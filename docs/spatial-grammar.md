@@ -79,37 +79,77 @@ nivel 2   validate()             ¿nulos? → tipos | error
 
 Quedan por explorar las otras dos lecturas de la profundidad que se plantearon: **tiempo** (entrar en el historial de una ejecución iterativa) y **contexto** (el anidamiento léxico de una función). La primera necesita el kernel (Fase 4); la segunda ya está medio cubierta por `nesting`.
 
+## Plegado: el programa se lee como un texto
+
+Una región lineal larga no crece sin fin a lo ancho: cuando la fila llega a su presupuesto de ancho, **salta a la siguiente**, igual que un párrafo. Cada fila se lee de izquierda a derecha, y el salto de fila se cuenta como lo que es —un retorno de carro— y no como un retroceso.
+
+El ancho de fila por defecto cabe en una pantalla. Eso cambia la pregunta de legibilidad: ya no es «¿cabe el programa entero de un vistazo?» sino «¿puedo leerlo al 100 % recorriéndolo?», que es como se lee un documento.
+
 ## La prueba de densidad
 
-«¿Se entiende?» es una opinión hasta que se mide. `analyze()` calcula las propiedades que la literatura de dibujo de grafos asocia a la legibilidad, y `generateProgram()` fabrica programas sintéticos con forma de script real (cadena principal, decisiones que se vuelven a juntar, bucles, imports, constantes compartidas). `node packages/spatial/scripts/density.ts` imprime la tabla.
+«¿Se entiende?» es una opinión hasta que se mide. `analyze()` calcula las propiedades que la literatura de dibujo de grafos asocia a la legibilidad, y `generateProgram()` fabrica programas sintéticos con forma de script real. `node packages/spatial/scripts/density.ts` imprime la tabla.
 
-| Pasos | Nodos | Solapes | Cruces/conexión | Hacia atrás | Nodo al encajar | Proporción | ms   |
-| ----- | ----- | ------- | --------------- | ----------- | --------------- | ---------- | ---- |
-| 6     | 15    | 0       | 0,00            | 0           | **136 px**      | 4,7:1      | 1,4  |
-| 12    | 27    | 0       | 0,39            | 0           | 68 px           | 8,4:1      | 1,4  |
-| 25    | 49    | 0       | 0,43            | 0           | 35 px           | 13,7:1     | 3,3  |
-| 50    | 92    | 0       | 0,24            | 0           | 18 px           | 26,4:1     | 4,7  |
-| 100   | 178   | 0       | 0,13            | 0           | 9 px            | 51,8:1     | 16,8 |
-| 200   | 350   | 0       | 0,06            | 0           | 5 px            | 102,4:1    | 63,5 |
+| Pasos | Nodos | Solapes | Cruces/conexión | Filas | Nodo al encajar | Nodo con scroll | ms   |
+| ----- | ----- | ------- | --------------- | ----- | --------------- | --------------- | ---- |
+| 6     | 15    | 0       | 0,13            | 3     | 183 px          | **258 px**      | 4,6  |
+| 12    | 27    | 0       | 0,55            | 5     | 107 px          | **258 px**      | 1,8  |
+| 25    | 49    | 0       | 0,67            | 9     | 63 px           | **258 px**      | 4,5  |
+| 50    | 92    | 0       | 0,39            | 17    | 37 px           | **258 px**      | 5,7  |
+| 100   | 178   | 0       | 0,24            | 32    | 21 px           | **258 px**      | 12,9 |
+| 200   | 350   | 0       | 0,16            | 63    | 11 px           | **258 px**      | 53,4 |
 
-**Lo que aguanta:** ningún nodo se pisa a ningún tamaño, ninguna conexión de flujo va hacia atrás, los cruces por conexión _bajan_ al crecer el programa (0,43 → 0,06) y colocar 350 nodos tarda 64 ms.
+«Nodo con scroll» es el ancho que le queda a un nodo encajando solo a lo ancho y recorriendo el resto hacia abajo: se mantiene a tamaño completo a cualquier longitud, porque una fila siempre cabe en una pantalla. Ningún nodo se pisa, ninguna conexión de flujo retrocede dentro de su fila, y colocar 350 nodos tarda 53 ms.
 
-**Lo que no:** «nodo al encajar» es el ancho que le queda a un nodo si el programa entero se mete en una pantalla de 1920×1080. Por debajo de unos 90 px un nodo deja de leerse, y eso ocurre **a partir de los 12 pasos**. La causa es estructural: una región lineal nunca se pliega, así que el lienzo solo crece a lo ancho y la proporción se dispara hasta 102:1.
+Antes del plegado, un programa de 12 pasos ya dejaba los nodos en 68 px —por debajo de los ~90 px que hacen falta para leer uno— y la proporción del lienzo llegaba a 102:1. Eso salió midiendo, no mirando: con seis nodos el diagrama parecía perfecto.
 
-Esto salió midiendo, no mirando: con seis nodos el diagrama parecía perfecto. La sección «La prueba de densidad» de la galería lo enseña con un programa generado de 20 pasos.
+## Orientación
 
-### Candidatos para resolverlo
+El eje de lectura es un parámetro, no una suposición. `layout(graph, { axis: 'vertical' })` coloca el mismo grafo como una lista de pasos hacia abajo, y las estrategias siguen funcionando porque razonan en ejes «principal» y «transversal», no en x e y. `AXIS_FOR` declara qué eje le sienta mejor a cada topología.
 
-1. **Plegado en serpentina.** Cuando una región lineal supera un presupuesto de ancho, salta a la fila siguiente — igual que un texto. Mantiene «se lee como una frase» y llevaría la proporción cerca de 1:1.
-2. **Colapso automático por abstracción.** Un archivo largo no se enseña plano: sus funciones se colapsan y se entra en ellas. La gramática ya tiene la profundidad; faltaría decidir el umbral a partir del cual colapsa sola.
-3. **Orientación vertical** para secuencias de pasos, como apunta la tabla original de topologías.
+## Profundidad por abstracción
 
-No son excluyentes: (1) arregla un script plano y (2) arregla un archivo con estructura.
+`collapse(graph, groups)` sustituye un grupo de nodos por uno solo que los encapsula y recablea las conexiones que cruzaban su borde. Un `def` se convierte en un nodo en el que se puede entrar.
+
+De dónde salen los grupos:
+
+- **Del AST** (`groupsFromContainers`): cada función es un grupo con su nombre.
+- **De la IA**, más adelante: ante un script largo sin funciones, propondrá dónde está la costura natural.
+
+Por eso una agrupación lleva `source` y `reason` obligatorios, y las rechazadas se devuelven con su motivo: una agrupación propuesta por un modelo tiene que poder auditarse igual que la clasificación espacial, y el usuario tiene que poder rechazarla. La IA nunca se hace pasar por el AST.
+
+La transición entre niveles es un viaje real por el eje Z (`perspective`, `translateZ`): el nivel que dejas atrás retrocede y se desenfoca. No es un efecto decorativo — es el mismo significado que ya tenía el relleno de vidrio en la gramática de nodos.
+
+## Movimiento
+
+La quinta dimensión, y la última en llegar. Cuando el programa cambia —tecleas, colapsas una función, cambias de densidad— el diagrama **no salta**: interpola.
+
+El movimiento es tipado, porque dice qué ha pasado:
+
+| Fase       | Significa                                                         |
+| ---------- | ----------------------------------------------------------------- |
+| `moving`   | El nodo es el mismo, en otro sitio. Puedes seguirlo con la vista. |
+| `entering` | Algo nuevo se escribió. Aparece con una escala mínima.            |
+| `leaving`  | Algo se borró o se colapsó. Se queda un instante desvaneciéndose. |
+| `settled`  | En su sitio.                                                      |
+
+`useMotion` (en `@prysel/ui`) interpola las posiciones con una salida suave y retiene un instante a los que desaparecen. Respeta `prefers-reduced-motion`: con esa preferencia, las posiciones se fijan sin animar.
+
+Es lo que permite seguir un nodo concreto mientras se teclea, en vez de tener que volver a buscarlo en cada pulsación.
+
+## El lienzo
+
+React Flow aporta lo que un lienzo infinito necesita —recorrer, acercar, seleccionar, arrastrar y virtualizar—, pero **no decide nada**: las posiciones salen de la gramática espacial, el trazado de las conexiones de `routeEdge`, y los puertos de los campos que mide cada nodo.
+
+Dos decisiones que vale la pena registrar:
+
+- **El encuadre lo calcula la gramática, no la vista.** `fitView` obliga a React Flow a redescubrir los límites midiendo el DOM, y eso llega tarde. Como el layout ya sabe cuánto ocupa el programa, el viewport se calcula con esos números: es determinista y no depende de cuándo mida nadie.
+- **La gramática propone y el usuario dispone.** Un nodo arrastrado a mano conserva su sitio, y el lienzo deja de reencuadrarse solo en cuanto alguien lo recorre.
+
+El modo de encaje distingue dos cosas: una **ilustración** se enseña entera (`contain`); un **lienzo de trabajo** se ajusta al ancho y se recorre hacia abajo (`width`), que es el modelo de documento que hace legible un programa largo.
 
 ## Lo que falta
 
-- **El plegado de una región lineal larga** (ver la prueba de densidad): es la deuda que bloquea conectar un parser.
+- Enrutado de aristas que esquive nodos (hoy son curvas directas, salvo los saltos de fila y los retornos).
 - `timeline` y `hub-and-spoke` como topologías propias (hoy caen en `pipeline` y `fan-out`).
-- Orientación vertical para secuencias de pasos: la gramática asume horizontal.
-- Enrutado de aristas que esquive nodos (hoy son curvas directas).
-- Movimiento: la transición entre dos layouts cuando el programa cambia, que es la quinta dimensión de la gramática y hoy no está animada.
+- Orientación vertical a fondo: el eje ya es un parámetro, pero las estrategias están afinadas para horizontal.
+- Análisis incremental: hoy se reanaliza el archivo entero en cada cambio (bastan décimas de milisegundo, pero tree-sitter puede hacerlo incremental).

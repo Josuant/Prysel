@@ -80,7 +80,12 @@ describe('colapso por abstracción', () => {
     const groups = groupsFromContainers(withContainer)
     expect(groups).toHaveLength(1)
     expect(groups[0]?.source).toBe('ast')
-    expect(groups[0]?.nodes).toEqual(['x', 'y'])
+    // El contenedor entra en su propio grupo: se queda con su identidad y absorbe el cuerpo.
+    expect(groups[0]?.nodes).toEqual(['fn', 'x', 'y'])
+    expect(groups[0]?.id).toBe('fn')
+
+    const { graph: folded } = collapse(withContainer, groups)
+    expect(folded.nodes.map((n) => n.id)).toEqual(['fn'])
   })
 })
 

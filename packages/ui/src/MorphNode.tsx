@@ -61,6 +61,12 @@ export interface MorphNodeProps {
   /** Muestra el chip de estado («Inactivo», «Ejecutando»). Ocúltalo en un lienzo sin ejecución. */
   showStatus?: boolean
   /**
+   * El nodo se dibuja como **territorio**: los nodos que contiene van encima, sobre el lienzo,
+   * no dentro de su cuerpo. Entonces solo enseña su cabecera — el contenido ya está a la vista,
+   * y repetirlo en un editor sería decir dos veces lo mismo.
+   */
+  container?: boolean
+  /**
    * Campos que reciben su valor de otro nodo. Se marcan en el editor y el puerto se dibuja
    * a su altura: es lo que deja claro de dónde viene cada entrada.
    */
@@ -91,6 +97,7 @@ export function MorphNode({
   showPorts = true,
   showActions = true,
   showStatus = true,
+  container = false,
   linkedSlots,
   onSlotsMeasured,
   onToggleDensity,
@@ -107,6 +114,7 @@ export function MorphNode({
   // La sombra es atención: solo bajo un relleno opaco, y solo si algo la pide.
   const raised =
     !compact &&
+    !container &&
     spec.fill === 'solid' &&
     (spec.elevation === 'raised' || density === 'expanded' || focused)
   const band = geo.headerBand
@@ -178,6 +186,7 @@ export function MorphNode({
       data-lod={lod}
       data-modifier={modifier}
       data-raised={raised ? '' : undefined}
+      data-container={container ? '' : undefined}
       data-band={band === undefined ? undefined : ''}
     >
       {raised && (
@@ -242,6 +251,7 @@ export function MorphNode({
           <>
             <header className="node__head">
               <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} />
+              {container && <span className="node__title type-node-title">{label}</span>}
               {showActions && (
                 <div className="node__actions">
                   <button type="button" className="node__action" aria-label="Duplicar nodo">
@@ -265,23 +275,25 @@ export function MorphNode({
               )}
             </header>
 
-            <div className="node__body">
-              <div className="node__title type-node-title">{label}</div>
-              {showCode && <code className="node__code type-code">{code}</code>}
-              {control && (
-                <div className="node__control">
-                  <Control
-                    model={control}
-                    level={level}
-                    onChange={onControlChange}
-                    {...(linkedSlots ? { linked: linkedSlots } : {})}
-                  />
-                </div>
-              )}
-              {children && <div className="node__children">{children}</div>}
-            </div>
+            {!container && (
+              <div className="node__body">
+                <div className="node__title type-node-title">{label}</div>
+                {showCode && <code className="node__code type-code">{code}</code>}
+                {control && (
+                  <div className="node__control">
+                    <Control
+                      model={control}
+                      level={level}
+                      onChange={onControlChange}
+                      {...(linkedSlots ? { linked: linkedSlots } : {})}
+                    />
+                  </div>
+                )}
+                {children && <div className="node__children">{children}</div>}
+              </div>
+            )}
 
-            {(meta || showStatus) && (
+            {!container && (meta || showStatus) && (
               <footer className="node__foot">
                 {meta && <span className="node__meta type-field-label">{meta}</span>}
                 {showStatus && <StatusChip state={state} />}

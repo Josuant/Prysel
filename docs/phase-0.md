@@ -10,10 +10,11 @@ Cada hito es pequeño, se puede comprobar en minutos y termina con algo que se v
 | **M0.3** Gramática de morfología + galería  | 23 tipos de nodo (insignia, silueta, trazo, relleno, tamaño, elevación, puertos) y una galería para verlos                                                     | `pnpm dev:gallery` → http://localhost:5173         | ✅                                    |
 | **M0.3b** Dirección artística v2 + editores | Tarjetas claras con insignia e iconos, chips de estado, 18 editores gráficos por tipo y un caso real completo con el programa entero                           | Galería → secciones «Densidad» y «Un caso real»    | ✅ **punto de decisión de dirección** |
 | **M0.4a** Gramática espacial                | `@prysel/spatial`: grafo semántico → clasificación topológica → estrategia de layout. Puertos con nombre, gramática de conexiones, profundidad por abstracción | Galería → «Gramática espacial» y «Un caso real»    | ✅                                    |
-| **M0.4b** Lienzo con React Flow             | Llevar el motor espacial a React Flow: arrastre, zoom, selección, virtualización                                                                               | Galería → lienzo navegable                         |                                       |
-| **M0.5** Extensión de VS Code (cascarón)    | El mismo webview dentro de VS Code: CSP estricta, tema sincronizado, protocolo de mensajes validado en ambos extremos                                          | F5 en VS Code → comando «Prysel: Abrir lienzo»     | ✅                                    |
+| **M0.4b** Legibilidad a densidad            | Plegado en filas, eje de lectura configurable y colapso por abstracción: un programa largo se lee al 100 % recorriéndolo                                       | `node packages/spatial/scripts/density.ts`         | ✅                                    |
+| **M0.4c** Lienzo y movimiento               | React Flow sobre el motor espacial (recorrer, acercar, seleccionar, arrastrar) y transiciones interpoladas entre layouts                                       | Galería → «Un caso real» y «En vivo»               | ✅                                    |
+| **M0.5** Parser y extensión de VS Code      | tree-sitter → grafo semántico en tiempo real, y la extensión con su webview, CSP estricta y protocolo validado en ambos extremos                               | `pnpm --filter prysel-extension build`, luego F5   | ✅                                    |
 | **M0.6** Componentes restantes del DS       | `Space` real (for/if/try/def con contenido), `Port` con estados, `MagicLens`, puntos de actividad en conexiones `live`                                         | Galería + tests de estados                         |                                       |
-| **M0.7** Riesgos y puertas de calidad       | Spike del parser de Python, presupuesto de rendimiento (500 nodos con efectos vs. nivel de detalle), regresión visual con capturas                             | Informe corto + `pnpm verify` incluye las capturas |                                       |
+| **M0.7** Riesgos y puertas de calidad       | Presupuesto de rendimiento con efectos activos, regresión visual con capturas, y análisis incremental del parser                                               | Informe corto + `pnpm verify` incluye las capturas |                                       |
 
 **Fuera de alcance por ahora:** Jupyter Notebook (se retoma tras validar la extensión de VS Code).
 
@@ -34,7 +35,9 @@ Lo que cambie aquí es barato de cambiar: vive en `packages/morphology/src/kinds
 ```
 packages/design-tokens   fuente de tokens → CSS / Tailwind / tipos (+ tests de contraste)
 packages/morphology      gramática de nodos: tipos, siluetas, tamaño, iconos (sin React)
-packages/spatial         gramática espacial: clasificación topológica y layout (sin React)
+packages/spatial         gramática espacial: clasificación topológica, layout y colapso (sin React)
+packages/python          Python → grafo semántico, con tree-sitter
+packages/extension       la extensión de VS Code y su webview
 packages/ui              componentes React: MorphNode, ExecutionGlyph, estilos
 packages/extension       extensión de VS Code: comando «Prysel: Abrir lienzo», parser en el host y webview con el lienzo
 apps/gallery             la galería (Vite + Tailwind)

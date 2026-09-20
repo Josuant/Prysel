@@ -14,6 +14,10 @@ pnpm install
 pnpm dev:gallery
 ```
 
+Abre http://localhost:5173. La sección **«De Python al lienzo, en vivo»** convierte lo que escribas en el diagrama mientras tecleas.
+
+Para la extensión de VS Code: `pnpm --filter prysel-extension build` y luego F5 sobre `packages/extension`.
+
 Abre http://localhost:5173. Al final están **«Gramática espacial»** (cómo la forma del programa decide su layout) y **«Un caso real»** (un programa entero de pandas en el lienzo, con nodos editables).
 
 Parámetros útiles en la URL: `?theme=dark&density=compact&state=running&gray=1&only=valores&case=compact`.

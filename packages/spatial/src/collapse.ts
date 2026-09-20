@@ -125,9 +125,11 @@ export function groupsFromContainers(graph: SemanticGraph): GroupSuggestion[] {
   return graph.nodes
     .filter((node) => (node.contains?.length ?? 0) > 0)
     .map((node) => ({
-      id: `group:${node.id}`,
+      // El grupo conserva la identidad del contenedor: la función absorbe su cuerpo
+      // en vez de convertirse en un nodo nuevo al lado de él.
+      id: node.id,
       label: node.id,
-      nodes: node.contains ?? [],
+      nodes: [node.id, ...(node.contains ?? [])],
       source: 'ast' as const,
       reason: `el AST declara que "${node.id}" contiene estos nodos`,
     }))

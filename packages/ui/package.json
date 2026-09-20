@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@prysel/morphology": "workspace:*",
-    "@prysel/spatial": "workspace:*"
+    "@prysel/spatial": "workspace:*",
+    "@xyflow/react": "^12.11.6"
   },
   "peerDependencies": {
     "react": "catalog:"

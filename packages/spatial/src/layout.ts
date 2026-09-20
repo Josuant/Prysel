@@ -335,7 +335,34 @@ export function routeEdge(
   const axis = options.axis ?? 'horizontal'
   const horizontal = axis === 'horizontal'
 
-  if (relation === 'feedback' || options.wrap) {
+  if (options.wrap) {
+    /**
+     * Un salto de fila es un retorno de carro: sale por el borde, baja y vuelve a entrar
+     * por el principio de la fila siguiente. Trazarlo en diagonal lo haría parecer una
+     * conexión cualquiera cruzando el programa, y es justo lo contrario.
+     */
+    const E = 26
+    const R = 14
+    if (horizontal) {
+      const mid = (a.y + b.y) / 2
+      return (
+        `M${round(a.x)} ${round(a.y)}H${round(a.x + E - R)}` +
+        `A${R} ${R} 0 0 1 ${round(a.x + E)} ${round(a.y + R)}V${round(mid - R)}` +
+        `A${R} ${R} 0 0 1 ${round(a.x + E - R)} ${round(mid)}H${round(b.x - E + R)}` +
+        `A${R} ${R} 0 0 0 ${round(b.x - E)} ${round(mid + R)}V${round(b.y - R)}` +
+        `A${R} ${R} 0 0 0 ${round(b.x - E + R)} ${round(b.y)}H${round(b.x)}`
+      )
+    }
+    const mid = (a.x + b.x) / 2
+    return (
+      `M${round(a.x)} ${round(a.y)}V${round(a.y + E - R)}` +
+      `A${R} ${R} 0 0 0 ${round(a.x - R)} ${round(a.y + E)}H${round(mid + R)}` +
+      `A${R} ${R} 0 0 0 ${round(mid)} ${round(a.y + E - R)}V${round(b.x)}` +
+      `M${round(mid)} ${round(b.y - E)}H${round(b.x)}V${round(b.y)}`
+    )
+  }
+
+  if (relation === 'feedback') {
     const detour = options.detour ?? 110
     const [c1, c2] = horizontal
       ? [

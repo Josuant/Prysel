@@ -237,6 +237,8 @@ export function RealCase() {
         density={density}
         stateOf={stateOf}
         onControlChange={onControlChange}
+        interactive
+        height={460}
       />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">

@@ -320,6 +320,13 @@ describe('trazado de conexiones', () => {
     expect(weak).not.toBe(strong)
   })
 
+  it('un salto de fila baja y vuelve a entrar por el principio: no cruza en diagonal', () => {
+    const path = routeEdge({ x: 900, y: 100 }, { x: 40, y: 400 }, 'transform', { wrap: true })
+    // Un retorno de carro se dibuja con tramos rectos y esquinas redondeadas, no con una curva.
+    expect(path).toContain('A')
+    expect(path).not.toContain('C')
+  })
+
   it('no produce coordenadas inválidas', () => {
     for (const relation of [
       'dependency',

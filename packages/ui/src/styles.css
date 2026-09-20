@@ -279,6 +279,20 @@
   white-space: nowrap;
 }
 
+/*
+ * Un territorio: el contenedor se dibuja DETRÁS de los nodos que abarca, así que solo
+ * enseña su cabecera. Su nombre va junto a la insignia, y nada compite con su contenido.
+ */
+.node[data-container] .node__content {
+  justify-content: flex-start;
+}
+.node[data-container] .node__head {
+  gap: var(--space-2);
+}
+.node[data-container] .node__title {
+  color: var(--ink-muted);
+}
+
 /* Contenedores: la etiqueta arriba, el territorio debajo, sin pie. */
 .node[data-role='container'] .node__foot {
   display: none;
@@ -375,6 +389,10 @@
 /* El retorno va contra el tiempo: discontinuo, para que se lea como excepción al flujo. */
 .edge[data-relation='feedback'] .edge__line {
   stroke-dasharray: 7 6;
+}
+.edge[data-wrap] .edge__line {
+  stroke-dasharray: 2 7;
+  opacity: 0.5;
 }
 .edge[data-live] .edge__line,
 .edge[data-live] .edge__head {
@@ -844,4 +862,97 @@
   inset: 0;
   overflow: visible;
   pointer-events: none;
+}
+
+/* ── El lienzo (React Flow) ────────────────────────────────────────────────
+ * React Flow aporta el viewport; el aspecto lo pone el design system.
+ * Su hoja base se importa desde Canvas.tsx y aquí solo se corrige lo que hace falta.
+ */
+.canvas {
+  position: relative;
+  overflow: hidden;
+}
+.canvas__defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+.canvas .react-flow__node {
+  cursor: default;
+}
+.canvas[data-interactive] .react-flow__node {
+  cursor: grab;
+}
+.canvas[data-interactive] .react-flow__node:active {
+  cursor: grabbing;
+}
+.canvas .react-flow__handle {
+  width: 9px;
+  height: 9px;
+  min-width: 0;
+  min-height: 0;
+  border: 1.5px solid var(--surface);
+  background: var(--line-faint);
+}
+/* Un puerto que recibe algo deja de ser invisible: es la respuesta a "¿de dónde viene esto?". */
+.canvas .react-flow__handle-left:not([data-handleid='in']),
+.canvas .react-flow__handle-top:not([data-handleid='in']) {
+  width: 11px;
+  height: 11px;
+  background: var(--ink);
+}
+.canvas .react-flow__node.selected .react-flow__handle {
+  background: var(--accent);
+}
+.canvas .react-flow__pane {
+  cursor: default;
+}
+.canvas[data-interactive] .react-flow__pane {
+  cursor: grab;
+}
+.canvas .react-flow__background-pattern {
+  color: var(--grid-dot);
+}
+.canvas .react-flow__edge-path,
+.canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke: none;
+}
+.edge__label-chip {
+  position: absolute;
+  padding: 2px 8px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--ink-muted);
+  pointer-events: none;
+}
+
+/* ── Movimiento: el diagrama se mueve, no salta ── */
+.flow-node {
+  transition: opacity 180ms ease-out;
+}
+/* Un nodo que entra aparece; uno que sale se desvanece. */
+.flow-node[data-phase='entering'] {
+  animation: node-enter 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.flow-node[data-phase='leaving'] {
+  opacity: 0;
+}
+@keyframes node-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow-node,
+  .flow-node[data-phase='entering'] {
+    animation: none;
+    transition: none;
+  }
 }

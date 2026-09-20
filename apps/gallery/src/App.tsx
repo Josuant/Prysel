@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { getKind, type Density, type NodeKindId, type NodeState } from '@prysel/morphology'
 import { MorphNode, type ControlModel } from '@prysel/ui'
+import { LiveParser } from './LiveParser.tsx'
 import { RealCase } from './RealCase.tsx'
 import { SpatialGrammar } from './SpatialGrammar.tsx'
 import { CHANNELS, GROUPS, SAMPLES } from './samples.tsx'
@@ -80,6 +81,7 @@ export function App() {
         {show('densidad') && <DensitySection lod={lod} />}
         {show('gram') && <SpatialGrammar />}
         {show('un caso') && <RealCase />}
+        {show('de python') && <LiveParser />}
       </main>
     </div>
   )

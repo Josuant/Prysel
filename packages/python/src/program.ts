@@ -135,6 +135,18 @@ class Builder {
     this.scope.set(name, id)
   }
 
+  /**
+   * Abre un ámbito anidado. Lo que se defina dentro desaparece al cerrarlo, para que
+   * un `total` local no se confunda con el `total` del módulo.
+   */
+  pushScope(): () => void {
+    const saved = new Map(this.scope)
+    return () => {
+      this.scope.clear()
+      for (const [name, id] of saved) this.scope.set(name, id)
+    }
+  }
+
   resolve(name: string): string | undefined {
     return this.scope.get(name)
   }
@@ -343,8 +355,19 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const id = statementId(statement, 'def')
       const name = field(statement, 'name')?.text ?? 'función'
       builder.add({ id, kind: 'abstraction.collapsed', label: name, code, line }, name)
+      const restore = builder.pushScope()
+      // Los parámetros existen solo dentro: se resuelven al propio nodo de la función.
+      const params = field(statement, 'parameters')
+      if (params) {
+        for (const param of params.namedChildren) {
+          if (!param) continue
+          const paramName = param.type === 'identifier' ? param.text : field(param, 'name')?.text
+          if (paramName) builder.bind(paramName, id)
+        }
+      }
       const body = field(statement, 'body')
       const inside = body ? visitBlock(builder, body) : []
+      restore()
       const node = builder.nodes.find((n) => n.id === id)
       if (node && inside.length > 0) {
         node.contains = inside

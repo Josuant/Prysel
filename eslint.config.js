@@ -24,11 +24,14 @@ export default tseslint.config(
     },
   },
   {
+    // Un hook puede vivir en un .ts: las reglas de hooks tienen que llegar ahí también.
+    files: ['**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: reactHooks.configs.recommended.rules,
+  },
+  {
     files: ['**/*.tsx'],
-    plugins: { 'react-hooks': reactHooks, 'jsx-a11y': jsxA11y },
-    rules: {
-      ...reactHooks.configs.recommended.rules,
-      ...jsxA11y.flatConfigs.recommended.rules,
-    },
+    plugins: { 'jsx-a11y': jsxA11y },
+    rules: jsxA11y.flatConfigs.recommended.rules,
   },
 )
