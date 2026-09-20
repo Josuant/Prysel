@@ -58,6 +58,8 @@ export interface MorphNodeProps {
   showPorts?: boolean
   /** Acciones de la cabecera (duplicar, editar, plegar), como en un constructor de flujos. */
   showActions?: boolean
+  /** Muestra el chip de estado («Inactivo», «Ejecutando»). Ocúltalo en un lienzo sin ejecución. */
+  showStatus?: boolean
   /**
    * Campos que reciben su valor de otro nodo. Se marcan en el editor y el puerto se dibuja
    * a su altura: es lo que deja claro de dónde viene cada entrada.
@@ -88,6 +90,7 @@ export function MorphNode({
   size,
   showPorts = true,
   showActions = true,
+  showStatus = true,
   linkedSlots,
   onSlotsMeasured,
   onToggleDensity,
@@ -161,6 +164,10 @@ export function MorphNode({
       style={rootStyle}
       role="group"
       aria-label={`${spec.name}: ${label}`}
+      // El nodo es un grupo de solo lectura, pero se hace alcanzable por teclado
+      // para que los lectores de pantalla puedan recorrer el diagrama nodo a nodo.
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
       data-kind={spec.id}
       data-role={spec.role}
       data-badge={spec.badge}
@@ -227,9 +234,9 @@ export function MorphNode({
               >
                 <Icon name="chevron" size={13} />
               </button>
-            ) : (
+            ) : showStatus ? (
               <StatusChip state={state} showLabel={false} className="node__glance-state" />
-            )}
+            ) : null}
           </div>
         ) : (
           <>
@@ -274,10 +281,12 @@ export function MorphNode({
               {children && <div className="node__children">{children}</div>}
             </div>
 
-            <footer className="node__foot">
-              {meta && <span className="node__meta type-field-label">{meta}</span>}
-              <StatusChip state={state} />
-            </footer>
+            {(meta || showStatus) && (
+              <footer className="node__foot">
+                {meta && <span className="node__meta type-field-label">{meta}</span>}
+                {showStatus && <StatusChip state={state} />}
+              </footer>
+            )}
           </>
         )}
       </div>

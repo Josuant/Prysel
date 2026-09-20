@@ -53,6 +53,12 @@ export interface CanvasProps {
   gapY?: number
   /** Altura mínima, para que una rejilla de ejemplos no quede dentada. */
   minHeight?: number
+  /** Muestra las acciones de cabecera de cada nodo (duplicar, editar). Falso en un lienzo de solo lectura. */
+  showActions?: boolean
+  /** Muestra el chip de estado de cada nodo. Falso cuando no hay ejecución que mostrar. */
+  showStatus?: boolean
+  /** Etiqueta accesible del lienzo, leída por lectores de pantalla. */
+  ariaLabel?: string
   className?: string
 }
 
@@ -67,6 +73,9 @@ export function Canvas({
   gapX,
   gapY,
   minHeight = 0,
+  showActions = true,
+  showStatus = true,
+  ariaLabel,
   className,
 }: CanvasProps) {
   const [slots, setSlots] = useState<Record<string, MeasuredSlot[]>>({})
@@ -147,6 +156,8 @@ export function Canvas({
         .filter(Boolean)
         .join(' ')}
       style={{ height: Math.max(bounds.h * scale, minHeight) }}
+      role="region"
+      aria-label={ariaLabel}
       data-regions={regions.map((r) => r.topology).join(' ')}
     >
       <div
@@ -197,6 +208,8 @@ export function Canvas({
               control={node.control}
               density={densityOf(node)}
               state={stateOf?.(node.id) ?? 'dormant'}
+              showActions={showActions}
+              showStatus={showStatus}
               linkedSlots={linked[node.id] ?? []}
               onSlotsMeasured={(measured) => {
                 setSlots((current) =>

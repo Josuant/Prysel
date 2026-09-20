@@ -16,6 +16,12 @@
   font-family: var(--font-sans);
 }
 
+/* El nodo es un grupo enfocable: el anillo solo aparece al navegar con teclado. */
+.node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
 .node[data-badge='value'] {
   --badge-bg: var(--badge-value-bg);
   --badge-fg: var(--badge-value-fg);
