@@ -34,7 +34,13 @@ let ready: Promise<TreeSitterModule> | null = null
 
 async function loadModule(locations: WasmLocations): Promise<TreeSitterModule> {
   ready ??= (async () => {
-    const module = (await import('@vscode/tree-sitter-wasm')) as unknown as TreeSitterModule
+    // `@vscode/tree-sitter-wasm` es CJS/UMD: según quién lo importe (Node nativo,
+    // vite-node, bundle CJS), los exportados pueden venir como named exports o
+    // como `default`. Se normaliza para que `module.Parser` exista en ambos casos.
+    const imported = (await import('@vscode/tree-sitter-wasm')) as unknown as TreeSitterModule & {
+      default?: TreeSitterModule
+    }
+    const module = imported.default ?? imported
     await module.Parser.init({
       locateFile: (file: string) =>
         locations.runtime.endsWith('.wasm') ? locations.runtime : `${locations.runtime}/${file}`,
