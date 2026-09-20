@@ -1,0 +1,31 @@
+{
+  "name": "@prysel/gallery",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Galería de morfología: cada tipo de nodo de Prysel, en cada tema, densidad y estado.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prysel/design-tokens": "workspace:*",
+    "@prysel/morphology": "workspace:*",
+    "@prysel/ui": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "@prysel/spatial": "workspace:*"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

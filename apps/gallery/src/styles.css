@@ -1,0 +1,98 @@
+@import 'tailwindcss';
+@import '@prysel/design-tokens/tokens.css';
+@import '@prysel/design-tokens/tailwind-theme.css';
+@import '@prysel/ui/styles.css';
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/* Estilos de la galería (no forman parte del sistema; solo enmarcan los ejemplos). */
+.type-architecture {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+}
+.type-primary {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+.type-secondary {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+}
+.type-tertiary {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Un trozo de lienzo: retícula de puntos sobre void. */
+.stage {
+  background-color: var(--void);
+  background-image: radial-gradient(var(--grid-dot) 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+
+.canvas-scroll {
+  overflow-x: auto;
+}
+
+/* Conexiones del lienzo: control fino en line, datos gruesos en ink (regla del DS). */
+.edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.edge {
+  fill: none;
+  stroke-linecap: round;
+}
+.edge[data-type='control'] {
+  stroke: var(--line);
+  stroke-width: var(--stroke-control);
+  stroke-dasharray: 5 5;
+}
+.edge[data-type='data'] {
+  stroke: var(--ink);
+  stroke-width: var(--stroke-data);
+  opacity: 0.55;
+}
+.edge[data-live] {
+  stroke: var(--accent);
+  opacity: 1;
+}
+.edge__pulse {
+  fill: var(--accent);
+}
+
+.run-button {
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  background: var(--ink);
+  color: var(--void);
+  cursor: pointer;
+}
+.run-button:hover {
+  opacity: 0.88;
+}
+
+/* La prueba del DS: si algo solo se entiende con color, el diseño falló. */
+[data-grayscale] {
+  filter: grayscale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge__pulse {
+    display: none;
+  }
+}

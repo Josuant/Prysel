@@ -1,0 +1,220 @@
+{
+  "name": "Prysel",
+  "version": 1,
+  "color": {
+    "themes": [
+      { "id": "light", "name": "Light" },
+      { "id": "dark", "name": "Dark" }
+    ],
+    "tokens": [
+      {
+        "name": "void",
+        "value": { "light": "#f6f4f0", "dark": "#121110" },
+        "usage": "Fondo del canvas — el territorio donde el programa existe físicamente."
+      },
+      {
+        "name": "surface",
+        "value": { "light": "#ffffff", "dark": "#1b1917" },
+        "usage": "Fondo del cuerpo de un nodo o panel, dibujado sobre void."
+      },
+      {
+        "name": "surface-raised",
+        "value": { "light": "#fdfcfa", "dark": "#221f1c" },
+        "usage": "Fondo de un nodo expandido o enfocado, y del panel de Magic Lens."
+      },
+      {
+        "name": "ink",
+        "value": { "light": "#17140f", "dark": "#f2efea" },
+        "usage": "Texto primario — identidad del nodo y código fuente — sobre void o surface."
+      },
+      {
+        "name": "ink-muted",
+        "value": { "light": "#5b5548", "dark": "#b6af9f" },
+        "usage": "Texto secundario — el contexto de un nodo, p. ej. 'amount > 1000' — sobre void o surface."
+      },
+      {
+        "name": "ink-faint",
+        "value": { "light": "#726b5c", "dark": "#948e7d" },
+        "usage": "Texto terciario — metadata como el conteo de filas o la posición en el archivo fuente — sobre void o surface."
+      },
+      {
+        "name": "line",
+        "value": { "light": "#948c76", "dark": "#6e6858" },
+        "usage": "Bordes de un nodo, contorno de un Space y conexiones de control en reposo, sobre void o surface."
+      },
+      {
+        "name": "line-faint",
+        "value": { "light": "#dbd5c6", "dark": "#322e27" },
+        "usage": "Puertos y conectores en reposo — deliberadamente casi invisibles; nunca portador de texto o de estado."
+      },
+      {
+        "name": "accent",
+        "value": { "light": "#7c5cfc", "dark": "#9a80ff" },
+        "usage": "El pulso del estado running y los acentos semánticos puntuales — nunca un color de categoría por tipo de nodo — sobre void o surface."
+      },
+      {
+        "name": "state-dormant",
+        "value": { "light": "{line}", "dark": "{line}" },
+        "usage": "El glifo ○ dormant y el anillo de un nodo inactivo — visualmente silencioso, igual a line."
+      },
+      {
+        "name": "state-running",
+        "value": { "light": "{accent}", "dark": "{accent}" },
+        "usage": "El glifo ◉ running y su pulso mínimo y perceptible — la misma tonalidad que accent: la señal de que el programa está vivo."
+      },
+      {
+        "name": "state-success",
+        "value": { "light": "#1e8e5a", "dark": "#4fbe8a" },
+        "usage": "El glifo ● completed tras una ejecución exitosa."
+      },
+      {
+        "name": "state-warning",
+        "value": { "light": "#92600a", "dark": "#e3a64f" },
+        "usage": "Advertencia no bloqueante — una reducción abrupta de datos, un nodo lento — nunca un estado de ejecución en sí."
+      },
+      {
+        "name": "state-error",
+        "value": { "light": "#c6362b", "dark": "#ff7a6e" },
+        "usage": "El punto de fractura ●─╳ de una ejecución fallida — se aplica solo en el punto exacto del fallo, nunca como inundación de la interfaz."
+      },
+      {
+        "name": "state-selected",
+        "value": { "light": "#1c6fd1", "dark": "#6aa9ff" },
+        "usage": "Selección y trazado de linaje — el rastro que Prysel ilumina al mostrar de dónde viene un valor."
+      }
+    ]
+  },
+  "type": {
+    "fonts": [],
+    "families": {
+      "mono": "ui-monospace, \"SF Mono\", \"JetBrains Mono\", \"Cascadia Code\", Menlo, Consolas, monospace"
+    },
+    "groups": [
+      {
+        "name": "Text",
+        "family": "mono",
+        "styles": [
+          {
+            "name": "primary",
+            "fontSize": "15px",
+            "lineHeight": "20px",
+            "fontWeight": 600,
+            "usage": "El nombre e intención de un nodo — 'Filter sales' — lo primero que se lee en cualquier nivel de zoom por encima de Structural."
+          },
+          {
+            "name": "secondary",
+            "fontSize": "13px",
+            "lineHeight": "18px",
+            "fontWeight": 400,
+            "usage": "El contexto de un nodo — 'amount > 1000' — los parámetros que dan sentido a la intención."
+          },
+          {
+            "name": "tertiary",
+            "fontSize": "11px",
+            "lineHeight": "16px",
+            "fontWeight": 400,
+            "letterSpacing": "0.02em",
+            "usage": "Metadata — filas, posición en el archivo fuente ('428 rows · sales.py:42') — la lectura menos urgente, distinguida por tamaño y peso, nunca solo por color."
+          }
+        ]
+      },
+      {
+        "name": "Structural",
+        "family": "mono",
+        "styles": [
+          {
+            "name": "space-title",
+            "fontSize": "12px",
+            "lineHeight": "16px",
+            "fontWeight": 600,
+            "letterSpacing": "0.04em",
+            "usage": "La etiqueta de un Space — un territorio for, if o try — p. ej. 'FOR item in sales'."
+          },
+          {
+            "name": "architecture",
+            "fontSize": "13px",
+            "lineHeight": "18px",
+            "fontWeight": 700,
+            "letterSpacing": "0.08em",
+            "usage": "Las etiquetas del zoom Nivel 3 — 'LOAD SALES', 'TRANSFORM' — la topología que sobrevive cuando todo lo demás se abstrae."
+          }
+        ]
+      }
+    ]
+  },
+  "spacing": {
+    "tokens": [
+      {
+        "name": "space-1",
+        "value": "4px",
+        "usage": "Separación entre el ícono y el nombre en la cabecera de un nodo."
+      },
+      {
+        "name": "space-2",
+        "value": "8px",
+        "usage": "Relleno interno de un nodo compacto; espacio entre un puerto y el borde del nodo."
+      },
+      {
+        "name": "space-3",
+        "value": "12px",
+        "usage": "Separación entre la fila de identidad de un nodo y su cuerpo."
+      },
+      {
+        "name": "space-4",
+        "value": "16px",
+        "usage": "Relleno estándar de un nodo, y separación entre campos de un nodo expandido."
+      },
+      {
+        "name": "space-6",
+        "value": "24px",
+        "usage": "Distancia entre dos nodos con dependencia directa ('A ─── B') — corta, para que la cercanía comunique dependencia."
+      },
+      {
+        "name": "space-10",
+        "value": "40px",
+        "usage": "Distancia entre nodos con una relación indirecta o más laxa."
+      },
+      {
+        "name": "space-16",
+        "value": "64px",
+        "usage": "Separación conceptual entre regiones no relacionadas del programa — nunca usada de forma decorativa."
+      }
+    ]
+  },
+  "radius": {
+    "tokens": [
+      {
+        "name": "radius-sm",
+        "value": "4px",
+        "usage": "Chips compactos e inline de un valor."
+      },
+      {
+        "name": "radius-md",
+        "value": "8px",
+        "usage": "Esquinas de un nodo estándar."
+      },
+      {
+        "name": "radius-lg",
+        "value": "14px",
+        "usage": "Esquinas de un nodo expandido y de un contenedor Space."
+      },
+      {
+        "name": "radius-full",
+        "value": "9999px",
+        "usage": "Puertos y glifos de estado de ejecución (○ ◉ ●) — siempre un círculo perfecto."
+      }
+    ]
+  },
+  "shadow": {
+    "tokens": [
+      {
+        "name": "shadow-raised",
+        "value": {
+          "light": "0 2px 8px rgba(23,20,15,0.10)",
+          "dark": "0 2px 10px rgba(0,0,0,0.45)"
+        },
+        "usage": "La única elevación que usa Prysel: bajo un nodo expanded o enfocado, y bajo el panel de Magic Lens. Las conexiones y los nodos dormant permanecen planos."
+      }
+    ]
+  }
+}

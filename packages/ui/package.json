@@ -1,0 +1,31 @@
+{
+  "name": "@prysel/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Componentes React del lienzo de Prysel: nodos con morfología semántica, glifos de estado, puertos.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prysel/morphology": "workspace:*",
+    "@prysel/spatial": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@prysel/design-tokens": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

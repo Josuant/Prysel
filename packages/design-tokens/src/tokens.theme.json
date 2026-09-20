@@ -1,0 +1,385 @@
+{
+  "name": "Prysel — tema v2",
+  "version": 2,
+  "overrides": [
+    {
+      "name": "void",
+      "value": { "light": "#f5f6f8", "dark": "#0e1014" },
+      "reason": "El lienzo pasa de crema cálido a un gris neutro y frío: las insignias pastel y el acento violeta necesitan un fondo sin temperatura propia.",
+      "usage": "Fondo del canvas — el territorio donde el programa existe físicamente."
+    },
+    {
+      "name": "surface",
+      "value": { "light": "#ffffff", "dark": "#161a21" },
+      "reason": "Las tarjetas son blancas y limpias; el color de tipo vive en la insignia, no en el relleno.",
+      "usage": "Fondo de una tarjeta de nodo o panel, dibujada sobre void."
+    },
+    {
+      "name": "surface-raised",
+      "value": { "light": "#ffffff", "dark": "#1c212a" },
+      "reason": "En claro, una tarjeta elevada se distingue por su sombra, no por un blanco distinto.",
+      "usage": "Fondo de un nodo expandido o enfocado, y del panel de Magic Lens."
+    },
+    {
+      "name": "ink",
+      "value": { "light": "#101418", "dark": "#eef1f5" },
+      "reason": "Tinta neutra, acorde al lienzo frío.",
+      "usage": "Texto primario — nombre del nodo y código fuente — sobre void o surface."
+    },
+    {
+      "name": "ink-muted",
+      "value": { "light": "#59626f", "dark": "#a2acba" },
+      "reason": "Neutralizada junto con ink: el gris cálido desentonaba con el lienzo frío.",
+      "usage": "Texto secundario — el código que da contexto a un nodo — sobre void o surface."
+    },
+    {
+      "name": "ink-faint",
+      "value": { "light": "#626a77", "dark": "#8a94a3" },
+      "reason": "Neutralizada y oscurecida: la versión cálida quedaba en 4.81:1 sobre void, sin margen para componer nada encima.",
+      "usage": "Texto terciario — metadata como el conteo de filas o la posición en el archivo — sobre void o surface."
+    },
+    {
+      "name": "line",
+      "value": { "light": "#848c9b", "dark": "#6e7888" },
+      "reason": "Se reserva para bordes de controles reales (campos, interruptores) y mantiene 3:1; el borde decorativo de una tarjeta usa border-card.",
+      "usage": "Bordes de controles editables y conexiones de control en reposo, sobre void o surface."
+    },
+    {
+      "name": "line-faint",
+      "value": { "light": "#dde1e7", "dark": "#2a313c" },
+      "reason": "Neutralizada junto con el resto de la escala de grises del tema.",
+      "usage": "Puertos y conectores en reposo — deliberadamente casi invisibles; nunca portador de texto o de estado."
+    },
+    {
+      "name": "accent",
+      "value": { "light": "#6355e0", "dark": "#9d8bff" },
+      "reason": "Mismo violeta de la marca, ajustado para alcanzar 4.5:1 sobre surface y poder usarse en texto de enlaces y conexiones activas.",
+      "usage": "El pulso de la ejecución viva, las conexiones activas y los acentos semánticos puntuales."
+    },
+    {
+      "name": "state-success",
+      "value": { "light": "#12704a", "dark": "#6fd6a2" },
+      "reason": "Alineado con el verde del chip de éxito.",
+      "usage": "Ejecución completada con éxito."
+    },
+    {
+      "name": "state-warning",
+      "value": { "light": "#855400", "dark": "#eeb45e" },
+      "reason": "Alineado con el ámbar del chip de advertencia.",
+      "usage": "Advertencia no bloqueante — una reducción abrupta de datos, un nodo lento."
+    },
+    {
+      "name": "state-error",
+      "value": { "light": "#b3213a", "dark": "#ff8fa3" },
+      "reason": "Alineado con el rojo del chip de error.",
+      "usage": "El punto de fractura de una ejecución fallida — solo en el punto exacto del fallo."
+    },
+    {
+      "name": "state-selected",
+      "value": { "light": "#1a5fb4", "dark": "#7cb2ff" },
+      "reason": "Alineado con el azul del chip de selección.",
+      "usage": "Selección y trazado de linaje."
+    },
+    {
+      "name": "shadow-raised",
+      "value": {
+        "light": "0 4px 12px rgba(16, 20, 24, 0.08), 0 1px 3px rgba(16, 20, 24, 0.06)",
+        "dark": "0 6px 18px rgba(0, 0, 0, 0.5)"
+      },
+      "reason": "Sombra en dos capas, más suave y difusa, como la de las tarjetas de referencia.",
+      "usage": "Elevación de un nodo expandido o enfocado, y del panel de Magic Lens."
+    }
+  ],
+  "color": {
+    "tokens": [
+      {
+        "name": "border-card",
+        "value": { "light": "#e5e8ee", "dark": "#262c36" },
+        "usage": "Borde decorativo de una tarjeta de nodo. Nunca es el único indicio de que algo es una tarjeta (siempre hay relleno, insignia y texto), por eso no necesita 3:1."
+      },
+      {
+        "name": "grid-dot",
+        "value": { "light": "#e0e4ea", "dark": "#1d232c" },
+        "usage": "Puntos de la retícula del lienzo, sobre void."
+      },
+      {
+        "name": "field",
+        "value": { "light": "#f7f8fa", "dark": "#11151b" },
+        "usage": "Fondo de un campo editable dentro de una tarjeta, sobre surface."
+      },
+      {
+        "name": "badge-value-bg",
+        "value": { "light": "#fdf3e3", "dark": "#33290f" },
+        "usage": "Fondo de la insignia de un literal y de su píldora compacta. Tono ámbar: el dato inmutable."
+      },
+      {
+        "name": "badge-value-fg",
+        "value": { "light": "#8a5300", "dark": "#f0c073" },
+        "usage": "Icono y texto de la insignia de un literal, sobre badge-value-bg."
+      },
+      {
+        "name": "badge-data-bg",
+        "value": { "light": "#e4f5f3", "dark": "#0f3230" },
+        "usage": "Fondo de la insignia de una colección o tabla. Tono verdeazulado: el dato con estructura."
+      },
+      {
+        "name": "badge-data-fg",
+        "value": { "light": "#0c6360", "dark": "#68d5cd" },
+        "usage": "Icono y texto de la insignia de una colección, sobre badge-data-bg."
+      },
+      {
+        "name": "badge-transform-bg",
+        "value": { "light": "#eceafe", "dark": "#26224a" },
+        "usage": "Fondo de la insignia de una transformación. Tono violeta: el dato que cambia."
+      },
+      {
+        "name": "badge-transform-fg",
+        "value": { "light": "#4b3fc4", "dark": "#b3a9ff" },
+        "usage": "Icono y texto de la insignia de una transformación, sobre badge-transform-bg."
+      },
+      {
+        "name": "badge-control-bg",
+        "value": { "light": "#ffeee3", "dark": "#3a2413" },
+        "usage": "Fondo de la insignia de una decisión, repetición o salto. Tono naranja: el camino que se bifurca."
+      },
+      {
+        "name": "badge-control-fg",
+        "value": { "light": "#a4490a", "dark": "#f4a76c" },
+        "usage": "Icono y texto de la insignia de control, sobre badge-control-bg."
+      },
+      {
+        "name": "badge-effect-bg",
+        "value": { "light": "#feeaee", "dark": "#3a1c24" },
+        "usage": "Fondo de la insignia de un efecto sobre el mundo exterior. Tono rosa: el código que sale del programa."
+      },
+      {
+        "name": "badge-effect-fg",
+        "value": { "light": "#a92140", "dark": "#ff94a8" },
+        "usage": "Icono y texto de la insignia de efecto, sobre badge-effect-bg."
+      },
+      {
+        "name": "badge-output-bg",
+        "value": { "light": "#e4f6ec", "dark": "#0f3126" },
+        "usage": "Fondo de la insignia de un resultado visible. Tono verde: lo que está hecho para mirarse."
+      },
+      {
+        "name": "badge-output-fg",
+        "value": { "light": "#0f6642", "dark": "#68d39d" },
+        "usage": "Icono y texto de la insignia de resultado, sobre badge-output-bg."
+      },
+      {
+        "name": "badge-neutral-bg",
+        "value": { "light": "#eef0f4", "dark": "#232a34" },
+        "usage": "Fondo de la insignia de lo ajeno, lo encapsulado y lo que aún no se entiende. Sin tono propio."
+      },
+      {
+        "name": "badge-neutral-fg",
+        "value": { "light": "#4a5461", "dark": "#aeb8c6" },
+        "usage": "Icono y texto de la insignia neutra, sobre badge-neutral-bg."
+      },
+      {
+        "name": "chip-dormant-bg",
+        "value": { "light": "#eef0f4", "dark": "#222832" },
+        "usage": "Fondo del chip de estado inactivo, sobre surface."
+      },
+      {
+        "name": "chip-dormant-fg",
+        "value": { "light": "#4a5461", "dark": "#a6b0be" },
+        "usage": "Icono y texto del chip inactivo, sobre chip-dormant-bg."
+      },
+      {
+        "name": "chip-running-bg",
+        "value": { "light": "#eceafe", "dark": "#26224a" },
+        "usage": "Fondo del chip de ejecución en curso, sobre surface."
+      },
+      {
+        "name": "chip-running-fg",
+        "value": { "light": "#4b3fc4", "dark": "#b3a9ff" },
+        "usage": "Icono y texto del chip en ejecución, sobre chip-running-bg."
+      },
+      {
+        "name": "chip-success-bg",
+        "value": { "light": "#e4f6ec", "dark": "#0f3126" },
+        "usage": "Fondo del chip de ejecución completada, sobre surface."
+      },
+      {
+        "name": "chip-success-fg",
+        "value": { "light": "#0f6642", "dark": "#68d39d" },
+        "usage": "Icono y texto del chip de éxito, sobre chip-success-bg."
+      },
+      {
+        "name": "chip-warning-bg",
+        "value": { "light": "#fff3e0", "dark": "#38280c" },
+        "usage": "Fondo del chip de advertencia, sobre surface."
+      },
+      {
+        "name": "chip-warning-fg",
+        "value": { "light": "#855400", "dark": "#eeb45e" },
+        "usage": "Icono y texto del chip de advertencia, sobre chip-warning-bg."
+      },
+      {
+        "name": "chip-error-bg",
+        "value": { "light": "#feeaee", "dark": "#3a1c24" },
+        "usage": "Fondo del chip de error, sobre surface."
+      },
+      {
+        "name": "chip-error-fg",
+        "value": { "light": "#a92140", "dark": "#ff94a8" },
+        "usage": "Icono y texto del chip de error, sobre chip-error-bg."
+      },
+      {
+        "name": "chip-selected-bg",
+        "value": { "light": "#e6effd", "dark": "#14294a" },
+        "usage": "Fondo del chip de selección, sobre surface."
+      },
+      {
+        "name": "chip-selected-fg",
+        "value": { "light": "#14539e", "dark": "#7cb2ff" },
+        "usage": "Icono y texto del chip de selección, sobre chip-selected-bg."
+      }
+    ]
+  },
+  "radius": {
+    "tokens": [
+      {
+        "name": "radius-card",
+        "value": "14px",
+        "usage": "Esquinas de una tarjeta de nodo."
+      },
+      {
+        "name": "radius-field",
+        "value": "8px",
+        "usage": "Esquinas de un campo editable, un botón o una vista previa dentro de una tarjeta."
+      },
+      {
+        "name": "radius-space",
+        "value": "20px",
+        "usage": "Esquinas de un contenedor Space: más suaves que las de una tarjeta, porque abarca más superficie."
+      }
+    ]
+  },
+  "shadow": {
+    "tokens": [
+      {
+        "name": "shadow-card",
+        "value": {
+          "light": "0 1px 2px rgba(16, 20, 24, 0.05), 0 2px 6px rgba(16, 20, 24, 0.04)",
+          "dark": "0 1px 2px rgba(0, 0, 0, 0.4)"
+        },
+        "usage": "La sombra mínima que despega una tarjeta del lienzo en reposo."
+      }
+    ]
+  },
+  "blur": {
+    "tokens": [
+      {
+        "name": "blur-glass",
+        "value": "14px",
+        "usage": "Desenfoque de fondo de un nodo de vidrio: encapsula complejidad sin ocultar del todo lo que hay detrás."
+      }
+    ]
+  },
+  "stroke": {
+    "tokens": [
+      {
+        "name": "stroke-node",
+        "value": "1px",
+        "usage": "Grosor del borde de una tarjeta de nodo."
+      },
+      {
+        "name": "stroke-control",
+        "value": "1.5px",
+        "usage": "Grosor de una conexión de control."
+      },
+      {
+        "name": "stroke-data",
+        "value": "4px",
+        "usage": "Grosor base de una conexión de datos."
+      }
+    ]
+  },
+  "opacity": {
+    "tokens": [
+      {
+        "name": "opacity-ghost",
+        "value": "0.55",
+        "usage": "Opacidad del relleno de lo diferido o ajeno al archivo. Nunca se aplica al texto."
+      },
+      {
+        "name": "opacity-dead",
+        "value": "0.45",
+        "usage": "Opacidad de un nodo inalcanzable (código muerto). Se aplica al nodo completo, texto incluido."
+      },
+      {
+        "name": "opacity-veil",
+        "value": "0.72",
+        "usage": "Opacidad de la lámina de surface bajo un nodo de vidrio: garantiza el contraste del texto cuando el lienzo se transparenta."
+      }
+    ]
+  },
+  "type": {
+    "families": {
+      "sans": "Inter, \"Segoe UI Variable Text\", \"SF Pro Text\", system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif"
+    },
+    "groups": [
+      {
+        "name": "Interfaz",
+        "family": "sans",
+        "styles": [
+          {
+            "name": "node-title",
+            "fontSize": "14px",
+            "lineHeight": "20px",
+            "fontWeight": 600,
+            "letterSpacing": "-0.006em",
+            "usage": "El nombre e intención de un nodo — 'Filter sales' — en la tipografía de interfaz, no en la de código."
+          },
+          {
+            "name": "badge",
+            "fontSize": "11px",
+            "lineHeight": "14px",
+            "fontWeight": 600,
+            "letterSpacing": "0.01em",
+            "usage": "El texto de una insignia de tipo o de un chip de estado."
+          },
+          {
+            "name": "field-label",
+            "fontSize": "11px",
+            "lineHeight": "16px",
+            "fontWeight": 500,
+            "letterSpacing": "0.01em",
+            "usage": "La etiqueta de un control editable dentro de una tarjeta."
+          },
+          {
+            "name": "stat",
+            "fontSize": "24px",
+            "lineHeight": "30px",
+            "fontWeight": 600,
+            "letterSpacing": "-0.02em",
+            "usage": "Una cifra de resultado en un nodo de salida."
+          }
+        ]
+      },
+      {
+        "name": "Código",
+        "family": "mono",
+        "styles": [
+          {
+            "name": "code",
+            "fontSize": "12px",
+            "lineHeight": "18px",
+            "fontWeight": 400,
+            "usage": "El fragmento de Python que un nodo representa — lo único que sigue siendo monoespaciado junto a los valores."
+          },
+          {
+            "name": "value",
+            "fontSize": "13px",
+            "lineHeight": "18px",
+            "fontWeight": 500,
+            "usage": "Un valor editable dentro de un control: el contenido de un campo, un número, un literal."
+          }
+        ]
+      }
+    ]
+  }
+}

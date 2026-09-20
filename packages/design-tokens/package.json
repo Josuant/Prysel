@@ -1,0 +1,25 @@
+{
+  "name": "@prysel/design-tokens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tokens del design system de Prysel: fuente (DS + extensión) → CSS, tema Tailwind y tipos.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./build": "./src/build.ts",
+    "./tokens.css": "./src/generated/tokens.css",
+    "./tailwind-theme.css": "./src/generated/tailwind-theme.css"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "check": "node scripts/build.ts --check",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/culori": "catalog:",
+    "@types/node": "catalog:",
+    "culori": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

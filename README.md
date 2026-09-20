@@ -1,0 +1,39 @@
+# Prysel
+
+Prysel no representa código: representa su **comportamiento**. Un lienzo 2D que vive junto al código Python dentro de VS Code y hace visible qué hace cada bloque, con nodos cuya forma, color, relleno, tamaño y sombra significan algo.
+
+Estado: **Fase 0** (fundaciones y lenguaje visual). Ver [docs/phase-0.md](docs/phase-0.md).
+
+## Ver la galería de morfología
+
+Requisitos: Node 24 y pnpm 12.
+
+```bash
+npm install -g pnpm@12.5.1
+pnpm install
+pnpm dev:gallery
+```
+
+Abre http://localhost:5173. Al final están **«Gramática espacial»** (cómo la forma del programa decide su layout) y **«Un caso real»** (un programa entero de pandas en el lienzo, con nodos editables).
+
+Parámetros útiles en la URL: `?theme=dark&density=compact&state=running&gray=1&only=valores&case=compact`.
+
+> En algunas instalaciones de Windows `corepack` falla con `EXDEV: cross-device link`; instalar pnpm con npm evita el problema.
+
+## Comandos
+
+| Comando                             | Qué hace                                                         |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `pnpm verify`                       | Todo lo siguiente, en orden                                      |
+| `pnpm tokens` / `pnpm tokens:check` | Regenera / comprueba CSS, tema Tailwind y tipos desde los tokens |
+| `pnpm lint`                         | ESLint                                                           |
+| `pnpm typecheck`                    | TypeScript en todos los paquetes                                 |
+| `pnpm test`                         | Vitest                                                           |
+| `pnpm format`                       | Prettier                                                         |
+
+## Documentación
+
+- [Fase 0 y sus hitos](docs/phase-0.md)
+- [ADR 0001 — Stack y seguridad](docs/adr/0001-stack.md)
+- [Gramática espacial](docs/spatial-grammar.md) — cómo la topología del programa decide su forma
+- [Diferencias respecto al design system publicado](docs/design-system-delta.md)

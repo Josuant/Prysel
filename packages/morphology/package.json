@@ -1,0 +1,21 @@
+{
+  "name": "@prysel/morphology",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Gramática visual de Prysel: qué forma, contorno, relleno y tamaño tiene cada construcción de Python.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prysel/design-tokens": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

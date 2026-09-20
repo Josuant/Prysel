@@ -1,0 +1,261 @@
+/* GENERADO por packages/design-tokens (pnpm tokens). No editar a mano. */
+
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --font-sans: Inter, "Segoe UI Variable Text", "SF Pro Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-10: 40px;
+  --space-16: 64px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+  --radius-card: 14px;
+  --radius-field: 8px;
+  --radius-space: 20px;
+  --blur-glass: 14px;
+  --stroke-node: 1px;
+  --stroke-control: 1.5px;
+  --stroke-data: 4px;
+  --opacity-ghost: 0.55;
+  --opacity-dead: 0.45;
+  --opacity-veil: 0.72;
+  --void: #f5f6f8;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --ink: #101418;
+  --ink-muted: #59626f;
+  --ink-faint: #626a77;
+  --line: #848c9b;
+  --line-faint: #dde1e7;
+  --accent: #6355e0;
+  --state-dormant: var(--line);
+  --state-running: var(--accent);
+  --state-success: #12704a;
+  --state-warning: #855400;
+  --state-error: #b3213a;
+  --state-selected: #1a5fb4;
+  --border-card: #e5e8ee;
+  --grid-dot: #e0e4ea;
+  --field: #f7f8fa;
+  --badge-value-bg: #fdf3e3;
+  --badge-value-fg: #8a5300;
+  --badge-data-bg: #e4f5f3;
+  --badge-data-fg: #0c6360;
+  --badge-transform-bg: #eceafe;
+  --badge-transform-fg: #4b3fc4;
+  --badge-control-bg: #ffeee3;
+  --badge-control-fg: #a4490a;
+  --badge-effect-bg: #feeaee;
+  --badge-effect-fg: #a92140;
+  --badge-output-bg: #e4f6ec;
+  --badge-output-fg: #0f6642;
+  --badge-neutral-bg: #eef0f4;
+  --badge-neutral-fg: #4a5461;
+  --chip-dormant-bg: #eef0f4;
+  --chip-dormant-fg: #4a5461;
+  --chip-running-bg: #eceafe;
+  --chip-running-fg: #4b3fc4;
+  --chip-success-bg: #e4f6ec;
+  --chip-success-fg: #0f6642;
+  --chip-warning-bg: #fff3e0;
+  --chip-warning-fg: #855400;
+  --chip-error-bg: #feeaee;
+  --chip-error-fg: #a92140;
+  --chip-selected-bg: #e6effd;
+  --chip-selected-fg: #14539e;
+  --shadow-raised: 0 4px 12px rgba(16, 20, 24, 0.08), 0 1px 3px rgba(16, 20, 24, 0.06);
+  --shadow-card: 0 1px 2px rgba(16, 20, 24, 0.05), 0 2px 6px rgba(16, 20, 24, 0.04);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --void: #0e1014;
+  --surface: #161a21;
+  --surface-raised: #1c212a;
+  --ink: #eef1f5;
+  --ink-muted: #a2acba;
+  --ink-faint: #8a94a3;
+  --line: #6e7888;
+  --line-faint: #2a313c;
+  --accent: #9d8bff;
+  --state-dormant: var(--line);
+  --state-running: var(--accent);
+  --state-success: #6fd6a2;
+  --state-warning: #eeb45e;
+  --state-error: #ff8fa3;
+  --state-selected: #7cb2ff;
+  --border-card: #262c36;
+  --grid-dot: #1d232c;
+  --field: #11151b;
+  --badge-value-bg: #33290f;
+  --badge-value-fg: #f0c073;
+  --badge-data-bg: #0f3230;
+  --badge-data-fg: #68d5cd;
+  --badge-transform-bg: #26224a;
+  --badge-transform-fg: #b3a9ff;
+  --badge-control-bg: #3a2413;
+  --badge-control-fg: #f4a76c;
+  --badge-effect-bg: #3a1c24;
+  --badge-effect-fg: #ff94a8;
+  --badge-output-bg: #0f3126;
+  --badge-output-fg: #68d39d;
+  --badge-neutral-bg: #232a34;
+  --badge-neutral-fg: #aeb8c6;
+  --chip-dormant-bg: #222832;
+  --chip-dormant-fg: #a6b0be;
+  --chip-running-bg: #26224a;
+  --chip-running-fg: #b3a9ff;
+  --chip-success-bg: #0f3126;
+  --chip-success-fg: #68d39d;
+  --chip-warning-bg: #38280c;
+  --chip-warning-fg: #eeb45e;
+  --chip-error-bg: #3a1c24;
+  --chip-error-fg: #ff94a8;
+  --chip-selected-bg: #14294a;
+  --chip-selected-fg: #7cb2ff;
+  --shadow-raised: 0 6px 18px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+    --void: #0e1014;
+    --surface: #161a21;
+    --surface-raised: #1c212a;
+    --ink: #eef1f5;
+    --ink-muted: #a2acba;
+    --ink-faint: #8a94a3;
+    --line: #6e7888;
+    --line-faint: #2a313c;
+    --accent: #9d8bff;
+    --state-dormant: var(--line);
+    --state-running: var(--accent);
+    --state-success: #6fd6a2;
+    --state-warning: #eeb45e;
+    --state-error: #ff8fa3;
+    --state-selected: #7cb2ff;
+    --border-card: #262c36;
+    --grid-dot: #1d232c;
+    --field: #11151b;
+    --badge-value-bg: #33290f;
+    --badge-value-fg: #f0c073;
+    --badge-data-bg: #0f3230;
+    --badge-data-fg: #68d5cd;
+    --badge-transform-bg: #26224a;
+    --badge-transform-fg: #b3a9ff;
+    --badge-control-bg: #3a2413;
+    --badge-control-fg: #f4a76c;
+    --badge-effect-bg: #3a1c24;
+    --badge-effect-fg: #ff94a8;
+    --badge-output-bg: #0f3126;
+    --badge-output-fg: #68d39d;
+    --badge-neutral-bg: #232a34;
+    --badge-neutral-fg: #aeb8c6;
+    --chip-dormant-bg: #222832;
+    --chip-dormant-fg: #a6b0be;
+    --chip-running-bg: #26224a;
+    --chip-running-fg: #b3a9ff;
+    --chip-success-bg: #0f3126;
+    --chip-success-fg: #68d39d;
+    --chip-warning-bg: #38280c;
+    --chip-warning-fg: #eeb45e;
+    --chip-error-bg: #3a1c24;
+    --chip-error-fg: #ff94a8;
+    --chip-selected-bg: #14294a;
+    --chip-selected-fg: #7cb2ff;
+    --shadow-raised: 0 6px 18px rgba(0, 0, 0, 0.5);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+.type-primary {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.type-secondary {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 400;
+}
+
+.type-tertiary {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.type-space-title {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.type-architecture {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.type-node-title {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  letter-spacing: -0.006em;
+}
+
+.type-badge {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.type-field-label {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.type-stat {
+  font-family: var(--font-sans);
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.type-code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 400;
+}
+
+.type-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}

@@ -1,0 +1,5 @@
+export * from './types.ts'
+export { buildShape, SHAPE_IDS } from './geometry.ts'
+export { ICONS, ICON_IDS } from './icons.ts'
+export { NODE_KINDS, getKind, type NodeKindId } from './kinds.ts'
+export { DENSITY_BASE, compactShape, complexityScale, nodeSize, shapeFor } from './sizing.ts'
