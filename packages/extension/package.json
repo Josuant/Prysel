@@ -14,7 +14,8 @@
     "Programming Languages"
   ],
   "activationEvents": [
-    "onCommand:prysel.openCanvas"
+    "onCommand:prysel.openCanvas",
+    "onView:prysel.canvasView"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -24,7 +25,25 @@
         "title": "Abrir lienzo",
         "category": "Prysel"
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "prysel",
+          "title": "Prysel",
+          "icon": "resources/prysel.svg"
+        }
+      ]
+    },
+    "views": {
+      "prysel": [
+        {
+          "type": "webview",
+          "id": "prysel.canvasView",
+          "name": "Lienzo"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node scripts/build.mjs",

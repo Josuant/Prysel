@@ -21,8 +21,25 @@ function wasmLocations(): { runtime: string; language: string } {
 }
 
 let parser: PythonParser | null = null
+let parserPromise: Promise<PythonParser> | null = null
 let panel: vscode.WebviewPanel | null = null
 let currentDoc: vscode.TextDocument | null = null
+
+/** Todos los webviews abiertos (panel y vista de la barra): reciben el mismo estado. */
+const webviews = new Set<vscode.Webview>()
+
+/** El parser se carga una sola vez y de forma perezosa: registrar comandos no debe esperarlo. */
+function getParser(): Promise<PythonParser> {
+  parserPromise ??= createPythonParser(wasmLocations()).then((created) => {
+    parser = created
+    return created
+  })
+  return parserPromise
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 function getNonce(): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -38,24 +55,26 @@ function themeKind(): Theme {
     : 'dark'
 }
 
-function post(message: WebviewMessage) {
-  panel?.webview.postMessage(message)
+function postToAll(message: WebviewMessage) {
+  for (const webview of webviews) webview.postMessage(message)
 }
 
-/** Analiza el documento activo y manda el programa al webview. */
-function refresh() {
-  if (!panel || !parser) return
+/** Analiza el documento activo y manda el programa a todos los webviews. */
+async function refresh() {
+  if (webviews.size === 0) return
+  currentDoc ??= vscode.window.activeTextEditor?.document ?? null
   const doc = currentDoc
   if (!doc || doc.languageId !== 'python') {
-    post({ type: 'update', program: null })
+    postToAll({ type: 'update', program: null })
     return
   }
   try {
+    const parser = await getParser()
     const program = buildProgram(parser.parse(doc.getText()))
-    post({ type: 'update', program, file: basename(doc.fileName) })
+    postToAll({ type: 'update', program, file: basename(doc.fileName) })
   } catch {
     // El código a medio escribir no debe tumbar el lienzo.
-    post({ type: 'update', program: null })
+    postToAll({ type: 'update', program: null })
   }
 }
 
@@ -90,6 +109,15 @@ function htmlFor(webview: vscode.Webview, extensionUri: vscode.Uri): string {
 </html>`
 }
 
+/** Conecta un webview recién creado: responde al «ready» con el tema y el estado actual. */
+function wireWebview(webview: vscode.Webview) {
+  webview.onDidReceiveMessage((message) => {
+    if (!parseHostMessage(message)) return
+    postToAll({ type: 'theme', theme: themeKind() })
+    void refresh()
+  })
+}
+
 function createPanel(extensionUri: vscode.Uri): vscode.WebviewPanel {
   const created = vscode.window.createWebviewPanel(
     'prysel.canvas',
@@ -101,21 +129,49 @@ function createPanel(extensionUri: vscode.Uri): vscode.WebviewPanel {
     },
   )
   created.webview.html = htmlFor(created.webview, extensionUri)
-  created.webview.onDidReceiveMessage((message) => {
-    const parsed = parseHostMessage(message)
-    if (!parsed) return
-    // El webview está listo: mandar el tema y el estado actual.
-    post({ type: 'theme', theme: themeKind() })
-    refresh()
+  webviews.add(created.webview)
+  wireWebview(created.webview)
+  created.onDidDispose(() => {
+    webviews.delete(created.webview)
   })
   return created
 }
 
-export async function activate(context: vscode.ExtensionContext) {
-  parser = await createPythonParser(wasmLocations())
+/** El mismo lienzo, como vista de la barra de actividad. */
+class CanvasViewProvider implements vscode.WebviewViewProvider {
+  static readonly viewType = 'prysel.canvasView'
 
+  constructor(private readonly extensionUri: vscode.Uri) {}
+
+  resolveWebviewView(webviewView: vscode.WebviewView) {
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'dist')],
+    }
+    webviewView.webview.html = htmlFor(webviewView.webview, this.extensionUri)
+    webviews.add(webviewView.webview)
+    wireWebview(webviewView.webview)
+    webviewView.onDidChangeVisibility(() => {
+      if (!webviewView.visible) return
+      postToAll({ type: 'theme', theme: themeKind() })
+      void refresh()
+    })
+    webviewView.onDidDispose(() => {
+      webviews.delete(webviewView.webview)
+    })
+  }
+}
+
+export function activate(context: vscode.ExtensionContext) {
+  // El comando y la vista se registran de forma síncrona: el parser se carga aparte.
   context.subscriptions.push(
     vscode.commands.registerCommand('prysel.openCanvas', async () => {
+      try {
+        await getParser()
+      } catch (error) {
+        vscode.window.showErrorMessage(`Prysel: no se pudo cargar el parser. ${messageOf(error)}`)
+        return
+      }
       if (!panel) {
         panel = createPanel(context.extensionUri)
         panel.onDidDispose(() => {
@@ -126,20 +182,24 @@ export async function activate(context: vscode.ExtensionContext) {
         panel.reveal(vscode.ViewColumn.Beside)
       }
       currentDoc = vscode.window.activeTextEditor?.document ?? null
-      post({ type: 'theme', theme: themeKind() })
-      refresh()
+      postToAll({ type: 'theme', theme: themeKind() })
+      void refresh()
     }),
+    vscode.window.registerWebviewViewProvider(
+      CanvasViewProvider.viewType,
+      new CanvasViewProvider(context.extensionUri),
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
     vscode.workspace.onDidChangeTextDocument((event) => {
-      if (!panel || !currentDoc) return
-      if (event.document.uri.toString() === currentDoc.uri.toString()) refresh()
+      if (!currentDoc) return
+      if (event.document.uri.toString() === currentDoc.uri.toString()) void refresh()
     }),
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (!panel) return
       currentDoc = editor?.document ?? null
-      refresh()
+      void refresh()
     }),
     vscode.window.onDidChangeActiveColorTheme(() => {
-      post({ type: 'theme', theme: themeKind() })
+      postToAll({ type: 'theme', theme: themeKind() })
     }),
   )
 }
