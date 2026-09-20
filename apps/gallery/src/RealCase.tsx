@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Density, NodeState } from '@prysel/morphology'
 import type { SemanticEdge } from '@prysel/spatial'
-import { Segmented, type ControlModel } from '@prysel/ui'
-import { Canvas, type CanvasNode } from './Canvas.tsx'
+import { Canvas, Segmented, type CanvasNode, type ControlModel } from '@prysel/ui'
 
 /**
  * Un caso real: un script de pandas, tal y como se vería en el lienzo.

@@ -10,8 +10,7 @@ import {
   type SemanticEdge,
   type Topology,
 } from '@prysel/spatial'
-import { EdgeDefs, Icon } from '@prysel/ui'
-import { Canvas, type CanvasNode } from './Canvas.tsx'
+import { Canvas, EdgeDefs, Icon, type CanvasNode } from '@prysel/ui'
 
 /**
  * La quinta gramática: Prysel usa el espacio como lenguaje.

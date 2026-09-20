@@ -16,7 +16,9 @@ import {
   type SemanticGraph,
   type SemanticNode,
 } from '@prysel/spatial'
-import { Edge, EdgeDefs, MorphNode, type ControlModel, type MeasuredSlot } from '@prysel/ui'
+import { Edge, EdgeDefs } from './Edge.tsx'
+import { MorphNode, type MeasuredSlot } from './MorphNode.tsx'
+import type { ControlModel } from './controls.tsx'
 
 /**
  * El lienzo. No coloca nada por su cuenta: pide las posiciones a la gramática espacial

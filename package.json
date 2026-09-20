@@ -12,6 +12,8 @@
     "tokens": "pnpm --filter @prysel/design-tokens build",
     "tokens:check": "pnpm --filter @prysel/design-tokens check",
     "dev:gallery": "pnpm --filter @prysel/gallery dev",
+    "build:extension": "pnpm --filter prysel-extension build",
+    "watch:extension": "pnpm --filter prysel-extension watch",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

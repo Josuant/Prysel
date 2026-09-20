@@ -1,0 +1,17 @@
+@import 'tailwindcss';
+@import '@prysel/design-tokens/tokens.css';
+@import '@prysel/design-tokens/tailwind-theme.css';
+@import '@prysel/ui/styles.css';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}

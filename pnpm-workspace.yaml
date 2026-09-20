@@ -3,6 +3,9 @@ packages:
   - apps/*
 
 # Una sola versión de cada dependencia compartida en todo el monorepo.
+allowBuilds:
+  esbuild: true
+
 catalog:
   react: ^19.3.0
   react-dom: ^19.3.0
@@ -27,3 +30,5 @@ catalog:
 
 # Cadena de suministro: no se instalan versiones publicadas hace menos de 24 h.
 minimumReleaseAge: 1440
+
+# esbuild necesita su script de instalación para disponer del binario nativo.

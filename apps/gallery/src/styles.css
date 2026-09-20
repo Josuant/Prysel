@@ -35,24 +35,11 @@ body {
   line-height: 16px;
 }
 
-/* Un trozo de lienzo: retícula de puntos sobre void. */
-.stage {
-  background-color: var(--void);
-  background-image: radial-gradient(var(--grid-dot) 1.2px, transparent 1.2px);
-  background-size: 22px 22px;
-}
-
 .canvas-scroll {
   overflow-x: auto;
 }
 
 /* Conexiones del lienzo: control fino en line, datos gruesos en ink (regla del DS). */
-.edges {
-  position: absolute;
-  inset: 0;
-  overflow: visible;
-  pointer-events: none;
-}
 .edge {
   fill: none;
   stroke-linecap: round;

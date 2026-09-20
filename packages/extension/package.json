@@ -1,0 +1,56 @@
+{
+  "name": "prysel-extension",
+  "displayName": "Prysel",
+  "description": "El comportamiento del código Python, visible en un lienzo dentro de VS Code.",
+  "version": "0.0.1",
+  "private": true,
+  "publisher": "prysel",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "Visualization",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onCommand:prysel.openCanvas"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "prysel.openCanvas",
+        "title": "Abrir lienzo",
+        "category": "Prysel"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prysel/python": "workspace:*",
+    "@vscode/tree-sitter-wasm": "^0.3.1"
+  },
+  "devDependencies": {
+    "@prysel/design-tokens": "workspace:*",
+    "@prysel/morphology": "workspace:*",
+    "@prysel/spatial": "workspace:*",
+    "@prysel/ui": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@types/vscode": "^1.92.0",
+    "@vitejs/plugin-react": "catalog:",
+    "esbuild": "^0.25.0",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

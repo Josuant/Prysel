@@ -20,6 +20,21 @@ Parámetros útiles en la URL: `?theme=dark&density=compact&state=running&gray=1
 
 > En algunas instalaciones de Windows `corepack` falla con `EXDEV: cross-device link`; instalar pnpm con npm evita el problema.
 
+## Probar la extensión (F5)
+
+La extensión convierte el archivo Python activo en el diagrama, en tiempo real.
+
+```bash
+pnpm install
+pnpm build:extension
+```
+
+En VS Code, pulsa **F5** (configuración `Prysel — extensión (F5)` en `.vscode/launch.json`). Se abre una ventana de Extension Development Host; abre cualquier `.py` y ejecuta el comando **«Prysel: Abrir lienzo»**. Cada cambio en el editor reanaliza el código y redibuja el lienzo.
+
+- El parser corre en el host (`@prysel/python` + tree-sitter) y manda el grafo semántico al webview.
+- El webview es el mismo lienzo que la galería (`@prysel/ui`), con CSP estricta, nonce, tema sincronizado y mensajes validados en ambos extremos.
+- Para iterar sin parar: `pnpm watch:extension` (recompila el host al guardar).
+
 ## Comandos
 
 | Comando                             | Qué hace                                                         |

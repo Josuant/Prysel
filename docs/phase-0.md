@@ -11,7 +11,7 @@ Cada hito es pequeño, se puede comprobar en minutos y termina con algo que se v
 | **M0.3b** Dirección artística v2 + editores | Tarjetas claras con insignia e iconos, chips de estado, 18 editores gráficos por tipo y un caso real completo con el programa entero                           | Galería → secciones «Densidad» y «Un caso real»    | ✅ **punto de decisión de dirección** |
 | **M0.4a** Gramática espacial                | `@prysel/spatial`: grafo semántico → clasificación topológica → estrategia de layout. Puertos con nombre, gramática de conexiones, profundidad por abstracción | Galería → «Gramática espacial» y «Un caso real»    | ✅                                    |
 | **M0.4b** Lienzo con React Flow             | Llevar el motor espacial a React Flow: arrastre, zoom, selección, virtualización                                                                               | Galería → lienzo navegable                         |                                       |
-| **M0.5** Extensión de VS Code (cascarón)    | El mismo webview dentro de VS Code: CSP estricta, tema sincronizado, protocolo de mensajes validado en ambos extremos                                          | F5 en VS Code → comando «Prysel: Abrir lienzo»     |                                       |
+| **M0.5** Extensión de VS Code (cascarón)    | El mismo webview dentro de VS Code: CSP estricta, tema sincronizado, protocolo de mensajes validado en ambos extremos                                          | F5 en VS Code → comando «Prysel: Abrir lienzo»     | ✅                                    |
 | **M0.6** Componentes restantes del DS       | `Space` real (for/if/try/def con contenido), `Port` con estados, `MagicLens`, puntos de actividad en conexiones `live`                                         | Galería + tests de estados                         |                                       |
 | **M0.7** Riesgos y puertas de calidad       | Spike del parser de Python, presupuesto de rendimiento (500 nodos con efectos vs. nivel de detalle), regresión visual con capturas                             | Informe corto + `pnpm verify` incluye las capturas |                                       |
 
@@ -36,6 +36,7 @@ packages/design-tokens   fuente de tokens → CSS / Tailwind / tipos (+ tests de
 packages/morphology      gramática de nodos: tipos, siluetas, tamaño, iconos (sin React)
 packages/spatial         gramática espacial: clasificación topológica y layout (sin React)
 packages/ui              componentes React: MorphNode, ExecutionGlyph, estilos
+packages/extension       extensión de VS Code: comando «Prysel: Abrir lienzo», parser en el host y webview con el lienzo
 apps/gallery             la galería (Vite + Tailwind)
 docs/                    esto, el delta del DS y la gramática espacial
 ```

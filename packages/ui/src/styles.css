@@ -823,3 +823,19 @@
     transition: none;
   }
 }
+
+/* ── Lienzo ── */
+/* Un trozo de lienzo: retícula de puntos sobre void. */
+.stage {
+  background-color: var(--void);
+  background-image: radial-gradient(var(--grid-dot) 1.2px, transparent 1.2px);
+  background-size: 22px 22px;
+}
+
+/* Las conexiones viven en un SVG que flota sobre los nodos. */
+.edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
