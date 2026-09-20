@@ -121,7 +121,9 @@ describe('el grafo resultante se puede dibujar', () => {
   })
 
   it('reanalizar un archivo es lo bastante rápido para hacerlo en cada tecla', () => {
-    const big = Array.from({ length: 200 }, (_, i) => `v${i} = v${Math.max(0, i - 1)} + ${i}`).join('\n')
+    const big = Array.from({ length: 200 }, (_, i) => `v${i} = v${Math.max(0, i - 1)} + ${i}`).join(
+      '\n',
+    )
     const started = performance.now()
     const program = parse(big)
     const elapsed = performance.now() - started

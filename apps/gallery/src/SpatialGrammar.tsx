@@ -355,7 +355,11 @@ export function DepthDemo() {
             <DepthLevel level={LEVELS[leaving.id]} />
           </div>
         )}
-        <div className="depth__layer" key={currentId} data-entering={leaving?.direction ?? undefined}>
+        <div
+          className="depth__layer"
+          key={currentId}
+          data-entering={leaving?.direction ?? undefined}
+        >
           <DepthLevel
             level={level}
             onEnter={(id) => {

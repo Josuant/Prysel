@@ -58,10 +58,7 @@ describe('colapso por abstracción', () => {
   })
 
   it('dos grupos que se pisan: se aplica el primero y se dice por qué el otro no', () => {
-    const { applied, rejected } = collapse(base, [
-      group(),
-      group({ id: 'h', nodes: ['c', 'd'] }),
-    ])
+    const { applied, rejected } = collapse(base, [group(), group({ id: 'h', nodes: ['c', 'd'] })])
     expect(applied.map((g) => g.id)).toEqual(['g'])
     expect(rejected[0]?.why).toMatch(/solapa/)
   })

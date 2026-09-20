@@ -272,9 +272,7 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
   const runOffset: Record<number, number> = {}
   let runCursor = 0
   for (const r of runs) {
-    const ids = graph.nodes
-      .filter((n) => layerRun[layers[n.id] ?? 0] === r)
-      .map((n) => n.id)
+    const ids = graph.nodes.filter((n) => layerRun[layers[n.id] ?? 0] === r).map((n) => n.id)
     const min = Math.min(...ids.map((id) => (cross[id] ?? 0) - crossOf(id) / 2))
     const max = Math.max(...ids.map((id) => (cross[id] ?? 0) + crossOf(id) / 2))
     runOffset[r] = runCursor - min

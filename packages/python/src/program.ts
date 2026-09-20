@@ -119,11 +119,6 @@ function kindOfExpression(expression: TsNode | null): NodeKindId {
   }
 }
 
-interface Binding {
-  name: string
-  node: string
-}
-
 class Builder {
   readonly nodes: ProgramNode[] = []
   readonly edges: SemanticEdge[] = []
@@ -286,7 +281,13 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const id = statementId(statement, 'for')
       const iterable = field(statement, 'right')
       const variable = field(statement, 'left')
-      builder.add({ id, kind: 'control.loop', label: `cada ${variable?.text ?? 'elemento'}`, code, line })
+      builder.add({
+        id,
+        kind: 'control.loop',
+        label: `cada ${variable?.text ?? 'elemento'}`,
+        code,
+        line,
+      })
       linkReads(builder, id, iterable, iterablePorts(iterable))
       if (variable) builder.bind(variable.text, id)
 
@@ -380,12 +381,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
   }
 }
 
-function visitAssignment(
-  builder: Builder,
-  assignment: TsNode,
-  line: number,
-  code: string,
-): string {
+function visitAssignment(builder: Builder, assignment: TsNode, line: number, code: string): string {
   const left = field(assignment, 'left')
   const right = field(assignment, 'right')
   const id = statementId(assignment, 'assign')
@@ -393,7 +389,12 @@ function visitAssignment(
   const kind = kindOfExpression(right)
 
   builder.add({ id, kind, label: name, code, line })
-  linkReads(builder, id, right, kind === 'control.condition' ? conditionPorts(right) : callPorts(right))
+  linkReads(
+    builder,
+    id,
+    right,
+    kind === 'control.condition' ? conditionPorts(right) : callPorts(right),
+  )
   builder.bind(name, id)
   return id
 }
