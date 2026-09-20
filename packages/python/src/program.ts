@@ -1,6 +1,19 @@
-import type { NodeKindId } from '@prysel/morphology'
-import type { Relation, SemanticEdge } from '@prysel/spatial'
+import type { ControlModel, NodeKindId } from '@prysel/morphology'
+import type { Channel, Relation, SemanticEdge } from '@prysel/spatial'
 import type { Node as TsNode, Tree } from '@vscode/tree-sitter-wasm'
+import {
+  augmented,
+  condition as conditionOf,
+  loop,
+  moduleOf,
+  positionalParams,
+  returned,
+  semanticsOf,
+  signal,
+  signatureOf,
+  type SemanticContext,
+} from './semantics.ts'
+import { calleeName, field, findFirst, firstLine, readNames } from './tree.ts'
 
 /**
  * Del árbol de tree-sitter al grafo semántico.
@@ -23,6 +36,13 @@ export interface ProgramNode {
   contains?: string[]
   /** Operaciones que encapsula. */
   ops?: number
+  /**
+   * Lo que el nodo enseña en lugar del código: un mensaje, un número, dos operandos y un
+   * operador. Solo existe cuando dice toda la sentencia; sin él, el nodo enseña el código.
+   */
+  control?: ControlModel
+  /** Si el nodo llama a una función definida en el archivo: el id de esa definición. */
+  calls?: string
 }
 
 export interface Program {
@@ -49,16 +69,15 @@ const IO_CALLS = [
   'execute',
 ]
 
+/** El nombre que un humano le daría a la acción, no el identificador de Python. */
+const ACTION_LABELS: Record<string, string> = {
+  print: 'Imprimir',
+  input: 'Pedir dato',
+  display: 'Mostrar',
+}
+
 /** Llamadas cuyo resultado está hecho para mirarse. */
 const DISPLAY_CALLS = ['display', 'show', 'plot', 'imshow', 'plt.show']
-
-const field = (node: TsNode, name: string): TsNode | null => node.childForFieldName(name)
-const firstLine = (text: string) => text.split('\n')[0]?.trim() ?? ''
-
-/** Nombre punteado de una llamada: `pd.read_csv` → "pd.read_csv". */
-function calleeName(call: TsNode): string {
-  return field(call, 'function')?.text ?? ''
-}
 
 function endsWith(name: string, candidates: string[]): boolean {
   const tail = name.split('.').pop() ?? name
@@ -124,6 +143,10 @@ class Builder {
   readonly edges: SemanticEdge[] = []
   readonly unsupported: Program['unsupported'] = []
   private readonly scope = new Map<string, string>()
+  /** Funciones definidas hasta ahora y sus parámetros: nombran los argumentos de cada llamada. */
+  readonly functions = new Map<string, string[]>()
+  /** Y el nodo que las define: es lo que permite ir de una llamada a su cuerpo. */
+  readonly functionIds = new Map<string, string>()
 
   add(node: ProgramNode, binds?: string): string {
     this.nodes.push(node)
@@ -151,7 +174,14 @@ class Builder {
     return this.scope.get(name)
   }
 
-  link(from: string, to: string, relation: Relation, toPort?: string, label?: string) {
+  link(
+    from: string,
+    to: string,
+    relation: Relation,
+    toPort?: string,
+    label?: string,
+    channel?: Channel,
+  ) {
     if (from === to) return
     const exists = this.edges.some(
       (e) => e.from === from && e.to === to && e.toPort === toPort && e.relation === relation,
@@ -163,30 +193,9 @@ class Builder {
       relation,
       ...(toPort === undefined ? {} : { toPort }),
       ...(label === undefined ? {} : { label }),
+      ...(channel === undefined ? {} : { channel }),
     })
   }
-}
-
-/** Identificadores que una expresión lee, en orden de aparición y sin repetir. */
-function readNames(expression: TsNode | null): string[] {
-  if (!expression) return []
-  const names: string[] = []
-  const walk = (node: TsNode) => {
-    if (node.type === 'identifier') {
-      const name = node.text
-      if (!names.includes(name)) names.push(name)
-      return
-    }
-    // De `pd.read_csv` interesa `pd`, no el atributo.
-    if (node.type === 'attribute') {
-      const object = field(node, 'object')
-      if (object) walk(object)
-      return
-    }
-    for (const child of node.namedChildren) if (child) walk(child)
-  }
-  walk(expression)
-  return names
 }
 
 /** Tiende las conexiones desde los nombres que lee una expresión hacia el nodo que la usa. */
@@ -271,7 +280,15 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
     case 'import_from_statement': {
       const id = statementId(statement, 'import')
       const bound = importedNames(statement)
-      builder.add({ id, kind: 'external.import', label: bound[0] ?? 'import', code, line })
+      const control = moduleOf(statement)
+      builder.add({
+        id,
+        kind: 'external.import',
+        label: bound[0] ?? 'import',
+        code,
+        line,
+        ...(control ? { control } : {}),
+      })
       // Un import puede dejar definidos varios nombres, y todos apuntan al mismo nodo.
       for (const name of bound) builder.bind(name, id)
       return id
@@ -284,8 +301,17 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         return visitAssignment(builder, inner, line, code)
       }
       const id = statementId(statement, 'expr')
-      builder.add({ id, kind: kindOfExpression(inner), label: describe(inner), code, line })
-      linkReads(builder, id, inner)
+      const sem = semanticsOf(inner, context(builder))
+      builder.add({
+        id,
+        kind: kindOfExpression(inner),
+        label: describe(inner),
+        code,
+        line,
+        ...(sem ? { control: sem.control } : {}),
+        ...calling(builder, inner),
+      })
+      linkReads(builder, id, inner, sem?.ports)
       return id
     }
 
@@ -293,12 +319,14 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const id = statementId(statement, 'for')
       const iterable = field(statement, 'right')
       const variable = field(statement, 'left')
+      const control = loop(variable, iterable)
       builder.add({
         id,
         kind: 'control.loop',
         label: `cada ${variable?.text ?? 'elemento'}`,
         code,
         line,
+        ...(control ? { control } : {}),
       })
       linkReads(builder, id, iterable, iterablePorts(iterable))
       if (variable) builder.bind(variable.text, id)
@@ -308,7 +336,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       if (inside.length > 0) {
         const first = inside[0]
         const last = inside[inside.length - 1]
-        if (first) builder.link(id, first, 'transform')
+        if (first) builder.link(id, first, 'transform', undefined, undefined, 'control')
         // El retorno cierra el bucle: es la única conexión que va contra el tiempo.
         if (last) builder.link(last, id, 'feedback')
         const node = builder.nodes.find((n) => n.id === id)
@@ -327,7 +355,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const body = field(statement, 'body')
       const inside = body ? visitBlock(builder, body) : []
       const last = inside[inside.length - 1]
-      if (inside[0]) builder.link(id, inside[0], 'transform')
+      if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
       if (last) builder.link(last, id, 'feedback')
       return id
     }
@@ -335,8 +363,16 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
     case 'if_statement': {
       const id = statementId(statement, 'if')
       const condition = field(statement, 'condition')
-      builder.add({ id, kind: 'control.condition', label: `¿${describe(condition)}?`, code, line })
-      linkReads(builder, id, condition, conditionPorts(condition))
+      const sem = conditionOf(condition)
+      builder.add({
+        id,
+        kind: 'control.condition',
+        label: `¿${describe(condition)}?`,
+        code,
+        line,
+        ...(sem ? { control: sem.control } : {}),
+      })
+      linkReads(builder, id, condition, sem?.ports ?? conditionPorts(condition))
 
       const body = field(statement, 'consequence')
       const yes = body ? visitBlock(builder, body) : []
@@ -354,10 +390,23 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
     case 'function_definition': {
       const id = statementId(statement, 'def')
       const name = field(statement, 'name')?.text ?? 'función'
-      builder.add({ id, kind: 'abstraction.collapsed', label: name, code, line }, name)
+      const params = field(statement, 'parameters')
+      const signature = signatureOf(params)
+      builder.add(
+        {
+          id,
+          kind: 'abstraction.collapsed',
+          label: name,
+          code,
+          line,
+          ...(signature ? { control: signature } : {}),
+        },
+        name,
+      )
+      builder.functions.set(name, positionalParams(params))
+      builder.functionIds.set(name, id)
       const restore = builder.pushScope()
       // Los parámetros existen solo dentro: se resuelven al propio nodo de la función.
-      const params = field(statement, 'parameters')
       if (params) {
         for (const param of params.namedChildren) {
           if (!param) continue
@@ -366,7 +415,11 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         }
       }
       const body = field(statement, 'body')
-      const inside = body ? visitBlock(builder, body) : []
+      // Todo lo que nace dentro del `def` es suyo, a cualquier profundidad: las ramas de un
+      // `if` o el cuerpo de un bucle también están indentados dentro de la función.
+      const before = builder.nodes.length
+      if (body) visitBlock(builder, body)
+      const inside = builder.nodes.slice(before).map((n) => n.id)
       restore()
       const node = builder.nodes.find((n) => n.id === id)
       if (node && inside.length > 0) {
@@ -379,15 +432,32 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
     case 'return_statement': {
       const id = statementId(statement, 'return')
       const value = statement.namedChildren[0] ?? null
-      builder.add({ id, kind: 'control.return', label: 'devolver', code, line })
-      linkReads(builder, id, value)
+      const sem = returned(value)
+      builder.add({
+        id,
+        kind: 'control.return',
+        label: 'devolver',
+        code,
+        line,
+        ...(sem ? { control: sem.control } : {}),
+      })
+      linkReads(builder, id, value, sem?.ports)
       return id
     }
 
     case 'raise_statement': {
       const id = statementId(statement, 'raise')
-      builder.add({ id, kind: 'control.raise', label: 'error', code, line })
-      linkReads(builder, id, statement.namedChildren[0] ?? null)
+      const raised = statement.namedChildren[0] ?? null
+      const control = signal(raised)
+      builder.add({
+        id,
+        kind: 'control.raise',
+        label: 'error',
+        code,
+        line,
+        ...(control ? { control } : {}),
+      })
+      linkReads(builder, id, raised)
       return id
     }
 
@@ -409,17 +479,39 @@ function visitAssignment(builder: Builder, assignment: TsNode, line: number, cod
   const right = field(assignment, 'right')
   const id = statementId(assignment, 'assign')
   const name = left?.text ?? 'valor'
-  const kind = kindOfExpression(right)
+  // `total += n` es una operación que también lee el `total` anterior.
+  const isAugmented = assignment.type === 'augmented_assignment'
+  const kind = isAugmented ? 'transform.operation' : kindOfExpression(right)
+  const sem = isAugmented ? augmented(assignment) : semanticsOf(right, context(builder))
 
-  builder.add({ id, kind, label: name, code, line })
+  builder.add({
+    id,
+    kind,
+    label: name,
+    code,
+    line,
+    ...(sem ? { control: sem.control } : {}),
+    ...calling(builder, right),
+  })
   linkReads(
     builder,
     id,
-    right,
-    kind === 'control.condition' ? conditionPorts(right) : callPorts(right),
+    isAugmented ? assignment : right,
+    sem?.ports ?? (kind === 'control.condition' ? conditionPorts(right) : callPorts(right)),
   )
   builder.bind(name, id)
   return id
+}
+
+/** `{ calls }` si la expresión es una llamada a una función que este archivo define. */
+function calling(builder: Builder, expression: TsNode | null): { calls?: string } {
+  if (expression?.type !== 'call') return {}
+  const calls = builder.functionIds.get(calleeName(expression))
+  return calls === undefined ? {} : { calls }
+}
+
+function context(builder: Builder): SemanticContext {
+  return { functions: builder.functions }
 }
 
 /** En una condición, el lado izquierdo es el dato y el derecho el valor con el que se compara. */
@@ -460,22 +552,13 @@ function iterablePorts(expression: TsNode | null): Record<string, string> {
   return ports
 }
 
-function findFirst(node: TsNode, types: string[]): TsNode | null {
-  if (types.includes(node.type)) return node
-  for (const child of node.namedChildren) {
-    if (!child) continue
-    const found = findFirst(child, types)
-    if (found) return found
-  }
-  return null
-}
-
 /** Una etiqueta corta y legible para una expresión. */
 function describe(expression: TsNode | null): string {
   if (!expression) return 'expresión'
   if (expression.type === 'call') {
     const name = calleeName(expression)
-    return name.split('.').pop() ?? name
+    const tail = name.split('.').pop() ?? name
+    return ACTION_LABELS[name] ?? tail
   }
   const text = firstLine(expression.text)
   return text.length > 28 ? `${text.slice(0, 27)}…` : text

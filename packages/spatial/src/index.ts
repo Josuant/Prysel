@@ -11,3 +11,4 @@ export {
   type CollapseResult,
   type GroupSuggestion,
 } from './collapse.ts'
+export { routeOrthogonal, type Rect, type Route, type RouteOptions } from './routing.ts'

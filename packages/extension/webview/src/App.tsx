@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Density } from '@prysel/morphology'
 import type { Program } from '@prysel/python'
-import { Canvas, type CanvasNode } from '@prysel/ui'
+import type { SemanticEdge } from '@prysel/spatial'
+import { Canvas, FunctionMenu, toCanvasNodes, useProgramView } from '@prysel/ui'
 import { parseWebviewMessage, type Theme } from '../../src/protocol.ts'
 
 const vscode = acquireVsCodeApi()
@@ -17,19 +18,7 @@ interface SavedState {
   density?: Density
 }
 
-/** Del programa analizado a los nodos que dibuja el lienzo. */
-function toCanvasNodes(program: Program): CanvasNode[] {
-  return program.nodes.map((node) => ({
-    id: node.id,
-    kind: node.kind,
-    label: node.label,
-    code: node.code,
-    // En lugar del chip de estado (no hay ejecución), se muestra la línea de origen.
-    meta: `línea ${node.line}`,
-    ...(node.ops === undefined ? {} : { metrics: { ops: node.ops } }),
-    ...(node.contains ? { contains: node.contains } : {}),
-  }))
-}
+const NO_EDGES: SemanticEdge[] = []
 
 export function App() {
   const [program, setProgram] = useState<Program | null>(null)
@@ -67,7 +56,10 @@ export function App() {
     vscode.setState({ density: next } satisfies SavedState)
   }
 
-  const nodes = program ? toCanvasNodes(program) : []
+  const source = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
+  // El programa enseña cada función una vez (como su llamada); una función se ve aparte.
+  // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
+  const view = useProgramView(source, program?.edges ?? NO_EDGES, density)
   const unsupported = program?.unsupported ?? []
   const canvasLabel = program
     ? `Diagrama de ${file ?? 'Python'}: ${program.nodes.length} nodos y ${program.edges.length} conexiones`
@@ -83,6 +75,7 @@ export function App() {
         <span className="text-[11px] text-ink-faint" aria-live="polite">
           {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
         </span>
+        <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
         <DensityControl value={density} onChange={changeDensity} />
       </header>
 
@@ -96,12 +89,16 @@ export function App() {
         </div>
       )}
 
-      <main className="min-h-0 flex-1 overflow-auto p-4">
+      <main className="min-h-0 flex-1 p-3">
         {program && program.nodes.length > 0 ? (
           <Canvas
-            nodes={nodes}
-            edges={program.edges}
+            nodes={view.nodes}
+            edges={view.edges}
             density={density}
+            onEnter={view.enter}
+            interactive
+            height="fill"
+            fitKey={view.viewKey}
             showActions={false}
             showStatus={false}
             ariaLabel={canvasLabel}

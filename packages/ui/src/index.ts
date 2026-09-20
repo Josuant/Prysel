@@ -13,3 +13,15 @@ export {
 } from './controls.tsx'
 export * from './fields.tsx'
 export { useMotion, type Animated, type MotionOptions, type MotionPhase } from './motion.ts'
+export {
+  foldScopes,
+  functionsOf,
+  programView,
+  toCanvasNodes,
+  useProgramView,
+  type FoldedView,
+  type FunctionInfo,
+  type ProgramView,
+  type SourceNode,
+} from './program.ts'
+export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'

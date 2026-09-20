@@ -1,3 +1,4 @@
+import type { ControlModel } from './controls.ts'
 import type { Density, Metrics, NodeKindSpec, ScaleBy, ShapeId } from './types.ts'
 
 /**
@@ -84,4 +85,87 @@ export function nodeSize(
   }
   // La complejidad ensancha el nodo mucho más de lo que lo alarga: el alto lo manda el contenido.
   return { w: snap(baseW * fw * scale), h: snap(baseH * fh * (1 + (scale - 1) * 0.45)) }
+}
+
+/**
+ * Cuánto necesita de alto el editor de un nodo, en píxeles.
+ *
+ * El tamaño base de cada densidad da sitio a un editor de una fila. Un editor con varios campos
+ * (una llamada con dos argumentos, una condición) no cabe ahí, y si el nodo no crece se
+ * recorta: el campo queda oculto y su puerto cae fuera de la tarjeta. Por eso el alto lo
+ * decide el contenido, y el layout lo sabe **antes** de pintar.
+ */
+// Medidas reales del DOM (a zoom 1): un campo, su etiqueta, la línea de destino y el hueco entre filas.
+const ROW = { input: 30, labeled: 49, note: 18, gap: 6, label: 19 }
+
+/**
+ * Un mensaje de varias líneas crece con su texto, hasta un tope (después, se desplaza).
+ * Se estima cuántas líneas ocupa: unos 28 caracteres por línea en normal y 34 en expandido.
+ */
+const AREA = { line: 16.2, chrome: 12, minLines: 2, maxLines: 5 }
+const CHARS_PER_LINE = { normal: 28, expanded: 34 }
+
+function areaHeight(text: string, density: 'normal' | 'expanded'): number {
+  const wrapped = text
+    .split('\n')
+    .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / CHARS_PER_LINE[density])), 0)
+  const lines = Math.min(AREA.maxLines, Math.max(AREA.minLines, wrapped))
+  return Math.ceil(lines * AREA.line + AREA.chrome)
+}
+
+/** Lo que el tamaño base de cada densidad ya acoge sin crecer (medido: alto de tarjeta − marco). */
+const ROOM: Record<Density, number> = { compact: 0, normal: 48, expanded: 140 }
+
+/** Apila filas: cada una con su alto y 6 px de hueco entre ellas. */
+const stack = (rows: number[]) =>
+  rows.length === 0 ? 0 : rows.reduce((sum, row) => sum + row, 0) + ROW.gap * (rows.length - 1)
+
+export function controlHeight(
+  model: ControlModel | undefined,
+  density: Density,
+  linked: readonly string[] = [],
+): number {
+  if (!model || density === 'compact') return 0
+  const full = density === 'expanded'
+  switch (model.kind) {
+    case 'text':
+      // En expandido el campo lleva su etiqueta («Valor»).
+      return (
+        (model.multiline ? areaHeight(model.value, full ? 'expanded' : 'normal') : ROW.input) +
+        (full ? ROW.label : 0)
+      )
+    case 'args': {
+      // Un argumento conectado nunca se esconde, y con más de uno cada campo lleva su nombre.
+      const isLinked = (name: string) => linked.includes(`arg:${name}`)
+      const shown = model.args.filter((a, i) => full || i === 0 || isLinked(a.name))
+      const labeled = full || model.args.length > 1 || shown.some((a) => isLinked(a.name))
+      const hidden = model.args.length - shown.length
+      return stack([
+        ...(model.target ? [ROW.note] : []),
+        ...shown.map(() => (labeled ? ROW.labeled : ROW.input)),
+        ...(hidden > 0 ? [ROW.note] : []),
+      ])
+    }
+    case 'condition':
+      return stack([ROW.input, ROW.input, ...(full && model.hits ? [ROW.note] : [])])
+    case 'signature': {
+      const shown = full ? model.params.length : Math.min(1, model.params.length)
+      const hidden = model.params.length - shown
+      return stack([
+        ...Array.from({ length: shown }, () => ROW.labeled),
+        ...(hidden > 0 ? [ROW.note] : []),
+      ])
+    }
+    default:
+      return ROW.input
+  }
+}
+
+/** Lo que hay que añadir al alto base de la densidad para que el editor quepa entero. */
+export function extraHeight(
+  model: ControlModel | undefined,
+  density: Density,
+  linked: readonly string[] = [],
+): number {
+  return Math.max(0, controlHeight(model, density, linked) - ROOM[density])
 }

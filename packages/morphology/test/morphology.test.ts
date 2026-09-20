@@ -8,9 +8,12 @@ import {
   buildShape,
   compactShape,
   complexityScale,
+  controlHeight,
+  extraHeight,
   getKind,
   nodeSize,
   shapeFor,
+  type ControlModel,
   type Density,
   type Point,
   type Role,
@@ -223,5 +226,64 @@ describe('tamaño = complejidad', () => {
     expect(compactShape(getKind('control.raise'))).toBe('pill-cut')
     expect(compactShape(getKind('space.for'))).toBe('pill')
     expect(compactShape(getKind('value.str'))).toBe('pill')
+  })
+})
+
+describe('el alto lo decide el contenido', () => {
+  const call = (args: string[]) =>
+    ({
+      kind: 'args',
+      target: 'suma',
+      args: args.map((name) => ({ name, value: '' })),
+    }) as const
+
+  it('un editor de una fila cabe en el tamaño base', () => {
+    expect(extraHeight({ kind: 'number', value: 5 }, 'normal')).toBe(0)
+    expect(extraHeight({ kind: 'text', value: 'hola' }, 'normal')).toBe(0)
+  })
+
+  it('una llamada con dos argumentos conectados necesita más alto que con uno', () => {
+    const one = extraHeight(call(['a']), 'normal', ['arg:a'])
+    const two = extraHeight(call(['a', 'b']), 'normal', ['arg:a', 'arg:b'])
+    expect(two).toBeGreaterThan(one)
+    expect(two).toBeGreaterThan(0)
+  })
+
+  it('un argumento conectado nunca se esconde, así que cuenta para el alto', () => {
+    const hidden = controlHeight(call(['a', 'b', 'c']), 'normal', [])
+    const shown = controlHeight(call(['a', 'b', 'c']), 'normal', ['arg:c'])
+    expect(shown).toBeGreaterThan(hidden)
+  })
+
+  it('en compacto no hay editor: una píldora no crece', () => {
+    expect(extraHeight(call(['a', 'b']), 'compact', ['arg:a', 'arg:b'])).toBe(0)
+  })
+
+  it('una condición, con sus dos filas, pide más que una fila', () => {
+    const condition: ControlModel = {
+      kind: 'condition',
+      field: 'x',
+      operator: '<',
+      value: '0',
+      operators: ['<'],
+    }
+    expect(controlHeight(condition, 'normal')).toBeGreaterThan(
+      controlHeight({ kind: 'number', value: 1 }, 'normal'),
+    )
+  })
+
+  it('un mensaje largo crece con sus líneas, hasta un tope', () => {
+    const message = (text: string): ControlModel => ({ kind: 'text', value: text, multiline: true })
+    const short = controlHeight(message('hola'), 'normal')
+    const long = controlHeight(message('x'.repeat(80)), 'normal')
+    const huge = controlHeight(message('x'.repeat(2000)), 'normal')
+    expect(long).toBeGreaterThan(short)
+    expect(huge).toBeGreaterThan(long)
+    // Tope: un texto enorme no se come el lienzo, se desplaza dentro de su campo.
+    expect(controlHeight(message('x'.repeat(4000)), 'normal')).toBe(huge)
+  })
+
+  it('sin editor no hay nada que acomodar', () => {
+    expect(extraHeight(undefined, 'normal')).toBe(0)
   })
 })

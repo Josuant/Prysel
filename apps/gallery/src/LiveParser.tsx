@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Density } from '@prysel/morphology'
 import { buildProgram, createPythonParser, type Program, type PythonParser } from '@prysel/python'
-import { collapse, groupsFromContainers, type SemanticEdge } from '@prysel/spatial'
-import { Canvas, Segmented, type CanvasNode } from '@prysel/ui'
+import type { SemanticEdge } from '@prysel/spatial'
+import { Canvas, FunctionMenu, Segmented, toCanvasNodes, useProgramView } from '@prysel/ui'
 import runtimeWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm?url'
 import pythonWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm?url'
 
@@ -12,42 +12,32 @@ import pythonWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm?ur
  * archivo es un campo de texto en vez del editor.
  */
 
-const EXAMPLE = `import pandas as pd
+const EXAMPLE = `numeroA = 5
+numero2 = float(input("Ingresa el segundo número: "))
 
-THRESHOLD = 1000
-sales = pd.read_csv("data/sales.csv")
-big = sales[sales.amount > THRESHOLD]
-summary = big.groupby("region").amount.sum()
-display(summary)
 
-def resumir(ventas, minimo=0):
-    filtradas = ventas[ventas.amount > minimo]
-    total = filtradas.amount.sum()
-    return total
+def suma(a, b):
+    return a + b
 
-total = 0
-for fila in big.itertuples():
-    total = total + fila.amount
+
+def _main():
+    if numero2 < 0:
+        print("El número ingresado es negativo. Por favor, ingresa un número positivo.")
+    else:
+        suma_resultado = suma(numeroA, numero2)
+        print(f"La suma de {numeroA} y {numero2} es: {suma_resultado}")
 `
 
-function toCanvasNodes(program: Program): CanvasNode[] {
-  return program.nodes.map((node) => ({
-    id: node.id,
-    kind: node.kind,
-    label: node.label,
-    code: node.code,
-    meta: `línea ${node.line}`,
-    ...(node.ops === undefined ? {} : { metrics: { ops: node.ops } }),
-    ...(node.contains ? { contains: node.contains } : {}),
-  }))
-}
+const NO_EDGES: SemanticEdge[] = []
 
 export function LiveParser() {
   const [source, setSource] = useState(EXAMPLE)
   const [program, setProgram] = useState<Program | null>(null)
-  const [density, setDensity] = useState<Density>('compact')
-  /** Colapsado, una función es un solo nodo; abierto, se ve su cuerpo en el mismo plano. */
-  const [collapsed, setCollapsed] = useState(true)
+  // `?live=normal` abre la demo en esa densidad: permite fotografiar una vista exacta.
+  const [density, setDensity] = useState<Density>(() => {
+    const asked = new URLSearchParams(window.location.search).get('live')
+    return asked === 'normal' || asked === 'expanded' ? asked : 'compact'
+  })
   const [error, setError] = useState<string | null>(null)
   const [ms, setMs] = useState(0)
   const parserRef = useRef<PythonParser | null>(null)
@@ -86,31 +76,10 @@ export function LiveParser() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Colapsar las funciones es lo que mantiene legible un archivo con estructura:
-  // cada `def` se convierte en un nodo en el que se puede entrar.
-  const view = (() => {
-    if (!program) return { nodes: [] as CanvasNode[], edges: [] as SemanticEdge[], folded: 0 }
-    const all = toCanvasNodes(program)
-    if (!collapsed) return { nodes: all, edges: program.edges, folded: 0 }
-    const graph = {
-      nodes: program.nodes.map((n) => ({
-        id: n.id,
-        role: 'transform' as const,
-        size: { w: 0, h: 0 },
-        ...(n.contains ? { contains: n.contains } : {}),
-      })),
-      edges: program.edges,
-    }
-    const { graph: result, applied } = collapse(graph, groupsFromContainers(graph))
-    const kept = new Set(result.nodes.map((n) => n.id))
-    return {
-      nodes: all
-        .filter((n) => kept.has(n.id))
-        .map((n) => ({ ...n, openable: n.contains !== undefined })),
-      edges: result.edges,
-      folded: applied.length,
-    }
-  })()
+  // Compacto pliega las funciones (vista de pájaro: qué recibe y qué devuelve cada una);
+  // normal y expandido las abren como territorios que envuelven su cuerpo.
+  const canvasNodes = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
+  const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density)
   const nodes = view.nodes
 
   return (
@@ -134,20 +103,14 @@ export function LiveParser() {
         />
         <span className="type-tertiary text-ink-faint">
           {program
-            ? `${nodes.length} nodos · ${view.edges.length} conexiones`
+            ? `${nodes.length} ${nodes.length === 1 ? 'nodo' : 'nodos'} · ${view.edges.length} ${view.edges.length === 1 ? 'conexión' : 'conexiones'}`
             : 'cargando el parser…'}
           {program && ` · analizado en ${ms < 0.1 ? '<0,1' : ms.toFixed(1)} ms`}
         </span>
-        <label className="type-tertiary flex items-center gap-2 text-ink-faint">
-          <input
-            type="checkbox"
-            checked={collapsed}
-            onChange={(event) => {
-              setCollapsed(event.target.checked)
-            }}
-          />
-          Colapsar funciones{view.folded > 0 && ` (${view.folded})`}
-        </label>
+        <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
+        {view.folded > 0 && (
+          <span className="type-tertiary text-ink-faint">{view.folded} funciones plegadas</span>
+        )}
         {program && program.unsupported.length > 0 && (
           <span className="type-tertiary text-ink-faint">
             sin soporte: {program.unsupported.map((u) => `${u.type} (línea ${u.line})`).join(', ')}
@@ -176,6 +139,8 @@ export function LiveParser() {
             density={density}
             height={460}
             interactive
+            onEnter={view.enter}
+            fitKey={view.viewKey}
             ariaLabel="Diagrama del programa escrito a la izquierda"
           />
         ) : (

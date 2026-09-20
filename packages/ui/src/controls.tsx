@@ -1,4 +1,4 @@
-import type { ControlId } from '@prysel/morphology'
+import type { ControlId, ControlModel } from '@prysel/morphology'
 import {
   Chips,
   CodeBlock,
@@ -8,9 +8,11 @@ import {
   Row,
   Segmented,
   Select,
+  NumberInput,
   Slider,
   Sparkline,
   Switch,
+  TextArea,
   TextInput,
 } from './fields.tsx'
 import { Icon } from './Icon.tsx'
@@ -19,48 +21,7 @@ import { Icon } from './Icon.tsx'
  * El modelo de cada editor gráfico. Es lo que convierte a un nodo en algo manipulable:
  * cambiar aquí equivale a reescribir el Python que hay debajo.
  */
-export type ControlModel =
-  | { kind: 'text'; value: string; placeholder?: string }
-  | { kind: 'number'; value: number; min: number; max: number; step?: number; unit?: string }
-  | { kind: 'boolean'; value: boolean; labels?: [string, string] }
-  | { kind: 'constant'; value: string; options: string[] }
-  | { kind: 'list'; items: string[]; itemType?: string }
-  | { kind: 'dict'; entries: [string, string][] }
-  | { kind: 'table'; columns: string[]; rows: string[][]; sortBy?: string }
-  | { kind: 'args'; target: string; args: { name: string; value: string }[] }
-  | { kind: 'expression'; left: string; operator: string; right: string; operators: string[] }
-  | {
-      kind: 'condition'
-      field: string
-      operator: string
-      value: string
-      operators: string[]
-      hits?: [number, number]
-    }
-  | { kind: 'loop'; iterable: string; variable: string; current?: number; total?: number }
-  | { kind: 'signal'; errorType: string; types: string[]; message: string }
-  | { kind: 'io'; target: string; mode: string; modes: string[] }
-  | {
-      kind: 'stats'
-      metric: string
-      value: string
-      deltaPct?: number
-      range: string
-      ranges: string[]
-      series: number[]
-      rows?: { label: string; value: string }[]
-    }
-  | { kind: 'module'; module: string; alias: string }
-  | { kind: 'signature'; params: { name: string; value: string }[] }
-  | {
-      kind: 'query'
-      field: string
-      operator: string
-      value: string
-      operators: string[]
-      hash: string
-    }
-  | { kind: 'code'; source: string }
+export type { ControlModel }
 
 export type ControlKind = ControlModel['kind']
 
@@ -90,15 +51,36 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
     case 'text':
       return (
         <Field label={full ? 'Valor' : undefined}>
-          <TextInput
-            value={model.value}
-            placeholder={model.placeholder}
-            onChange={(value) => patch({ value })}
-          />
+          {model.multiline ? (
+            <TextArea
+              value={model.value}
+              placeholder={model.placeholder}
+              rows={full ? 4 : 2}
+              // Un mensaje con {huecos} recibe valores de otros nodos, pero sigue siendo editable.
+              slot={{ id: 'value', label: 'Mensaje' }}
+              onChange={(value) => patch({ value })}
+            />
+          ) : (
+            <TextInput
+              value={model.value}
+              placeholder={model.placeholder}
+              onChange={(value) => patch({ value })}
+            />
+          )}
         </Field>
       )
 
     case 'number':
+      // Un literal cualquiera no tiene rango con sentido: se escribe. El deslizador es para lo que sí lo tiene.
+      if (model.min === undefined || model.max === undefined) {
+        return (
+          <NumberInput
+            value={model.value}
+            step={model.step ?? 'any'}
+            onChange={(value) => patch({ value })}
+          />
+        )
+      }
       return (
         <div className="control-stack">
           <Row>
@@ -212,25 +194,36 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
       )
 
     case 'args': {
-      const args = full ? model.args : model.args.slice(0, 1)
+      // Un argumento que recibe una conexión nunca se esconde: si dos cables llegan a este nodo,
+      // hay que ver a qué argumento entra cada uno. Y con su nombre, o no se sabría cuál es cuál.
+      const shown = model.args
+        .map((arg, index) => ({ arg, index, linked: isLinked(`arg:${arg.name}`) }))
+        .filter(({ index, linked }) => full || index === 0 || linked)
+      const hidden = model.args.length - shown.length
       return (
         <div className="control-stack">
-          {args.map((arg, i) => (
-            <Field key={arg.name} label={full ? arg.name : undefined}>
+          {model.target && <span className="control-target type-value">{model.target}( )</span>}
+          {shown.map(({ arg, index, linked }) => (
+            <Field
+              key={arg.name}
+              label={full || linked || model.args.length > 1 ? arg.name : undefined}
+            >
               <TextInput
                 value={arg.value}
                 slot={{ id: `arg:${arg.name}`, label: arg.name }}
-                linked={isLinked(`arg:${arg.name}`)}
+                linked={linked}
                 onChange={(value) =>
                   patch({
-                    args: model.args.map((a, j) => (j === i ? { ...a, value } : a)),
+                    args: model.args.map((a, j) => (j === index ? { ...a, value } : a)),
                   })
                 }
               />
             </Field>
           ))}
-          {!full && model.args.length > 1 && (
-            <span className="type-field-label muted">+{model.args.length - 1} argumentos</span>
+          {hidden > 0 && (
+            <span className="type-field-label muted">
+              +{hidden} {hidden === 1 ? 'argumento' : 'argumentos'}
+            </span>
           )}
         </div>
       )
@@ -241,7 +234,7 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
         <Row>
           <TextInput
             value={model.left}
-            slot={{ id: 'left', label: 'Operando izquierdo' }}
+            slot={{ id: 'left', label: 'Izquierda' }}
             linked={isLinked('left')}
             onChange={(left) => patch({ left })}
           />
@@ -253,7 +246,7 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
           />
           <TextInput
             value={model.right}
-            slot={{ id: 'right', label: 'Operando derecho' }}
+            slot={{ id: 'right', label: 'Derecha' }}
             linked={isLinked('right')}
             onChange={(right) => patch({ right })}
           />
@@ -279,7 +272,7 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
             />
             <TextInput
               value={model.value}
-              slot={{ id: 'value', label: 'Valor comparado' }}
+              slot={{ id: 'value', label: 'Valor' }}
               linked={isLinked('value')}
               onChange={(value) => patch({ value })}
             />
@@ -407,7 +400,7 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
       return (
         <div className="control-stack">
           {params.map((p, i) => (
-            <Field key={p.name} label={full ? p.name : undefined}>
+            <Field key={p.name} label={p.name}>
               <TextInput
                 value={p.value}
                 slot={{ id: `param:${p.name}`, label: p.name }}

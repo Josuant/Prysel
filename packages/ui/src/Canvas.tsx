@@ -8,6 +8,7 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import {
+  extraHeight,
   getKind,
   nodeSize,
   type Density,
@@ -15,10 +16,17 @@ import {
   type NodeKindId,
   type NodeState,
 } from '@prysel/morphology'
-import { layout, type Axis, type SemanticEdge, type SemanticGraph } from '@prysel/spatial'
+import {
+  channelOf,
+  layout,
+  type Axis,
+  type SemanticEdge,
+  type SemanticGraph,
+} from '@prysel/spatial'
 import { EdgeDefs } from './Edge.tsx'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
+import { dragTerritory } from './drag.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import '@xyflow/react/dist/base.css'
@@ -45,6 +53,8 @@ export interface CanvasNode {
   contains?: string[]
   /** Se puede entrar en él: baja un nivel de abstracción. */
   openable?: boolean
+  /** Es una llamada a una función que el programa define: el id de esa definición. */
+  opens?: string
 }
 
 export interface CanvasProps {
@@ -58,8 +68,11 @@ export interface CanvasProps {
   axis?: Axis
   gapX?: number
   gapY?: number
-  /** Altura del lienzo. Sin ella, la que necesite el programa (hasta un máximo razonable). */
-  height?: number
+  /**
+   * Altura del lienzo. Sin ella, la que necesite el programa (hasta un máximo razonable).
+   * `fill` ocupa todo el alto de su contenedor: es lo que quiere una vista a pantalla completa.
+   */
+  height?: number | 'fill'
   /** Altura mínima, para que una rejilla de ejemplos no quede dentada. */
   minHeight?: number
   /**
@@ -79,6 +92,11 @@ export interface CanvasProps {
    * y lo que mantiene los nodos a tamaño legible por largo que sea el programa.
    */
   fitMode?: 'contain' | 'width'
+  /**
+   * Identifica «qué se está viendo». Al cambiar (se entra en otra función), el lienzo olvida lo
+   * que el usuario movió, seleccionó o recorrió y vuelve a encuadrar: es otro diagrama.
+   */
+  fitKey?: string
   /** Etiqueta accesible del lienzo, leída por lectores de pantalla. */
   ariaLabel?: string
   className?: string
@@ -89,10 +107,8 @@ const EDGE_TYPES = { prysel: PryselEdge }
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
 const MAX_HEIGHT = 640
 
-/** ¿Es este nodo un contenedor de alcance (una abstracción con hijos)? */
-function isScopeNode(node: CanvasNode): boolean {
-  return getKind(node.kind).role === 'abstraction' && (node.contains?.length ?? 0) > 0
-}
+type Point = { x: number; y: number }
+const NO_POSITIONS: Record<string, Point> = {}
 
 export function Canvas(props: CanvasProps) {
   return (
@@ -119,30 +135,67 @@ function CanvasInner({
   showStatus = true,
   animate = true,
   fitMode,
+  fitKey = '',
   ariaLabel,
   className,
 }: CanvasProps) {
+  // Lo que el usuario hace sobre el diagrama (mover, seleccionar, recorrer) pertenece a «lo que
+  // se está viendo»: al cambiar `fitKey` se descarta, sin efectos, porque se compara la clave.
   /** Posiciones que el usuario ha movido a mano: mandan sobre las que propone la gramática. */
-  const [moved, setMoved] = useState<Record<string, { x: number; y: number }>>({})
+  const [movedState, setMovedState] = useState({ key: fitKey, positions: NO_POSITIONS })
+  const moved = movedState.key === fitKey ? movedState.positions : NO_POSITIONS
   /** El lienzo se reencuadra solo hasta que el usuario lo recorre: a partir de ahí, manda él. */
-  const [taken, setTaken] = useState(false)
+  const [takenKey, setTakenKey] = useState<string | null>(null)
+  const taken = takenKey === fitKey
+  const [selectedState, setSelectedState] = useState<{ key: string; id: string } | null>(null)
+  const selectedId = selectedState?.key === fitKey ? selectedState.id : null
+  /** Mientras se arrastra, el nodo sigue al puntero: interpolar su posición lo haría ir por detrás. */
+  const [dragging, setDragging] = useState(false)
+
   const { setViewport } = useReactFlow()
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
+  /** Dónde está cada nodo ahora mismo: lo necesita un arrastre para saber cuánto se ha movido. */
+  const shownRef = useRef<Record<string, Point>>({})
 
   const densityOf = useCallback(
     (node: CanvasNode): Density => (density === 'normal' ? (node.density ?? 'normal') : density),
     [density],
   )
 
-  const { placements, bounds } = useMemo(() => {
+  const byId = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
+
+  /**
+   * Qué campos de cada nodo reciben una conexión: lo dice el grafo, no la interfaz.
+   * Se calcula antes del layout porque el alto de un nodo depende de cuántos campos enseña,
+   * y la conexión de una función a su propio cuerpo (sus parámetros) no se dibuja: no cuenta.
+   */
+  const linked = useMemo(() => {
+    const map: Record<string, string[]> = {}
+    for (const edge of edges) {
+      if (!edge.toPort) continue
+      const from = byId.get(edge.from)
+      const isBody =
+        from !== undefined &&
+        getKind(from.kind).role === 'abstraction' &&
+        from.contains?.includes(edge.to)
+      if (isBody) continue
+      map[edge.to] = [...(map[edge.to] ?? []), edge.toPort]
+    }
+    return map
+  }, [edges, byId])
+
+  const { placements, bounds, scopes } = useMemo(() => {
     const graph: SemanticGraph = {
       nodes: nodes.map((node) => {
         const spec = getKind(node.kind)
+        const d = densityOf(node)
+        const base = nodeSize(spec, d, node.metrics)
         return {
           id: node.id,
           role: spec.role,
-          size: nodeSize(spec, densityOf(node), node.metrics),
+          // El editor manda sobre el alto: si no cabe, el campo se recorta y su puerto cae fuera.
+          size: { w: base.w, h: base.h + extraHeight(node.control, d, linked[node.id]) },
           ...(node.contains ? { contains: node.contains } : {}),
         }
       }),
@@ -153,19 +206,36 @@ function CanvasInner({
       ...(gapX === undefined ? {} : { gapX }),
       ...(gapY === undefined ? {} : { gapY }),
     })
-  }, [nodes, edges, densityOf, axis, gapX, gapY])
+  }, [nodes, edges, densityOf, axis, gapX, gapY, linked])
 
-  /** Qué campos de cada nodo reciben una conexión: lo dice el grafo, no la interfaz. */
-  const linked = useMemo(() => {
-    const map: Record<string, string[]> = {}
-    for (const edge of edges) {
-      if (!edge.toPort) continue
-      map[edge.to] = [...(map[edge.to] ?? []), edge.toPort]
-    }
+  // Lo que un ámbito envuelve ya lo dice el espacio: la conexión de la función a su propio
+  // cuerpo (sus parámetros) sería una línea redundante que cruza su cabecera.
+  const visibleEdges = useMemo(
+    () => edges.filter((edge) => !scopes[edge.from]?.includes(edge.to)),
+    [edges, scopes],
+  )
+
+  const parentOf = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const [scope, members] of Object.entries(scopes)) for (const id of members) map[id] = scope
     return map
-  }, [edges])
+  }, [scopes])
 
-  const byId = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
+  /** Todo lo que hay dentro de un territorio, a cualquier profundidad. */
+  const descendantsOf = useCallback(
+    (root: string): string[] => {
+      const found: string[] = []
+      const walk = (scope: string) => {
+        for (const id of scopes[scope] ?? []) {
+          found.push(id)
+          walk(id)
+        }
+      }
+      walk(root)
+      return found
+    },
+    [scopes],
+  )
 
   // El destino tiene que ser estable entre renders: si cambia de identidad en cada uno,
   // la animación se relanzaría sin parar en vez de avanzar.
@@ -180,12 +250,23 @@ function CanvasInner({
   )
 
   // El movimiento: las posiciones se interpolan, así que un nodo se puede seguir con la vista.
-  const animated = useMotion(motionItems, { disabled: !animate })
+  const animated = useMotion(motionItems, { disabled: !animate || dragging })
+
+  useEffect(() => {
+    shownRef.current = Object.fromEntries(animated.map((item) => [item.id, item.position]))
+  }, [animated])
+
+  /** Lo que la selección ilumina: el nodo elegido y, si es un territorio, todo su interior. */
+  const lit = useMemo(() => {
+    if (selectedId === null) return null
+    return new Set([selectedId, ...descendantsOf(selectedId)])
+  }, [selectedId, descendantsOf])
 
   const flowNodes: PryselFlowNode[] = animated.flatMap((item) => {
     const node = byId.get(item.id)
     if (!node) return []
-    const container = isScopeNode(node)
+    // Es un territorio solo si el layout le ha encontrado un interior: colapsada, una función es un nodo más.
+    const container = scopes[item.id] !== undefined
     return [
       {
         id: item.id,
@@ -195,6 +276,7 @@ function CanvasInner({
         height: item.value.size.h,
         initialWidth: item.value.size.w,
         initialHeight: item.value.size.h,
+        selected: item.id === selectedId,
         // El contenedor va por detrás: su territorio enmarca a los nodos que abarca.
         zIndex: container ? 0 : 1,
         draggable: interactive,
@@ -217,7 +299,20 @@ function CanvasInner({
     ]
   })
 
-  const flowEdges: PryselFlowEdge[] = edges.map((edge) => ({
+  // Lo que las conexiones tienen que esquivar: cada nodo y cada territorio, donde están ahora.
+  const obstacles = useMemo(
+    () =>
+      animated.map((item) => ({
+        id: item.id,
+        x: item.position.x,
+        y: item.position.y,
+        w: item.value.size.w,
+        h: item.value.size.h,
+      })),
+    [animated],
+  )
+
+  const flowEdges: PryselFlowEdge[] = visibleEdges.map((edge) => ({
     id: `${edge.from}-${edge.to}-${edge.toPort ?? ''}-${edge.relation}`,
     source: edge.from,
     target: edge.to,
@@ -225,25 +320,40 @@ function CanvasInner({
     targetHandle: edge.toPort ?? 'in',
     type: 'prysel' as const,
     ...(edge.label === undefined ? {} : { label: edge.label }),
-    markerEnd: `url(#prysel-arrow-${edge.relation === 'transform' ? 'thick' : 'thin'})`,
+    markerEnd: `url(#prysel-arrow-${channelOf(edge) === 'control' ? 'thick' : 'thin'})`,
+    // Con algo seleccionado, sus conexiones destacan y el resto se retira.
+    ...(lit ? { zIndex: lit.has(edge.from) || lit.has(edge.to) ? 10 : 0 } : {}),
     data: {
       relation: edge.relation,
+      channel: channelOf(edge),
+      obstacles,
+      parentOf,
       axis,
+      ...(lit ? { emphasis: lit.has(edge.from) || lit.has(edge.to) ? 'active' : 'dim' } : {}),
       live:
         stateOf !== undefined && stateOf(edge.from) === 'success' && stateOf(edge.to) !== 'dormant',
     },
   }))
 
-  const onNodesChange = useCallback((changes: NodeChange<PryselFlowNode>[]) => {
-    for (const change of changes) {
-      if (change.type !== 'position' || !change.position) continue
-      const { id, position } = change
-      setMoved((current) => ({ ...current, [id]: position }))
-    }
-  }, [])
+  const onNodesChange = useCallback(
+    (changes: NodeChange<PryselFlowNode>[]) => {
+      for (const change of changes) {
+        if (change.type !== 'position' || !change.position) continue
+        const { id, position } = change
+        const inside = descendantsOf(id)
+        // Una instantánea: el actualizador de estado no debe leer una referencia mutable.
+        const shown = shownRef.current
+        setMovedState((previous) => {
+          const base = previous.key === fitKey ? previous.positions : NO_POSITIONS
+          return { key: fitKey, positions: dragTerritory(base, shown, id, position, inside) }
+        })
+      }
+    },
+    [descendantsOf, fitKey],
+  )
 
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
-  const shape = `${bounds.w}x${bounds.h}:${placements.length}`
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}`
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
    * no hace falta que la vista lo redescubra midiendo el DOM (que además llega tarde).
@@ -278,10 +388,13 @@ function CanvasInner({
     }
   }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive])
 
-  const onMoveStart = useCallback((event: unknown) => {
-    // Un movimiento sin evento es programático (el propio reencuadre): no cuenta como tomar el control.
-    if (event) setTaken(true)
-  }, [])
+  const onMoveStart = useCallback(
+    (event: unknown) => {
+      // Un movimiento sin evento es programático (el propio reencuadre): no cuenta como tomar el control.
+      if (event) setTakenKey(fitKey)
+    },
+    [fitKey],
+  )
 
   const canvasHeight = height ?? Math.max(minHeight, Math.min(bounds.h, MAX_HEIGHT))
 
@@ -291,8 +404,9 @@ function CanvasInner({
         .filter(Boolean)
         .join(' ')}
       ref={frameRef}
-      style={{ height: canvasHeight }}
+      style={{ height: canvasHeight === 'fill' ? '100%' : canvasHeight }}
       data-interactive={interactive ? '' : undefined}
+      data-selection={selectedId === null ? undefined : ''}
       role="group"
       aria-label={ariaLabel ?? 'Diagrama del programa'}
     >
@@ -307,6 +421,37 @@ function CanvasInner({
         edgeTypes={EDGE_TYPES}
         onNodesChange={interactive ? onNodesChange : undefined}
         onMoveStart={interactive ? onMoveStart : undefined}
+        onNodeClick={
+          interactive
+            ? (_, node) => {
+                setSelectedState({ key: fitKey, id: node.id })
+              }
+            : undefined
+        }
+        onPaneClick={
+          interactive
+            ? () => {
+                setSelectedState(null)
+              }
+            : undefined
+        }
+        onNodeDragStart={
+          interactive
+            ? (_, node) => {
+                // Arrastrar un nodo lo selecciona: React Flow mueve a la vez todo lo seleccionado,
+                // y si quedara otro nodo elegido se desplazaría también, sumándose a mi propio arrastre.
+                setSelectedState({ key: fitKey, id: node.id })
+                setDragging(true)
+              }
+            : undefined
+        }
+        onNodeDragStop={
+          interactive
+            ? () => {
+                setDragging(false)
+              }
+            : undefined
+        }
         minZoom={0.15}
         maxZoom={1.6}
         proOptions={{ hideAttribution: true }}
@@ -322,6 +467,9 @@ function CanvasInner({
         nodesFocusable={interactive}
         edgesFocusable={false}
         autoPanOnNodeDrag={false}
+        // Un territorio seleccionado no debe subir por encima de los nodos que envuelve: su área
+        // cubre todo el interior y se tragaría los clics de sus hijos. El orden lo decide el lienzo.
+        elevateNodesOnSelect={false}
       >
         {interactive && <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />}
       </ReactFlow>

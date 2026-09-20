@@ -39,6 +39,27 @@ export type Relation =
   /** Dependencia débil: un import, un tipo, un símbolo al que se alude sin que fluya un dato. */
   | 'reference'
 
+/**
+ * El canal por el que viaja una conexión. Son dos lenguajes visuales distintos y no deben
+ * confundirse: en un algoritmo denso, mezclarlos es lo que vuelve ilegible el lienzo.
+ *
+ * - **control**: el orden de ejecución — qué se ejecuta después, por qué camino, cuándo se repite.
+ *   Continua y gruesa: es la columna vertebral del programa.
+ * - **datos**: el paso de valores — qué variable alimenta a qué operación.
+ *   Fina y punteada: es una dependencia, no un camino.
+ */
+export type Channel = 'control' | 'data'
+
+/** El canal de cada relación cuando la conexión no dice otra cosa. */
+export const CHANNEL_OF: Record<Relation, Channel> = {
+  dependency: 'data',
+  transform: 'data',
+  merge: 'data',
+  reference: 'data',
+  branch: 'control',
+  feedback: 'control',
+}
+
 export interface SemanticNode {
   id: string
   /** Rol morfológico. La clasificación espacial lo usa como pista, nunca como única señal. */
@@ -66,6 +87,16 @@ export interface SemanticEdge {
   toPort?: string
   /** Etiqueta de la relación: "verdadero", "falso", "cada fila". */
   label?: string
+  /**
+   * Canal explícito. Casi siempre se deduce de la relación; solo hace falta cuando una misma
+   * relación se usa en los dos sentidos (la entrada al cuerpo de un bucle es control, pero
+   * se traza como una transformación).
+   */
+  channel?: Channel
+}
+
+export function channelOf(edge: Pick<SemanticEdge, 'relation' | 'channel'>): Channel {
+  return edge.channel ?? CHANNEL_OF[edge.relation]
 }
 
 export interface SemanticGraph {
@@ -170,6 +201,13 @@ export interface Placement extends Point {
   row: number
 }
 
+/**
+ * El marco de un ámbito. Un `def` no es un nodo más: es un territorio que envuelve su cuerpo,
+ * igual que la indentación agrupa el cuerpo de una función en el texto. La cabecera lleva la
+ * insignia y el nombre; el resto es el margen que separa el contenido del borde.
+ */
+export const SCOPE_FRAME = { top: 66, side: 24, bottom: 24 } as const
+
 export interface LayoutResult {
   placements: Placement[]
   regions: Region[]
@@ -180,4 +218,6 @@ export interface LayoutResult {
   axis: Axis
   /** Cuántas filas ocupó el programa tras plegarse. */
   rows: number
+  /** Ámbitos que envuelven a otros nodos: id del contenedor → nodos de su interior. */
+  scopes: Record<string, string[]>
 }

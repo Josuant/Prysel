@@ -108,10 +108,18 @@ export function collapse(
     const from = resolve(edge.from)
     const to = resolve(edge.to)
     if (from === to) continue // conexión interna: se va con el grupo
-    const key = `${from}→${to}:${edge.relation}:${edge.toPort ?? ''}`
+    // Un puerto pertenece al nodo que se ha plegado, no al grupo: ya no existe, y una arista
+    // que apunta a un puerto inexistente no se puede dibujar. Entra por el borde del grupo.
+    const { fromPort, toPort, ...rest } = edge
+    const kept = {
+      ...rest,
+      ...(from === edge.from && fromPort !== undefined ? { fromPort } : {}),
+      ...(to === edge.to && toPort !== undefined ? { toPort } : {}),
+    }
+    const key = `${from}→${to}:${edge.relation}:${kept.toPort ?? ''}`
     if (seen.has(key)) continue
     seen.add(key)
-    edges.push({ ...edge, from, to })
+    edges.push({ ...kept, from, to })
   }
 
   return { graph: { nodes, edges }, applied, rejected }

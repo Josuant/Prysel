@@ -288,13 +288,13 @@
       },
       {
         "name": "stroke-control",
-        "value": "1.5px",
-        "usage": "Grosor de una conexión de control."
+        "value": "3px",
+        "usage": "Grosor de una conexión de control — el orden de ejecución: continua y gruesa."
       },
       {
         "name": "stroke-data",
-        "value": "4px",
-        "usage": "Grosor base de una conexión de datos."
+        "value": "2px",
+        "usage": "Grosor de una conexión de datos — el paso de valores: fina y punteada."
       }
     ]
   },

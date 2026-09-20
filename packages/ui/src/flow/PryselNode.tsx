@@ -39,7 +39,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   const updateNodeInternals = useUpdateNodeInternals()
 
   const spec = getKind(node.kind)
-  const geo = buildShape(shapeFor(spec, density), size.w, size.h)
+  const geo = buildShape(container ? spec.shape : shapeFor(spec, density), size.w, size.h)
   const horizontal = axis === 'horizontal'
 
   // Al cambiar los campos medidos cambian los puertos: React Flow tiene que volver a mirarlos.
@@ -79,6 +79,18 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
               title={slot.label}
               isConnectable={false}
             />
+          ))}
+          {/* Cada cable que entra dice a qué campo llega: sin esto, dos cables al mismo nodo son ambiguos. */}
+          {connected.map((slot) => (
+            <span
+              key={`label:${slot.id}`}
+              className="port-label type-badge"
+              data-side={horizontal ? 'left' : 'top'}
+              style={along(slot.y)}
+              aria-hidden
+            >
+              {slot.label}
+            </span>
           ))}
         </>
       )}
@@ -120,8 +132,18 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         focused={selected}
         linkedSlots={linkedSlots}
         onSlotsMeasured={handleSlots}
-        onControlChange={(next) => data.onControlChange?.(id, next)}
-        {...(node.openable && data.onEnter ? { onToggleDensity: () => data.onEnter?.(id) } : {})}
+        // Sin quien reciba el cambio, el editor se enseña pero no se puede escribir en él:
+        // un campo que acepta texto y no cambia el programa engaña.
+        {...(data.onControlChange
+          ? { onControlChange: (next: ControlModel) => data.onControlChange?.(id, next) }
+          : {})}
+        {...(node.openable && data.onEnter
+          ? {
+              onToggleDensity: () => data.onEnter?.(id),
+              // Una llamada lleva a la función que llama; una función, a plegarse o abrirse.
+              ...(node.opens ? { toggleLabel: `Ver la función de ${node.label}` } : {}),
+            }
+          : {})}
       />
     </div>
   )

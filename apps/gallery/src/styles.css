@@ -39,21 +39,6 @@ body {
   overflow-x: auto;
 }
 
-/* Conexiones del lienzo: control fino en line, datos gruesos en ink (regla del DS). */
-.edge {
-  fill: none;
-  stroke-linecap: round;
-}
-.edge[data-type='control'] {
-  stroke: var(--line);
-  stroke-width: var(--stroke-control);
-  stroke-dasharray: 5 5;
-}
-.edge[data-type='data'] {
-  stroke: var(--ink);
-  stroke-width: var(--stroke-data);
-  opacity: 0.55;
-}
 .edge[data-live] {
   stroke: var(--accent);
   opacity: 1;

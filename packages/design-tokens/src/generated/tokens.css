@@ -21,8 +21,8 @@
   --radius-space: 20px;
   --blur-glass: 14px;
   --stroke-node: 1px;
-  --stroke-control: 1.5px;
-  --stroke-data: 4px;
+  --stroke-control: 3px;
+  --stroke-data: 2px;
   --opacity-ghost: 0.55;
   --opacity-dead: 0.45;
   --opacity-veil: 0.72;

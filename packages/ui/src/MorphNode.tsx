@@ -74,10 +74,17 @@ export interface MorphNodeProps {
   /** Avisa de dónde ha quedado cada puerto de entrada, para que el lienzo trace las conexiones. */
   onSlotsMeasured?: (slots: MeasuredSlot[]) => void
   onToggleDensity?: () => void
+  /** Qué hace el chevron, para lectores de pantalla: «Abrir la función», «Plegar suma». */
+  toggleLabel?: string
   /** Contenido de un contenedor Space. */
   children?: ReactNode
   className?: string
   style?: CSSProperties
+}
+
+/** De `def suma(a, b):` interesa lo que el título no dice: `(a, b)`. */
+function signatureOf(code: string): string {
+  return code.replace(/^\s*(?:async\s+)?(?:def|class)\s+\w+/, '').replace(/:\s*$/, '')
 }
 
 export function MorphNode({
@@ -101,15 +108,17 @@ export function MorphNode({
   linkedSlots,
   onSlotsMeasured,
   onToggleDensity,
+  toggleLabel,
   children,
   className,
   style,
 }: MorphNodeProps) {
   const spec = getKind(kind)
   const { w, h } = size ?? nodeSize(spec, density, metrics)
-  const geo = buildShape(shapeFor(spec, density), w, h)
+  // Un ámbito es un territorio, no una píldora: conserva su pestaña de carpeta a cualquier densidad.
+  const geo = buildShape(container ? spec.shape : shapeFor(spec, density), w, h)
 
-  const compact = density === 'compact'
+  const compact = density === 'compact' && !container
   const fill: FillMode = modifier === 'generating' ? 'hatch' : spec.fill
   // La sombra es atención: solo bajo un relleno opaco, y solo si algo la pide.
   const raised =
@@ -182,7 +191,7 @@ export function MorphNode({
       data-stroke={spec.stroke}
       data-fill={fill}
       data-state={state}
-      data-density={density}
+      data-density={container ? 'normal' : density}
       data-lod={lod}
       data-modifier={modifier}
       data-raised={raised ? '' : undefined}
@@ -237,8 +246,8 @@ export function MorphNode({
             {onToggleDensity ? (
               <button
                 type="button"
-                className="node__action"
-                aria-label="Entrar en el nodo"
+                className="node__action nodrag"
+                aria-label={toggleLabel ?? `Abrir ${label}`}
                 onClick={onToggleDensity}
               >
                 <Icon name="chevron" size={13} />
@@ -252,20 +261,42 @@ export function MorphNode({
             <header className="node__head">
               <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} />
               {container && <span className="node__title type-node-title">{label}</span>}
-              {showActions && (
+              {container && code && (
+                <code className="node__signature type-code">{signatureOf(code)}</code>
+              )}
+              {(showActions || onToggleDensity) && (
                 <div className="node__actions">
-                  <button type="button" className="node__action" aria-label="Duplicar nodo">
-                    <Icon name="copy" size={13} />
-                  </button>
-                  <button type="button" className="node__action" aria-label="Editar código">
-                    <Icon name="pencil" size={13} />
-                  </button>
+                  {showActions && (
+                    <>
+                      <button
+                        type="button"
+                        className="node__action nodrag"
+                        aria-label="Duplicar nodo"
+                      >
+                        <Icon name="copy" size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        className="node__action nodrag"
+                        aria-label="Editar código"
+                      >
+                        <Icon name="pencil" size={13} />
+                      </button>
+                    </>
+                  )}
                   {onToggleDensity && (
                     <button
                       type="button"
-                      className="node__action"
-                      aria-label={density === 'expanded' ? 'Plegar nodo' : 'Expandir nodo'}
-                      aria-expanded={density === 'expanded'}
+                      className="node__action nodrag"
+                      aria-label={
+                        toggleLabel ??
+                        (container
+                          ? `Plegar ${label}`
+                          : density === 'expanded'
+                            ? 'Plegar nodo'
+                            : 'Expandir nodo')
+                      }
+                      aria-expanded={container || density === 'expanded'}
                       onClick={onToggleDensity}
                     >
                       <Icon name="chevron" size={13} />

@@ -1,13 +1,14 @@
 import { classify, incoming, outgoing } from './classify.ts'
-import type {
-  Axis,
-  LayoutResult,
-  Placement,
-  Point,
-  Region,
-  Relation,
-  SemanticGraph,
-  Size,
+import {
+  SCOPE_FRAME,
+  type Axis,
+  type LayoutResult,
+  type Placement,
+  type Point,
+  type Region,
+  type Relation,
+  type SemanticGraph,
+  type Size,
 } from './types.ts'
 
 /**
@@ -199,7 +200,8 @@ function separate(
   for (const id of sorted) cross[id] = (cross[id] ?? 0) + shift
 }
 
-export function layout(graph: SemanticGraph, options: LayoutOptions = {}): LayoutResult {
+/** Un plano sin ámbitos: todos los nodos se colocan a la vez, en una sola superficie. */
+function layoutFlat(graph: SemanticGraph, options: LayoutOptions): LayoutResult {
   const { gapX, gapY, padding, axis, maxRun, gapRun } = { ...DEFAULTS, ...options }
   const metrics = AXIS[axis]
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
@@ -313,10 +315,189 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     layers,
     axis,
     rows: runs.length,
+    scopes: {},
     bounds: {
       w: extent.w + (axis === 'vertical' ? feedbackRoom : 0),
       h: extent.h + (axis === 'horizontal' ? feedbackRoom : 0),
     },
+  }
+}
+
+/**
+ * Los ámbitos del grafo: un nodo de abstracción que tiene nodos dentro es un territorio.
+ * Devuelve, para cada uno, todo lo que le pertenece — el cuerpo entero, a cualquier profundidad
+ * (las ramas de un `if`, el cuerpo de un bucle) — salvo lo que pertenece a otro ámbito anidado.
+ *
+ * Cada nodo es de **su ámbito más interno**: se decide por tamaño, no por el orden del grafo,
+ * así que el resultado no depende de cómo declare el analizador lo que contiene.
+ */
+function findScopes(graph: SemanticGraph): Map<string, string[]> {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+
+  /** Todo lo que un nodo abarca, siguiendo `contains` hacia abajo. */
+  const reach = (root: string): Set<string> => {
+    const found = new Set<string>()
+    const walk = (id: string) => {
+      for (const child of byId.get(id)?.contains ?? []) {
+        if (child === root || found.has(child) || !byId.has(child)) continue
+        found.add(child)
+        walk(child)
+      }
+    }
+    walk(root)
+    return found
+  }
+
+  const raw = new Map<string, Set<string>>()
+  for (const node of graph.nodes) {
+    if (node.role !== 'abstraction') continue
+    const inside = reach(node.id)
+    if (inside.size > 0) raw.set(node.id, inside)
+  }
+
+  // De menor a mayor: el ámbito más pequeño que contiene a un nodo es el suyo.
+  const owner = new Map<string, string>()
+  /** ¿Es `target` dueño de `from`, directa o indirectamente? Asignarlo cerraría un ciclo. */
+  const owns = (target: string, from: string): boolean => {
+    for (let up = owner.get(from); up !== undefined; up = owner.get(up))
+      if (up === target) return true
+    return false
+  }
+  for (const [scope, inside] of [...raw].sort((a, b) => a[1].size - b[1].size)) {
+    for (const id of inside) {
+      if (owner.has(id) || id === scope || owns(id, scope)) continue
+      owner.set(id, scope)
+    }
+  }
+
+  const scopes = new Map<string, string[]>()
+  for (const node of graph.nodes) {
+    const parent = owner.get(node.id)
+    if (parent === undefined) continue
+    scopes.set(parent, [...(scopes.get(parent) ?? []), node.id])
+  }
+  // Un ámbito sin nada propio dentro no es un territorio: es un nodo más.
+  return new Map(
+    graph.nodes.flatMap((n) => (scopes.has(n.id) ? [[n.id, scopes.get(n.id) ?? []]] : [])),
+  )
+}
+
+/**
+ * Del grafo semántico a posiciones. Si el programa tiene ámbitos (funciones con cuerpo),
+ * cada uno se coloca **primero por dentro**: su contenido se ordena en su propio plano y el
+ * ámbito toma el tamaño que ese contenido necesita. Después el programa de fuera trata a cada
+ * ámbito como un solo bloque del tamaño justo, así que nada de lo de dentro se sale ni se
+ * mezcla con lo de fuera — igual que la indentación agrupa un cuerpo en el texto.
+ */
+export function layout(graph: SemanticGraph, options: LayoutOptions = {}): LayoutResult {
+  const scopes = findScopes(graph)
+  if (scopes.size === 0) return layoutFlat(graph, options)
+
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]))
+  const parentOf = new Map<string, string>()
+  for (const [scope, members] of scopes) for (const id of members) parentOf.set(id, scope)
+  const topOf = (id: string): string => {
+    let current = id
+    for (let parent = parentOf.get(current); parent; parent = parentOf.get(current)) {
+      current = parent
+    }
+    return current
+  }
+
+  interface Frame {
+    size: Size
+    inner: LayoutResult
+  }
+  const frames = new Map<string, Frame>()
+  /** El tamaño de cada nodo tal como lo ven los de su nivel: un ámbito mide lo que abarca. */
+  const sizes = new Map(graph.nodes.map((n) => [n.id, n.size]))
+
+  // Se resuelve de dentro hacia fuera: un ámbito no sabe cuánto mide hasta conocer su contenido.
+  const measure = (scope: string): Size => {
+    const known = frames.get(scope)
+    if (known) return known.size
+    const members = new Set(scopes.get(scope))
+    for (const id of members) if (scopes.has(id)) sizes.set(id, measure(id))
+
+    const inner = layoutFlat(
+      {
+        nodes: [...members].flatMap((id) => {
+          const node = byId.get(id)
+          if (!node) return []
+          // Un ámbito anidado llega ya resuelto: para su nivel es un bloque más.
+          return [
+            scopes.has(id) ? { ...node, size: sizes.get(id) ?? node.size, contains: [] } : node,
+          ]
+        }),
+        edges: graph.edges.filter((e) => members.has(e.from) && members.has(e.to)),
+      },
+      { ...options, padding: 0 },
+    )
+    const own = byId.get(scope)?.size.w ?? 0
+    const size = {
+      w: Math.max(inner.bounds.w + SCOPE_FRAME.side * 2, own),
+      h: inner.bounds.h + SCOPE_FRAME.top + SCOPE_FRAME.bottom,
+    }
+    frames.set(scope, { size, inner })
+    sizes.set(scope, size)
+    return size
+  }
+  for (const scope of scopes.keys()) measure(scope)
+
+  // El plano de fuera solo ve lo que no está dentro de nadie. Las conexiones que entran o
+  // salen de un ámbito se recogen en su borde, y las que quedan dentro ya no cuentan aquí.
+  const seen = new Set<string>()
+  const outerEdges = graph.edges.flatMap((e) => {
+    const from = topOf(e.from)
+    const to = topOf(e.to)
+    const key = `${from}|${to}|${e.relation}`
+    if (from === to || seen.has(key)) return []
+    seen.add(key)
+    return [{ from, to, relation: e.relation }]
+  })
+  const outer = layoutFlat(
+    {
+      nodes: graph.nodes
+        .filter((n) => !parentOf.has(n.id))
+        .map((n) =>
+          scopes.has(n.id) ? { ...n, size: sizes.get(n.id) ?? n.size, contains: [] } : n,
+        ),
+      edges: outerEdges,
+    },
+    options,
+  )
+
+  // De coordenadas relativas a absolutas, bajando por los ámbitos.
+  const absolute = new Map<string, Placement>()
+  const settle = (placement: Placement) => {
+    absolute.set(placement.id, placement)
+    const frame = frames.get(placement.id)
+    if (!frame) return
+    for (const child of frame.inner.placements) {
+      settle({
+        ...child,
+        x: placement.x + SCOPE_FRAME.side + child.x,
+        y: placement.y + SCOPE_FRAME.top + child.y,
+      })
+    }
+  }
+  for (const placement of outer.placements) settle(placement)
+
+  const inners = [...frames.values()].map((f) => f.inner)
+  return {
+    placements: graph.nodes.flatMap((n) => {
+      const placement = absolute.get(n.id)
+      return placement ? [placement] : []
+    }),
+    regions: [...outer.regions, ...inners.flatMap((i) => i.regions)],
+    layers: Object.assign({}, ...inners.map((i) => i.layers), outer.layers) as Record<
+      string,
+      number
+    >,
+    axis: outer.axis,
+    rows: outer.rows,
+    bounds: outer.bounds,
+    scopes: Object.fromEntries(scopes),
   }
 }
 

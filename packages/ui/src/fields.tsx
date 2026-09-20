@@ -62,6 +62,73 @@ export function TextInput({
   )
 }
 
+/** Un mensaje de varias líneas: el texto puro, sin comillas ni nada de la sintaxis que lo rodea. */
+export function TextArea({
+  value,
+  onChange,
+  placeholder,
+  rows = 2,
+  slot,
+  linked = false,
+}: {
+  value: string
+  onChange?: (v: string) => void
+  placeholder?: string
+  rows?: number
+  slot?: Slot
+  linked?: boolean
+}) {
+  return (
+    <textarea
+      className="input input--area type-value"
+      data-grow=""
+      data-slot={slot?.id}
+      data-slot-label={slot?.label}
+      data-linked={linked ? '' : undefined}
+      title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
+      value={value}
+      placeholder={placeholder}
+      rows={rows}
+      readOnly={!onChange || linked}
+      onChange={(e) => onChange?.(e.target.value)}
+    />
+  )
+}
+
+/** Un número cualquiera: se escribe, no se desliza. Para un literal sin rango con sentido. */
+export function NumberInput({
+  value,
+  onChange,
+  step = 'any',
+  slot,
+  linked = false,
+}: {
+  value: number
+  onChange?: (v: number) => void
+  step?: number | 'any'
+  slot?: Slot
+  linked?: boolean
+}) {
+  return (
+    <input
+      className="input type-value"
+      type="number"
+      data-grow=""
+      data-slot={slot?.id}
+      data-slot-label={slot?.label}
+      data-linked={linked ? '' : undefined}
+      title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
+      value={value}
+      step={step}
+      readOnly={!onChange || linked}
+      onChange={(e) => {
+        const next = e.target.valueAsNumber
+        if (!Number.isNaN(next)) onChange?.(next)
+      }}
+    />
+  )
+}
+
 export function Select({
   value,
   options,

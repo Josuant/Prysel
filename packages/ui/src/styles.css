@@ -290,7 +290,30 @@
   gap: var(--space-2);
 }
 .node[data-container] .node__title {
+  flex: none;
   color: var(--ink-muted);
+}
+.node[data-container] .node__signature {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--ink-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Ámbito translúcido: se ve el lienzo a través, con un velo del color de su familia.
+ * Los nodos de dentro se leen sobre él, y la conexión que cruza su borde entra en el territorio.
+ */
+.node[data-container] .node__fill {
+  background: color-mix(in srgb, var(--badge-fg) 6%, transparent);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.node[data-container] .node__outline {
+  stroke: color-mix(in srgb, var(--badge-fg) 34%, transparent);
+  stroke-width: 1.5;
 }
 
 /* Contenedores: la etiqueta arriba, el territorio debajo, sin pie. */
@@ -357,42 +380,83 @@
   }
 }
 
-/* ── Conexiones: la relación decide el trazo, nunca el color ── */
+/* ── Conexiones: dos canales, dos lenguajes visuales ──────────────────────────
+ * Control (el orden de ejecución) es continua y gruesa: la columna vertebral del programa.
+ * Datos (el paso de valores) es fina y punteada: una dependencia, no un camino.
+ * La diferencia es de trazo, no de color, así que se lee igual en escala de grises y a
+ * cualquier zoom. El color queda libre para el estado.
+ */
 .edge__line {
   fill: none;
-  stroke: var(--line);
-  stroke-width: var(--stroke-control);
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.edge__head {
-  fill: var(--line);
-  stroke: none;
-}
-/* El flujo principal pesa más: se distingue de una dependencia en escala de grises. */
-.edge[data-relation='transform'] .edge__line {
-  stroke: var(--ink);
+
+/* Datos */
+.edge[data-channel='data'] .edge__line {
+  stroke: var(--line);
   stroke-width: var(--stroke-data);
-  opacity: 0.32;
+  stroke-dasharray: 0.1 5.5;
+}
+.edge[data-channel='data'] .edge__head {
+  fill: var(--line);
+}
+/* El dato que entra y sale distinto es el flujo principal de datos: un punto más oscuro. */
+.edge[data-relation='transform'] .edge__line {
+  stroke: var(--ink-muted);
 }
 .edge[data-relation='transform'] .edge__head {
-  fill: var(--ink);
-  opacity: 0.45;
+  fill: var(--ink-muted);
 }
-/* Una referencia no transporta un dato: punteada y tenue. */
+/* Una referencia no transporta un dato: más espaciada y tenue. */
 .edge[data-relation='reference'] .edge__line {
   stroke: var(--line-faint);
-  stroke-dasharray: 1 6;
+  stroke-dasharray: 0.1 9;
 }
 .edge[data-relation='reference'] .edge__head {
   fill: var(--line-faint);
 }
-/* El retorno va contra el tiempo: discontinuo, para que se lea como excepción al flujo. */
-.edge[data-relation='feedback'] .edge__line {
-  stroke-dasharray: 7 6;
+
+/* Control */
+.edge[data-channel='control'] .edge__line {
+  stroke: var(--ink);
+  stroke-width: var(--stroke-control);
+  opacity: 0.72;
 }
+.edge[data-channel='control'] .edge__head {
+  fill: var(--ink);
+  opacity: 0.8;
+}
+/*
+ * Selección: las conexiones del nodo elegido destacan y el resto se retira, para poder seguir
+ * de dónde viene y a dónde va un valor sin recorrer el diagrama con el dedo.
+ */
+.edge[data-emphasis='active'] .edge__line {
+  stroke: var(--accent);
+  opacity: 1;
+}
+.edge[data-emphasis='active'] .edge__head {
+  fill: var(--accent);
+  opacity: 1;
+}
+.edge[data-emphasis='active'][data-channel='data'] .edge__line {
+  /* Un dato sigue siendo fino y punteado: destaca por color y opacidad, no por peso. */
+  stroke-width: calc(var(--stroke-data) + 0.5px);
+}
+.edge[data-emphasis='dim'] .edge__line,
+.edge[data-emphasis='dim'] .edge__head {
+  opacity: 0.14;
+}
+.edge__label-chip[data-emphasis='active'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.edge__label-chip[data-emphasis='dim'] {
+  opacity: 0.25;
+}
+/* Un salto de fila es un retorno de carro: sigue siendo la misma conexión, pero por detrás. */
 .edge[data-wrap] .edge__line {
-  stroke-dasharray: 2 7;
-  opacity: 0.5;
+  opacity: 0.4;
 }
 .edge[data-live] .edge__line,
 .edge[data-live] .edge__head {
@@ -519,6 +583,23 @@
 }
 .input[data-grow] {
   flex: 1;
+}
+/* Un mensaje de varias líneas: crece con su texto, no con el ratón. */
+.input--area {
+  display: block;
+  resize: none;
+  line-height: 1.35;
+  field-sizing: content;
+  min-height: 2.7em;
+  max-height: 6.9em;
+  overflow-y: auto;
+}
+.node[data-density='expanded'] .input--area {
+  max-height: 6.9em;
+}
+/* La llamada a la que pertenecen los argumentos. */
+.control-target {
+  color: var(--ink-faint);
 }
 .input:not([data-grow]) {
   flex: none;
@@ -889,6 +970,7 @@
 .canvas .react-flow__handle {
   width: 9px;
   height: 9px;
+  border-radius: 50%;
   min-width: 0;
   min-height: 0;
   border: 1.5px solid var(--surface);
@@ -900,6 +982,31 @@
   width: 11px;
   height: 11px;
   background: var(--ink);
+}
+/* La etiqueta de un puerto de entrada: encima del cable, justo antes del campo al que llega. */
+.port-label {
+  position: absolute;
+  z-index: 2;
+  max-width: 96px;
+  overflow: hidden;
+  padding: 1px 6px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--ink-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.port-label[data-side='left'] {
+  right: 100%;
+  margin-right: 8px;
+  transform: translateY(calc(-100% - 3px));
+}
+.port-label[data-side='top'] {
+  bottom: 100%;
+  margin-bottom: 8px;
+  transform: translateX(-50%);
 }
 .canvas .react-flow__node.selected .react-flow__handle {
   background: var(--accent);
@@ -955,4 +1062,112 @@
     animation: none;
     transition: none;
   }
+}
+
+/* ── Menú de funciones ── */
+.fn-menu {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.fn-menu__path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.fn-menu__crumb {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-field);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+}
+button.fn-menu__crumb:hover {
+  background: var(--field);
+  color: var(--ink);
+}
+.fn-menu__crumb[aria-current='page'] {
+  color: var(--ink);
+  cursor: default;
+}
+.fn-menu__sep {
+  color: var(--ink-faint);
+}
+.fn-menu__sig {
+  margin-left: 2px;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+}
+.fn-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--ink-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.fn-menu__trigger:hover,
+.fn-menu__trigger[aria-expanded='true'] {
+  color: var(--ink);
+}
+.fn-menu__trigger:focus-visible,
+.fn-menu__crumb:focus-visible,
+.fn-menu__item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.fn-menu__count {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--field);
+  color: var(--ink-faint);
+}
+.fn-menu__list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 240px;
+  max-height: 60vh;
+  margin: 0;
+  padding: 4px;
+  overflow: auto;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  list-style: none;
+}
+.fn-menu__item {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-field);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fn-menu__item:hover,
+.fn-menu__item[aria-selected='true'] {
+  background: var(--field);
+}
+.fn-menu__name {
+  font-weight: 600;
+}
+.fn-menu__meta {
+  color: var(--ink-faint);
 }

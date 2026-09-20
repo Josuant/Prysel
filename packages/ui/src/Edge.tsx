@@ -1,20 +1,26 @@
-import type { Relation } from '@prysel/spatial'
+import { CHANNEL_OF, type Channel, type Relation } from '@prysel/spatial'
 
 /**
- * Gramática de conexiones. La relación computacional decide el trazo, la punta y la curvatura;
- * el color solo se usa para el estado (activa / fallida), nunca para distinguir el tipo de relación.
+ * Gramática de conexiones. Hay dos canales, y son dos lenguajes visuales distintos:
  *
- *   dependency  A ──▸ B   B usa el valor de A
- *   transform   A ━━▸ B   el dato entra y sale distinto (el flujo principal)
- *   branch      A ──▸ B   una salida etiquetada de una decisión
- *   merge       A ──▸ D   varias fuentes que desembocan en el mismo sitio
+ *   control  ━━━▸   continua y gruesa: el orden de ejecución (rama, retorno de bucle, entrada al cuerpo)
+ *   datos    ┈┈┈▸   fina y punteada: el paso de un valor de un nodo a otro
+ *
+ * Dentro de cada canal, la relación computacional afina el trazo y la curvatura;
+ * el color solo se usa para el estado (activa / fallida), nunca para distinguir el tipo.
+ *
+ *   dependency  A ┈▸ B   B usa el valor de A
+ *   transform   A ┈▸ B   el dato entra y sale distinto (el flujo principal de datos)
+ *   reference   A ┈▸ B   dependencia débil: un import, un símbolo al que se alude
+ *   branch      A ━▸ B   una salida etiquetada de una decisión
  *   feedback    A ⤺  B   el control vuelve atrás: la única que va contra el tiempo
- *   reference   A ┈┈▸ B   dependencia débil: un import, un símbolo al que se alude
  */
 
 export interface EdgeProps {
   path: string
   relation: Relation
+  /** Sin él, se deduce de la relación. */
+  channel?: Channel
   /** Etiqueta de la relación ("verdadero", "falso", "cada fila"). */
   label?: string
   /** Punto donde colocar la etiqueta, en coordenadas del lienzo. */
@@ -34,10 +40,10 @@ export function EdgeDefs() {
           key={weight}
           id={`prysel-arrow-${weight}`}
           viewBox="0 0 10 10"
-          refX={weight === 'thick' ? 7 : 8}
+          refX={weight === 'thick' ? 6 : 8}
           refY={5}
-          markerWidth={weight === 'thick' ? 5 : 6}
-          markerHeight={weight === 'thick' ? 5 : 6}
+          markerWidth={weight === 'thick' ? 3.4 : 4.2}
+          markerHeight={weight === 'thick' ? 3.4 : 4.2}
           orient="auto-start-reverse"
         >
           <path className="edge__head" d="M1 1L9 5L1 9z" />
@@ -47,12 +53,14 @@ export function EdgeDefs() {
   )
 }
 
-export function Edge({ path, relation, label, labelAt, live, failed }: EdgeProps) {
-  const weight = relation === 'transform' ? 'thick' : 'thin'
+export function Edge({ path, relation, channel, label, labelAt, live, failed }: EdgeProps) {
+  const lane = channel ?? CHANNEL_OF[relation]
+  const weight = lane === 'control' ? 'thick' : 'thin'
   return (
     <g
       className="edge"
       data-relation={relation}
+      data-channel={lane}
       data-live={live ? '' : undefined}
       data-failed={failed ? '' : undefined}
     >
