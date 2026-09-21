@@ -230,8 +230,12 @@ export function slimWidth(base: number, model?: ControlModel): number {
  * resto de nodos sigue apilando cabecera y editor.
  */
 export const isLineCard = (kind: string, control: ControlModel | undefined): boolean =>
-  (kind === 'transform.operation' || kind === 'transform.call' || kind === 'effect.io') &&
-  (control?.kind === 'expression' || control?.kind === 'args')
+  control?.kind === 'assign' ||
+  ((kind === 'transform.operation' || kind === 'transform.call' || kind === 'effect.io') &&
+    (control?.kind === 'expression' || control?.kind === 'args'))
+
+/** Un nombre que Python admite como variable: si el destino de una asignación lo es, va como chip. */
+export const isPlainName = (text: string): boolean => /^[\p{L}_][\p{L}\p{N}_]*$/u.test(text.trim())
 
 /** El título fijo de las llamadas de acción, que ya dicen qué hacen: no se repite su nombre en un campo. */
 export const ACTION_TITLES: Readonly<Record<string, string>> = {
@@ -280,6 +284,11 @@ export function lineWidth(
   let title = 0
   if (model?.kind === 'expression') {
     inner = lineField(model.left) + gap + 46 + gap + lineField(model.right)
+  } else if (model?.kind === 'assign') {
+    // Con un nombre de destino, el chip ya lo dice; con otro (`self.x`), un campo propio y su igual.
+    inner =
+      (isPlainName(model.destination) ? 0 : lineField(model.destination) + gap + 10 + gap) +
+      lineField(model.value, 80)
   } else if (model?.kind === 'args') {
     const action = ACTION_CALLS.has(model.target)
     const label = labelsArgs(model.args)
@@ -357,6 +366,9 @@ export function controlHeight(
     case 'condition':
       // Esbelta: campo, operador y valor en una fila. Expandida: apilados, con sus marcadores.
       return full ? stack([ROW.input, ROW.input, ...(model.hits ? [ROW.note] : [])]) : ROW.input
+    case 'assign':
+      // Destino y valor: en una fila cuando cabe; apilados en expandido.
+      return full ? stack([ROW.input, ROW.input]) : ROW.input
     case 'expression':
       // La fórmula: operando, operador y operando. En una fila cuando cabe (los puertos se reparten
       // a lo alto del borde); apilados en expandido.

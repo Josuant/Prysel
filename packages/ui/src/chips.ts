@@ -41,7 +41,10 @@ const CHIP_KINDS: ReadonlySet<string> = new Set([
  */
 export const isChipKind = (node: Pick<CanvasNode, 'kind' | 'provides' | 'control'>): boolean =>
   node.provides !== undefined &&
-  ((CHIP_KINDS.has(node.kind) && (node.control !== undefined || node.kind === 'value.none')) ||
+  ((CHIP_KINDS.has(node.kind) &&
+    // Una colección que no es un literal (`t = (a, b)`) trae un editor de destino y valor: no es un chip.
+    ((node.control !== undefined && node.control.kind !== 'assign') ||
+      node.kind === 'value.none')) ||
     // Una operación entre literales (`TAU = 2 * 3.14159`) es una constante: se porta como un valor.
     isConstantOperation(node))
 
@@ -107,6 +110,12 @@ export function slotText(control: ControlModel | undefined, slot: string): strin
       return slot === 'iterable' ? control.iterable : undefined
     case 'class':
       return slot === 'bases' ? control.bases : undefined
+    case 'assign':
+      return slot === 'value'
+        ? control.value
+        : slot === 'destination'
+          ? control.destination
+          : undefined
     case 'with':
       return slot === 'context' ? control.context : undefined
     case 'handler':

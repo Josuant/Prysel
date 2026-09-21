@@ -104,7 +104,17 @@ export function inputsOf(
     if (source.as !== 'expression') continue
     if (path.startsWith('args.')) found[`arg:${path.slice(5)}`] ??= source
     else if (
-      ['left', 'right', 'field', 'value', 'iterable', 'context', 'type', 'bases'].includes(path)
+      [
+        'left',
+        'right',
+        'field',
+        'value',
+        'iterable',
+        'context',
+        'type',
+        'bases',
+        'destination',
+      ].includes(path)
     ) {
       found[path] ??= source
     }
@@ -454,6 +464,30 @@ export function classOf(bases: TsNode | null, params: string[]): ControlModel {
 export function classSources(bases: TsNode | null): Record<string, Source> | undefined {
   if (!bases || bases.text.slice(1, -1).trim() === '') return undefined
   return { bases: { start: bases.startIndex + 1, end: bases.endIndex - 1, as: 'expression' } }
+}
+
+/**
+ * `destino = valor` cuando el valor no tiene editor propio: dos campos. Solo si cabe en una línea cada
+ * uno (un valor de varias líneas no se puede escribir en un campo).
+ */
+export function assignOf(left: TsNode | null, right: TsNode | null): ControlModel | null {
+  if (!left || !right || left.text.includes('\n') || right.text.includes('\n')) return null
+  return { kind: 'assign', destination: left.text, value: right.text }
+}
+
+/**
+ * De dónde sale cada campo. El valor siempre se puede reescribir; el destino solo si no es un nombre (un
+ * nombre se renombra, que cambia todos sus usos).
+ */
+export function assignSources(
+  left: TsNode | null,
+  right: TsNode | null,
+): Record<string, Source> | undefined {
+  if (!left || !right) return undefined
+  return {
+    value: span(right, 'expression'),
+    ...(left.type === 'identifier' ? {} : { destination: span(left, 'expression') }),
+  }
 }
 
 /** `raise ValueError("mensaje")`: un tipo de error y su mensaje. */

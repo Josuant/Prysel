@@ -60,6 +60,12 @@ export type ControlModel =
    * recibe al crearse (los parámetros de su `__init__`, sin `self`).
    */
   | { kind: 'class'; bases: string; params: string[] }
+  /**
+   * `destino = valor` cuando el valor no es nada que tenga editor propio (un nombre, un atributo, un
+   * elemento, una expresión más larga): dos campos, el destino y el valor. Con un destino que es un
+   * nombre, editarlo lo renombra en todos sus usos.
+   */
+  | { kind: 'assign'; destination: string; value: string }
   | { kind: 'signal'; errorType: string; types: string[]; message: string }
   | { kind: 'io'; target: string; mode: string; modes: string[] }
   | {

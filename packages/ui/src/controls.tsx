@@ -2,6 +2,7 @@ import { useContext } from 'react'
 import {
   ACTION_CALLS,
   INLINE_ARGS,
+  isPlainName,
   labelsArgs,
   lineArgs,
   type ControlId,
@@ -65,6 +66,7 @@ const WRITABLE: ReadonlySet<string> = new Set([
   'condition',
   'args',
   'loop',
+  'assign',
   'with',
   'handler',
   'class',
@@ -506,6 +508,50 @@ function Editor({
           )}
         </div>
       )
+
+    case 'assign': {
+      // En una línea, un destino que es un nombre ya lo dice el chip que la abre: solo el valor.
+      const named = isPlainName(model.destination)
+      const showTarget = !line || !named
+      const valueField = (
+        <TextInput
+          value={model.value}
+          slot={{ id: 'value', label: 'Valor' }}
+          linked={isLinked('value')}
+          {...(suggestions ? { suggestions } : {})}
+          onChange={on('value', (value: string) => patch({ value }))}
+        />
+      )
+      const targetField = (
+        <TextInput
+          value={model.destination}
+          {...(!named
+            ? { slot: { id: 'destination', label: 'Destino' }, linked: isLinked('destination') }
+            : {})}
+          {...(!named && suggestions ? { suggestions } : {})}
+          onChange={on('destination', (destination: string) => patch({ destination }))}
+        />
+      )
+      if (line) {
+        return (
+          <div className="control-line">
+            {showTarget && (
+              <>
+                {targetField}
+                <span className="control-line__paren">=</span>
+              </>
+            )}
+            {valueField}
+          </div>
+        )
+      }
+      return (
+        <div className="control-stack">
+          <Field label={full ? 'Destino' : undefined}>{targetField}</Field>
+          <Field label={full ? 'Valor' : undefined}>{valueField}</Field>
+        </div>
+      )
+    }
 
     case 'with':
       return (

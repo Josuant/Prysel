@@ -3,6 +3,8 @@ import type { Channel, Relation, SemanticEdge } from '@prysel/spatial'
 import type { Node as TsNode, Tree } from '@vscode/tree-sitter-wasm'
 import type { NodeRange, Source, Span } from './source.ts'
 import {
+  assignOf,
+  assignSources,
   augmented,
   classOf,
   classSources,
@@ -1186,6 +1188,9 @@ function visitAssignment(builder: Builder, assignment: TsNode, line: number, cod
   const isAugmented = assignment.type === 'augmented_assignment'
   const kind = isAugmented ? 'transform.operation' : kindOfExpression(right)
   const sem = isAugmented ? augmented(assignment) : semanticsOf(right, context(builder))
+  // Lo que no tiene editor propio (`y = x`, `self.a = b`, `z = a and b`) se enseña como destino y valor.
+  const generic =
+    !sem && !isAugmented && kind !== 'control.condition' ? assignOf(left, right) : null
 
   builder.add({
     id,
@@ -1194,18 +1199,42 @@ function visitAssignment(builder: Builder, assignment: TsNode, line: number, cod
     code,
     line,
     ...fromSemantics(sem),
+    ...(generic
+      ? {
+          control: generic,
+          ...sourcesOf(assignSources(left, right)),
+          ...inputsIn(inputsOf(assignSources(left, right))),
+        }
+      : {}),
     ...calling(builder, right),
   })
   linkReads(
     builder,
     id,
     isAugmented ? assignment : right,
-    sem?.ports ?? (kind === 'control.condition' ? conditionPorts(right) : callPorts(right)),
+    sem?.ports ??
+      (generic
+        ? portsOf(right, 'value')
+        : kind === 'control.condition'
+          ? conditionPorts(right)
+          : callPorts(right)),
   )
+  // Un destino que lee (`self.x`, `xs[i]`) usa los nombres que hay en él antes de asignar.
+  if (generic && left && left.type !== 'identifier') {
+    linkReads(builder, id, left, portsOf(left, 'destination'))
+  }
   builder.bind(name, id)
   if (left?.type === 'identifier') {
     builder.recordName(id, name, left)
     builder.provide(id, name)
+    if (generic) builder.rename(id, 'destination', name)
+  } else if (
+    left?.type === 'pattern_list' ||
+    left?.type === 'tuple_pattern' ||
+    left?.type === 'list_pattern'
+  ) {
+    // `a, b = f()`: cada nombre del patrón lo define este nodo (`self.x = …` no define `self`).
+    for (const each of patternNames(left)) builder.bind(each, id)
   }
   return id
 }

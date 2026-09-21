@@ -297,9 +297,16 @@ export function MorphNode({
   // pie (línea, estado) se pide con el tooltip o en expandido. Un territorio y expandido conservan todo.
   const slim = !container && !compact && density !== 'expanded'
   // Una operación o una llamada se leen de corrido: icono, nombre, y lo que hacen, en una sola línea.
-  const lined = slim && line && (control?.kind === 'expression' || control?.kind === 'args')
+  const lined =
+    slim &&
+    line &&
+    (control?.kind === 'expression' || control?.kind === 'args' || control?.kind === 'assign')
   const lineTitle =
-    control?.kind === 'args' ? ACTION_TITLES[control.target] : result ? undefined : label
+    control?.kind === 'args'
+      ? ACTION_TITLES[control.target]
+      : result || control?.kind === 'assign'
+        ? undefined
+        : label
   // Una decisión con su editor ya dice lo que compara: el título repetiría los mismos campos.
   const shownLabel =
     slim && kind === 'control.condition' && control?.kind === 'condition' ? 'Si' : label

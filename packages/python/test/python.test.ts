@@ -334,9 +334,18 @@ describe('un nodo enseña lo que significa, no la sintaxis que lo escribió', ()
     })
   })
 
-  it('lo que no puede representar sin perder algo lo deja como código, sin editor', () => {
+  it('lo que no tiene un editor propio se enseña entero como destino y valor, sin perder nada', () => {
     const { nodes } = parse('r = f(*args)\nok = 1 < x < 3\nz = df.groupby("k").sum()\n')
-    expect(nodes.map((n) => n.control)).toEqual([undefined, undefined, undefined])
+    expect(nodes.map((n) => n.control)).toEqual([
+      { kind: 'assign', destination: 'r', value: 'f(*args)' },
+      { kind: 'assign', destination: 'ok', value: '1 < x < 3' },
+      { kind: 'assign', destination: 'z', value: 'df.groupby("k").sum()' },
+    ])
+  })
+
+  it('lo que sigue sin poder escribirse en un campo (varias líneas) se queda como código', () => {
+    const { nodes } = parse('r = f(\n    1,\n    *args,\n)\n')
+    expect(nodes[0]?.control).toBeUndefined()
   })
 
   it('no lee cada nombre como argumento dos veces', () => {

@@ -29,6 +29,7 @@ export {
   ACTION_TITLES,
   INLINE_ARGS,
   isLineCard,
+  isPlainName,
   labelsArgs,
   lineArgs,
   lineHeight,

@@ -765,3 +765,44 @@ describe('una clase en el lienzo', () => {
     expect(plan.trays.has('C')).toBe(true)
   })
 })
+
+describe('las asignaciones con destino y valor', () => {
+  const asignacion = (id: string, destination: string, value: string, extra = {}) =>
+    node(id, { control: { kind: 'assign', destination, value }, line: 1, ...extra })
+
+  it('una colección que no es un literal no es un chip, aunque sea de un tipo de chip', () => {
+    const tupla = asignacion('t', 't', '(a, b)', { kind: 'data.list', provides: 't' })
+    expect(isChipKind(tupla)).toBe(false)
+  })
+
+  it('un destino que es un nombre ofrece su resultado como chip; uno que no lo es, no', () => {
+    const copia = asignacion('copia', 'copia', 'a', { kind: 'transform.call', provides: 'copia' })
+    expect(resultName(copia, 'normal')).toBe('copia')
+    const atributo = asignacion('self.n', 'self.n', 'n', { kind: 'transform.call' })
+    expect(resultName(atributo, 'normal')).toBeUndefined()
+  })
+
+  it('lee lo que hay escrito en el valor y en el destino', () => {
+    const control = { kind: 'assign' as const, destination: 'xs[i]', value: 'v' }
+    expect(slotText(control, 'value')).toBe('v')
+    expect(slotText(control, 'destination')).toBe('xs[i]')
+    expect(slotText(control, 'otra')).toBeUndefined()
+  })
+
+  it('el cable a su valor deja de dibujarse cuando la casilla ya lo nombra', () => {
+    const a = node('a', { kind: 'transform.call', provides: 'a', line: 1 })
+    const y = asignacion('y', 'y', 'a', {
+      kind: 'transform.call',
+      provides: 'y',
+      line: 2,
+      inputs: ['value'],
+    })
+    const plan = planChips(
+      [a, y],
+      [{ from: 'a', to: 'y', relation: 'transform', toPort: 'value' }],
+      { canAdd: false, density: () => 'normal' },
+    )
+    expect(plan.hidden.size).toBe(1)
+    expect(plan.chipSlots['y']?.['value']?.name).toBe('a')
+  })
+})
