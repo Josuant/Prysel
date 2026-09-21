@@ -204,3 +204,36 @@ describe('meter algo en un bucle', () => {
     expect(text).toBe('for i in r:\n    a = 2\n    print(i)\n')
   })
 })
+
+describe('un bucle que desempaqueta', () => {
+  const SOURCE = 'for clave, valor in datos.items():\n    print(clave, valor)\n'
+
+  it('cada nombre del patrón es un puerto propio', () => {
+    const loop = kind(parse(SOURCE), 'control.loop')
+    expect(loop.params).toEqual(['clave', 'valor'])
+  })
+
+  it('lo que usa cada uno dentro sale por el suyo', () => {
+    const program = parse(SOURCE)
+    const loop = kind(program, 'control.loop')
+    const ports = program.edges
+      .filter((e) => e.from === loop.id && e.fromPort)
+      .map((e) => e.fromPort)
+    expect(ports).toEqual(expect.arrayContaining(['param:clave', 'param:valor']))
+  })
+
+  it('se puede conectar cada uno a lo de dentro', () => {
+    const { text } = act('for a, b in pares:\n    c = 0 + 0\n', (p) => ({
+      type: 'connect',
+      from: kind(p, 'control.loop').id,
+      port: 'param:b',
+      to: find(p, 'c').id,
+      slot: 'right',
+    }))
+    expect(text).toBe('for a, b in pares:\n    c = 0 + b\n')
+  })
+
+  it('no hay un solo nombre que ofrecer por el puerto normal del bucle', () => {
+    expect(kind(parse(SOURCE), 'control.loop').provides).toBeUndefined()
+  })
+})

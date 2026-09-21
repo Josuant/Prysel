@@ -68,7 +68,7 @@ export interface PryselNodeData extends Record<string, unknown> {
   /** Las casillas que solo reciben chips: no llevan puerto para un cable. */
   chipOnly?: readonly string[] | undefined
   /** La casilla sobre la que está un chip que se arrastra. */
-  hotSlot?: { slot: string; ok: boolean } | null | undefined
+  hotSlot?: { slot: string; ok: boolean; convert?: boolean } | null | undefined
   /** Quitar el chip de una casilla. */
   onClearChip?: (id: string, slot: string) => void
   /** A quién se puede llamar: lo que ofrece el desplegable de una llamada. */

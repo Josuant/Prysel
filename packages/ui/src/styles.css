@@ -1995,3 +1995,36 @@ button.fn-menu__crumb:hover {
 .input[data-lit] {
   box-shadow: 0 0 0 2px var(--accent);
 }
+
+/* Una colección se edita en un panel bajo su chip. */
+.vchip__collection {
+  position: relative;
+  display: inline-flex;
+}
+.vchip__pop {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 8px);
+  left: -8px;
+  width: 260px;
+  padding: 8px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  white-space: normal;
+}
+/* Con el panel abierto, el chip pasa por encima de todo lo que tiene alrededor. */
+.react-flow__node:has(.vchip__pop) {
+  z-index: 1000 !important;
+}
+/* Valdría convirtiendo el valor: ámbar, no verde. */
+.input[data-hot='convert'] {
+  outline: 2px solid var(--state-warning);
+  background: color-mix(in srgb, var(--state-warning) 14%, var(--field));
+}
+/* Valdría convirtiendo el valor: ámbar, no verde. */
+.input[data-hot='convert'] {
+  outline: 2px solid var(--state-warning);
+  background: color-mix(in srgb, var(--state-warning) 14%, var(--field));
+}

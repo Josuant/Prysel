@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { CanvasNode } from '../Canvas.tsx'
-import { checkConnection, type Link } from '../connect.ts'
+import { checkConnection, convertNotice, type Link } from '../connect.ts'
 
 /**
  * Arrastrar un chip hasta una casilla.
@@ -17,6 +17,9 @@ export interface ChipHover {
   nodeId: string
   slot: string
   ok: boolean
+  /** Valdría, pero convirtiendo el valor (un texto donde se pide un número). */
+  convert?: 'float'
+  name?: string
   /** Por qué no valdría, si no vale. */
   reason?: string
 }
@@ -77,12 +80,17 @@ export function useChipDrag({
         slot: hit.slot,
       })
       setHover((previous) =>
-        previous?.nodeId === hit.nodeId && previous.slot === hit.slot && previous.ok === verdict.ok
+        previous?.nodeId === hit.nodeId &&
+        previous.slot === hit.slot &&
+        previous.ok === verdict.ok &&
+        previous.convert === (verdict.ok ? verdict.convert : undefined)
           ? previous
           : {
               ...hit,
               ok: verdict.ok,
-              ...(verdict.ok ? {} : { reason: verdict.reason }),
+              ...(verdict.ok
+                ? { name: verdict.name, ...(verdict.convert ? { convert: verdict.convert } : {}) }
+                : { reason: verdict.reason }),
             },
       )
     },
@@ -95,8 +103,16 @@ export function useChipDrag({
       setCarried(null)
       setHover(null)
       if (!target) return
-      if (target.ok) onLink({ from: chipSource(chipId), to: target.nodeId, slot: target.slot })
-      else if (target.reason) onRefuse(target.reason)
+      if (target.ok) {
+        onLink({
+          from: chipSource(chipId),
+          to: target.nodeId,
+          slot: target.slot,
+          ...(target.convert ? { convert: target.convert } : {}),
+        })
+        // Se avisa de que el valor se convirtió por el camino.
+        if (target.convert && target.name) onRefuse(convertNotice(target.name))
+      } else if (target.reason) onRefuse(target.reason)
     },
     [hover, onLink, onRefuse],
   )

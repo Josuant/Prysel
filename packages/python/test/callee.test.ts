@@ -239,3 +239,64 @@ describe('añadir una variable al principio de un contexto', () => {
     expect(program.nodes.find((n) => n.line === change.select?.line)?.label).toBe('variable')
   })
 })
+
+describe('convertir al conectar', () => {
+  it('un texto que llega a un campo numérico se escribe con float()', () => {
+    const { text } = act('n = input("x")\nr = 0 - 0\n', (p) => ({
+      type: 'connect',
+      from: find(p, 'n').id,
+      to: find(p, 'r').id,
+      slot: 'right',
+      convert: 'float',
+    }))
+    expect(text).toBe('n = input("x")\nr = 0 - float(n)\n')
+  })
+
+  it('sin conversión escribe el nombre a secas', () => {
+    const { text } = act('n = 1\nr = 0 - 0\n', (p) => ({
+      type: 'connect',
+      from: find(p, 'n').id,
+      to: find(p, 'r').id,
+      slot: 'right',
+    }))
+    expect(text).toBe('n = 1\nr = 0 - n\n')
+  })
+})
+
+describe('subir un valor a las inicializaciones del contexto', () => {
+  it('antes de la primera sentencia del programa', () => {
+    const { text } = act('print("a")\nx = 5\n', (p) => ({
+      type: 'move',
+      id: find(p, 'x').id,
+      before: p.nodes[0]?.id ?? '',
+    }))
+    expect(text).toBe('x = 5\nprint("a")\n')
+  })
+
+  it('en una función, con su sangría', () => {
+    const { text } = act('def f(a):\n    s = a\n    limite = 3\n    return s\n', (p) => ({
+      type: 'move',
+      id: find(p, 'limite').id,
+      before: find(p, 's').id,
+    }))
+    expect(text).toBe('def f(a):\n    limite = 3\n    s = a\n    return s\n')
+  })
+
+  it('se lleva los comentarios pegados encima', () => {
+    const { text } = act('print("a")\n# el tope\nx = 5\n', (p) => ({
+      type: 'move',
+      id: find(p, 'x').id,
+      before: p.nodes[0]?.id ?? '',
+    }))
+    expect(text).toBe('# el tope\nx = 5\nprint("a")\n')
+  })
+
+  it('no se mueve delante de sí mismo', () => {
+    const { change } = act('x = 5\n', (p) => ({
+      type: 'move',
+      id: find(p, 'x').id,
+      before: find(p, 'x').id,
+    }))
+    expect(change.edits).toEqual([])
+  })
+})

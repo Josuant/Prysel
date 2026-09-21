@@ -46,7 +46,7 @@ export interface Slot {
 export interface SlotState {
   chips: Readonly<Record<string, { name: string; type: ValueType }>>
   /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
-  hot: { slot: string; ok: boolean } | null
+  hot: { slot: string; ok: boolean; convert?: boolean } | null
   /** Quita el chip de una casilla. Sin él, no se puede quitar desde aquí. */
   clear?: (slot: string) => void
   /** A quién se puede llamar: las funciones del programa y las de uso común. */
@@ -68,7 +68,7 @@ function useSlotState(slot: Slot | undefined, value: string) {
     chip,
     attrs: {
       'data-chip': chip?.type,
-      'data-hot': hot ? (hot.ok ? 'ok' : 'no') : undefined,
+      'data-hot': hot ? (hot.ok ? (hot.convert ? 'convert' : 'ok') : 'no') : undefined,
       'data-lit': slot && state.lit?.includes(slot.id) ? '' : undefined,
     },
     /** El botón que quita el chip de la casilla. */

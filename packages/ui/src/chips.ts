@@ -14,17 +14,28 @@ import type { CanvasNode } from './Canvas.tsx'
  * Todo aquí es puro (posiciones y tamaños), para probarlo sin navegador.
  */
 
-/** Los tipos de nodo que se dibujan como chip: los valores escalares. */
+/**
+ * Los tipos de nodo que se dibujan como chip: los valores literales con nombre (un número, un texto,
+ * un verdadero / falso, `None`) y las colecciones literales (`[1, 2, 3]`, `{"a": 1}`), que se ven
+ * resumidas y se editan en un panel.
+ */
 const CHIP_KINDS: ReadonlySet<string> = new Set([
   'value.number',
   'value.str',
   'value.bool',
   'value.none',
+  'data.list',
+  'data.dict',
 ])
 
-/** ¿Es un valor que se dibuja como chip? Tiene que dejar definido un nombre (`x = 5`). */
-export const isChipKind = (node: Pick<CanvasNode, 'kind' | 'provides'>): boolean =>
-  CHIP_KINDS.has(node.kind) && node.provides !== undefined
+/**
+ * ¿Es un valor que se dibuja como chip? Tiene que dejar definido un nombre (`x = 5`) y, salvo
+ * `None`, que el analizador haya sabido representarlo: una lista con `*resto` no cabe en una píldora.
+ */
+export const isChipKind = (node: Pick<CanvasNode, 'kind' | 'provides' | 'control'>): boolean =>
+  CHIP_KINDS.has(node.kind) &&
+  node.provides !== undefined &&
+  (node.control !== undefined || node.kind === 'value.none')
 
 /** Un chip que representa una función del programa: se arrastra a una llamada. */
 export interface FunctionChip {
@@ -53,10 +64,21 @@ export const TRAY = {
 
 const CHAR = 7.4
 
-/** Lo que enseña un chip como valor: `5`, `"Ana"`, `True`, `None`. */
+/** Un resumen que no pasa de `max` caracteres: el resto va en el panel del chip. */
+const summary = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text
+
+/** Lo que enseña un chip como valor: `5`, `"Ana"`, `True`, `None`, `[1, 2, 3]`, `{"a": 1}`. */
 export function chipValue(node: Pick<CanvasNode, 'control'>): string {
   const control = node.control
   switch (control?.kind) {
+    case 'list':
+      return summary(`[${control.items.join(', ')}]`, 20)
+    case 'dict':
+      return summary(
+        `{${control.entries.map(([key, value]) => `${key}: ${value}`).join(', ')}}`,
+        20,
+      )
     case 'number':
       return String(control.value)
     case 'text': {
@@ -320,4 +342,28 @@ export function planChips(
     chipOnly,
     functions,
   }
+}
+
+/**
+ * A qué sentencia se puede subir un valor del flujo para que sea una inicialización de su contexto:
+ * la primera de su bloque (en el programa, tras los \`import\`). \`null\` si no se puede:
+ * - no es un valor que se dibuje como chip;
+ * - es de una rama de una decisión (subirlo lo volvería incondicional);
+ * - ya estaba definido antes (\`x = 1\` … \`x = 5\`): subir el segundo cambiaría lo que ven los usos de entre medias;
+ * - ya es la primera sentencia.
+ */
+export function promoteTarget(nodes: readonly CanvasNode[], node: CanvasNode): string | null {
+  if (!isChipKind(node) || node.provides === undefined) return null
+  if (node.scope?.includes(node.provides)) return null
+  const owner = node.owner
+  if (owner !== undefined) {
+    const context = nodes.find((candidate) => candidate.id === owner)
+    if (context?.kind !== 'abstraction.collapsed' && context?.kind !== 'control.loop') return null
+  }
+  const first = nodes
+    .filter(
+      (other) => other.owner === owner && (owner !== undefined || other.kind !== 'external.import'),
+    )
+    .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))[0]
+  return first && first.id !== node.id && (first.line ?? 0) < (node.line ?? 0) ? first.id : null
 }

@@ -56,7 +56,15 @@ export type NodeAction =
    * Conectar la salida de un nodo (`port`: el parámetro de una función, si sale de uno) a un campo de
    * otro: el campo pasa a leer el nombre que el origen define, sin escribirlo a mano.
    */
-  | { type: 'connect'; from: string; to: string; slot: string; port?: string }
+  | {
+      type: 'connect'
+      from: string
+      to: string
+      slot: string
+      port?: string
+      /** El valor es un texto y el campo pide un número: se escribe `float(nombre)` en vez del nombre. */
+      convert?: 'float'
+    }
   /**
    * Cambiar a quién llama una llamada: la función pasa a ser otra, su lista de argumentos se ajusta
    * a los parámetros de la nueva (cada uno con su casilla) y, si devuelve algo, el resultado se guarda.
@@ -65,7 +73,7 @@ export type NodeAction =
   /** Soltar un cable: el campo vuelve a un valor neutro. */
   | { type: 'disconnect'; id: string; slot: string }
   /**
-   * Mover una sentencia a otro sitio: al final del cuerpo de una función (`into`) o detrás de otro
-   * nodo (`after`). Es lo que pasa al arrastrar un nodo dentro o fuera de una función.
+   * Mover una sentencia a otro sitio: al final del cuerpo de una función (`into`), detrás de otro
+   * nodo (`after`) o justo antes de otro (`before`). Es lo que pasa al arrastrar un nodo dentro o fuera de una función.
    */
-  | { type: 'move'; id: string; after?: string; into?: string }
+  | { type: 'move'; id: string; after?: string; into?: string; before?: string }

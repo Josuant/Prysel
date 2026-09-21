@@ -14,9 +14,15 @@ export interface Link {
   port?: string
   to: string
   slot: string
+  /** Se convierte al conectar: ver `Verdict`. */
+  convert?: 'float'
 }
 
-export type Verdict = { ok: true; name: string } | { ok: false; reason: string }
+/**
+ * El veredicto de una conexión. Un texto que llega a un campo que pide un número no se rechaza:
+ * se convierte (`convert`), y el nodo escribe `float(nombre)`. Lo demás que no encaja, sí se rechaza.
+ */
+export type Verdict = { ok: true; name: string; convert?: 'float' } | { ok: false; reason: string }
 
 /** El nombre que sale por un puerto de un nodo, si sale alguno. */
 export function outputName(node: CanvasNode, port?: string): string | undefined {
@@ -64,10 +70,18 @@ export function checkConnection(nodes: ReadonlyMap<string, CanvasNode>, link: Li
   }
   const given = source.valueType ?? 'any'
   if (!accepts(target.control, link.slot, given)) {
+    // Un texto donde se pide un número (lo que devuelve `input()`): se convierte en vez de rechazarlo.
+    if (given === 'text' && accepts(target.control, link.slot, 'number')) {
+      return { ok: true, name, convert: 'float' }
+    }
     return { ok: false, reason: `No se puede conectar ${VALUE_NAMES[given]} a ese campo.` }
   }
   return { ok: true, name }
 }
+
+/** Lo que se le dice a quien conecta cuando el valor se convirtió por el camino. */
+export const convertNotice = (name: string) =>
+  `«${name}» es un texto y ese campo pide un número: se escribió float(${name}).`
 
 /** El gesto de conectar, como la acción que lo escribe en el código. */
 export const connectAction = (link: Link): NodeAction => ({
@@ -76,6 +90,7 @@ export const connectAction = (link: Link): NodeAction => ({
   to: link.to,
   slot: link.slot,
   ...(link.port === undefined ? {} : { port: link.port }),
+  ...(link.convert === undefined ? {} : { convert: link.convert }),
 })
 
 /**

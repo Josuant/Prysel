@@ -95,7 +95,7 @@ export interface MorphNodeProps {
   /** Las casillas que llevan un chip dentro (una variable que se arrastró hasta ellas), por puerto. */
   chipSlots?: Readonly<Record<string, { name: string; type: ValueType }>>
   /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
-  hotSlot?: { slot: string; ok: boolean } | null
+  hotSlot?: { slot: string; ok: boolean; convert?: boolean } | null
   /** Quita el chip de una casilla (la deja en un valor neutro). */
   onClearChip?: (slot: string) => void
   /** A quién se puede llamar (funciones del programa y de uso común): lo que ofrece el desplegable de una llamada. */

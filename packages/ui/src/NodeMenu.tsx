@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 
 /**
  * El menú de un nodo (clic derecho, o la tecla de menú con el nodo enfocado): duplicar, editar como
@@ -26,6 +26,16 @@ export interface NodeMenuProps {
 
 export function NodeMenu({ x, y, title, items, onClose }: NodeMenuProps) {
   const root = useRef<HTMLDivElement>(null)
+
+  // Cerca de un borde del lienzo el menú se abriría cortado: se recoloca para que quepa entero.
+  useLayoutEffect(() => {
+    const menu = root.current
+    const stage = menu?.offsetParent
+    if (!menu || !(stage instanceof HTMLElement)) return
+    const room = 4
+    menu.style.left = `${Math.max(room, Math.min(x, stage.clientWidth - menu.offsetWidth - room))}px`
+    menu.style.top = `${Math.max(room, Math.min(y, stage.clientHeight - menu.offsetHeight - room))}px`
+  }, [x, y, items.length])
 
   useEffect(() => {
     root.current?.querySelector<HTMLButtonElement>('button')?.focus()

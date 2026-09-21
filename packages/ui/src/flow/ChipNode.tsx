@@ -4,6 +4,7 @@ import { getKind, valueTypeOf, type ControlModel } from '@prysel/morphology'
 import type { CanvasNode } from '../Canvas.tsx'
 import { chipValue, type FunctionChip } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
+import { Control } from '../controls.tsx'
 import { onKeys, useDraft } from '../fields.tsx'
 import type { TrayLayout } from '../chips.ts'
 
@@ -67,11 +68,17 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
         onChange={(next) => {
           data.onControlChange?.(id, next)
         }}
-        editable={data.onControlChange !== undefined && (chip.editable?.includes('value') ?? true)}
+        editable={
+          data.onControlChange !== undefined && (chip.editable?.includes(editedField(chip)) ?? true)
+        }
       />
     </div>
   )
 }
+
+/** El campo que se escribe al editar el valor de un chip: el valor mismo, los elementos o las entradas. */
+const editedField = (chip: CanvasNode): string =>
+  chip.control?.kind === 'list' ? 'items' : chip.control?.kind === 'dict' ? 'entries' : 'value'
 
 /** El nombre de un chip: con doble clic (o desde su menú) se renombra en todos los sitios donde se usa. */
 function ChipName({
@@ -191,8 +198,76 @@ function ChipValue({
         onChange({ ...control, value })
       }}
     />
+  ) : control?.kind === 'list' || control?.kind === 'dict' ? (
+    <ChipCollection chip={chip} control={control} onChange={onChange} editable={editable} />
   ) : (
     <span className="vchip__value">{chipValue(chip)}</span>
+  )
+}
+
+/**
+ * Una colección se ve resumida (`[1, 2, 3]`) y se edita en un panel bajo el chip, con el mismo
+ * editor que tendría en un nodo: añadir y quitar elementos o claves, sin abrir nada más.
+ */
+function ChipCollection({
+  chip,
+  control,
+  onChange,
+  editable,
+}: {
+  chip: CanvasNode
+  control: ControlModel
+  onChange: (next: ControlModel) => void
+  editable: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target
+      if (root.current && target instanceof HTMLElement && !root.current.contains(target)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+  return (
+    <span ref={root} className="vchip__collection">
+      <button
+        type="button"
+        className="vchip__value vchip__value--switch nodrag"
+        aria-expanded={open}
+        aria-label={`Editar ${chip.label}`}
+        onClick={() => {
+          setOpen((current) => !current)
+        }}
+      >
+        {chipValue(chip)}
+      </button>
+      {open && (
+        <div
+          className="vchip__pop nodrag nopan"
+          role="dialog"
+          aria-label={`Valor de ${chip.label}`}
+        >
+          <Control
+            model={control}
+            level="full"
+            {...(editable ? { onChange } : {})}
+            {...(chip.editable ? { editable: chip.editable } : {})}
+          />
+        </div>
+      )}
+    </span>
   )
 }
 

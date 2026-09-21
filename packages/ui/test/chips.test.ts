@@ -10,6 +10,7 @@ import {
   isChipKind,
   packChips,
   planChips,
+  promoteTarget,
   trayLayout,
 } from '../src/chips.ts'
 
@@ -41,20 +42,31 @@ const edge = (from: string, to: string, toPort: string): SemanticEdge => ({
 })
 
 describe('qué es un chip', () => {
-  it('un valor escalar con nombre', () => {
-    for (const kind of ['value.number', 'value.str', 'value.bool', 'value.none'] as const) {
-      expect(isChipKind({ kind, provides: 'x' })).toBe(true)
+  it('un valor literal con nombre', () => {
+    for (const kind of ['value.number', 'value.str', 'value.bool'] as const) {
+      expect(isChipKind({ kind, provides: 'x', control: { kind: 'number', value: 1 } })).toBe(true)
     }
+    // None no tiene editor: es lo único que vale sin él.
+    expect(isChipKind({ kind: 'value.none', provides: 'x' })).toBe(true)
   })
 
-  it('lo que se calcula no lo es: una llamada, una operación, una lista', () => {
-    for (const kind of [
-      'transform.call',
-      'transform.operation',
-      'data.list',
-      'data.dict',
-    ] as const) {
-      expect(isChipKind({ kind, provides: 'x' })).toBe(false)
+  it('una colección literal también: se ve resumida y se edita en un panel', () => {
+    expect(
+      isChipKind({ kind: 'data.list', provides: 'x', control: { kind: 'list', items: [] } }),
+    ).toBe(true)
+    expect(
+      isChipKind({ kind: 'data.dict', provides: 'x', control: { kind: 'dict', entries: [] } }),
+    ).toBe(true)
+  })
+
+  it('una lista que el analizador no supo representar (con *resto) no cabe en una píldora', () => {
+    expect(isChipKind({ kind: 'data.list', provides: 'x' })).toBe(false)
+    expect(isChipKind({ kind: 'value.number', provides: 'x' })).toBe(false)
+  })
+
+  it('lo que se calcula no lo es: una llamada, una operación', () => {
+    for (const kind of ['transform.call', 'transform.operation'] as const) {
+      expect(isChipKind({ kind, provides: 'x', control: { kind: 'number', value: 1 } })).toBe(false)
     }
   })
 
@@ -188,6 +200,14 @@ describe('cómo se pinta un chip', () => {
     expect(chipValue({})).toBe('None')
   })
 
+  it('una colección se resume: sus elementos, o sus claves', () => {
+    expect(chipValue({ control: { kind: 'list', items: ['1', '2', '3'] } })).toBe('[1, 2, 3]')
+    expect(chipValue({ control: { kind: 'dict', entries: [['"a"', '1']] } })).toBe('{"a": 1}')
+    const long = chipValue({ control: { kind: 'list', items: Array.from({ length: 30 }, String) } })
+    expect(long.length).toBeLessThanOrEqual(20)
+    expect(long.endsWith('…')).toBe(true)
+  })
+
   it('un texto largo se recorta', () => {
     const text = 'un texto larguísimo que no cabe'
     expect(chipValue({ control: { kind: 'text', value: text } }).length).toBeLessThan(text.length)
@@ -239,5 +259,49 @@ describe('la cajita', () => {
       expect(chip.x + 100).toBeLessThanOrEqual(tray?.w ?? 0)
       expect(chip.y + 28).toBeLessThanOrEqual(tray?.h ?? 0)
     }
+  })
+})
+
+describe('subir un valor del flujo a las inicializaciones', () => {
+  const primero = node('inicio', { line: 1 })
+
+  it('va antes de la primera sentencia de su bloque', () => {
+    const x = value('x', 3)
+    expect(promoteTarget([primero, node('otra', { line: 2 }), x], x)).toBe('inicio')
+  })
+
+  it('en el programa se salta los import', () => {
+    const x = value('x', 4)
+    const nodes = [node('os', { kind: 'external.import', line: 1 }), primero, x]
+    expect(
+      promoteTarget([...nodes.slice(0, 1), { ...primero, line: 2 }, { ...x, line: 4 }], x),
+    ).toBe('inicio')
+  })
+
+  it('un valor de una rama de una decisión no sube: sería incondicional', () => {
+    const x = value('x', 3, { owner: 'si' })
+    const nodes = [node('si', { kind: 'control.condition', line: 1 }), x]
+    expect(promoteTarget(nodes, x)).toBeNull()
+  })
+
+  it('uno que ya estaba definido antes no sube: cambiaría lo que ven los usos de entre medias', () => {
+    const x = value('x', 3, { scope: ['x'] })
+    expect(promoteTarget([primero, x], x)).toBeNull()
+  })
+
+  it('el que ya es el primero no tiene adónde subir', () => {
+    const x = value('x', 1)
+    expect(promoteTarget([x, node('otra', { line: 2 })], x)).toBeNull()
+  })
+
+  it('lo que no es un chip no sube', () => {
+    expect(promoteTarget([primero, node('op', { line: 2 })], node('op', { line: 2 }))).toBeNull()
+  })
+
+  it('dentro de una función sube al principio de su cuerpo', () => {
+    const f = node('f', { kind: 'abstraction.collapsed', line: 1, contains: ['s', 'x'] })
+    const s = node('s', { line: 2, owner: 'f' })
+    const x = value('x', 3, { owner: 'f' })
+    expect(promoteTarget([f, s, x], x)).toBe('s')
   })
 })

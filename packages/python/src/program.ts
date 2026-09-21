@@ -378,6 +378,12 @@ function linkReads(
   })
 }
 
+/** Los nombres que un patrón de asignación deja definidos (`clave, valor`, `(a, b)`, `[x, *resto]`). */
+function patternNames(pattern: TsNode): string[] {
+  if (pattern.type === 'identifier') return [pattern.text]
+  return pattern.namedChildren.flatMap((child) => (child ? patternNames(child) : []))
+}
+
 /** Un nombre que Python admite para una variable o una función. */
 const IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u
 
@@ -640,7 +646,12 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       if (variable?.type === 'identifier') {
         builder.bindParam(variable.text, id)
         builder.provide(id, variable.text)
-      } else if (variable) builder.bind(variable.text, id)
+      } else if (variable) {
+        // `for clave, valor in …`: cada nombre del patrón es un puerto propio.
+        const names = patternNames(variable)
+        if (names.length === 0) builder.bind(variable.text, id)
+        for (const name of names) builder.bindParam(name, id)
+      }
       if (variable?.type === 'identifier') {
         builder.recordName(id, variable.text, variable)
         builder.rename(id, 'variable', variable.text)

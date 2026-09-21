@@ -70,11 +70,42 @@ describe('conectar un cable', () => {
     expect(verdict.ok ? '' : verdict.reason).toContain('suma')
   })
 
-  it('un texto no entra en una resta, pero sí en una suma', () => {
-    const bad = checkConnection(NODES, { from: 'texto', to: 'resta', slot: 'right' })
+  it('un texto en una resta se convierte con float(); en una suma entra tal cual', () => {
+    expect(checkConnection(NODES, { from: 'texto', to: 'resta', slot: 'right' })).toEqual({
+      ok: true,
+      name: 'texto',
+      convert: 'float',
+    })
+    expect(checkConnection(NODES, { from: 'texto', to: 'suma', slot: 'right' })).toEqual({
+      ok: true,
+      name: 'texto',
+    })
+  })
+
+  it('una colección en una resta no se convierte: se rechaza y se explica', () => {
+    const all = new Map(NODES).set('lista', {
+      id: 'lista',
+      kind: 'data.list',
+      label: 'lista',
+      provides: 'lista',
+      valueType: 'collection',
+      scope: [],
+    } as CanvasNode)
+    const bad = checkConnection(
+      new Map(all).set('resta', {
+        ...(all.get('resta') as CanvasNode),
+        scope: ['a', 'texto', 'lista'],
+      }),
+      { from: 'lista', to: 'resta', slot: 'right' },
+    )
     expect(bad).toMatchObject({ ok: false })
-    expect(bad.ok ? '' : bad.reason).toContain('texto')
-    expect(checkConnection(NODES, { from: 'texto', to: 'suma', slot: 'right' }).ok).toBe(true)
+    expect(bad.ok ? '' : bad.reason).toContain('colección')
+  })
+
+  it('la conversión viaja en la acción', () => {
+    expect(connectAction({ from: 'a', to: 'b', slot: 'left', convert: 'float' })).toMatchObject({
+      convert: 'float',
+    })
   })
 })
 

@@ -471,11 +471,11 @@ function reindent(block: string[], from: number, to: number): string[] {
 export function moveNode(
   program: Program,
   id: string,
-  where: { after?: string; into?: string },
+  where: { after?: string; into?: string; before?: string },
 ): Change {
   const node = nodeById(program, id)
   const range = node?.range
-  const target = nodeById(program, where.after ?? where.into ?? '')
+  const target = nodeById(program, where.after ?? where.into ?? where.before ?? '')
   if (!node || !range || !target?.range || target.id === id) return { edits: [] }
   // Ni dentro de sí misma, ni detrás de algo que ella contiene.
   if (target.range.start >= range.start && target.range.end <= range.end) return { edits: [] }
@@ -541,7 +541,7 @@ function outputName(source: ProgramNode, port?: string): string | undefined {
  */
 export function connectNodes(
   program: Program,
-  action: { from: string; to: string; slot: string; port?: string },
+  action: { from: string; to: string; slot: string; port?: string; convert?: 'float' },
 ): Change {
   const source = nodeById(program, action.from)
   const target = nodeById(program, action.to)
@@ -563,8 +563,9 @@ export function connectNodes(
     return { edits: [] }
   }
   if (!target.scope?.includes(name)) return { edits: [] }
-  if (program.source.slice(at.start, at.end) === name) return { edits: [] }
-  return { edits: [{ start: at.start, end: at.end, text: name }] }
+  const written = action.convert === 'float' ? `float(${name})` : name
+  if (program.source.slice(at.start, at.end) === written) return { edits: [] }
+  return { edits: [{ start: at.start, end: at.end, text: written }] }
 }
 
 /**
@@ -692,6 +693,7 @@ export function actionEdits(program: Program, action: NodeAction): Change {
       return moveNode(program, action.id, {
         ...(action.after === undefined ? {} : { after: action.after }),
         ...(action.into === undefined ? {} : { into: action.into }),
+        ...(action.before === undefined ? {} : { before: action.before }),
       })
     case 'callee':
       return changeCallee(program, action.id, action.callee)

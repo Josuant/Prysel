@@ -52,9 +52,17 @@ import {
   functionChipSize,
   isChipKind,
   planChips,
+  promoteTarget,
   type FunctionChip,
 } from './chips.ts'
-import { checkConnection, connectAction, dropTarget, outputName, type Link } from './connect.ts'
+import {
+  checkConnection,
+  connectAction,
+  convertNotice,
+  dropTarget,
+  outputName,
+  type Link,
+} from './connect.ts'
 import type { NodeEdit } from './MorphNode.tsx'
 import '@xyflow/react/dist/base.css'
 
@@ -544,8 +552,12 @@ function CanvasInner({
     (connection: Connection) => {
       const link = linkOf(connection)
       const verdict = checkConnection(lookup, link)
-      if (verdict.ok) onAction?.(connectAction(link))
-      else setNotice(verdict.reason)
+      if (verdict.ok) {
+        onAction?.(
+          connectAction({ ...link, ...(verdict.convert ? { convert: verdict.convert } : {}) }),
+        )
+        if (verdict.convert) setNotice(convertNotice(verdict.name))
+      } else setNotice(verdict.reason)
     },
     [lookup, linkOf, onAction],
   )
@@ -604,6 +616,16 @@ function CanvasInner({
         label: node.opens ? `Ver la función de ${node.label}` : scopes[id] ? 'Plegar' : 'Abrir',
         onSelect: () => {
           onEnter(id)
+        },
+      })
+    }
+    // Un valor del flujo puede subir a las variables de su contexto: pasa a ser una inicialización.
+    const before = plan.docked.has(id) ? null : promoteTarget(nodes, node)
+    if (before) {
+      items.push({
+        label: 'Subir a las variables del contexto',
+        onSelect: () => {
+          onAction?.({ type: 'move', id, before })
         },
       })
     }
@@ -860,7 +882,11 @@ function CanvasInner({
           litSlots: litSlots[node.id],
           hotSlot:
             chipDrag.hover?.nodeId === node.id
-              ? { slot: chipDrag.hover.slot, ok: chipDrag.hover.ok }
+              ? {
+                  slot: chipDrag.hover.slot,
+                  ok: chipDrag.hover.ok,
+                  ...(chipDrag.hover.convert ? { convert: true } : {}),
+                }
               : null,
           ...(connectable ? { onAddChip, onClearChip } : {}),
           ...(container && interactive ? { onResize } : {}),
