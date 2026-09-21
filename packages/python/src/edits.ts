@@ -360,9 +360,29 @@ export function addTemplate(
  * del cuerpo de una función o un bucle (`into`), o al final del archivo. `lines` recibe la sangría
  * del sitio y devuelve las líneas ya sangradas. Un cuerpo que era solo `pass` se sustituye.
  */
+/** Un camino de una decisión, descrito como el cuerpo de una sentencia compuesta. */
+interface Region {
+  head: number
+  bodyEnd: number
+  end: number
+  indent: number
+  bodyIndent?: number
+}
+
+/** Dónde se escribe algo: detrás o justo antes de un nodo, al final de un cuerpo, o en un camino de una decisión. */
+interface Place {
+  after?: string
+  into?: string
+  before?: string
+  /** El cuerpo de un camino de una decisión (para sustituir su pass). */
+  region?: Region
+  /** Hay que crear el else de esta decisión. */
+  elseOf?: string
+}
+
 function insertLines(
   program: Program,
-  where: { after?: string; into?: string; before?: string },
+  where: Place,
   lines: (indent: number) => string[],
   spaced = false,
 ): Change {
@@ -377,6 +397,8 @@ function insertLines(
   const anchor = where.after ? nodeById(program, where.after) : undefined
   const scope = where.into ? nodeById(program, where.into) : undefined
   const before = where.before ? nodeById(program, where.before) : undefined
+  const region = where.region
+  const decision = where.elseOf ? nodeById(program, where.elseOf) : undefined
   /** Se escribe al principio del archivo: no hay línea anterior a la que pegarse. */
   let leading = false
   if (before?.range) {
@@ -390,10 +412,15 @@ function insertLines(
   } else if (anchor?.range) {
     at = lineEnd(text, anchor.range.end)
     indent = anchor.range.indent
-  } else if (scope?.range) {
-    at = lineEnd(text, scope.range.bodyEnd ?? scope.range.end)
-    indent = scope.range.bodyIndent ?? scope.range.indent + 4
-    const { head, bodyEnd } = scope.range
+  } else if (decision?.range) {
+    // Una decisión sin else: se crea al final, con lo que se mueva dentro.
+    at = lineEnd(text, decision.range.end)
+    indent = decision.range.bodyIndent ?? decision.range.indent + 4
+  } else if (region ?? scope?.range) {
+    const box = (region ?? scope?.range) as Region
+    at = lineEnd(text, box.bodyEnd ?? box.end)
+    indent = box.bodyIndent ?? box.indent + 4
+    const { head, bodyEnd } = box
     if (head !== undefined && bodyEnd !== undefined) {
       const body = text.slice(head, bodyEnd)
       if (/^\s*pass\s*$/.test(body)) {
@@ -403,15 +430,18 @@ function insertLines(
     }
     // Lo que se mete en una función o un bucle va **antes** de su `return`, `break` o `continue`
     // final: detrás nunca se ejecutaría.
-    const end = lineEnd(text, scope.range.bodyEnd ?? scope.range.end)
-    const closing = program.nodes.find(
-      (n) =>
-        (n.kind === 'control.return' ||
-          n.kind === 'control.break' ||
-          n.kind === 'control.continue') &&
-        n.range?.owner === scope.id &&
-        lineEnd(text, n.range.end) === end,
-    )
+    const end = lineEnd(text, box.bodyEnd ?? box.end)
+    const closing =
+      region || !scope
+        ? undefined
+        : program.nodes.find(
+            (n) =>
+              (n.kind === 'control.return' ||
+                n.kind === 'control.break' ||
+                n.kind === 'control.continue') &&
+              n.range?.owner === scope.id &&
+              lineEnd(text, n.range.end) === end,
+          )
     if (!pass && closing?.range) {
       const first = lineStart(text, closing.range.lead ?? closing.range.start)
       // Justo después de la línea anterior (la del `def`, si el `return` es lo primero).
@@ -424,7 +454,9 @@ function insertLines(
     if (text.length > 0 && !text.endsWith('\n')) prefix = eol
   }
 
-  const written = lines(indent)
+  const written = decision?.range
+    ? [' '.repeat(decision.range.indent) + 'else:', ...lines(indent)]
+    : lines(indent)
   if (pass) {
     // El primer renglón ocupa el sitio del `pass` (que ya lleva su sangría); el resto va debajo.
     const joined = written.map((line, i) => (i === 0 ? line.trimStart() : line)).join(eol)
@@ -434,7 +466,13 @@ function insertLines(
     }
   }
 
-  const atEndOfFile = at === text.length && !anchor?.range && !scope?.range && !before?.range
+  const atEndOfFile =
+    at === text.length &&
+    !anchor?.range &&
+    !scope?.range &&
+    !before?.range &&
+    !region &&
+    !decision?.range
   const blanks = spaced && text.trim() !== '' ? [eol, eol] : []
   const block = written.join(eol)
   // Detrás de una línea, se empieza con un salto; al final del archivo, se cierra con él.
@@ -471,11 +509,19 @@ function reindent(block: string[], from: number, to: number): string[] {
 export function moveNode(
   program: Program,
   id: string,
-  where: { after?: string; into?: string; before?: string },
+  request: {
+    after?: string
+    into?: string
+    before?: string
+    start?: boolean
+    branch?: 'yes' | 'no'
+  },
 ): Change {
   const node = nodeById(program, id)
   const range = node?.range
-  const target = nodeById(program, where.after ?? where.into ?? where.before ?? '')
+  const where = resolvePlace(program, request)
+  if (!where) return { edits: [] }
+  const target = nodeById(program, where.after ?? where.into ?? where.before ?? where.elseOf ?? '')
   if (!node || !range || !target?.range || target.id === id) return { edits: [] }
   // Ni dentro de sí misma, ni detrás de algo que ella contiene.
   if (target.range.start >= range.start && target.range.end <= range.end) return { edits: [] }
@@ -513,6 +559,78 @@ export function moveNode(
     }
   }
   return { edits, ...(placed.select ? { select: { line: placed.select.line - shift } } : {}) }
+}
+
+/**
+ * Lo que inicializa un contexto sin actuar: los valores, las colecciones, los import y las funciones
+ * definidas. Lo que se mete «al principio» de un cuerpo va después de eso, para no deshacer sus chips.
+ */
+const SETUP: ReadonlySet<string> = new Set([
+  'value.number',
+  'value.str',
+  'value.bool',
+  'value.none',
+  'data.list',
+  'data.dict',
+  'external.import',
+  'abstraction.collapsed',
+])
+
+/** El cuerpo de un camino de una decisión, con la sangría de lo que ya lleva dentro. */
+function regionOf(head: number, end: number, indent: number, bodyIndent?: number): Region {
+  return { head, bodyEnd: end, end, indent, ...(bodyIndent === undefined ? {} : { bodyIndent }) }
+}
+
+/**
+ * De lo que pide el usuario a un sitio concreto del texto. start es el principio de lo que actúa en
+ * un cuerpo; branch es uno de los dos caminos de una decisión (se crea el else si hace falta).
+ */
+function resolvePlace(
+  program: Program,
+  request: {
+    after?: string
+    into?: string
+    before?: string
+    start?: boolean
+    branch?: 'yes' | 'no'
+  },
+): Place | null {
+  const { after, into, before, start, branch } = request
+  const inside = (owner: string) =>
+    program.nodes
+      .filter((n) => n.range?.owner === owner)
+      .sort((a, b) => (a.range?.start ?? 0) - (b.range?.start ?? 0))
+  if (into !== undefined && branch !== undefined) {
+    const decision = nodeById(program, into)
+    const r = decision?.range
+    if (!decision || decision.kind !== 'control.condition' || !r) return null
+    const { head, yesEnd } = r
+    if (head === undefined || yesEnd === undefined) return null
+    const nodes = inside(decision.id)
+    if (branch === 'yes') {
+      const first = nodes.find((n) => n.range && n.range.start > head && n.range.end <= yesEnd)
+      return first
+        ? { before: first.id }
+        : { into: decision.id, region: regionOf(head, yesEnd, r.indent, r.bodyIndent) }
+    }
+    const { elseAt, elseHead, elseEnd } = r
+    if (elseAt === undefined || elseHead === undefined || elseEnd === undefined) {
+      return { elseOf: decision.id }
+    }
+    const first = nodes.find((n) => n.range && n.range.start >= elseHead)
+    return first
+      ? { before: first.id }
+      : { into: decision.id, region: regionOf(elseHead, elseEnd, r.indent, r.bodyIndent) }
+  }
+  if (into !== undefined && start) {
+    const first = inside(into).find((n) => !SETUP.has(n.kind))
+    return first ? { before: first.id } : { into }
+  }
+  return {
+    ...(after === undefined ? {} : { after }),
+    ...(into === undefined ? {} : { into }),
+    ...(before === undefined ? {} : { before }),
+  }
 }
 
 /**
@@ -694,6 +812,8 @@ export function actionEdits(program: Program, action: NodeAction): Change {
         ...(action.after === undefined ? {} : { after: action.after }),
         ...(action.into === undefined ? {} : { into: action.into }),
         ...(action.before === undefined ? {} : { before: action.before }),
+        ...(action.start === undefined ? {} : { start: action.start }),
+        ...(action.branch === undefined ? {} : { branch: action.branch }),
       })
     case 'callee':
       return changeCallee(program, action.id, action.callee)

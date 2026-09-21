@@ -76,4 +76,17 @@ export type NodeAction =
    * Mover una sentencia a otro sitio: al final del cuerpo de una función (`into`), detrás de otro
    * nodo (`after`) o justo antes de otro (`before`). Es lo que pasa al arrastrar un nodo dentro o fuera de una función.
    */
-  | { type: 'move'; id: string; after?: string; into?: string; before?: string }
+  | {
+      type: 'move'
+      id: string
+      after?: string
+      into?: string
+      before?: string
+      /**
+       * Con `into`: no al final del cuerpo sino al **principio de lo que actúa** (tras las
+       * inicializaciones), que es donde lleva el puerto de inicio de una función o un bucle.
+       */
+      start?: true
+      /** Con `into` una decisión: a cuál de sus dos caminos (`yes` el verdadero, `no` el `else`), al principio. */
+      branch?: 'yes' | 'no'
+    }

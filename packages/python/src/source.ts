@@ -38,6 +38,11 @@ export interface NodeRange extends Span {
   /** Dónde acaba su cuerpo, y con qué sangría empieza. */
   bodyEnd?: number
   bodyIndent?: number
+  /** Solo en una decisión: dónde acaba su primer camino, y dónde está su `else` (si lo tiene). */
+  yesEnd?: number
+  elseAt?: number
+  elseHead?: number
+  elseEnd?: number
   /** Dónde empieza el primer comentario pegado encima (va con la sentencia al eliminarla). */
   lead?: number
   /** Cuántas sentencias tiene su bloque, y qué sentencia lo posee (`undefined` = el archivo). */

@@ -62,7 +62,11 @@ import {
   type FunctionChip,
 } from './chips.ts'
 import {
+  ORDER_IN,
   checkConnection,
+  checkOrder,
+  isOrderHandle,
+  type OrderPort,
   connectAction,
   convertNotice,
   dropTarget,
@@ -286,6 +290,8 @@ function CanvasInner({
   const [codeFor, setCodeFor] = useState<{ key: string; id: string } | null>(null)
   /** De dónde sale el cable que se está arrastrando ahora mismo. */
   const [connecting, setConnecting] = useState<{ from: string; port?: string } | null>(null)
+  /** Se arrastra un cable de orden desde este nodo y este puerto. */
+  const [ordering, setOrdering] = useState<{ from: string; port: OrderPort } | null>(null)
   /** El menú de «crear un nodo ya conectado», abierto donde se soltó el cable en el vacío. */
   const [quick, setQuick] = useState<{ x: number; y: number; from: string; port?: string } | null>(
     null,
@@ -664,8 +670,24 @@ function CanvasInner({
     return found
   }, [connecting, nodes, lookup])
 
+  /** Un cable de orden soltado sobre un nodo: ese nodo pasa a ejecutarse donde dice el puerto de origen. */
+  const orderTo = useCallback(
+    (from: string, port: OrderPort, to: string) => {
+      const verdict = checkOrder(byId, { from, port, to })
+      if (verdict.ok) onAction?.(verdict.action)
+      else setNotice(verdict.reason)
+    },
+    [byId, onAction],
+  )
+
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (isOrderHandle(connection.sourceHandle)) {
+        if (connection.targetHandle === ORDER_IN) {
+          orderTo(connection.source, connection.sourceHandle as OrderPort, connection.target)
+        }
+        return
+      }
       const link = linkOf(connection)
       const verdict = checkConnection(lookup, link)
       if (verdict.ok) {
@@ -675,12 +697,19 @@ function CanvasInner({
         if (verdict.convert) setNotice(convertNotice(verdict.name))
       } else setNotice(verdict.reason)
     },
-    [lookup, linkOf, onAction],
+    [lookup, linkOf, onAction, orderTo],
   )
 
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
       setConnecting(null)
+      const dragged = ordering
+      setOrdering(null)
+      if (dragged) {
+        // Soltado sobre un nodo pero no sobre su puerto: vale igual, es ese nodo el que se coloca.
+        if (!state.isValid && state.toNode) orderTo(dragged.from, dragged.port, state.toNode.id)
+        return
+      }
       const from = state.fromHandle
       if (state.isValid || !from || from.type !== 'source' || !state.fromNode) return
       const port = from.id?.startsWith('param:') ? from.id : undefined
@@ -711,7 +740,7 @@ function CanvasInner({
         setQuick({ ...origin, x: point.clientX - frame.left, y: point.clientY - frame.top })
       }
     },
-    [byId, lookup, eligible, onAction],
+    [byId, lookup, eligible, onAction, ordering, orderTo],
   )
 
   /** Lo que ofrece el menú de un nodo: lo que se hacía con los iconos de su cabecera, y más. */
@@ -1242,6 +1271,7 @@ function CanvasInner({
       data-interactive={interactive ? '' : undefined}
       data-selection={selectedId === null ? undefined : ''}
       data-linking={connecting ? '' : undefined}
+      data-ordering={ordering ? '' : undefined}
       role="group"
       aria-label={ariaLabel ?? 'Diagrama del programa'}
       onKeyDown={interactive ? onKeyDown : undefined}
@@ -1312,6 +1342,11 @@ function CanvasInner({
           connectable
             ? (_, { nodeId, handleId, handleType }) => {
                 setQuick(null)
+                // Un cable de orden no es un cable de datos: no busca casillas donde soltarse.
+                if (nodeId !== null && isOrderHandle(handleId) && handleType === 'source') {
+                  setOrdering({ from: nodeId, port: handleId as OrderPort })
+                  return
+                }
                 setConnecting(
                   handleType === 'source' && nodeId !== null
                     ? {
@@ -1324,7 +1359,17 @@ function CanvasInner({
             : undefined
         }
         onConnectEnd={connectable ? onConnectEnd : undefined}
-        isValidConnection={(connection) => checkConnection(lookup, linkOf(connection)).ok}
+        isValidConnection={(connection) =>
+          isOrderHandle(connection.sourceHandle) || isOrderHandle(connection.targetHandle)
+            ? connection.targetHandle === ORDER_IN &&
+              isOrderHandle(connection.sourceHandle) &&
+              checkOrder(byId, {
+                from: connection.source,
+                port: connection.sourceHandle as OrderPort,
+                to: connection.target,
+              }).ok
+            : checkConnection(lookup, linkOf(connection)).ok
+        }
         connectionRadius={22}
         connectOnClick={false}
         deleteKeyCode={null}

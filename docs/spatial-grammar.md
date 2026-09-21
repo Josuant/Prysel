@@ -203,6 +203,18 @@ El plano se coloca **solo** con ese orden, con el control (ramas, `break`, la vu
 
 **Sin cables de orden a la vista.** En un bloque lineal el orden lo dice la posición, y dibujar una flecha entre cada par de sentencias solo ensuciaría. Los únicos cables que se ven son los de control que sí dicen algo que la posición no dice (las ramas de un `if`, `break`, el carril «repite»). Al seleccionar un nodo se dibuja su orden (lo de antes y lo de después) junto con sus cables de datos ocultos, sin repetir el camino cuando ya lo une un dato.
 
+### Reordenar arrastrando un cable de orden
+
+El orden no se ve en reposo, pero se **edita**: cada nodo tiene **puertos de orden** que aparecen al pasar el ratón, al seleccionarlo o al arrastrar un cable de orden (`.order-port`). Arrastrar un cable de orden hasta un nodo **mueve esa sentencia en el código** (`move`): el nodo sobre el que se suelta pasa a ejecutarse donde dice el puerto del que sale el cable (`checkOrder`, pura y probada). Se puede soltar en cualquier parte del nodo, no solo sobre su puerto de entrada.
+
+| Puerto (de salida)                                                | Dónde queda el nodo soltado                                                                                                                           |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `order-out` (abajo)                                               | **Justo detrás** del nodo, en su bloque (`after`). Sirve para reordenar y para pasar una sentencia a otro bloque, con su sangría.                     |
+| `order-yes` / `order-no` (abajo de una decisión, en verde y rojo) | Al **principio del camino verdadero** / **del `else`** (`into` + `branch`). Un camino que era un `pass` lo sustituye, y si no hay `else` se **crea**. |
+| `order-body` (borde izquierdo de una función o un bucle)          | Al **principio de lo que actúa** en su cuerpo (`into` + `start`): tras las inicializaciones, para no deshacer sus chips.                              |
+
+Lo que se rechaza, con su motivo en el aviso: detrás de un `return`, `raise`, `break` o `continue` (no se ejecutaría), un nodo respecto a sí mismo, y meter un nodo dentro de lo que él mismo contiene, a cualquier profundidad.
+
 ### Llamar a una función: elegirla, y sus casillas aparecen
 
 El nodo de una llamada tiene una casilla para **a quién llama**, con un desplegable con las funciones del programa y las de uso común (`print`, `len`, `range`…), y acepta el **chip de una función** (las funciones del programa se ofrecen como chips `ƒ nombre(a, b)` en la cajita del programa). Al elegir otra, la acción `callee` (`changeCallee`) escribe:
@@ -385,16 +397,14 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 
 - Micro-interfaces semánticas: sustituir la línea de código literal de cada nodo (`print`, `input`…) por controles reales — un desplegable para un operador lógico, un campo de formulario para un literal.
 - Orden secuencial entre sentencias como conexiones de control (ver arriba).
-- **Arrastrar cables de orden para reordenar** (`move`), con puertos de ejecución en la decisión (verdadero / falso), en `break` y en `continue`: el orden ya coloca el plano (ver «El orden de ejecución coloca el plano»), pero aún no se puede editar arrastrando; hoy se reordena moviendo el nodo a otro sitio del flujo.
 - **Puertos de ejecución** (la flecha ▸ de entrada y salida que ordena las sentencias): hoy el orden es el del archivo y no se dibuja ni se cablea; conectarlos reordenaría el código y es la decisión abierta del orden secuencial.
 - **Conectar un cable existente a otro campo** (arrastrar el extremo de un cable ya tendido) y **cables desde un puerto de entrada** hacia una salida nueva: hoy se conecta desde salidas.
 - **Un nodo sin nombre como origen** (`print(x)` no define nada; `float(input())` sin asignar): para usarlos habría que introducir una variable.
-- **Mover dentro del mismo bloque** (reordenar sentencias): arrastrar a otra función ya reubica el código, pero no hay gesto para cambiar el orden dentro de una misma función.
 - **Meter una función dentro de otra** arrastrándola (hoy solo se reubican nodos).
 - **La cláusula `else` de un bucle** no se representa.
 - **Funciones definidas dentro de otra** como chips de su contexto: hoy las funciones solo se ofrecen en la cajita del programa.
 - **Arrastrar un chip a un cable ya tendido** (soltarlo sobre la casilla que el cable alimenta ya lo sustituye), y **dejar que un chip nazca de una operación con solo literales**: hoy el chip se crea con «＋ variable» o subiendo un valor con el menú.
-- **Un puerto de salida arrastrable en el bucle**: `termina` y `siguiente` solo reciben los cables que ya están en el código; no se puede arrastrar un `break` nuevo hasta ellos.
+- **Puertos de orden para `break` y `continue`**: `termina` y `siguiente` solo reciben los cables que ya están en el código; no se puede arrastrar un `break` nuevo hasta ellos, ni crear uno desde el puerto de inicio de un bucle. Tampoco hay puerto para los caminos `elif` ni para el `else` de un bucle.
 - **Auto-layout jerárquico** (Dagre/ELK): el reparto lo hace la gramática espacial; Mayús+F solo le devuelve lo que el usuario movió.
 - **Reordenar y mover sentencias** (arrastrar un nodo a otro sitio del flujo de control, o a otro bloque): hoy se duplica y se elimina, pero no se mueve.
 - **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.

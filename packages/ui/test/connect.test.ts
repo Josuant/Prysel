@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest'
 import type { CanvasNode } from '../src/Canvas.tsx'
 import { iterChipId } from '../src/chips.ts'
 import { chipSource } from '../src/flow/useChipDrag.ts'
-import { addPlace, checkConnection, connectAction, dropTarget, outputName } from '../src/connect.ts'
+import {
+  addPlace,
+  checkConnection,
+  checkOrder,
+  isOrderHandle,
+  connectAction,
+  dropTarget,
+  outputName,
+} from '../src/connect.ts'
 
 const node = (id: string, extra: Partial<CanvasNode> = {}): CanvasNode => ({
   id,
@@ -199,5 +207,77 @@ describe('de dónde sale el valor de un chip', () => {
     expect(
       checkConnection(all, { ...chipSource(iterChipId('for', 'i')), to: 'dentro', slot: 'left' }),
     ).toEqual({ ok: true, name: 'i' })
+  })
+})
+
+describe('el cable de orden mueve una sentencia', () => {
+  const all = new Map<string, CanvasNode>(
+    [
+      node('a', { kind: 'transform.call', provides: 'a' }),
+      node('b', { kind: 'transform.call', provides: 'b' }),
+      node('if', { kind: 'control.condition' }),
+      node('dentro', { kind: 'transform.call', owner: 'if' }),
+      node('fuera', { kind: 'transform.call' }),
+      node('bucle', { kind: 'control.loop', contains: ['cuerpo'] }),
+      node('cuerpo', { kind: 'transform.call', owner: 'bucle' }),
+      node('def', { kind: 'abstraction.collapsed', contains: ['interior'] }),
+      node('interior', { kind: 'transform.call', owner: 'def' }),
+      node('salir', { kind: 'control.break' }),
+    ].map((n) => [n.id, n]),
+  )
+
+  it('el puerto de salida pone el nodo justo detrás', () => {
+    expect(checkOrder(all, { from: 'a', port: 'order-out', to: 'b' })).toEqual({
+      ok: true,
+      action: { type: 'move', id: 'b', after: 'a' },
+    })
+  })
+
+  it('un nodo no se ordena respecto a sí mismo', () => {
+    expect(checkOrder(all, { from: 'a', port: 'order-out', to: 'a' }).ok).toBe(false)
+  })
+
+  it('detrás de un break, un return, un raise o un continue no se ejecuta nada', () => {
+    const verdict = checkOrder(all, { from: 'salir', port: 'order-out', to: 'b' })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.ok ? '' : verdict.reason).toContain('no se ejecuta')
+  })
+
+  it('no se mete algo dentro de sí mismo, a ninguna profundidad', () => {
+    expect(checkOrder(all, { from: 'cuerpo', port: 'order-out', to: 'bucle' }).ok).toBe(false)
+    expect(checkOrder(all, { from: 'dentro', port: 'order-out', to: 'if' }).ok).toBe(false)
+    expect(checkOrder(all, { from: 'interior', port: 'order-body', to: 'def' }).ok).toBe(false)
+  })
+
+  it('los caminos de una decisión mandan el nodo al principio del suyo', () => {
+    expect(checkOrder(all, { from: 'if', port: 'order-yes', to: 'fuera' })).toEqual({
+      ok: true,
+      action: { type: 'move', id: 'fuera', into: 'if', branch: 'yes' },
+    })
+    expect(checkOrder(all, { from: 'if', port: 'order-no', to: 'fuera' })).toMatchObject({
+      action: { branch: 'no' },
+    })
+  })
+
+  it('solo una decisión tiene camino verdadero y falso', () => {
+    expect(checkOrder(all, { from: 'a', port: 'order-yes', to: 'b' }).ok).toBe(false)
+  })
+
+  it('el inicio de una función o un bucle lo pone al principio de lo que actúa', () => {
+    expect(checkOrder(all, { from: 'bucle', port: 'order-body', to: 'fuera' })).toEqual({
+      ok: true,
+      action: { type: 'move', id: 'fuera', into: 'bucle', start: true },
+    })
+    expect(checkOrder(all, { from: 'def', port: 'order-body', to: 'fuera' }).ok).toBe(true)
+    expect(checkOrder(all, { from: 'a', port: 'order-body', to: 'b' }).ok).toBe(false)
+  })
+
+  it('reconoce los puertos de orden entre los demás', () => {
+    for (const handle of ['order-in', 'order-out', 'order-yes', 'order-no', 'order-body']) {
+      expect(isOrderHandle(handle)).toBe(true)
+    }
+    expect(isOrderHandle('out')).toBe(false)
+    expect(isOrderHandle('param:x')).toBe(false)
+    expect(isOrderHandle(null)).toBe(false)
   })
 })

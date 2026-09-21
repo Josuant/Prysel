@@ -275,6 +275,13 @@ class Builder {
       : null
     const first = body?.namedChildren.find((c) => c && c.type !== 'comment')
     const indent = statement.startPosition.column
+    // Una decisión: dónde acaba cada camino, para poder meter algo al principio del que se quiera.
+    const orElse =
+      statement.type === 'if_statement'
+        ? statement.namedChildren.find((c) => c?.type === 'else_clause')
+        : undefined
+    const elseBody = orElse ? field(orElse, 'body') : null
+    const elseColon = orElse?.children.find((c) => c?.type === ':')
     node.range = {
       start: statement.startIndex,
       end: statement.endIndex,
@@ -289,6 +296,10 @@ class Builder {
                 : (body?.endIndex ?? statement.endIndex),
             bodyIndent: first?.startPosition.column ?? indent + 4,
           }
+        : {}),
+      ...(statement.type === 'if_statement' && body ? { yesEnd: body.endIndex } : {}),
+      ...(orElse && elseColon && elseBody
+        ? { elseAt: orElse.startIndex, elseHead: elseColon.endIndex, elseEnd: elseBody.endIndex }
         : {}),
       ...(extra.lead === undefined ? {} : { lead: extra.lead }),
       ...(extra.owner === undefined ? {} : { owner: extra.owner }),

@@ -125,3 +125,86 @@ export function addPlace(
     ? { where: `Al final de ${focus.name}`, place: { into: focus.id } }
     : { where: 'Al final del programa', place: {} }
 }
+
+/**
+ * El gesto de **orden**: un cable de orden va de lo que se ejecuta antes a lo que se ejecuta después, y
+ * al soltarlo sobre un nodo, ese nodo pasa a ejecutarse ahí. Arrastrar el cable **es** mover la
+ * sentencia en el código. Los puertos de salida dicen dónde queda:
+ * - `order-out`: justo detrás del nodo.
+ * - `order-yes` / `order-no`: al principio del camino verdadero / del `else` de una decisión.
+ * - `order-body`: al principio de lo que actúa en una función o un bucle.
+ */
+export const ORDER_IN = 'order-in'
+export type OrderPort = 'order-out' | 'order-yes' | 'order-no' | 'order-body'
+const ORDER_PORTS: readonly string[] = ['order-out', 'order-yes', 'order-no', 'order-body']
+
+/** ¿Es el puerto de orden de un nodo (de salida o de entrada)? */
+export const isOrderHandle = (handle: string | null | undefined): boolean =>
+  handle === ORDER_IN || (handle != null && ORDER_PORTS.includes(handle))
+
+/** Las sentencias tras las que la ejecución no sigue: detrás de ellas nada se ejecutaría. */
+const JUMPS: ReadonlySet<string> = new Set([
+  'control.return',
+  'control.raise',
+  'control.break',
+  'control.continue',
+])
+
+/** ¿Está `child` dentro de `ancestor`, a cualquier profundidad? Moverlo ahí cerraría un ciclo. */
+function within(nodes: ReadonlyMap<string, CanvasNode>, child: string, ancestor: string): boolean {
+  const seen = new Set<string>()
+  for (let id: string | undefined = child; id !== undefined && !seen.has(id);) {
+    seen.add(id)
+    if (id === ancestor) return true
+    const node = nodes.get(id)
+    if (node?.owner !== undefined) id = node.owner
+    else id = [...nodes.values()].find((other) => other.contains?.includes(id as string))?.id
+  }
+  return false
+}
+
+export type OrderVerdict = { ok: true; action: NodeAction } | { ok: false; reason: string }
+
+/** ¿Se puede soltar el cable de orden de `from` (por su puerto) sobre `to`? Y, si sí, la acción que lo escribe. */
+export function checkOrder(
+  nodes: ReadonlyMap<string, CanvasNode>,
+  link: { from: string; port: OrderPort; to: string },
+): OrderVerdict {
+  const source = nodes.get(link.from)
+  const target = nodes.get(link.to)
+  if (!source || !target) return { ok: false, reason: 'Ese nodo ya no está.' }
+  if (source.id === target.id)
+    return { ok: false, reason: 'Un nodo no se ordena respecto a sí mismo.' }
+  if (within(nodes, source.id, target.id)) {
+    return { ok: false, reason: 'No se puede meter algo dentro de sí mismo.' }
+  }
+  switch (link.port) {
+    case 'order-out':
+      if (JUMPS.has(source.kind)) {
+        return {
+          ok: false,
+          reason: 'Después de un return, raise, break o continue no se ejecuta nada.',
+        }
+      }
+      return { ok: true, action: { type: 'move', id: target.id, after: source.id } }
+    case 'order-yes':
+    case 'order-no':
+      if (source.kind !== 'control.condition') {
+        return { ok: false, reason: 'Solo una decisión tiene camino verdadero y falso.' }
+      }
+      return {
+        ok: true,
+        action: {
+          type: 'move',
+          id: target.id,
+          into: source.id,
+          branch: link.port === 'order-yes' ? 'yes' : 'no',
+        },
+      }
+    case 'order-body':
+      if (source.kind !== 'abstraction.collapsed' && source.kind !== 'control.loop') {
+        return { ok: false, reason: 'Solo una función o un bucle tienen cuerpo.' }
+      }
+      return { ok: true, action: { type: 'move', id: target.id, into: source.id, start: true } }
+  }
+}

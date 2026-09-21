@@ -202,6 +202,14 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   }, [id, updateNodeInternals, portLayout])
   const targetSide = horizontal ? Position.Left : Position.Top
   const sourceSide = horizontal ? Position.Right : Position.Bottom
+  // Los puertos de orden van en el otro eje que los de datos: arriba y abajo si el plano corre a lo ancho.
+  const orderIn = horizontal ? Position.Top : Position.Left
+  const orderOut = horizontal ? Position.Bottom : Position.Right
+  /** Reparte un puerto de orden a lo largo del borde por el que sale (un porcentaje del borde). */
+  const acrossEdge = (percent: number) =>
+    horizontal ? { left: `${percent}%` } : { top: `${percent}%` }
+  /** En compacto la tarjeta es una píldora: no hay sitio para más puertos. */
+  const isCompactCard = density === 'compact' && !container
   /** Coloca un puerto a lo largo del borde correspondiente. */
   const along = (value: number) => (horizontal ? { top: value } : { left: value })
 
@@ -460,6 +468,68 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
             <Icon name="repeat" size={11} />
             repite
           </span>
+        </>
+      )}
+
+      {/*
+        Los puertos de orden: aparecen al pasar el ratón o al seleccionar el nodo. Arrastrar de la salida de uno
+        a otro nodo lo coloca justo detrás; de los de una decisión, al principio de su camino verdadero o del
+        else; del de inicio de una función o un bucle, al principio de lo que actúa.
+      */}
+      {connectable && !isCompactCard && (
+        <>
+          <Handle
+            type="target"
+            id="order-in"
+            position={orderIn}
+            className="order-port"
+            title="Aquí se ejecuta: suelta un cable de orden para poner este nodo detrás de otro"
+            isConnectable
+          />
+          {node.kind === 'control.condition' ? (
+            <>
+              <Handle
+                type="source"
+                id="order-yes"
+                position={orderOut}
+                className="order-port"
+                data-branch="yes"
+                style={acrossEdge(25)}
+                title="Al principio del camino verdadero"
+                isConnectable
+              />
+              <Handle
+                type="source"
+                id="order-no"
+                position={orderOut}
+                className="order-port"
+                data-branch="no"
+                style={acrossEdge(75)}
+                title="Al principio del camino falso (else)"
+                isConnectable
+              />
+            </>
+          ) : null}
+          <Handle
+            type="source"
+            id="order-out"
+            position={orderOut}
+            className="order-port"
+            title="Lo que sigue: arrastra a un nodo para ponerlo detrás de este"
+            isConnectable
+          />
+          {container && (
+            <Handle
+              type="source"
+              id="order-body"
+              position={Position.Left}
+              className="order-port"
+              data-body=""
+              style={{ top: contentTop + 12 }}
+              title="Al principio de lo que hace: arrastra a un nodo para ponerlo primero"
+              isConnectable
+            />
+          )}
         </>
       )}
 
