@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Density } from '@prysel/morphology'
+import type { Density, NodeState } from '@prysel/morphology'
 import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
 import {
@@ -13,6 +13,17 @@ import {
 import { actionEdits } from '@prysel/python/edits'
 import type { NodeAction, TemplateId } from '@prysel/morphology'
 import { parseWebviewMessage, type Theme } from '../../src/protocol.ts'
+import { topLevelOf } from '../../src/plan.ts'
+import {
+  chipHint,
+  describeSummary,
+  runCaption,
+  type Assets,
+  type KernelStatus,
+  type RunState,
+  type RunView,
+} from '../../src/runs.ts'
+import { OutputPanel } from './OutputPanel.tsx'
 import { useWriteBack } from './useWriteBack.ts'
 
 const vscode = acquireVsCodeApi()
@@ -32,10 +43,35 @@ interface SavedState {
 }
 
 const NO_EDGES: SemanticEdge[] = []
+const NO_RUNS: Record<string, RunView> = {}
+
+/** El estado visual de un nodo según cómo está su sentencia: al día, desactualizada, ejecutándose o con error. */
+const NODE_STATE: Record<RunState, NodeState> = {
+  never: 'dormant',
+  running: 'running',
+  fresh: 'success',
+  stale: 'warning',
+  error: 'error',
+}
+
+const KERNEL_LABEL: Record<KernelStatus, string> = {
+  stopped: 'Motor parado',
+  starting: 'Arrancando el motor…',
+  idle: 'Motor listo',
+  busy: 'Ejecutando…',
+  dead: 'Motor caído',
+}
 
 export function App() {
   const [program, setProgram] = useState<Program | null>(null)
   const [file, setFile] = useState<string | null>(null)
+  /** La versión del texto que se está enseñando: los resultados solo valen para ella. */
+  const [version, setVersion] = useState<number | null>(null)
+  const [runs, setRuns] = useState<Record<string, RunView>>(NO_RUNS)
+  const [kernel, setKernel] = useState<KernelStatus>('stopped')
+  const [problem, setProblem] = useState<string | null>(null)
+  const [assets, setAssets] = useState<ReadonlyMap<number, Assets>>(new Map())
+  const [outputOpen, setOutputOpen] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
   // Lo que se acaba de crear queda enfocado: se localiza por la línea en la que se escribió.
   const focusCreated = useCallback((created: Program, line: number) => {
@@ -56,7 +92,14 @@ export function App() {
       if (message.type === 'update') {
         setProgram(message.program)
         setFile(message.file ?? null)
+        setVersion(message.version ?? null)
         received(message.program, message.version ?? null)
+      } else if (message.type === 'runs') {
+        setRuns(message.views)
+        setKernel(message.kernel)
+        setProblem(message.problem)
+      } else if (message.type === 'assets') {
+        setAssets((previous) => new Map(previous).set(message.seq, message.assets))
       } else if (message.type === 'theme') {
         setTheme(message.theme)
       }
@@ -77,12 +120,85 @@ export function App() {
     vscode.setState({ density: next } satisfies SavedState)
   }
 
+  /** A qué sentencia de primer nivel pertenece cada nodo: es la unidad que se ejecuta. */
+  const top = useMemo(() => (program ? topLevelOf(program) : new Map<string, string>()), [program])
+
   const source = useMemo(() => {
     if (!program) return []
-    return toCanvasNodes(program.nodes).map((node) =>
-      pending[node.id] ? { ...node, control: pending[node.id] } : node,
-    )
-  }, [program, pending])
+    return toCanvasNodes(program.nodes).map((node) => {
+      const shown = pending[node.id] ? { ...node, control: pending[node.id] } : node
+      // Solo la propia sentencia lleva lo observado: sus nodos de dentro no definen nombres del programa.
+      const view = top.get(node.id) === node.id ? runs[node.id] : undefined
+      if (!view) return shown
+      const caption = runCaption(view)
+      const observed = Object.fromEntries(
+        Object.entries(view.values ?? {}).map(([name, summary]) => {
+          const short = chipHint(summary)
+          return [name, { ...(short ? { short } : {}), long: describeSummary(summary) }]
+        }),
+      )
+      return {
+        ...shown,
+        ...(caption ? { meta: `línea ${node.line} · ${caption}` } : {}),
+        ...(Object.keys(observed).length > 0 ? { observed } : {}),
+      }
+    })
+  }, [program, pending, runs, top])
+
+  const viewOf = (id: string): RunView | undefined => {
+    const statement = top.get(id)
+    return statement === undefined ? undefined : runs[statement]
+  }
+  const stateOf = (id: string): NodeState => {
+    const view = viewOf(id)
+    return view ? NODE_STATE[view.state] : 'dormant'
+  }
+  const started = kernel !== 'stopped' || Object.values(runs).some((r) => r.state !== 'never')
+
+  /** Ejecutar: los nodos pedidos (con lo que necesitan y no está al día), o todo. */
+  const run = (ids: string[] | 'all') => {
+    if (version === null) return
+    post({ type: 'run', version, ids })
+  }
+  const selectedView = selected === null ? undefined : viewOf(selected)
+  const statementNode = program?.nodes.find(
+    (n) => n.id === (selected === null ? undefined : top.get(selected)),
+  )
+
+  // Mayús+Intro ejecuta el nodo seleccionado, como en un notebook (salvo escribiendo en un campo).
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' || !event.shiftKey || selected === null) return
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        target.closest('input, textarea, select, [contenteditable]')
+      ) {
+        return
+      }
+      event.preventDefault()
+      if (version !== null) post({ type: 'run', version, ids: [selected] })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [selected, version])
+
+  // Un fallo lleva la atención a su nodo: es lo que hay que mirar.
+  const failed = useMemo(
+    () => Object.entries(runs).find(([, view]) => view.state === 'error')?.[0] ?? null,
+    [runs],
+  )
+  const [lastFailed, setLastFailed] = useState<string | null>(null)
+  // Se ajusta al recibir el fallo, no en un efecto: el mismo fallo no vuelve a robar la selección.
+  if (failed !== lastFailed) {
+    setLastFailed(failed)
+    if (failed !== null) {
+      setSelected(failed)
+      setOutputOpen(true)
+    }
+  }
 
   // El programa enseña cada función una vez (como su llamada); una función se ve aparte.
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
@@ -120,6 +236,25 @@ export function App() {
         <span className="text-[11px] text-ink-faint" aria-live="polite">
           {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
         </span>
+        {program && (
+          <RunControls
+            kernel={kernel}
+            problem={problem}
+            hasSelection={selected !== null}
+            onRunAll={() => {
+              run('all')
+            }}
+            onRunSelected={() => {
+              if (selected !== null) run([selected])
+            }}
+            onInterrupt={() => {
+              post({ type: 'interrupt' })
+            }}
+            onRestart={() => {
+              post({ type: 'restart' })
+            }}
+          />
+        )}
         <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
         {program && <AddNodeMenu onAdd={add} where={addWhere} />}
         <DensityControl value={density} onChange={changeDensity} />
@@ -144,6 +279,10 @@ export function App() {
             onEnter={view.enter}
             onControlChange={changeControl}
             onAction={act}
+            onRun={(id) => {
+              run([id])
+            }}
+            stateOf={stateOf}
             addTarget={'into' in place ? place.into : null}
             palette={palette}
             addToModule={view.focus === null}
@@ -153,13 +292,87 @@ export function App() {
             height="fill"
             fitKey={view.viewKey}
             showActions
-            showStatus={false}
+            showStatus={started}
             ariaLabel={canvasLabel}
           />
         ) : (
           <EmptyState />
         )}
       </main>
+
+      {outputOpen && selectedView && selectedView.state !== 'never' && statementNode && (
+        <OutputPanel
+          title={statementNode.label}
+          view={selectedView}
+          assets={selectedView.seq === undefined ? undefined : assets.get(selectedView.seq)}
+          onClose={() => {
+            setOutputOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Los botones de ejecución y cómo está el motor. */
+function RunControls({
+  kernel,
+  problem,
+  hasSelection,
+  onRunAll,
+  onRunSelected,
+  onInterrupt,
+  onRestart,
+}: {
+  kernel: KernelStatus
+  problem: string | null
+  hasSelection: boolean
+  onRunAll: () => void
+  onRunSelected: () => void
+  onInterrupt: () => void
+  onRestart: () => void
+}) {
+  const busy = kernel === 'busy' || kernel === 'starting'
+  const button =
+    'px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40 disabled:hover:text-ink-muted'
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        role="group"
+        aria-label="Ejecución"
+        className="flex overflow-hidden rounded-md border border-border-card bg-surface"
+      >
+        <button type="button" className={button} onClick={onRunAll} disabled={busy}>
+          ▶ Todo
+        </button>
+        <button
+          type="button"
+          className={button}
+          onClick={onRunSelected}
+          disabled={busy || !hasSelection}
+          title="Ejecuta el nodo seleccionado y lo que necesita (Mayús+Intro)"
+        >
+          ▶ Selección
+        </button>
+        <button type="button" className={button} onClick={onInterrupt} disabled={kernel !== 'busy'}>
+          ■ Parar
+        </button>
+        <button
+          type="button"
+          className={button}
+          onClick={onRestart}
+          disabled={kernel === 'stopped'}
+        >
+          ↻ Reiniciar
+        </button>
+      </div>
+      <span
+        className={`text-[11px] ${kernel === 'dead' ? 'text-[var(--chip-error-fg)]' : 'text-ink-faint'}`}
+        title={problem ?? undefined}
+        aria-live="polite"
+      >
+        {KERNEL_LABEL[kernel]}
+      </span>
     </div>
   )
 }

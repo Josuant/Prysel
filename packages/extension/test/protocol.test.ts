@@ -108,3 +108,67 @@ describe('extensión → webview', () => {
     expect(parseWebviewMessage({ type: 'theme', theme: 'neon' })).toBeNull()
   })
 })
+
+describe('ejecución: webview → extensión', () => {
+  it('acepta pedir ejecutar nodos o todo, con la versión del texto', () => {
+    expect(parseHostMessage({ type: 'run', version: 4, ids: ['assign:3:0'] })).toEqual({
+      type: 'run',
+      version: 4,
+      ids: ['assign:3:0'],
+    })
+    expect(parseHostMessage({ type: 'run', version: 4, ids: 'all' })).toEqual({
+      type: 'run',
+      version: 4,
+      ids: 'all',
+    })
+  })
+
+  it('acepta interrumpir y reiniciar', () => {
+    expect(parseHostMessage({ type: 'interrupt' })).toEqual({ type: 'interrupt' })
+    expect(parseHostMessage({ type: 'restart' })).toEqual({ type: 'restart' })
+  })
+
+  it('descarta una petición de ejecutar mal formada: es ejecutar código del usuario', () => {
+    const bad = [
+      { type: 'run', ids: ['a'] },
+      { type: 'run', version: 1.5, ids: ['a'] },
+      { type: 'run', version: 1, ids: [] },
+      { type: 'run', version: 1, ids: [3] },
+      { type: 'run', version: 1, ids: [''] },
+      { type: 'run', version: 1, ids: 'algunos' },
+      { type: 'run', version: 1, ids: Array.from({ length: 501 }, (_, i) => `n${i}`) },
+      { type: 'run', version: 1, ids: ['x'.repeat(201)] },
+    ]
+    for (const message of bad) expect(parseHostMessage(message)).toBeNull()
+  })
+})
+
+describe('ejecución: extensión → webview', () => {
+  const runs = {
+    type: 'runs',
+    views: { 'assign:1:0': { state: 'fresh' } },
+    kernel: 'idle',
+    problem: null,
+    version: 2,
+  }
+
+  it('acepta cómo está cada sentencia y el motor', () => {
+    expect(parseWebviewMessage(runs)).toEqual(runs)
+    expect(parseWebviewMessage({ ...runs, kernel: 'dead', problem: 'sin Python' })).not.toBeNull()
+  })
+
+  it('descarta un estado de motor que no existe, o una versión que no es un entero', () => {
+    expect(parseWebviewMessage({ ...runs, kernel: 'volando' })).toBeNull()
+    expect(parseWebviewMessage({ ...runs, version: 'dos' })).toBeNull()
+    expect(parseWebviewMessage({ ...runs, views: [] })).toBeNull()
+    expect(parseWebviewMessage({ ...runs, problem: 3 })).toBeNull()
+  })
+
+  it('acepta las imágenes de una ejecución, y descarta las mal formadas', () => {
+    const assets = { type: 'assets', seq: 7, assets: { figures: [], images: {} } }
+    expect(parseWebviewMessage(assets)).toEqual(assets)
+    expect(parseWebviewMessage({ type: 'assets', seq: 7 })).toBeNull()
+    expect(parseWebviewMessage({ type: 'assets', seq: 'x', assets: assets.assets })).toBeNull()
+    expect(parseWebviewMessage({ type: 'assets', seq: 7, assets: { images: {} } })).toBeNull()
+  })
+})

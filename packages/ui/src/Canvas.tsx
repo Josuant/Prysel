@@ -121,6 +121,11 @@ export interface CanvasNode {
   provides?: string
   /** Los nombres que deja definidos una asignación de varios valores (`a, b = f()`): cada uno, un chip. */
   results?: readonly string[]
+  /**
+   * Lo que se observó al ejecutar, por nombre: `short` es lo que acompaña a su chip (`200×2`) y `long` lo
+   * que dice al pasar el puntero (`ndarray 200×2 float64`). Nunca cambia lo que significa el código.
+   */
+  observed?: Readonly<Record<string, { short?: string; long: string }>>
   /** En una función, sus parámetros: cada uno es un puerto de salida hacia lo que hay dentro. */
   params?: readonly string[]
   /** Los campos que aceptan un cable (por su puerto). */
@@ -150,6 +155,8 @@ export interface CanvasProps {
   /** El nodo seleccionado, si lo lleva quien usa el lienzo (para poder enfocar lo que acaba de crear). */
   selected?: string | null
   onSelect?: (id: string | null) => void
+  /** Ejecutar un nodo (con lo que necesita): si el lienzo tiene un motor detrás, el menú lo ofrece. */
+  onRun?: (id: string) => void
   onEnter?: (id: string) => void
   /** Eje de lectura del programa. */
   axis?: Axis
@@ -256,6 +263,7 @@ function CanvasInner({
   minHeight = 0,
   interactive = false,
   showActions = true,
+  onRun,
   showStatus = true,
   animate = true,
   fitMode,
@@ -514,7 +522,11 @@ function CanvasInner({
                 {
                   w: lineWidth(
                     node.control,
-                    resultNames(node, d),
+                    // Cada pastilla mide también lo que se observó de su valor (`200×2`).
+                    resultNames(node, d).map((name) => {
+                      const short = node.observed?.[name]?.short
+                      return short ? `${name} ${short}` : name
+                    }),
                     linked[node.id],
                     node.openable ? 26 : 0,
                   ),
@@ -790,6 +802,15 @@ function CanvasInner({
     const node = byId.get(id)
     if (!node) return []
     const items: NodeMenuItem[] = []
+    if (onRun) {
+      items.push({
+        label: 'Ejecutar',
+        hint: 'Mayús+Intro',
+        onSelect: () => {
+          onRun(id)
+        },
+      })
+    }
     if (node.renamable) {
       items.push({
         label: 'Renombrar',

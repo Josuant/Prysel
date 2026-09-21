@@ -132,6 +132,13 @@ describe.skipIf(!available)('el motor de ejecución', () => {
     })
   })
 
+  it('un módulo que solo recibió una llamada no cambió: no se resume; el que se importa, sí', async () => {
+    const imported = await kernel.run('import math as m')
+    expect(imported.values['m']).toMatchObject({ type: 'module', repr: 'math' })
+    const called = await kernel.run('m.sqrt(4)\nn = 1')
+    expect(Object.keys(called.values)).toEqual(['n'])
+  })
+
   it('cuenta lo que hay definido', async () => {
     await kernel.reset()
     await kernel.run('import os\nvalor = 7\n_privada = 1')

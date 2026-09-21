@@ -43,6 +43,17 @@
           "name": "Lienzo"
         }
       ]
+    },
+    "configuration": {
+      "title": "Prysel",
+      "properties": {
+        "prysel.python": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Intérprete de Python con el que se ejecuta el código desde el lienzo. Vacío: el entorno elegido en la extensión de Python (o `python` del PATH)."
+        }
+      }
     }
   },
   "scripts": {
@@ -71,5 +82,11 @@
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "En un espacio de trabajo sin confianza el lienzo se puede ver y editar, pero no ejecutar código."
+    }
   }
 }

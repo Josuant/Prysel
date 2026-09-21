@@ -33,6 +33,7 @@ import sys
 import threading
 import time
 import traceback
+import types
 
 MAX_TEXT = 4_000
 MAX_ROWS = 8
@@ -197,6 +198,9 @@ def summarize(obj):
         out["image"] = picture
         out["size"] = list(getattr(obj, "size", []))
         return out
+    if isinstance(obj, types.ModuleType):
+        out["repr"] = getattr(obj, "__name__", "módulo")
+        return out
     if callable(obj):
         out["repr"] = _safe_repr(obj, 80)
         return out
@@ -214,10 +218,16 @@ class _Touched(ast.NodeVisitor):
 
     def __init__(self):
         self.names = []
+        # Los que el fragmento solo recibió como receptor de una llamada (`plt.plot(...)`): no los definió.
+        self.receivers = set()
 
-    def add(self, name):
+    def add(self, name, receiver=False):
         if name not in self.names:
             self.names.append(name)
+        if receiver:
+            self.receivers.add(name)
+        else:
+            self.receivers.discard(name)
 
     def visit_Name(self, node):
         if isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -254,14 +264,14 @@ class _Touched(ast.NodeVisitor):
         while isinstance(target, (ast.Attribute, ast.Subscript, ast.Call)):
             target = target.func if isinstance(target, ast.Call) else target.value
         if isinstance(target, ast.Name) and isinstance(node.func, ast.Attribute):
-            self.add(target.id)
+            self.add(target.id, receiver=target.id not in self.names)
         self.generic_visit(node)
 
 
 def touched(tree):
     visitor = _Touched()
     visitor.visit(tree)
-    return visitor.names
+    return visitor.names, visitor.receivers
 
 
 class Runner:
@@ -282,12 +292,14 @@ class Runner:
         tail = None
         if tree.body and isinstance(tree.body[-1], ast.Expr) and not code.rstrip().endswith(";"):
             tail = ast.Expression(tree.body.pop().value)
-        names = touched(tree)
+        names, receivers = touched(tree)
         if tail is not None:
-            names += [n for n in touched(tail) if n not in names]
+            more, more_receivers = touched(tail)
+            names += [n for n in more if n not in names]
+            receivers |= {n for n in more_receivers if n not in names[: len(names) - len(more)]}
         body = compile(tree, name, "exec")
         last = compile(tail, name, "eval") if tail is not None else None
-        return body, last, names
+        return body, last, names, receivers
 
     def run(self, request):
         run = request.get("id", "run")
@@ -297,10 +309,10 @@ class Runner:
         saved = sys.stdout, sys.stderr
         sys.stdout, sys.stderr = self.stdout, self.stderr
         ok = True
-        names = []
+        names, receivers = [], set()
         self.running.set()
         try:
-            body, last, names = self.compile(code, run)
+            body, last, names, receivers = self.compile(code, run)
             exec(body, self.namespace)
             if last is not None:
                 value = eval(last, self.namespace)
@@ -314,9 +326,15 @@ class Runner:
             self.running.clear()
             sys.stdout, sys.stderr = saved
             self.stdout.run = self.stderr.run = None
-        for name in [*names, *[n for n in request.get("watch", []) if n not in names]]:
-            if name in self.namespace:
-                emit({"ev": "value", "id": run, "name": name, "summary": summarize(self.namespace[name])})
+        asked = request.get("watch", [])
+        for name in [*names, *[n for n in asked if n not in names]]:
+            if name not in self.namespace:
+                continue
+            value = self.namespace[name]
+            # Un módulo que solo recibió una llamada (`plt.plot(...)`) no cambió: no se resume, salvo que sea lo que define.
+            if isinstance(value, types.ModuleType) and name in receivers and name not in asked:
+                continue
+            emit({"ev": "value", "id": run, "name": name, "summary": summarize(value)})
         self.figures(run)
         emit({"ev": "done", "id": run, "ok": ok, "ms": round((time.perf_counter() - started) * 1000, 1)})
 
@@ -330,6 +348,8 @@ class Runner:
         text = "".join(traceback.format_list(shown)) + "".join(
             traceback.format_exception_only(type(error), error)
         )
+        # El nombre interno del fragmento no le dice nada a quien lee.
+        text = text.replace(f'File "<prysel:{run}>"', "Fragmento")
         emit(
             {
                 "ev": "error",

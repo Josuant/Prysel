@@ -560,7 +560,12 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         {...(data.line ? { line: true } : {})}
         {...(results.length > 0
           ? {
-              results: results.map((name) => ({ name, type: node.valueType ?? 'any' })),
+              results: results.map((name) => ({
+                name,
+                type: node.valueType ?? 'any',
+                ...(node.observed?.[name]?.short ? { hint: node.observed[name].short } : {}),
+                ...(node.observed?.[name] ? { title: node.observed[name].long } : {}),
+              })),
               ...(data.onGrabResult
                 ? {
                     onGrabResult: (event: React.PointerEvent<HTMLElement>, name: string) => {

@@ -483,18 +483,21 @@
 .edge[data-wrap] .edge__line {
   opacity: 0.4;
 }
-.edge[data-live] .edge__line,
-.edge[data-live] .edge__head {
+/* La línea solo lleva trazo (con relleno, un camino abierto se cierra y se pinta como un polígono). */
+.edge[data-live] .edge__line {
   stroke: var(--accent);
-  fill: var(--accent);
   opacity: 1;
 }
 .edge[data-live] .edge__head {
   stroke: none;
+  fill: var(--accent);
+  opacity: 1;
 }
-.edge[data-failed] .edge__line,
-.edge[data-failed] .edge__head {
+.edge[data-failed] .edge__line {
   stroke: var(--state-error);
+  opacity: 1;
+}
+.edge[data-failed] .edge__head {
   fill: var(--state-error);
   opacity: 1;
 }
@@ -2203,4 +2206,14 @@ button.fn-menu__crumb:hover {
 /* Una asignación en una línea: el valor, con un chip dentro, mide lo que lleva escrito. */
 .control-line > .chip-wrap {
   flex: 1 1 auto;
+}
+
+/* Lo que se observó al ejecutar (la forma de un array, las filas de una tabla): acompaña al nombre del chip. */
+.vchip__hint {
+  margin-left: 5px;
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.62;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }

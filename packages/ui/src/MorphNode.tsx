@@ -107,7 +107,7 @@ export interface MorphNodeProps {
    * Lo que asigna la línea (`A = funcion()`, o `a, b = f()`): cada nombre es un chip que se arrastra a
    * una casilla.
    */
-  results?: readonly { name: string; type: ValueType }[]
+  results?: readonly { name: string; type: ValueType; hint?: string; title?: string }[]
   /** El usuario agarra el chip de un resultado: el lienzo lleva el arrastre. */
   onGrabResult?: (event: React.PointerEvent<HTMLElement>, name: string) => void
   /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
@@ -219,6 +219,8 @@ function RenameBox({ label, onDone }: { label: string; onDone: (to: string | nul
 function ResultChip({
   name,
   type,
+  hint,
+  title,
   renamable,
   signal,
   onRename,
@@ -226,6 +228,10 @@ function ResultChip({
 }: {
   name: string
   type: ValueType
+  /** Lo que se observó al ejecutar (`200×2`): acompaña al nombre. */
+  hint?: string
+  /** Lo que dice al pasar el puntero, si se observó algo. */
+  title?: string
   renamable: boolean
   signal: number
   onRename: (to: string) => void
@@ -235,7 +241,11 @@ function ResultChip({
     <span
       className="vchip vchip--result nodrag"
       data-type={type}
-      title={`${name}: arrástrala a una casilla que reciba un valor`}
+      title={
+        title
+          ? `${name}: ${title} — arrástrala a una casilla que reciba un valor`
+          : `${name}: arrástrala a una casilla que reciba un valor`
+      }
       onPointerDown={(event) => {
         // Escribir o seleccionar dentro del cuadro de renombrar no es llevarse el chip.
         if (event.target instanceof HTMLInputElement) return
@@ -243,6 +253,7 @@ function ResultChip({
       }}
     >
       <Title label={name} renamable={renamable} tag="span" signal={signal} onRename={onRename} />
+      {hint && <span className="vchip__hint">{hint}</span>}
     </span>
   )
 }
@@ -318,6 +329,8 @@ export function MorphNode({
       key={result.name}
       name={result.name}
       type={result.type}
+      {...(result.hint ? { hint: result.hint } : {})}
+      {...(result.title ? { title: result.title } : {})}
       renamable={renamable || (several && onAction !== undefined)}
       signal={renameSignal}
       onRename={(to) =>

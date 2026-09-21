@@ -82,10 +82,9 @@ export interface KernelOptions {
   cwd?: string
 }
 
-const RUNNER = join(__dirname, '..', 'runtime', 'prysel_runner.py')
-
 /** Dónde está el ejecutor: junto a la extensión, o —ya empaquetado— el que se le indique. */
-export const runnerPath = (override?: string): string => override ?? RUNNER
+export const runnerPath = (override?: string): string =>
+  override ?? join(__dirname, '..', 'runtime', 'prysel_runner.py')
 
 export class Kernel {
   private readonly pending = new Map<string, Pending>()
