@@ -85,7 +85,9 @@ export function slotAccepts(
   if (control?.kind === 'expression' && (slot === 'left' || slot === 'right')) {
     return NUMERIC_ONLY.has(control.operator) ? ['number', 'boolean', 'any'] : undefined
   }
-  if (control?.kind === 'loop' && slot === 'iterable') return ['collection', 'text', 'any']
+  if (control?.kind === 'loop' && slot === 'iterable' && !control.while) {
+    return ['collection', 'text', 'any']
+  }
   return undefined
 }
 

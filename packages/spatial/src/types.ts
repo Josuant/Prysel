@@ -79,6 +79,12 @@ export interface SemanticNode {
    * salen de su borde, y sus etiquetas y sus cables necesitan aire antes de llegar al primer nodo.
    */
   gutter?: number
+  /** Ancho que pide lo que hay en la cabecera (la cajita de chips): el territorio no puede ser más estrecho. */
+  headerWidth?: number
+  /** Es un territorio aunque no sea una abstracción: un bucle con cuerpo envuelve lo que repite. */
+  territory?: boolean
+  /** Tamaño mínimo de un ámbito que el usuario ha ensanchado: nunca queda por debajo de su contenido. */
+  minSize?: Size
 }
 
 export interface SemanticEdge {
@@ -94,6 +100,11 @@ export interface SemanticEdge {
   toPort?: string
   /** Etiqueta de la relación: "verdadero", "falso", "cada fila". */
   label?: string
+  /**
+   * Si la conexión se dibuja saltándose un nodo que no se enseña (un `return` que solo devuelve una
+   * variable), el nodo del que en realidad sale o al que llega: es donde se escribe al cambiarla.
+   */
+  via?: string
   /**
    * Canal explícito. Casi siempre se deduce de la relación; solo hace falta cuando una misma
    * relación se usa en los dos sentidos (la entrada al cuerpo de un bucle es control, pero

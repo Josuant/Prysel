@@ -7,12 +7,14 @@ import {
   type NodeKindId,
 } from '@prysel/morphology'
 import {
+  channelOf,
   collapse,
   groupsFromContainers,
   type SemanticEdge,
   type SemanticGraph,
 } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
+import { isLoopTerritory } from './flow/frame.ts'
 
 /**
  * Del programa analizado al lienzo. Es lo que comparten la extensión y la galería: los dos
@@ -50,6 +52,8 @@ export interface SourceNode {
   inputs?: Record<string, unknown>
   /** Los nombres que el nodo puede leer: lo definido antes, en su ámbito. */
   scope?: string[]
+  /** Dónde está en el archivo: aquí solo importa qué sentencia lo posee (la función, el bucle o la decisión que lo envuelve). */
+  range?: { owner?: string }
   calls?: string
   note?: string
 }
@@ -106,6 +110,8 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
       ? { inputs: Object.keys(node.inputs) }
       : {}),
     valueType: valueTypeOf(node.kind, node.control),
+    // Quién lo posee: decide si es una inicialización de su contexto (un chip) o parte del flujo.
+    ...(node.range?.owner === undefined ? {} : { owner: node.range.owner }),
     // En lugar del chip de estado (no hay ejecución), se muestra la línea de origen.
     meta: `línea ${node.line}`,
     ...(node.ops === undefined ? {} : { metrics: { ops: node.ops } }),
@@ -116,9 +122,14 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
   }))
 }
 
-/** Un ámbito plegable: una abstracción con cuerpo (una función), no un bucle ni una decisión. */
-function isFoldable(node: CanvasNode): boolean {
+/** Una función con cuerpo: es la que aparece en el menú «Funciones» y la que se ve aparte. */
+function isFunction(node: CanvasNode): boolean {
   return getKind(node.kind).role === 'abstraction' && (node.contains?.length ?? 0) > 0
+}
+
+/** Un ámbito plegable: una función con cuerpo o un bucle con cuerpo (no una decisión). */
+function isFoldable(node: CanvasNode): boolean {
+  return isFunction(node) || isLoopTerritory(node)
 }
 
 export interface FunctionInfo {
@@ -126,6 +137,8 @@ export interface FunctionInfo {
   name: string
   /** `(a, b)`: lo que la función recibe. */
   signature: string
+  /** Los nombres de sus parámetros, en orden. */
+  params: string[]
   /** Cuántas llamadas hay a ella en el archivo. */
   calls: number
   /**
@@ -140,7 +153,7 @@ export interface FunctionInfo {
 }
 
 export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): FunctionInfo[] {
-  return nodes.filter(isFoldable).map((node) => {
+  return nodes.filter(isFunction).map((node) => {
     const body = new Set(node.contains)
     const params =
       node.control?.kind === 'signature' ? node.control.params.map((p) => p.name).join(', ') : ''
@@ -148,6 +161,7 @@ export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): Functio
       id: node.id,
       name: node.label,
       signature: `(${params})`,
+      params: node.control?.kind === 'signature' ? node.control.params.map((p) => p.name) : [],
       calls: nodes.filter((other) => other.opens === node.id).length,
       used: edges.some((edge) => edge.from === node.id && !body.has(edge.to)),
       size: body.size,
@@ -224,6 +238,81 @@ export function foldScopes(
   }
 }
 
+/**
+ * El retorno de una función no es un nodo más: es **la salida de la función**. Un `return suma` que
+ * solo devuelve una variable no se dibuja: el cable va de donde se calcula `suma` directamente al
+ * puerto de retorno de la función, y eso ya dice que ese valor es lo que devuelve. Un `return a + b`
+ * es una operación: se dibuja como tal, con su salida al puerto de retorno.
+ *
+ * Los retornos que son el destino de una decisión o de un bucle se quedan (perderían el cable de
+ * control que los alcanza), y una función cuyo cuerpo sería solo su retorno también: sin nada
+ * dentro no habría territorio.
+ */
+export function foldReturns(nodes: CanvasNode[], edges: SemanticEdge[]): FoldedView {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const hiddenIn = new Map<string, string>()
+  const patched = new Map<string, CanvasNode>()
+  const added: SemanticEdge[] = []
+
+  for (const def of nodes) {
+    if (def.kind !== 'abstraction.collapsed') continue
+    const body = (def.contains ?? []).filter((id) => byId.has(id))
+    if (body.length === 0) continue
+
+    const returns = body.flatMap((id) => {
+      const node = byId.get(id)
+      return node?.kind === 'control.return' ? [node] : []
+    })
+    const simple = new Set(
+      returns
+        .filter((node) => {
+          const control = node.control
+          if (control?.kind !== 'args' || control.args.length !== 1) return false
+          if (!IDENTIFIER.test(control.args[0]?.value.trim() ?? '')) return false
+          const incoming = edges.filter((edge) => edge.to === node.id)
+          return (
+            incoming.length > 0 &&
+            incoming.every((edge) => edge.toPort === 'arg:valor' && channelOf(edge) === 'data')
+          )
+        })
+        .map((node) => node.id),
+    )
+    // Sin nada más dentro, no habría territorio: se quedan a la vista.
+    if (body.every((id) => simple.has(id))) simple.clear()
+
+    for (const id of simple) hiddenIn.set(id, def.id)
+    for (const node of returns) {
+      if (simple.has(node.id)) continue
+      const operation = node.control?.kind === 'expression'
+      patched.set(node.id, {
+        ...node,
+        returns: def.id,
+        ...(operation ? { kind: 'transform.operation' as const, label: 'devuelve' } : {}),
+      })
+      added.push({ from: node.id, to: def.id, relation: 'transform', toPort: 'return' })
+    }
+    patched.set(def.id, {
+      ...def,
+      inputs: [...(def.inputs ?? []), 'return'],
+      contains: def.contains?.filter((id) => byId.has(id) && !simple.has(id)) ?? [],
+    })
+  }
+
+  return {
+    nodes: nodes
+      .filter((node) => !hiddenIn.has(node.id))
+      .map((node) => patched.get(node.id) ?? node),
+    edges: [
+      ...edges.flatMap((edge) => {
+        if (hiddenIn.has(edge.from)) return []
+        const def = hiddenIn.get(edge.to)
+        return [def === undefined ? edge : { ...edge, to: def, toPort: 'return', via: edge.to }]
+      }),
+      ...added,
+    ],
+  }
+}
+
 const NONE: ReadonlySet<string> = new Set()
 const PROGRAM = 'programa'
 
@@ -279,7 +368,10 @@ export function useProgramView(
     () => new Set(scopes.filter((id) => (mode === 'compact') !== flipped.has(id))),
     [scopes, mode, flipped],
   )
-  const view = useMemo(() => foldScopes(base.nodes, base.edges, foldedSet), [base, foldedSet])
+  const view = useMemo(() => {
+    const folded = foldScopes(base.nodes, base.edges, foldedSet)
+    return foldReturns(folded.nodes, folded.edges)
+  }, [base, foldedSet])
 
   const toggle = useCallback(
     (id: string) => {

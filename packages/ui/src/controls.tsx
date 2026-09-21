@@ -1,4 +1,5 @@
-import { INLINE_ARGS, type ControlId, type ControlModel } from '@prysel/morphology'
+import { useContext } from 'react'
+import { ACTION_CALLS, INLINE_ARGS, type ControlId, type ControlModel } from '@prysel/morphology'
 import {
   Chips,
   CodeBlock,
@@ -8,6 +9,7 @@ import {
   Row,
   Segmented,
   Select,
+  SlotStateContext,
   NumberInput,
   RowButton,
   Slider,
@@ -80,6 +82,7 @@ export function Control(props: ControlProps) {
 }
 
 function Editor({ model, level, onChange, linked = [], editable, suggestions }: ControlProps) {
+  const state = useContext(SlotStateContext)
   const isLinked = (slot: string) => linked.includes(slot)
   const patch = <M extends ControlModel>(next: Partial<M>) =>
     onChange?.({ ...model, ...next } as ControlModel)
@@ -266,12 +269,18 @@ function Editor({ model, level, onChange, linked = [], editable, suggestions }: 
       const hidden = model.args.length - shown.length
       return (
         <div className="control-stack">
-          {model.target && <span className="control-target type-value">{model.target}( )</span>}
+          {/* A quién se llama: un desplegable con las funciones del programa (o un nombre cualquiera) y una casilla donde soltar un chip de función. */}
+          {model.target && !ACTION_CALLS.has(model.target) && (
+            <TextInput
+              value={model.target}
+              slot={{ id: 'callee', label: 'Función' }}
+              placeholder="función"
+              {...(state.callees && state.callees.length > 0 ? { suggestions: state.callees } : {})}
+              onChange={on('target', (target: string) => patch({ target }))}
+            />
+          )}
           {shown.map(({ arg, index, linked }) => (
-            <Field
-              key={arg.name}
-              label={full || linked || model.args.length > 1 ? arg.name : undefined}
-            >
+            <Field key={arg.name} label={full || model.args.length > 1 ? arg.name : undefined}>
               <TextInput
                 value={arg.value}
                 slot={{ id: `arg:${arg.name}`, label: arg.name }}
@@ -296,34 +305,64 @@ function Editor({ model, level, onChange, linked = [], editable, suggestions }: 
 
     case 'expression':
       return (
-        <div className="control-stack">
-          {/* Apiladas a propósito: dos puertos a la misma altura se taparían y no se podría elegir. */}
+        // Se lee como la fórmula: un operando, la operación en medio y el otro operando. Cada
+        // operando tiene su puerto a su altura; la salida, a la derecha, es el resultado.
+        <div className="control-stack control-formula" data-inline={full ? undefined : ''}>
           <TextInput
             value={model.left}
-            slot={{ id: 'left', label: 'Izquierda' }}
+            slot={{ id: 'left', label: 'A' }}
             linked={isLinked('left')}
             {...(suggestions ? { suggestions } : {})}
             onChange={on('left', (left: string) => patch({ left }))}
           />
-          <Row>
+          <div className="control-formula__op">
             <Select
               value={model.operator}
               options={model.operators}
               compact
               onChange={on('operator', (operator: string) => patch({ operator }))}
             />
-            <TextInput
-              value={model.right}
-              slot={{ id: 'right', label: 'Derecha' }}
-              linked={isLinked('right')}
-              {...(suggestions ? { suggestions } : {})}
-              onChange={on('right', (right: string) => patch({ right }))}
-            />
-          </Row>
+          </div>
+          <TextInput
+            value={model.right}
+            slot={{ id: 'right', label: 'B' }}
+            linked={isLinked('right')}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('right', (right: string) => patch({ right }))}
+          />
         </div>
       )
 
     case 'condition':
+      // Esbelta: campo, operador y valor en una fila (sus puertos se reparten a lo alto del borde).
+      if (!full) {
+        return (
+          <div className="control-stack control-formula" data-inline="">
+            <TextInput
+              value={model.field}
+              slot={{ id: 'field', label: 'Campo' }}
+              linked={isLinked('field')}
+              {...(suggestions ? { suggestions } : {})}
+              onChange={on('field', (field: string) => patch({ field }))}
+            />
+            <div className="control-formula__op">
+              <Select
+                value={model.operator}
+                options={model.operators}
+                compact
+                onChange={on('operator', (operator: string) => patch({ operator }))}
+              />
+            </div>
+            <TextInput
+              value={model.value}
+              slot={{ id: 'value', label: 'Valor' }}
+              linked={isLinked('value')}
+              {...(suggestions ? { suggestions } : {})}
+              onChange={on('value', (value: string) => patch({ value }))}
+            />
+          </div>
+        )
+      }
       return (
         <div className="control-stack">
           {/* Apiladas a propósito: cada entrada necesita su propia altura para su puerto. */}
@@ -363,6 +402,21 @@ function Editor({ model, level, onChange, linked = [], editable, suggestions }: 
       )
 
     case 'loop':
+      // `while`: no hay variable ni secuencia, sino una condición que se evalúa en cada vuelta.
+      if (model.while) {
+        return (
+          <Row>
+            <span className="type-field-label muted">mientras</span>
+            <TextInput
+              value={model.iterable}
+              slot={{ id: 'iterable', label: 'Condición' }}
+              linked={isLinked('iterable')}
+              {...(suggestions ? { suggestions } : {})}
+              onChange={on('iterable', (iterable: string) => patch({ iterable }))}
+            />
+          </Row>
+        )
+      }
       return (
         <div className="control-stack">
           <Row>

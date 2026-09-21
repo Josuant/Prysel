@@ -48,6 +48,8 @@ export type NodeAction =
       template: TemplateId
       after?: string
       into?: string
+      /** Al principio del contexto (del cuerpo de `into`, o del archivo) en vez de al final: donde se inicializa. */
+      at?: 'start'
       connect?: { from: string; port?: string }
     }
   /**
@@ -55,5 +57,15 @@ export type NodeAction =
    * otro: el campo pasa a leer el nombre que el origen define, sin escribirlo a mano.
    */
   | { type: 'connect'; from: string; to: string; slot: string; port?: string }
+  /**
+   * Cambiar a quién llama una llamada: la función pasa a ser otra, su lista de argumentos se ajusta
+   * a los parámetros de la nueva (cada uno con su casilla) y, si devuelve algo, el resultado se guarda.
+   */
+  | { type: 'callee'; id: string; callee: string }
   /** Soltar un cable: el campo vuelve a un valor neutro. */
   | { type: 'disconnect'; id: string; slot: string }
+  /**
+   * Mover una sentencia a otro sitio: al final del cuerpo de una función (`into`) o detrás de otro
+   * nodo (`after`). Es lo que pasa al arrastrar un nodo dentro o fuera de una función.
+   */
+  | { type: 'move'; id: string; after?: string; into?: string }

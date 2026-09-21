@@ -168,10 +168,11 @@ describe('catálogo de tipos de nodo', () => {
   })
 
   describe('el contenido cabe en cada densidad', () => {
-    // compacto: icono + nombre + punto. normal: + insignia, código y pie. expandido: + control.
+    // compacto: icono + nombre + punto. normal (esbelta): icono, nombre y un editor de una fila; su alto
+    // real sale de lo que lleva dentro (`slimHeight`). expandido: + control completo.
     const min: Record<Density, [number, number]> = {
       compact: [120, 24],
-      normal: [190, 120],
+      normal: [150, 56],
       expanded: [214, 180],
     }
     it.each(NODE_KINDS.map((k) => k.id))('%s', (id) => {
@@ -270,7 +271,7 @@ describe('el alto lo decide el contenido', () => {
     expect(extraHeight(call(['a', 'b']), 'compact', ['arg:a', 'arg:b'])).toBe(0)
   })
 
-  it('una condición, con sus dos filas, pide más que una fila', () => {
+  it('una condición y una operación caben en una fila en normal, y se apilan en expandido', () => {
     const condition: ControlModel = {
       kind: 'condition',
       field: 'x',
@@ -278,9 +279,18 @@ describe('el alto lo decide el contenido', () => {
       value: '0',
       operators: ['<'],
     }
-    expect(controlHeight(condition, 'normal')).toBeGreaterThan(
-      controlHeight({ kind: 'number', value: 1 }, 'normal'),
-    )
+    const operation: ControlModel = {
+      kind: 'expression',
+      left: 'a',
+      operator: '+',
+      right: 'b',
+      operators: ['+'],
+    }
+    const row = controlHeight({ kind: 'number', value: 1 }, 'normal')
+    expect(controlHeight(condition, 'normal')).toBe(row)
+    expect(controlHeight(operation, 'normal')).toBe(row)
+    expect(controlHeight(condition, 'expanded')).toBeGreaterThan(row)
+    expect(controlHeight(operation, 'expanded')).toBeGreaterThan(row)
   })
 
   it('un mensaje largo crece con sus líneas, hasta un tope', () => {

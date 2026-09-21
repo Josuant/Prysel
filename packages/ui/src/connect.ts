@@ -31,6 +31,20 @@ export function checkConnection(nodes: ReadonlyMap<string, CanvasNode>, link: Li
   const source = nodes.get(link.from)
   const target = nodes.get(link.to)
   if (!source || !target) return { ok: false, reason: 'Ese nodo ya no está.' }
+  if (link.slot === 'return') {
+    // El puerto de retorno de una función: recibe lo que se calcula dentro de ella (o uno de sus parámetros).
+    const name = outputName(source, link.port)
+    const inside =
+      target.contains?.includes(source.id) === true ||
+      (source.id === target.id && link.port?.startsWith('param:') === true)
+    if (!target.inputs?.includes('return') || !inside || name === undefined) {
+      return {
+        ok: false,
+        reason: 'Solo se puede devolver un valor calculado dentro de la función.',
+      }
+    }
+    return { ok: true, name }
+  }
   if (source.id === target.id)
     return { ok: false, reason: 'Un nodo no puede alimentarse a sí mismo.' }
   if (!target.inputs?.includes(link.slot)) {
@@ -38,6 +52,10 @@ export function checkConnection(nodes: ReadonlyMap<string, CanvasNode>, link: Li
   }
   const name = outputName(source, link.port)
   if (name === undefined) return { ok: false, reason: 'Este nodo no produce ningún valor.' }
+  // A quién se llama tiene que ser una función; a la inversa, una función sí puede pasarse como valor.
+  if (link.slot === 'callee' && (source.kind !== 'abstraction.collapsed' || link.port)) {
+    return { ok: false, reason: 'Solo una función se puede llamar.' }
+  }
   if (!target.scope?.includes(name)) {
     return {
       ok: false,

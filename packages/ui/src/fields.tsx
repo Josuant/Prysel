@@ -1,4 +1,13 @@
-import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
+import type { ValueType } from '@prysel/morphology'
 import { Icon } from './Icon.tsx'
 
 /** Primitivas de edición. Todo lo que el usuario puede tocar dentro de una tarjeta vive aquí. */
@@ -30,11 +39,64 @@ export interface Slot {
 }
 
 /**
+ * Lo que le pasa a las casillas de un nodo desde fuera: qué chip llevan dentro (una variable que se
+ * arrastró hasta ellas), cuál se está sobrevolando con un chip en la mano y cómo quitar uno. Va por
+ * contexto para no cruzar cada editor con tres parámetros más.
+ */
+export interface SlotState {
+  chips: Readonly<Record<string, { name: string; type: ValueType }>>
+  /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
+  hot: { slot: string; ok: boolean } | null
+  /** Quita el chip de una casilla. Sin él, no se puede quitar desde aquí. */
+  clear?: (slot: string) => void
+  /** A quién se puede llamar: las funciones del programa y las de uso común. */
+  callees?: readonly string[]
+  /** Las casillas donde se usa el chip seleccionado: se marcan, porque su conexión no se dibuja. */
+  lit?: readonly string[]
+}
+
+const NO_STATE: SlotState = { chips: {}, hot: null }
+export const SlotStateContext = createContext<SlotState>(NO_STATE)
+
+/** El estado de una casilla: el chip que lleva (si su texto es justo ese nombre) y si es el objetivo de un arrastre. */
+function useSlotState(slot: Slot | undefined, value: string) {
+  const state = useContext(SlotStateContext)
+  const known = slot ? state.chips[slot.id] : undefined
+  const chip = known && known.name === value.trim() ? known : undefined
+  const hot = slot && state.hot?.slot === slot.id ? state.hot : null
+  return {
+    chip,
+    attrs: {
+      'data-chip': chip?.type,
+      'data-hot': hot ? (hot.ok ? 'ok' : 'no') : undefined,
+      'data-lit': slot && state.lit?.includes(slot.id) ? '' : undefined,
+    },
+    /** El botón que quita el chip de la casilla. */
+    clear:
+      chip && slot && state.clear ? (
+        <button
+          type="button"
+          className="chip-clear nodrag"
+          aria-label={`Quitar ${chip.name} de ${slot.label}`}
+          title={`Quitar ${chip.name}`}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            state.clear?.(slot.id)
+          }}
+        >
+          <Icon name="x" size={11} />
+        </button>
+      ) : null,
+  }
+}
+
+/**
  * Un campo de texto se edita en un **borrador** y se confirma al salir de él o con Intro
  * (Esc lo descarta). Confirmar por tecla reescribiría el código a cada pulsación, y a medio
  * escribir casi ningún trozo de Python es válido: el nodo cambiaría de forma bajo los dedos.
  */
-function useDraft(value: string, onCommit?: (next: string) => void) {
+export function useDraft(value: string, onCommit?: (next: string) => void) {
   const [draft, setDraft] = useState<string | null>(null)
   // Lo último escrito, para que perder el foco confirme lo que hay y no lo que había al pintar.
   const latest = useRef<string | null>(null)
@@ -59,7 +121,7 @@ function useDraft(value: string, onCommit?: (next: string) => void) {
 }
 
 /** Intro confirma y Esc descarta. En un área de texto, Intro es un salto de línea: confirma Ctrl+Intro. */
-function onKeys(
+export function onKeys(
   editor: { cancel: () => void; commit: () => void },
   multiline: boolean,
 ): (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void {
@@ -99,25 +161,43 @@ export function TextInput({
   const editor = useDraft(value, onChange)
   const listId = useId()
   const offered = suggestions !== undefined && suggestions.length > 0 && onChange !== undefined
+  const state = useSlotState(slot, value)
+  const input = (
+    <input
+      list={offered ? listId : undefined}
+      className={`input ${mono ? 'type-value' : 'type-field-label'}`}
+      data-grow={grow ? '' : undefined}
+      data-slot={slot?.id}
+      data-slot-label={slot?.label}
+      data-linked={linked ? '' : undefined}
+      {...state.attrs}
+      title={
+        state.chip
+          ? `${state.chip.name}: el valor de esta casilla`
+          : linked
+            ? `${slot?.label ?? 'Valor'} viene de otro nodo`
+            : undefined
+      }
+      value={editor.shown}
+      placeholder={placeholder}
+      readOnly={!onChange || linked}
+      onChange={(e) => {
+        editor.edit(e.target.value)
+      }}
+      onBlur={editor.commit}
+      onKeyDown={onKeys(editor, false)}
+    />
+  )
   return (
     <>
-      <input
-        list={offered ? listId : undefined}
-        className={`input ${mono ? 'type-value' : 'type-field-label'}`}
-        data-grow={grow ? '' : undefined}
-        data-slot={slot?.id}
-        data-slot-label={slot?.label}
-        data-linked={linked ? '' : undefined}
-        title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
-        value={editor.shown}
-        placeholder={placeholder}
-        readOnly={!onChange || linked}
-        onChange={(e) => {
-          editor.edit(e.target.value)
-        }}
-        onBlur={editor.commit}
-        onKeyDown={onKeys(editor, false)}
-      />
+      {state.clear ? (
+        <span className="chip-wrap">
+          {input}
+          {state.clear}
+        </span>
+      ) : (
+        input
+      )}
       {offered && (
         <datalist id={listId}>
           {suggestions.map((name) => (
@@ -172,14 +252,22 @@ export function TextArea({
   linked?: boolean
 }) {
   const editor = useDraft(value, onChange)
-  return (
+  const state = useSlotState(slot, value)
+  const area = (
     <textarea
       className="input input--area type-value"
       data-grow=""
       data-slot={slot?.id}
       data-slot-label={slot?.label}
       data-linked={linked ? '' : undefined}
-      title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
+      {...state.attrs}
+      title={
+        state.chip
+          ? `${state.chip.name}: el valor de esta casilla`
+          : linked
+            ? `${slot?.label ?? 'Valor'} viene de otro nodo`
+            : undefined
+      }
       value={editor.shown}
       placeholder={placeholder}
       rows={rows}
@@ -190,6 +278,14 @@ export function TextArea({
       onBlur={editor.commit}
       onKeyDown={onKeys(editor, true)}
     />
+  )
+  return state.clear ? (
+    <span className="chip-wrap">
+      {area}
+      {state.clear}
+    </span>
+  ) : (
+    area
   )
 }
 

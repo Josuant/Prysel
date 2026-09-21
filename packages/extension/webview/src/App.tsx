@@ -99,6 +99,10 @@ export function App() {
     program?.nodes.find((n) => n.id === selected),
     view.focus,
   )
+  /** Las funciones del programa, como chips que se arrastran a una llamada. */
+  const palette = view.functions
+    .filter((fn) => fn.id !== view.focus?.id)
+    .map((fn) => ({ id: fn.id, name: fn.name, signature: fn.signature, params: fn.params }))
   const add = (template: TemplateId) => {
     act({ type: 'add', template, ...place })
   }
@@ -140,6 +144,9 @@ export function App() {
             onEnter={view.enter}
             onControlChange={changeControl}
             onAction={act}
+            addTarget={'into' in place ? place.into : null}
+            palette={palette}
+            addToModule={view.focus === null}
             selected={selected}
             onSelect={setSelected}
             interactive

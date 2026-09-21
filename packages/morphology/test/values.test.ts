@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { accepts, slotAccepts, slotTypeOf, valueTypeOf, type ControlModel } from '../src/index.ts'
+import {
+  ACTION_CALLS,
+  accepts,
+  slimControlHeight,
+  slimHeight,
+  slimWidth,
+  slotAccepts,
+  slotTypeOf,
+  valueTypeOf,
+  type ControlModel,
+} from '../src/index.ts'
 
 const expression = (operator: string): ControlModel => ({
   kind: 'expression',
@@ -73,5 +83,82 @@ describe('qué acepta un campo', () => {
       'collection',
     )
     expect(slotTypeOf(expression('+'), 'left')).toBe('any')
+  })
+})
+
+describe('la tarjeta esbelta mide lo que lleva dentro', () => {
+  const row = slimControlHeight({ kind: 'number', value: 1 })
+  const args = (target: string, names: string[]): ControlModel => ({
+    kind: 'args',
+    target,
+    args: names.map((name) => ({ name, value: 'x' })),
+  })
+
+  it('un editor de una fila es una fila', () => {
+    expect(slimControlHeight({ kind: 'text', value: 'Hola', multiline: false })).toBe(row)
+  })
+
+  it('una operación y una condición caben en una fila: A, operador y B', () => {
+    const operation: ControlModel = {
+      kind: 'expression',
+      left: 'a',
+      operator: '+',
+      right: 'b',
+      operators: ['+'],
+    }
+    expect(slimControlHeight(operation)).toBe(row)
+    expect(
+      slimControlHeight({
+        kind: 'condition',
+        field: 'a',
+        operator: '<',
+        value: '1',
+        operators: ['<'],
+      }),
+    ).toBe(row)
+  })
+
+  it('una llamada suma la función y cada argumento; print no repite su nombre', () => {
+    expect(slimControlHeight(args('sumar', ['a', 'b']))).toBeGreaterThan(
+      slimControlHeight(args('print', ['mensaje', 'fin'])),
+    )
+    // print(x): un solo campo, el del mensaje.
+    expect(slimControlHeight(args('print', ['mensaje']))).toBe(row)
+    expect(ACTION_CALLS.has('print')).toBe(true)
+  })
+
+  it('con más argumentos de los que caben, los que no tienen cable se resumen', () => {
+    const many = args('f', ['a', 'b', 'c', 'd', 'e', 'f'])
+    expect(slimControlHeight(many)).toBeLessThan(
+      slimControlHeight(args('f', ['a', 'b', 'c', 'd'])) + 40,
+    )
+  })
+
+  it('el alto total es marco + cabecera + editor: sin aire de más', () => {
+    const one = slimHeight({ kind: 'number', value: 1 })
+    const two = slimHeight(args('sumar', ['a', 'b']))
+    expect(two - one).toBe(slimControlHeight(args('sumar', ['a', 'b'])) - row)
+    // Y es bastante menos que la tarjeta de antes (156 de base).
+    expect(one).toBeLessThan(100)
+  })
+
+  it('un comentario suma su sitio; sin editor, se enseña el código', () => {
+    expect(slimHeight({ kind: 'number', value: 1 }, [], 'Explica algo')).toBeGreaterThan(
+      slimHeight({ kind: 'number', value: 1 }),
+    )
+    expect(slimHeight(undefined, [], undefined, true)).toBeGreaterThan(slimHeight(undefined))
+  })
+
+  it('las fórmulas piden más ancho que un campo suelto', () => {
+    const formula: ControlModel = {
+      kind: 'condition',
+      field: 'a',
+      operator: '<',
+      value: '1',
+      operators: ['<'],
+    }
+    expect(slimWidth(224, formula)).toBeGreaterThan(224)
+    expect(slimWidth(224, { kind: 'number', value: 1 })).toBe(224)
+    expect(slimWidth(300, formula)).toBe(300)
   })
 })

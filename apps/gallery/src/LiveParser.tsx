@@ -134,6 +134,7 @@ export function LiveParser() {
     analyse(rewritten, change.select?.line)
   }
 
+  const canvasHeight = Number(new URLSearchParams(location.search).get('h')) || 460
   // Compacto pliega las funciones (vista de pájaro: qué recibe y qué devuelve cada una);
   // normal y expandido las abren como territorios que envuelven su cuerpo.
   const canvasNodes = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
@@ -144,6 +145,10 @@ export function LiveParser() {
     program?.nodes.find((n) => n.id === selected),
     view.focus,
   )
+  /** Las funciones del programa, como chips que se arrastran a una llamada. */
+  const palette = view.functions
+    .filter((fn) => fn.id !== view.focus?.id)
+    .map((fn) => ({ id: fn.id, name: fn.name, signature: fn.signature, params: fn.params }))
   const add = (template: TemplateId) => {
     act({ type: 'add', template, ...place })
   }
@@ -204,11 +209,16 @@ export function LiveParser() {
             nodes={nodes}
             edges={view.edges}
             density={density}
-            height={460}
+            // `?h=` da otro alto al lienzo (y encuadra entero): para capturar un programa grande.
+            height={canvasHeight}
+            {...(canvasHeight === 460 ? {} : { fitMode: 'contain' as const })}
             interactive
             onEnter={view.enter}
             onControlChange={changeControl}
             onAction={act}
+            addTarget={'into' in place ? place.into : null}
+            palette={palette}
+            addToModule={view.focus === null}
             selected={selected}
             onSelect={setSelected}
             fitKey={view.viewKey}

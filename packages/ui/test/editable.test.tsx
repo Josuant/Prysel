@@ -78,9 +78,9 @@ describe('qué campos de un editor se pueden escribir', () => {
       ],
     }
     const markup = html(call, { editable: ['args.b'], level: 'full' })
-    // En el editor completo se ven los dos argumentos; solo `b` se puede escribir.
-    expect(inputs(markup)).toBe(2)
-    expect(readOnly(markup)).toBe(1)
+    // En el editor completo se ven la función y los dos argumentos; solo `b` se puede escribir.
+    expect(inputs(markup)).toBe(3)
+    expect(readOnly(markup)).toBe(2)
   })
 
   it('un valor por defecto y un nombre de parámetro son campos distintos', () => {

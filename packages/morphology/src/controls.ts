@@ -41,7 +41,16 @@ export type ControlModel =
       operators: string[]
       hits?: [number, number]
     }
-  | { kind: 'loop'; iterable: string; variable: string; current?: number; total?: number }
+  | {
+      kind: 'loop'
+      /** La secuencia que recorre (`for`) o la condición que se evalúa en cada vuelta (`while`). */
+      iterable: string
+      variable: string
+      /** Es un `while`: no hay variable de iteración y `iterable` es una condición. */
+      while?: boolean
+      current?: number
+      total?: number
+    }
   | { kind: 'signal'; errorType: string; types: string[]; message: string }
   | { kind: 'io'; target: string; mode: string; modes: string[] }
   | {

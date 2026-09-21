@@ -278,7 +278,9 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
   const list = field(expression, 'arguments')
   if (!callee || list?.type !== 'argument_list') return null
   const items = named(list).filter((item) => item.type !== 'comment')
-  if (items.length === 0) return null
+  const callable = field(expression, 'function')
+  // Una llamada sin argumentos a una función suelta (`main()`) también tiene editor: es donde se elige a quién llamar.
+  if (items.length === 0 && (callable?.type !== 'identifier' || callee === 'print')) return null
 
   // `print("mensaje")` no es una llamada con un argumento: es un mensaje. Se edita como texto.
   const only = items[0]
@@ -289,7 +291,13 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
       route(only, 'value', ports)
       const at = stringSpan(only)
       return {
-        control: { kind: 'text', value: message, multiline: true, placeholder: 'Mensaje' },
+        // Un mensaje corto cabe en una fila; uno largo o de varias líneas crece.
+        control: {
+          kind: 'text',
+          value: message,
+          multiline: message.includes('\n') || message.length > 40,
+          placeholder: 'Mensaje',
+        },
         ports,
         ...(at ? { sources: { value: at } } : {}),
         // Conectar una variable a un mensaje lo sustituye entero: `print("Hola")` → `print(nombre)`.
@@ -321,7 +329,18 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
     route(value, `arg:${name}`, ports)
     sources[`args.${name}`] = span(value, 'expression')
   }
-  return { control: { kind: 'args', target: callee, args }, ports, sources }
+  // A quién se llama y la lista de argumentos como un todo: es lo que permite elegir otra función
+  // (y con ella, sus parámetros) sin escribir el nombre a mano.
+  if (callable) {
+    sources['target'] = span(callable, 'expression')
+    sources['argsList'] = inside(list)
+  }
+  return {
+    control: { kind: 'args', target: callee, args },
+    ports,
+    sources,
+    ...(callable ? { inputs: { callee: span(callable, 'expression') } } : {}),
+  }
 }
 
 /** Lo que enseña un nodo que calcula o guarda una expresión. `null` = mostrar el código. */

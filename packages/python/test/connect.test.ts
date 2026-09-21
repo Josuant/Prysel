@@ -76,7 +76,7 @@ describe('lo que un nodo ofrece y lo que acepta', () => {
 
   it('cada argumento de una llamada es un puerto con su nombre', () => {
     const program = parse('def suma(a, b):\n    return a + b\nx = suma(1, 2)\n')
-    expect(Object.keys(at(program, 3).inputs ?? {})).toEqual(['arg:a', 'arg:b'])
+    expect(Object.keys(at(program, 3).inputs ?? {})).toEqual(['callee', 'arg:a', 'arg:b'])
   })
 
   it('la secuencia de un bucle y el valor de una condición aceptan un cable', () => {

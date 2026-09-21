@@ -103,6 +103,8 @@ export type IconId =
   | 'chevron'
   | 'plus'
   | 'calendar'
+  | 'exit'
+  | 'skip'
 
 /**
  * El editor gráfico que el nodo muestra en su cuerpo. Es lo que hace que un nodo sea

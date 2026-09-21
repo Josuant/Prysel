@@ -15,7 +15,12 @@ export { ICONS, ICON_IDS } from './icons.ts'
 export { NODE_KINDS, getKind, type NodeKindId } from './kinds.ts'
 export {
   DENSITY_BASE,
+  ACTION_CALLS,
   INLINE_ARGS,
+  slimControlHeight,
+  slimHeight,
+  slimWidth,
+  LOOP_HEADROOM,
   compactShape,
   complexityScale,
   controlHeight,

@@ -345,7 +345,26 @@ const SPACED: ReadonlySet<TemplateId> = new Set(['function'])
 export function addTemplate(
   program: Program,
   template: TemplateId,
-  where: { after?: string; into?: string; fill?: string } = {},
+  where: { after?: string; into?: string; before?: string; fill?: string } = {},
+): Change {
+  return insertLines(
+    program,
+    where,
+    (indent) => linesOf(template, where.fill).map((line) => ' '.repeat(indent) + line),
+    SPACED.has(template),
+  )
+}
+
+/**
+ * Escribe unas líneas en un sitio del programa: detrás de un nodo (con su misma sangría), al final
+ * del cuerpo de una función o un bucle (`into`), o al final del archivo. `lines` recibe la sangría
+ * del sitio y devuelve las líneas ya sangradas. Un cuerpo que era solo `pass` se sustituye.
+ */
+function insertLines(
+  program: Program,
+  where: { after?: string; into?: string; before?: string },
+  lines: (indent: number) => string[],
+  spaced = false,
 ): Change {
   const text = program.source
   const eol = eolOf(text)
@@ -357,7 +376,18 @@ export function addTemplate(
 
   const anchor = where.after ? nodeById(program, where.after) : undefined
   const scope = where.into ? nodeById(program, where.into) : undefined
-  if (anchor?.range) {
+  const before = where.before ? nodeById(program, where.before) : undefined
+  /** Se escribe al principio del archivo: no hay línea anterior a la que pegarse. */
+  let leading = false
+  if (before?.range) {
+    // Justo antes de una sentencia (y de los comentarios que lleva pegados): al final de la línea anterior.
+    const first = lineStart(text, before.range.lead ?? before.range.start)
+    indent = before.range.indent
+    if (first === 0) {
+      at = 0
+      leading = true
+    } else at = first - (text.slice(first - 2, first) === '\r\n' ? 2 : 1)
+  } else if (anchor?.range) {
     at = lineEnd(text, anchor.range.end)
     indent = anchor.range.indent
   } else if (scope?.range) {
@@ -371,37 +401,128 @@ export function addTemplate(
         pass = { start, end: start + 4 }
       }
     }
+    // Lo que se mete en una función o un bucle va **antes** de su `return`, `break` o `continue`
+    // final: detrás nunca se ejecutaría.
+    const end = lineEnd(text, scope.range.bodyEnd ?? scope.range.end)
+    const closing = program.nodes.find(
+      (n) =>
+        (n.kind === 'control.return' ||
+          n.kind === 'control.break' ||
+          n.kind === 'control.continue') &&
+        n.range?.owner === scope.id &&
+        lineEnd(text, n.range.end) === end,
+    )
+    if (!pass && closing?.range) {
+      const first = lineStart(text, closing.range.lead ?? closing.range.start)
+      // Justo después de la línea anterior (la del `def`, si el `return` es lo primero).
+      at = first - (text.slice(first - 2, first) === '\r\n' ? 2 : 1)
+      indent = closing.range.indent
+    }
   } else {
     // Al final del archivo. Si no acaba en salto de línea, se pone uno antes.
     at = text.length
     if (text.length > 0 && !text.endsWith('\n')) prefix = eol
   }
 
+  const written = lines(indent)
   if (pass) {
     // El primer renglón ocupa el sitio del `pass` (que ya lleva su sangría); el resto va debajo.
-    const lines = linesOf(template, where.fill)
-      .map((line, i) => (i === 0 ? line : ' '.repeat(indent) + line))
-      .join(eol)
+    const joined = written.map((line, i) => (i === 0 ? line.trimStart() : line)).join(eol)
     return {
-      edits: [{ start: pass.start, end: pass.end, text: lines }],
+      edits: [{ start: pass.start, end: pass.end, text: joined }],
       select: { line: lineOf(text, pass.start) },
     }
   }
 
-  const atEndOfFile = at === text.length && !anchor?.range && !scope?.range
-  const blanks = SPACED.has(template) && text.trim() !== '' ? [eol, eol] : []
-  const lines = linesOf(template, where.fill)
-    .map((line) => ' '.repeat(indent) + line)
-    .join(eol)
+  const atEndOfFile = at === text.length && !anchor?.range && !scope?.range && !before?.range
+  const blanks = spaced && text.trim() !== '' ? [eol, eol] : []
+  const block = written.join(eol)
   // Detrás de una línea, se empieza con un salto; al final del archivo, se cierra con él.
-  const body = atEndOfFile
-    ? `${prefix}${blanks.join('')}${lines}${eol}`
-    : `${eol}${blanks.join('')}${lines}`
-  const breaks = (body.slice(0, body.indexOf(lines)).match(/\n/g) ?? []).length
+  const body = leading
+    ? `${block}${eol}`
+    : atEndOfFile
+      ? `${prefix}${blanks.join('')}${block}${eol}`
+      : `${eol}${blanks.join('')}${block}`
+  const breaks = (body.slice(0, body.indexOf(block)).match(/\n/g) ?? []).length
   return {
     edits: [{ start: at, end: at, text: body }],
     select: { line: lineOf(text, at) + breaks },
   }
+}
+
+const newlines = (text: string) => (text.match(/\n/g) ?? []).length
+
+/** Cambia la sangría de un bloque de líneas de `from` a `to` columnas (las líneas en blanco no se tocan). */
+function reindent(block: string[], from: number, to: number): string[] {
+  const delta = to - from
+  if (delta === 0) return block
+  return block.map((line) => {
+    if (line.trim() === '') return line
+    return delta > 0 ? ' '.repeat(delta) + line : line.replace(new RegExp(`^ {0,${-delta}}`), '')
+  })
+}
+
+/**
+ * Mueve una sentencia entera —con su cuerpo y los comentarios que lleva pegados— al final del
+ * cuerpo de una función (`into`) o detrás de otro nodo (`after`), cambiándole la sangría al nuevo
+ * sitio. Es lo que escribe arrastrar un nodo dentro o fuera de una función. Si la sentencia era lo
+ * único de su bloque, ese queda con un `pass`. No mueve algo dentro de sí mismo.
+ */
+export function moveNode(
+  program: Program,
+  id: string,
+  where: { after?: string; into?: string },
+): Change {
+  const node = nodeById(program, id)
+  const range = node?.range
+  const target = nodeById(program, where.after ?? where.into ?? '')
+  if (!node || !range || !target?.range || target.id === id) return { edits: [] }
+  // Ni dentro de sí misma, ni detrás de algo que ella contiene.
+  if (target.range.start >= range.start && target.range.end <= range.end) return { edits: [] }
+
+  const text = program.source
+  const first = range.lead ?? range.start
+  const begin = lineStart(text, first)
+  // Una sentencia que comparte línea con otra (`if x: y = 1`) no es una línea suya: no se mueve.
+  if (!blankBefore(text, begin, first)) return { edits: [] }
+  const block = text.slice(begin, lineEnd(text, range.end)).split(/\r?\n/)
+
+  let removed = deleteNode(program, id).edits
+  if (removed.length === 0) return { edits: [] }
+  const placed = insertLines(program, where, (indent) => reindent(block, range.indent, indent))
+  const insertion = placed.edits[0]
+  if (!insertion) return { edits: [] }
+  let edits = [...removed, ...placed.edits]
+  if (!validEdits(edits, text.length)) {
+    // Sacar lo último de una función y ponerlo detrás de ella: el sitio de destino es justo el final
+    // de lo que se quita. Se lleva el salto de línea de antes en vez del de después, y las dos
+    // ediciones quedan pegadas en lugar de solaparse.
+    const cut = removed[0]
+    const before = text.slice(begin - 2, begin) === '\r\n' ? 2 : text[begin - 1] === '\n' ? 1 : 0
+    if (removed.length !== 1 || cut?.text !== '' || before === 0) return { edits: [] }
+    removed = [{ start: begin - before, end: lineEnd(text, range.end), text: '' }]
+    edits = [...removed, ...placed.edits]
+    if (!validEdits(edits, text.length)) return { edits: [] }
+  }
+
+  // Lo borrado antes del sitio donde se escribe le quita líneas a la posición final.
+  let shift = 0
+  for (const edit of removed) {
+    if (edit.end <= insertion.start) {
+      shift += newlines(text.slice(edit.start, edit.end)) - newlines(edit.text)
+    }
+  }
+  return { edits, ...(placed.select ? { select: { line: placed.select.line - shift } } : {}) }
+}
+
+/**
+ * La primera sentencia de un contexto (el cuerpo de una función o de un bucle, o el archivo si no se
+ * dice cuál): ahí se inicializan las variables. En el archivo se salta los `import`, que van antes.
+ */
+function firstStatement(program: Program, into?: string): ProgramNode | undefined {
+  return program.nodes
+    .filter((n) => n.range?.owner === into && (into !== undefined || n.kind !== 'external.import'))
+    .sort((a, b) => (a.range?.start ?? 0) - (b.range?.start ?? 0))[0]
 }
 
 /** El nombre que sale por un puerto de un nodo: el del parámetro, o el que el nodo define. */
@@ -424,6 +545,18 @@ export function connectNodes(
 ): Change {
   const source = nodeById(program, action.from)
   const target = nodeById(program, action.to)
+  if (action.slot === 'return' && target?.kind === 'abstraction.collapsed') {
+    return connectReturn(program, target, source, action.port)
+  }
+  // Un chip de función soltado sobre la casilla de una llamada: pasa a llamar a esa función.
+  if (action.slot === 'callee') {
+    // Solo una función se puede llamar: una variable no se escribe donde va a quién se llama.
+    const name =
+      source?.kind === 'abstraction.collapsed' && !action.port ? source.provides : undefined
+    return target && name && target.scope?.includes(name)
+      ? changeCallee(program, target.id, name)
+      : { edits: [] }
+  }
   const at = target?.inputs?.[action.slot]
   const name = source ? outputName(source, action.port) : undefined
   if (!source || !target || !at || !name || !isIdentifier(name) || source.id === target.id) {
@@ -432,6 +565,86 @@ export function connectNodes(
   if (!target.scope?.includes(name)) return { edits: [] }
   if (program.source.slice(at.start, at.end) === name) return { edits: [] }
   return { edits: [{ start: at.start, end: at.end, text: name }] }
+}
+
+/**
+ * Conecta algo al puerto de retorno de una función: la función pasa a devolver ese valor. Si ya
+ * tiene un `return` en su cuerpo, cambia lo que devuelve; si no, lo añade al final.
+ */
+function connectReturn(
+  program: Program,
+  def: ProgramNode,
+  source: ProgramNode | undefined,
+  port?: string,
+): Change {
+  const name = source ? outputName(source, port) : undefined
+  if (!source || !name || !isIdentifier(name)) return { edits: [] }
+  const inside =
+    def.contains?.includes(source.id) === true ||
+    (source.id === def.id && port?.startsWith('param:') === true)
+  if (!inside) return { edits: [] }
+
+  const returns = program.nodes
+    .filter((n) => n.kind === 'control.return' && n.range?.owner === def.id)
+    .sort((a, b) => a.line - b.line)
+  const last = returns[returns.length - 1]
+  if (!last?.range) return addTemplate(program, 'return', { into: def.id, fill: name })
+
+  const value = last.inputs?.['arg:valor']
+  if (value) {
+    if (program.source.slice(value.start, value.end) === name) return { edits: [] }
+    return { edits: [{ start: value.start, end: value.end, text: name }] }
+  }
+  // Un `return a + b` (o algo que no es un valor suelto) se sustituye entero.
+  return { edits: [{ start: last.range.start, end: last.range.end, text: `return ${name}` }] }
+}
+
+/** Un nombre que se puede llamar: un identificador, con puntos si es un método (`df.head`). */
+const CALLEE = /^[\p{L}_][\p{L}\p{N}_]*(\.[\p{L}_][\p{L}\p{N}_]*)*$/u
+
+/**
+ * Cambia a quién llama una llamada. Si la nueva función es del programa, la lista de argumentos se
+ * ajusta a sus parámetros (los valores que ya había se conservan, por posición; los que faltan
+ * quedan en `None`) para que cada parámetro tenga su casilla. Y si devuelve algo y la llamada estaba
+ * suelta (`f(x)`), su resultado se guarda en una variable, que es la salida del nodo.
+ */
+export function changeCallee(program: Program, id: string, callee: string): Change {
+  const node = nodeById(program, id)
+  const target = node?.sources?.['target']
+  const list = node?.sources?.['argsList']
+  const control = node?.control
+  if (!node || !target || !list || control?.kind !== 'args' || !CALLEE.test(callee)) {
+    return { edits: [] }
+  }
+  if (callee === control.target) return { edits: [] }
+  const text = program.source
+
+  const def = program.nodes.find((n) => n.kind === 'abstraction.collapsed' && n.provides === callee)
+  const edits: TextEdit[] = []
+
+  // Suelta y con resultado: se guarda. El nombre no puede chocar con nada de lo que el nodo ve.
+  const returns =
+    def !== undefined &&
+    program.nodes.some((n) => n.kind === 'control.return' && def.contains?.includes(n.id))
+  const bare = node.id.startsWith('expr:') && node.range !== undefined
+  let head = ''
+  if (returns && bare && node.range && node.range.start === target.start) {
+    const taken = new Set(node.scope ?? [])
+    let name = 'resultado'
+    for (let n = 2; taken.has(name); n++) name = `resultado_${n}`
+    head = `${name} = `
+  }
+  edits.push({ start: target.start, end: target.end, text: `${head}${callee}` })
+
+  if (def) {
+    const params = def.params ?? []
+    const current = control.args.map((arg) => arg.value)
+    const next = params.map((_, i) => current[i]?.trim() || 'None')
+    if (text.slice(list.start, list.end) !== next.join(', ')) {
+      edits.push({ start: list.start, end: list.end, text: next.join(', ') })
+    }
+  }
+  return { edits }
 }
 
 /** Suelta el cable de un campo: vuelve a un valor neutro que Python acepta. */
@@ -463,12 +676,25 @@ export function actionEdits(program: Program, action: NodeAction): Change {
     case 'add': {
       const source = action.connect ? nodeById(program, action.connect.from) : undefined
       const fill = source && action.connect ? outputName(source, action.connect.port) : undefined
+      const first = action.at === 'start' ? firstStatement(program, action.into) : undefined
       return addTemplate(program, action.template, {
         ...(action.after === undefined ? {} : { after: action.after }),
-        ...(action.into === undefined ? {} : { into: action.into }),
+        // Al principio del contexto: antes de su primera sentencia. Si no tiene ninguna, es el final.
+        ...(first === undefined
+          ? action.into === undefined
+            ? {}
+            : { into: action.into }
+          : { before: first.id }),
         ...(fill === undefined || !isIdentifier(fill) ? {} : { fill }),
       })
     }
+    case 'move':
+      return moveNode(program, action.id, {
+        ...(action.after === undefined ? {} : { after: action.after }),
+        ...(action.into === undefined ? {} : { into: action.into }),
+      })
+    case 'callee':
+      return changeCallee(program, action.id, action.callee)
     case 'connect':
       return connectNodes(program, action)
     case 'disconnect':

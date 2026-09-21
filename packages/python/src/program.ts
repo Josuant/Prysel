@@ -198,6 +198,8 @@ class Builder {
   private readonly scope = new Map<string, { id: string; port?: string }>()
   /** Los nombres visibles ahora, ya calculados: los nodos consecutivos comparten la misma lista. */
   private visible: string[] | null = null
+  /** Los bucles que envuelven lo que se está recorriendo, del más interno al más externo: a quién apuntan un `break` o un `continue`. */
+  readonly loops: string[] = []
   /** Funciones definidas hasta ahora y sus parámetros: nombran los argumentos de cada llamada. */
   readonly functions = new Map<string, string[]>()
   /** Y el nodo que las define: es lo que permite ir de una llamada a su cuerpo. */
@@ -633,8 +635,12 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         ...(control ? inputsIn(inputsOf(loopSources(iterable))) : {}),
       })
       linkReads(builder, id, iterable, iterablePorts(iterable))
-      if (variable) builder.bind(variable.text, id)
-      if (variable?.type === 'identifier') builder.provide(id, variable.text)
+      // La variable de iteración es un puerto del bucle, como un parámetro lo es de una función:
+      // de ahí salen los cables hacia lo que hay dentro.
+      if (variable?.type === 'identifier') {
+        builder.bindParam(variable.text, id)
+        builder.provide(id, variable.text)
+      } else if (variable) builder.bind(variable.text, id)
       if (variable?.type === 'identifier') {
         builder.recordName(id, variable.text, variable)
         builder.rename(id, 'variable', variable.text)
@@ -643,17 +649,22 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       builder.annotate(id, own.header.join('\n'))
 
       const body = field(statement, 'body')
+      const before = builder.nodes.length
+      builder.loops.push(id)
       const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      builder.loops.pop()
       if (inside.length > 0) {
         const first = inside[0]
         const last = inside[inside.length - 1]
         if (first) builder.link(id, first, 'transform', undefined, undefined, 'control')
         // El retorno cierra el bucle: es la única conexión que va contra el tiempo.
         if (last) builder.link(last, id, 'feedback')
+        // Todo lo que nace dentro es suyo, a cualquier profundidad (las ramas de un `if` incluidas).
+        const nested = builder.nodes.slice(before).map((n) => n.id)
         const node = builder.nodes.find((n) => n.id === id)
         if (node) {
-          node.contains = inside
-          node.ops = inside.length
+          node.contains = nested
+          node.ops = nested.length
         }
       }
       return id
@@ -661,15 +672,55 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
 
     case 'while_statement': {
       const id = statementId(statement, 'while')
-      builder.add({ id, kind: 'control.loop', label: 'mientras', code, line })
-      linkReads(builder, id, field(statement, 'condition'))
+      const condition = field(statement, 'condition')
+      const control = condition
+        ? ({ kind: 'loop', variable: '', iterable: condition.text, while: true } as const)
+        : null
+      builder.add({
+        id,
+        kind: 'control.loop',
+        label: 'mientras',
+        code,
+        line,
+        ...(control ? { control } : {}),
+        ...(control ? sourcesOf(loopSources(condition)) : {}),
+        ...(control ? inputsIn(inputsOf(loopSources(condition))) : {}),
+      })
+      linkReads(builder, id, condition, iterablePorts(condition))
       const own = ownComments(statement)
       builder.annotate(id, own.header.join('\n'))
       const body = field(statement, 'body')
+      const before = builder.nodes.length
+      builder.loops.push(id)
       const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      builder.loops.pop()
       const last = inside[inside.length - 1]
       if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
       if (last) builder.link(last, id, 'feedback')
+      const nested = builder.nodes.slice(before).map((n) => n.id)
+      const node = builder.nodes.find((n) => n.id === id)
+      if (node && nested.length > 0) {
+        node.contains = nested
+        node.ops = nested.length
+      }
+      return id
+    }
+
+    // `break` sale del bucle más cercano y `continue` salta a su siguiente vuelta: cada uno se
+    // conecta al puerto del bucle que afecta, así se ve a cuál.
+    case 'break_statement':
+    case 'continue_statement': {
+      const isBreak = statement.type === 'break_statement'
+      const id = statementId(statement, isBreak ? 'break' : 'continue')
+      builder.add({
+        id,
+        kind: isBreak ? 'control.break' : 'control.continue',
+        label: isBreak ? 'salir' : 'siguiente',
+        code,
+        line,
+      })
+      const loop = builder.loops[builder.loops.length - 1]
+      if (loop) builder.link(id, loop, 'transform', isBreak ? 'exit' : 'next', undefined, 'control')
       return id
     }
 
@@ -730,6 +781,8 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         linkReads(builder, id, field(param, 'value'))
       }
       const restore = builder.pushScope()
+      // Un `break` dentro de una función no afecta a un bucle que la rodea.
+      const outerLoops = builder.loops.splice(0)
       // Los parámetros existen solo dentro: se resuelven al propio nodo de la función.
       if (params) {
         for (const param of params.namedChildren) {
@@ -761,6 +814,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const before = builder.nodes.length
       if (body) visitBlock(builder, body, { skip: new Set(doc ? [doc.at] : []), owner: id })
       const inside = builder.nodes.slice(before).map((n) => n.id)
+      builder.loops.push(...outerLoops)
       restore()
       const node = builder.nodes.find((n) => n.id === id)
       if (node && inside.length > 0) {

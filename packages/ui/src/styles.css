@@ -1571,3 +1571,427 @@ button.fn-menu__crumb:hover {
   margin: 4px 8px 2px;
   color: var(--ink-muted);
 }
+
+/* La operación se lee como una fórmula: A, el operador en medio, B. */
+.control-formula__op {
+  display: flex;
+  justify-content: center;
+}
+
+/* La etiqueta del puerto de retorno de una función, fuera de su borde derecho. */
+.port-label[data-side='right'] {
+  left: 100%;
+  margin-left: 8px;
+  transform: translateY(-50%);
+}
+.port-label[data-side='bottom'] {
+  top: 100%;
+  margin-top: 8px;
+  transform: translateX(-50%);
+}
+
+/* ── Meter y sacar nodos de una función arrastrando ── */
+/* Al arrastrar un nodo sobre una función (o fuera de la suya), esa función lo dice antes de soltar. */
+.drop-hint {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  border: 2px dashed var(--accent);
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  pointer-events: none;
+}
+.drop-hint[data-drop='out'] {
+  border-color: var(--state-warning);
+  background: color-mix(in srgb, var(--state-warning) 9%, transparent);
+}
+.drop-hint__label {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink);
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.drop-hint[data-drop='out'] .drop-hint__label {
+  border-color: var(--state-warning);
+}
+/* Donde irá lo que se añada desde el menú. */
+.flow-node[data-add-target]::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: -3px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 28px;
+  pointer-events: none;
+}
+/* El agarre para cambiar el tamaño de una función. */
+.node-resize.react-flow__resize-control {
+  width: 16px;
+  height: 16px;
+  border: 0;
+  background: transparent;
+  cursor: nwse-resize;
+}
+.node-resize__grip {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-right: 2.5px solid var(--accent);
+  border-bottom: 2.5px solid var(--accent);
+  border-radius: 0 0 6px 0;
+  transform: translate(-14px, -14px);
+}
+.add-menu {
+  align-items: center;
+  gap: 8px;
+}
+.add-menu__target {
+  color: var(--ink-muted);
+}
+
+/* ── Bucles: un territorio que envuelve lo que repite ── */
+/* El editor del bucle (`para x en …`) vive en la cabecera del territorio. */
+.node__control--territory {
+  max-width: 460px;
+  margin-top: var(--space-1);
+  pointer-events: auto;
+}
+/*
+ * El carril de repetición: sale del final del cuerpo, recorre el borde de abajo y sube hasta la
+ * cabecera. Discontinuo y en movimiento suave, para que se lea «esto vuelve a pasar».
+ */
+.loop-rail {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.loop-rail__line,
+.loop-rail__head {
+  stroke: color-mix(in srgb, var(--badge-control-fg) 75%, transparent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.loop-rail__line {
+  stroke-dasharray: 7 7;
+  animation: rail-flow 1.4s linear infinite;
+}
+@keyframes rail-flow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+.loop-rail__label {
+  position: absolute;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--badge-control-fg) 50%, transparent);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--ink-muted);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .loop-rail__line {
+    animation: none;
+  }
+}
+/* En un bucle, las etiquetas de los puertos de la izquierda dejan pasar el carril. */
+.port-label[data-side='inside'][data-rail] {
+  left: 28px;
+  max-width: 52px;
+}
+
+/* ── El menú de un nodo (clic derecho) ── */
+.node-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+}
+.node-menu__item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-field);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.node-menu__item:hover,
+.node-menu__item:focus-visible {
+  outline: none;
+  background: var(--field);
+}
+.node-menu__item[data-danger] {
+  color: var(--state-error);
+}
+.node-menu__hint {
+  color: var(--ink-faint);
+  font: inherit;
+  font-size: 0.85em;
+}
+
+/* ── Chips: variables y constantes como píldoras, agrupadas en la cabecera de cada contexto ── */
+.vchip {
+  --chip-color: var(--socket-any);
+  display: inline-flex;
+  height: 28px;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 8px;
+  border: 1.5px solid color-mix(in srgb, var(--chip-color) 60%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--chip-color) 14%, var(--surface));
+  color: var(--ink);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  cursor: grab;
+}
+.vchip[data-type='number'] {
+  --chip-color: var(--socket-number);
+}
+.vchip[data-type='text'] {
+  --chip-color: var(--socket-text);
+}
+.vchip[data-type='boolean'] {
+  --chip-color: var(--socket-boolean);
+}
+.vchip[data-type='collection'] {
+  --chip-color: var(--socket-collection);
+}
+.vchip[data-type='function'] {
+  --chip-color: var(--accent);
+}
+.vchip[data-selected] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.react-flow__node.dragging .vchip {
+  box-shadow: var(--shadow-raised);
+  cursor: grabbing;
+}
+.vchip__icon {
+  flex: none;
+  color: var(--chip-color);
+}
+.vchip__name {
+  font-weight: 600;
+}
+.vchip__eq {
+  color: var(--ink-faint);
+}
+.vchip__sig {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+}
+.vchip__value {
+  font-family: var(--font-mono);
+  color: var(--ink);
+}
+.vchip__value--input,
+.vchip__value--switch {
+  min-width: 0;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--chip-color) 60%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-family: var(--font-mono);
+}
+.vchip__value--switch {
+  cursor: pointer;
+}
+.vchip__value--input:focus-visible,
+.vchip__value--switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.vchip__field[data-quoted]::before,
+.vchip__field[data-quoted]::after {
+  content: '"';
+  color: var(--ink-faint);
+}
+
+/* La cajita de chips de un contexto. */
+.tray {
+  position: relative;
+  box-sizing: border-box;
+  border: 1.5px dashed color-mix(in srgb, var(--ink-faint) 50%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.tray-slot {
+  position: absolute;
+  z-index: 1;
+}
+.tray__add {
+  position: absolute;
+  display: inline-flex;
+  height: 28px;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  border: 1.5px dashed color-mix(in srgb, var(--ink-faint) 65%, transparent);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.tray__add:hover:not(:disabled),
+.tray__add:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tray__add:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Una casilla que lleva un chip dentro: se ve el chip, no un cable. */
+.input[data-chip] {
+  --slot-chip: var(--socket-any);
+  padding-left: 12px;
+  border-color: color-mix(in srgb, var(--slot-chip) 65%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--slot-chip) 14%, var(--field));
+  color: var(--ink);
+  font-style: normal;
+  font-weight: 600;
+}
+.input[data-chip='number'] {
+  --slot-chip: var(--socket-number);
+}
+.input[data-chip='text'] {
+  --slot-chip: var(--socket-text);
+}
+.input[data-chip='boolean'] {
+  --slot-chip: var(--socket-boolean);
+}
+.input[data-chip='collection'] {
+  --slot-chip: var(--socket-collection);
+}
+.chip-clear {
+  display: inline-grid;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--field);
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.chip-clear:hover,
+.chip-clear:focus-visible {
+  color: var(--state-error);
+}
+/* La casilla sobre la que está un chip que se arrastra: verde si lo admite, roja si no. */
+.input[data-hot='ok'] {
+  outline: 2px solid var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 14%, var(--field));
+}
+.input[data-hot='no'] {
+  outline: 2px solid var(--state-error);
+  background: color-mix(in srgb, var(--state-error) 12%, var(--field));
+}
+.chip-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+}
+.chip-wrap > .input {
+  min-width: 0;
+  flex: 1;
+  padding-right: 28px;
+}
+.chip-wrap > .chip-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  margin: 0;
+  transform: translateY(-50%);
+}
+
+/* ── Tarjeta esbelta: solo lo relevante ── */
+/* El icono dice el tipo; el nombre va en la cabecera, junto a él. */
+.badge[data-icon-only] {
+  padding: 4px;
+}
+.node[data-slim] .node__head {
+  gap: 6px;
+}
+.node[data-slim] .node__head .node__title {
+  flex: 1;
+  min-width: 0;
+}
+.node[data-slim] .node__body {
+  padding-top: 4px;
+}
+.node[data-slim] .node__control {
+  padding-top: 4px;
+}
+/* El nombre de un campo va a su izquierda, no encima: una fila menos por campo. */
+.node[data-slim] .field {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.node[data-slim] .field__label {
+  flex: none;
+  min-width: 2ch;
+}
+/* Una fórmula (operación, condición) en una sola fila: A, operador, B. */
+.control-formula[data-inline] {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.control-formula[data-inline] > .input,
+.control-formula[data-inline] > .chip-wrap {
+  min-width: 0;
+  flex: 1;
+  width: auto;
+}
+.control-formula[data-inline] > .control-formula__op {
+  flex: none;
+}
+.node[data-slim] .input {
+  padding: 3px 8px;
+}
+/* Las casillas donde se usa el chip seleccionado. */
+.input[data-lit] {
+  box-shadow: 0 0 0 2px var(--accent);
+}

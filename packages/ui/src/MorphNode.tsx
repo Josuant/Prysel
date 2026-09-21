@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -18,9 +19,11 @@ import {
   type NodeKindId,
   type NodeState,
   type Point,
+  type ValueType,
 } from '@prysel/morphology'
 import { StatusChip, TypeBadge } from './Badge.tsx'
 import { Control, type ControlModel } from './controls.tsx'
+import { SlotStateContext, type SlotState } from './fields.tsx'
 import { Icon } from './Icon.tsx'
 
 /** Medio píxel de margen para que el trazo de 1px caiga nítido sobre la rejilla. */
@@ -48,8 +51,10 @@ export interface MorphNodeProps {
   code?: string
   /** Metadata del pie: "428 → 91 filas · sales.py:42". */
   meta?: string
-  /** Qué hacen las acciones de la cabecera (duplicar, editar como código, eliminar). Sin ella, son decorativas. */
+  /** Lo que pide el usuario sobre el nodo: renombrarlo, plegarlo… Las demás acciones viven en su menú. */
   onAction?: (edit: NodeEdit) => void
+  /** Sube cada vez que el menú del nodo pide renombrarlo: abre el cuadro del título. */
+  renameSignal?: number
   /** El título es un nombre que Python conoce (una variable, una función): doble clic lo renombra. */
   renamable?: boolean
   /** Lo que el código dice de sí mismo (comentarios, docstring): bajo el título, o en la cabecera de un territorio. */
@@ -74,8 +79,6 @@ export interface MorphNodeProps {
   /** Tamaño explícito (contenedores). Sin él se deriva de tipo, densidad y complejidad. */
   size?: { w: number; h: number }
   showPorts?: boolean
-  /** Acciones de la cabecera (duplicar, editar, plegar), como en un constructor de flujos. */
-  showActions?: boolean
   /** Muestra el chip de estado («Inactivo», «Ejecutando»). Ocúltalo en un lienzo sin ejecución. */
   showStatus?: boolean
   /**
@@ -89,6 +92,16 @@ export interface MorphNodeProps {
    * a su altura: es lo que deja claro de dónde viene cada entrada.
    */
   linkedSlots?: string[]
+  /** Las casillas que llevan un chip dentro (una variable que se arrastró hasta ellas), por puerto. */
+  chipSlots?: Readonly<Record<string, { name: string; type: ValueType }>>
+  /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
+  hotSlot?: { slot: string; ok: boolean } | null
+  /** Quita el chip de una casilla (la deja en un valor neutro). */
+  onClearChip?: (slot: string) => void
+  /** A quién se puede llamar (funciones del programa y de uso común): lo que ofrece el desplegable de una llamada. */
+  callees?: readonly string[]
+  /** Las casillas donde se usa el chip seleccionado. */
+  litSlots?: readonly string[]
   /** Avisa de dónde ha quedado cada puerto de entrada, para que el lienzo trace las conexiones. */
   onSlotsMeasured?: (slots: MeasuredSlot[]) => void
   onToggleDensity?: () => void
@@ -108,14 +121,23 @@ function Title({
   label,
   renamable,
   tag,
+  signal = 0,
   onRename,
 }: {
   label: string
   renamable: boolean
   tag: 'div' | 'span'
+  /** Cada vez que sube, se abre el cuadro de renombrar (lo pide el menú del nodo). */
+  signal?: number
   onRename: (to: string) => void
 }) {
   const [editing, setEditing] = useState(false)
+  const [seen, setSeen] = useState(signal)
+  // Un aviso nuevo del menú abre el cuadro: se compara durante el render, sin efectos.
+  if (signal !== seen) {
+    setSeen(signal)
+    if (renamable) setEditing(true)
+  }
   const Tag = tag
   if (!editing) {
     return (
@@ -188,6 +210,7 @@ export function MorphNode({
   code,
   meta,
   onAction,
+  renameSignal = 0,
   renamable = false,
   note,
   density = 'normal',
@@ -202,10 +225,14 @@ export function MorphNode({
   lod = 'full',
   size,
   showPorts = true,
-  showActions = true,
   showStatus = true,
   container = false,
   linkedSlots,
+  chipSlots,
+  hotSlot = null,
+  onClearChip,
+  callees,
+  litSlots,
   onSlotsMeasured,
   onToggleDensity,
   toggleLabel,
@@ -219,6 +246,12 @@ export function MorphNode({
   const geo = buildShape(container ? spec.shape : shapeFor(spec, density), w, h)
 
   const compact = density === 'compact' && !container
+  // Una tarjeta esbelta: solo lo relevante. El icono dice el tipo, el nombre va en la cabecera y el
+  // pie (línea, estado) se pide con el tooltip o en expandido. Un territorio y expandido conservan todo.
+  const slim = !container && !compact && density !== 'expanded'
+  // Una decisión con su editor ya dice lo que compara: el título repetiría los mismos campos.
+  const shownLabel =
+    slim && kind === 'control.condition' && control?.kind === 'condition' ? 'Si' : label
   const fill: FillMode = modifier === 'generating' ? 'hatch' : spec.fill
   // La sombra es atención: solo bajo un relleno opaco, y solo si algo la pide.
   const raised =
@@ -240,12 +273,15 @@ export function MorphNode({
     const root = contentRef.current
     if (!root) return
     const base = root.getBoundingClientRect()
+    // El lienzo se acerca y se aleja con una transformación: lo que se mide en pantalla hay que
+    // devolverlo a píxeles del nodo, o los puertos caerían a otra altura en cuanto hay zoom.
+    const scale = root.offsetWidth > 0 ? base.width / root.offsetWidth : 1
     const found = [...root.querySelectorAll<HTMLElement>('[data-slot]')].map((el) => {
       const box = el.getBoundingClientRect()
       return {
         id: el.dataset['slot'] ?? '',
         label: el.dataset['slotLabel'] ?? el.dataset['slot'] ?? '',
-        y: Math.round(box.top + box.height / 2 - base.top),
+        y: Math.round((box.top + box.height / 2 - base.top) / scale),
       }
     })
     const signature = JSON.stringify(found)
@@ -275,138 +311,126 @@ export function MorphNode({
     ...style,
   } as CSSProperties
 
+  const slotState = useMemo<SlotState>(
+    () => ({
+      chips: chipSlots ?? {},
+      hot: hotSlot,
+      ...(onClearChip ? { clear: onClearChip } : {}),
+      ...(callees ? { callees } : {}),
+      ...(litSlots ? { lit: litSlots } : {}),
+    }),
+    [chipSlots, hotSlot, onClearChip, callees, litSlots],
+  )
+
   return (
-    <div
-      className={['node', className].filter(Boolean).join(' ')}
-      style={rootStyle}
-      role="group"
-      aria-label={`${spec.name}: ${label}`}
-      // El nodo es un grupo de solo lectura, pero se hace alcanzable por teclado
-      // para que los lectores de pantalla puedan recorrer el diagrama nodo a nodo.
-      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-      tabIndex={0}
-      data-kind={spec.id}
-      data-role={spec.role}
-      data-badge={spec.badge}
-      data-stroke={spec.stroke}
-      data-fill={fill}
-      data-state={state}
-      data-density={container ? 'normal' : density}
-      data-lod={lod}
-      data-modifier={modifier}
-      data-raised={raised ? '' : undefined}
-      data-container={container ? '' : undefined}
-      data-band={band === undefined ? undefined : ''}
-    >
-      {raised && (
-        <svg className="node__shadow" width={w} height={h} aria-hidden>
-          <path d={geo.d} />
-        </svg>
-      )}
-
-      <svg className="node__back" width={w} height={h} aria-hidden>
-        {geo.layers
-          .filter((l) => l.kind === 'back')
-          .map((l, i) => (
-            <g key={i} transform={`translate(${(l.dx ?? 0) + HAIRLINE} ${(l.dy ?? 0) + HAIRLINE})`}>
-              <path className="node__back-plate" d={l.d} />
-            </g>
-          ))}
-      </svg>
-
-      <div className="node__fill" style={{ clipPath: `path('${geo.d}')` }} />
-
-      <svg className="node__stroke" width={w} height={h} aria-hidden>
-        <g transform={`translate(${HAIRLINE} ${HAIRLINE})`}>
-          {geo.layers
-            .filter((l) => l.kind === 'detail')
-            .map((l, i) => (
-              <path
-                key={i}
-                className="node__detail"
-                d={l.d}
-                transform={l.dx || l.dy ? `translate(${l.dx ?? 0} ${l.dy ?? 0})` : undefined}
-              />
-            ))}
-          <path className="node__outline" d={geo.d} />
-        </g>
-      </svg>
-
+    <SlotStateContext.Provider value={slotState}>
       <div
-        ref={contentRef}
-        className="node__content"
-        style={{
-          padding: `${geo.inset.top}px ${geo.inset.right}px ${geo.inset.bottom}px ${geo.inset.left}px`,
-        }}
+        className={['node', className].filter(Boolean).join(' ')}
+        style={rootStyle}
+        role="group"
+        aria-label={`${spec.name}: ${label}`}
+        // El nodo es un grupo de solo lectura, pero se hace alcanzable por teclado
+        // para que los lectores de pantalla puedan recorrer el diagrama nodo a nodo.
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+        tabIndex={0}
+        data-kind={spec.id}
+        data-role={spec.role}
+        data-badge={spec.badge}
+        data-stroke={spec.stroke}
+        data-fill={fill}
+        data-state={state}
+        data-density={container ? 'normal' : density}
+        data-slim={slim ? '' : undefined}
+        data-lod={lod}
+        data-modifier={modifier}
+        data-raised={raised ? '' : undefined}
+        data-container={container ? '' : undefined}
+        data-band={band === undefined ? undefined : ''}
       >
-        {compact ? (
-          <div className="node__glance" title={note}>
-            <Icon name={spec.icon} size={14} className="node__glance-icon" />
-            <span className="node__glance-label type-node-title">{label}</span>
-            {onToggleDensity ? (
-              <button
-                type="button"
-                className="node__action nodrag"
-                aria-label={toggleLabel ?? `Abrir ${label}`}
-                onClick={onToggleDensity}
+        {raised && (
+          <svg className="node__shadow" width={w} height={h} aria-hidden>
+            <path d={geo.d} />
+          </svg>
+        )}
+
+        <svg className="node__back" width={w} height={h} aria-hidden>
+          {geo.layers
+            .filter((l) => l.kind === 'back')
+            .map((l, i) => (
+              <g
+                key={i}
+                transform={`translate(${(l.dx ?? 0) + HAIRLINE} ${(l.dy ?? 0) + HAIRLINE})`}
               >
-                <Icon name="chevron" size={13} />
-              </button>
-            ) : showStatus ? (
-              <StatusChip state={state} showLabel={false} className="node__glance-state" />
-            ) : null}
-          </div>
-        ) : (
-          <>
-            <header className="node__head">
-              <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} />
-              {container && (
-                <Title
-                  label={label}
-                  renamable={renamable}
-                  tag="span"
-                  onRename={(to) => onAction?.({ type: 'rename', to })}
+                <path className="node__back-plate" d={l.d} />
+              </g>
+            ))}
+        </svg>
+
+        <div className="node__fill" style={{ clipPath: `path('${geo.d}')` }} />
+
+        <svg className="node__stroke" width={w} height={h} aria-hidden>
+          <g transform={`translate(${HAIRLINE} ${HAIRLINE})`}>
+            {geo.layers
+              .filter((l) => l.kind === 'detail')
+              .map((l, i) => (
+                <path
+                  key={i}
+                  className="node__detail"
+                  d={l.d}
+                  transform={l.dx || l.dy ? `translate(${l.dx ?? 0} ${l.dy ?? 0})` : undefined}
                 />
-              )}
-              {container && code && (
-                <code className="node__signature type-code">{signatureOf(code)}</code>
-              )}
-              {(showActions || onToggleDensity) && (
-                <div className="node__actions">
-                  {showActions && (
-                    <>
-                      <button
-                        type="button"
-                        className="node__action nodrag"
-                        aria-label="Duplicar nodo"
-                        title="Duplicar"
-                        onClick={() => onAction?.({ type: 'duplicate' })}
-                      >
-                        <Icon name="copy" size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        className="node__action nodrag"
-                        aria-label="Editar código"
-                        title="Editar como código"
-                        onClick={() => onAction?.({ type: 'open-code' })}
-                      >
-                        <Icon name="pencil" size={13} />
-                      </button>
-                      {onAction && (
-                        <button
-                          type="button"
-                          className="node__action node__action--danger nodrag"
-                          aria-label="Eliminar nodo"
-                          title="Eliminar"
-                          onClick={() => onAction({ type: 'delete' })}
-                        >
-                          <Icon name="trash" size={13} />
-                        </button>
-                      )}
-                    </>
-                  )}
-                  {onToggleDensity && (
+              ))}
+            <path className="node__outline" d={geo.d} />
+          </g>
+        </svg>
+
+        <div
+          ref={contentRef}
+          className="node__content"
+          style={{
+            padding: `${geo.inset.top}px ${geo.inset.right}px ${geo.inset.bottom}px ${geo.inset.left}px`,
+          }}
+        >
+          {compact ? (
+            <div className="node__glance" title={note}>
+              <Icon name={spec.icon} size={14} className="node__glance-icon" />
+              <span className="node__glance-label type-node-title">{label}</span>
+              {onToggleDensity ? (
+                <button
+                  type="button"
+                  className="node__action nodrag"
+                  aria-label={toggleLabel ?? `Abrir ${label}`}
+                  onClick={onToggleDensity}
+                >
+                  <Icon name="chevron" size={13} />
+                </button>
+              ) : showStatus ? (
+                <StatusChip state={state} showLabel={false} className="node__glance-state" />
+              ) : null}
+            </div>
+          ) : (
+            <>
+              <header className="node__head" {...(slim && meta ? { title: meta } : {})}>
+                <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} iconOnly={slim} />
+                {(container || slim) && (
+                  <Title
+                    label={shownLabel}
+                    renamable={renamable}
+                    tag="span"
+                    signal={renameSignal}
+                    onRename={(to) => onAction?.({ type: 'rename', to })}
+                  />
+                )}
+                {container && code && (
+                  <code className="node__signature type-code">{signatureOf(code)}</code>
+                )}
+                {/* El estado solo se enseña cuando pasa algo: en reposo no dice nada. */}
+                {slim && showStatus && state !== 'dormant' && (
+                  <StatusChip state={state} showLabel={false} />
+                )}
+                {/* Duplicar, editar como código y eliminar están en el menú del nodo (clic derecho). */}
+                {onToggleDensity && (
+                  <div className="node__actions">
                     <button
                       type="button"
                       className="node__action nodrag"
@@ -423,76 +447,93 @@ export function MorphNode({
                     >
                       <Icon name="chevron" size={13} />
                     </button>
-                  )}
-                </div>
-              )}
-            </header>
-
-            {container && note && (
-              <p className="node__note node__note--doc" title={note}>
-                {note}
-              </p>
-            )}
-
-            {!container && (
-              <div className="node__body">
-                <Title
-                  label={label}
-                  renamable={renamable}
-                  tag="div"
-                  onRename={(to) => onAction?.({ type: 'rename', to })}
-                />
-                {note && (
-                  <p className="node__note" title={note}>
-                    {note}
-                  </p>
-                )}
-                {showCode && <code className="node__code type-code">{code}</code>}
-                {control && (
-                  <div className="node__control">
-                    <Control
-                      model={control}
-                      level={level}
-                      onChange={onControlChange}
-                      {...(editable ? { editable } : {})}
-                      {...(suggestions ? { suggestions } : {})}
-                      {...(linkedSlots ? { linked: linkedSlots } : {})}
-                    />
                   </div>
                 )}
-                {children && <div className="node__children">{children}</div>}
-              </div>
-            )}
+              </header>
 
-            {!container && (meta || showStatus) && (
-              <footer className="node__foot">
-                {meta && <span className="node__meta type-field-label">{meta}</span>}
-                {showStatus && <StatusChip state={state} />}
-              </footer>
-            )}
-          </>
-        )}
+              {container && note && (
+                <p className="node__note node__note--doc" title={note}>
+                  {note}
+                </p>
+              )}
+
+              {/* El bucle es un territorio, pero lo que recorre y con qué variable se edita en su cabecera. */}
+              {container && control?.kind === 'loop' && (
+                <div className="node__control node__control--territory">
+                  <Control
+                    model={control}
+                    level="summary"
+                    onChange={onControlChange}
+                    {...(editable ? { editable } : {})}
+                    {...(suggestions ? { suggestions } : {})}
+                    {...(linkedSlots ? { linked: linkedSlots } : {})}
+                  />
+                </div>
+              )}
+
+              {!container && (
+                <div className="node__body">
+                  {!slim && (
+                    <Title
+                      label={label}
+                      renamable={renamable}
+                      tag="div"
+                      signal={renameSignal}
+                      onRename={(to) => onAction?.({ type: 'rename', to })}
+                    />
+                  )}
+                  {note && (
+                    <p className="node__note" title={note}>
+                      {note}
+                    </p>
+                  )}
+                  {showCode && <code className="node__code type-code">{code}</code>}
+                  {control && (
+                    <div className="node__control">
+                      <Control
+                        model={control}
+                        level={level}
+                        onChange={onControlChange}
+                        {...(editable ? { editable } : {})}
+                        {...(suggestions ? { suggestions } : {})}
+                        {...(linkedSlots ? { linked: linkedSlots } : {})}
+                      />
+                    </div>
+                  )}
+                  {children && <div className="node__children">{children}</div>}
+                </div>
+              )}
+
+              {!container && !slim && (meta || showStatus) && (
+                <footer className="node__foot">
+                  {meta && <span className="node__meta type-field-label">{meta}</span>}
+                  {showStatus && <StatusChip state={state} />}
+                </footer>
+              )}
+            </>
+          )}
+        </div>
+
+        {showPorts &&
+          spec.ports.in &&
+          // Con campos medidos, cada entrada tiene su propio puerto a la altura de su campo.
+          (connected.length > 0 ? (
+            connected.map((slot) => (
+              <Port
+                key={slot.id}
+                at={{ x: 0, y: slot.y }}
+                side="in"
+                label={slot.label}
+                linked={linkedSlots?.includes(slot.id) ?? false}
+              />
+            ))
+          ) : (
+            <Port at={geo.handles.in} side="in" />
+          ))}
+        {showPorts && spec.ports.out && <Port at={geo.handles.out} side="out" />}
+        {showPorts && spec.ports.out && geo.handles.alt && <Port at={geo.handles.alt} side="alt" />}
       </div>
-
-      {showPorts &&
-        spec.ports.in &&
-        // Con campos medidos, cada entrada tiene su propio puerto a la altura de su campo.
-        (connected.length > 0 ? (
-          connected.map((slot) => (
-            <Port
-              key={slot.id}
-              at={{ x: 0, y: slot.y }}
-              side="in"
-              label={slot.label}
-              linked={linkedSlots?.includes(slot.id) ?? false}
-            />
-          ))
-        ) : (
-          <Port at={geo.handles.in} side="in" />
-        ))}
-      {showPorts && spec.ports.out && <Port at={geo.handles.out} side="out" />}
-      {showPorts && spec.ports.out && geo.handles.alt && <Port at={geo.handles.alt} side="alt" />}
-    </div>
+    </SlotStateContext.Provider>
   )
 }
 

@@ -30,6 +30,10 @@ export const ICONS: Record<IconId, string> = {
   alert:
     'M10.6 4.6 3 17.4a1.7 1.7 0 0 0 1.4 2.6h15.2a1.7 1.7 0 0 0 1.4-2.6L13.4 4.6a1.6 1.6 0 0 0-2.8 0ZM12 9.5v4M12 16.8h.01',
   return: 'M9.5 10 5 14.5l4.5 4.5M19.5 4.5v6a4 4 0 0 1-4 4H5',
+  // Una puerta con una flecha que sale: `break`.
+  exit: 'M14 4.5h4A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5h-4M10.5 8 6.5 12l4 4M6.5 12H16',
+  // Dos puntas y una barra: `continue`, saltar a la siguiente vuelta.
+  skip: 'M5 6.5 11.5 12 5 17.5zM12.5 6.5 19 12l-6.5 5.5zM20 5v14',
   globe: `${circle(12, 12, 8)}M4 12h16M12 4a13 13 0 0 1 0 16a13 13 0 0 1 0-16`,
   chart: 'M4 4v14.5a1.5 1.5 0 0 0 1.5 1.5H20M7.5 15.5l3.5-4 2.8 2.6L19 7.5',
   package: 'M12 3.2 4 7.6v8.8l8 4.4 8-4.4V7.6zM4 7.6l8 4.4 8-4.4M12 12v8.8',

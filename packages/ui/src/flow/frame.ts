@@ -1,3 +1,5 @@
+import { LOOP_HEADROOM, docHeadroom } from '@prysel/morphology'
+
 /**
  * Las dimensiones de un nodo dentro de React Flow.
  *
@@ -14,6 +16,27 @@ export interface NodeFrame {
   initialWidth: number
   initialHeight: number
   measured: { width: number; height: number }
+}
+
+/** ¿Es un bucle con cuerpo? Se dibuja como territorio: envuelve lo que repite, como una función. */
+export const isLoopTerritory = (node: { kind: string; contains?: readonly string[] | undefined }) =>
+  node.kind === 'control.loop' && (node.contains?.length ?? 0) > 0
+
+/**
+ * Lo que la cabecera de un territorio pide sobre el margen de serie: la documentación de una función
+ * o de un bucle, y el editor del bucle (`para x en …`), que vive en su cabecera.
+ */
+export function territoryHeadroom(node: {
+  kind: string
+  note?: string | undefined
+  control?: unknown
+  contains?: readonly string[] | undefined
+}): number {
+  if ((node.contains?.length ?? 0) === 0) return 0
+  return (
+    (node.note ? docHeadroom(node.note) : 0) +
+    (isLoopTerritory(node) && node.control ? LOOP_HEADROOM : 0)
+  )
 }
 
 export function nodeFrame(size: { w: number; h: number }): NodeFrame {

@@ -167,6 +167,16 @@ export const SAMPLES: Record<NodeKindId, Sample> = {
       message: 'importe negativo',
     },
   },
+  'control.break': {
+    label: 'salir',
+    code: 'break',
+    meta: 'sort.py:31',
+  },
+  'control.continue': {
+    label: 'siguiente',
+    code: 'continue',
+    meta: 'sort.py:24',
+  },
   'control.return': {
     label: 'Devolver total',
     code: 'return total',
@@ -286,7 +296,14 @@ export const GROUPS: Group[] = [
     title: 'Control de flujo',
     blurb:
       'El camino se decide, se repite o se corta. Las salidas están donde dice la lógica: la condición tiene dos, el retorno y la excepción no tienen ninguna.',
-    kinds: ['control.condition', 'control.loop', 'control.raise', 'control.return'],
+    kinds: [
+      'control.condition',
+      'control.loop',
+      'control.break',
+      'control.continue',
+      'control.raise',
+      'control.return',
+    ],
   },
   {
     title: 'Efectos y salida',

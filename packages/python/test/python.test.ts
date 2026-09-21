@@ -241,11 +241,18 @@ describe('un nodo enseña lo que significa, no la sintaxis que lo escribió', ()
   const byLabel = (program: Program, label: string) => program.nodes.find((n) => n.label === label)
 
   it('un print es un mensaje: sin la palabra print y sin comillas', () => {
-    const { nodes } = parse('print("El número es negativo")\n')
+    const { nodes } = parse('print("Hola")\n')
     expect(nodes[0]).toMatchObject({
       label: 'Imprimir',
-      control: { kind: 'text', value: 'El número es negativo', multiline: true },
+      control: { kind: 'text', value: 'Hola', multiline: false },
     })
+  })
+
+  it('un mensaje largo o de varias líneas crece; uno corto cabe en una fila', () => {
+    const long = parse('print("El número ingresado es negativo. Por favor, ingresa otro.")\n')
+    expect(long.nodes[0]?.control).toMatchObject({ kind: 'text', multiline: true })
+    const lines = parse('print("""uno\ndos""")\n')
+    expect(lines.nodes[0]?.control).toMatchObject({ kind: 'text', multiline: true })
   })
 
   it('un f-string conserva sus huecos y sus valores entran por el campo del mensaje', () => {

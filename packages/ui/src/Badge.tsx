@@ -10,19 +10,24 @@ export function TypeBadge({
   icon,
   label,
   className,
+  iconOnly = false,
 }: {
   family: BadgeFamily
   icon: IconId
   label: string
   className?: string
+  /** Solo el icono: el nombre del tipo va en su tooltip. Es lo que usa una tarjeta compacta. */
+  iconOnly?: boolean
 }) {
   return (
     <span
       className={['badge type-badge', className].filter(Boolean).join(' ')}
       data-family={family}
+      data-icon-only={iconOnly ? '' : undefined}
+      {...(iconOnly ? { title: label, role: 'img', 'aria-label': label } : {})}
     >
       <Icon name={icon} size={13} />
-      {label}
+      {!iconOnly && label}
     </span>
   )
 }

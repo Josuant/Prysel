@@ -56,6 +56,8 @@ export function AddNodeMenu({ onAdd, where }: AddNodeMenuProps) {
         <Icon name="plus" size={13} />
         Añadir
       </button>
+      {/* Siempre a la vista: dónde caerá lo que se añada (dentro de una función, detrás de un nodo…). */}
+      {where && <span className="add-menu__target type-field-label">{where}</span>}
 
       {open && (
         <div className="add-menu__list" id={listId} role="menu" aria-label="Añadir un nodo">

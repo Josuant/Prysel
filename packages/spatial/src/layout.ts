@@ -350,7 +350,7 @@ function findScopes(graph: SemanticGraph): Map<string, string[]> {
 
   const raw = new Map<string, Set<string>>()
   for (const node of graph.nodes) {
-    if (node.role !== 'abstraction') continue
+    if (node.role !== 'abstraction' && !node.territory) continue
     const inside = reach(node.id)
     if (inside.size > 0) raw.set(node.id, inside)
   }
@@ -440,9 +440,15 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     const own = byId.get(scope)?.size.w ?? 0
     const top = SCOPE_FRAME.top + (byId.get(scope)?.headroom ?? 0)
     const left = SCOPE_FRAME.side + (byId.get(scope)?.gutter ?? 0)
+    const min = byId.get(scope)?.minSize
     const size = {
-      w: Math.max(inner.bounds.w + left + SCOPE_FRAME.side, own),
-      h: inner.bounds.h + top + SCOPE_FRAME.bottom,
+      w: Math.max(
+        inner.bounds.w + left + SCOPE_FRAME.side,
+        own,
+        min?.w ?? 0,
+        (byId.get(scope)?.headerWidth ?? 0) + left + SCOPE_FRAME.side,
+      ),
+      h: Math.max(inner.bounds.h + top + SCOPE_FRAME.bottom, min?.h ?? 0),
     }
     frames.set(scope, { size, inner, top, left })
     sizes.set(scope, size)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CHANNEL_OF,
+  PARAM_GUTTER,
   SCOPE_FRAME,
   channelOf,
   layout,
@@ -204,5 +205,44 @@ describe('la cabecera de un ámbito puede pedir más sitio (su documentación)',
 
   it('lo de dentro sigue dentro', () => {
     expect(inside(at(documented, 'x'), at(documented, 'f'))).toBe(true)
+  })
+})
+
+describe('una función con parámetros reserva sitio a su izquierda', () => {
+  const plain = layout({ nodes: [scope('f', ['x']), node('x')], edges: [] })
+  const ported = layout({
+    nodes: [{ ...scope('f', ['x']), gutter: PARAM_GUTTER }, node('x')],
+    edges: [],
+  })
+
+  it('crece a lo ancho lo que pide, y el contenido se desplaza lo mismo', () => {
+    expect(at(ported, 'f').size.w - at(plain, 'f').size.w).toBe(PARAM_GUTTER)
+    expect(at(ported, 'x').x - at(plain, 'x').x).toBe(PARAM_GUTTER)
+  })
+
+  it('lo de dentro sigue dentro', () => {
+    expect(inside(at(ported, 'x'), at(ported, 'f'))).toBe(true)
+  })
+})
+
+describe('el usuario puede ensanchar una función, pero no por debajo de su contenido', () => {
+  const natural = layout({ nodes: [scope('f', ['x']), node('x')], edges: [] })
+  const size = at(natural, 'f').size
+  const wider = (min: { w: number; h: number }) =>
+    layout({ nodes: [{ ...scope('f', ['x']), minSize: min }, node('x')], edges: [] })
+
+  it('un tamaño mayor se respeta', () => {
+    const bigger = wider({ w: size.w + 100, h: size.h + 60 })
+    expect(at(bigger, 'f').size).toEqual({ w: size.w + 100, h: size.h + 60 })
+  })
+
+  it('uno menor que el contenido no lo recorta', () => {
+    expect(at(wider({ w: 10, h: 10 }), 'f').size).toEqual(size)
+  })
+
+  it('lo de dentro conserva su sitio: el espacio de más queda a la derecha y abajo', () => {
+    const bigger = wider({ w: size.w + 100, h: size.h + 60 })
+    expect(at(bigger, 'x').x - at(bigger, 'f').x).toBe(at(natural, 'x').x - at(natural, 'f').x)
+    expect(inside(at(bigger, 'x'), at(bigger, 'f'))).toBe(true)
   })
 })

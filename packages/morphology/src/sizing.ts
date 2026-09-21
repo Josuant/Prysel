@@ -9,7 +9,7 @@ import type { Density, Metrics, NodeKindSpec, ScaleBy, ShapeId } from './types.t
  */
 export const DENSITY_BASE: Record<Density, readonly [number, number]> = {
   compact: [200, 36],
-  normal: [258, 156],
+  normal: [224, 96],
   expanded: [300, 248],
 }
 
@@ -102,7 +102,10 @@ export function nodeSize(
  */
 export const INLINE_ARGS = 4
 
-const ROW = { input: 30, labeled: 49, note: 18, gap: 6, label: 19, add: 24 }
+/** Lo que la cabecera de un bucle dibujado como territorio suma para su editor (`para x en …`). */
+export const LOOP_HEADROOM = 40
+
+const ROW = { op: 22, input: 30, labeled: 49, note: 18, gap: 6, label: 19, add: 24 }
 
 /**
  * Cuántas líneas ocupa un texto de `width` caracteres de ancho: el ajuste es por palabras, como
@@ -147,6 +150,90 @@ function areaHeight(text: string, density: 'normal' | 'expanded'): number {
   return Math.ceil(lines * AREA.line + AREA.chrome)
 }
 
+/** Llamadas cuyo nombre ya dice el título del nodo («Imprimir», «Pedir dato»): no repiten su nombre en un campo. */
+export const ACTION_CALLS: ReadonlySet<string> = new Set(['print', 'input'])
+
+/**
+ * La tarjeta esbelta (densidad normal): solo lo relevante. Su alto sale de lo que lleva dentro, no de
+ * un tamaño de serie: el marco de la forma (arriba y abajo), la cabecera (icono, nombre, acción), y el
+ * editor con filas más bajas que en expandido.
+ */
+const SLIM = { frame: 30, head: 21, gap: 4, input: 26, rowGap: 4, note: 16, add: 22, code: 20 }
+
+const slimStack = (rows: number[]) =>
+  rows.length === 0 ? 0 : rows.reduce((sum, row) => sum + row, 0) + SLIM.rowGap * (rows.length - 1)
+
+/** Lo que mide el editor de una tarjeta esbelta. */
+export function slimControlHeight(
+  model: ControlModel | undefined,
+  linked: readonly string[] = [],
+): number {
+  if (!model) return 0
+  switch (model.kind) {
+    case 'text':
+      return model.multiline ? areaHeight(model.value, 'normal') : SLIM.input
+    case 'args': {
+      const isLinked = (name: string) => linked.includes(`arg:${name}`)
+      const shown = model.args.filter(
+        (a, i) => i === 0 || isLinked(a.name) || model.args.length <= INLINE_ARGS,
+      )
+      const hidden = model.args.length - shown.length
+      return slimStack([
+        ...(model.target && !ACTION_CALLS.has(model.target) ? [SLIM.input] : []),
+        ...shown.map(() => SLIM.input),
+        ...(hidden > 0 ? [SLIM.note] : []),
+      ])
+    }
+    case 'signal':
+      return slimStack([SLIM.input, SLIM.input])
+    case 'dict': {
+      const hidden = Math.max(0, model.entries.length - 1)
+      return slimStack([SLIM.input, ...(hidden > 0 ? [SLIM.note] : []), SLIM.add])
+    }
+    case 'signature':
+      return slimStack([...model.params.map(() => SLIM.input), SLIM.add])
+    case 'loop':
+      // Con progreso (una ejecución en marcha) lleva una fila más.
+      return model.total === undefined ? SLIM.input : SLIM.input + SLIM.rowGap + SLIM.note
+    default:
+      return SLIM.input
+  }
+}
+
+/**
+ * El ancho de una tarjeta esbelta: el de serie, y más si lleva una fórmula (A, operador, B en una
+ * fila) o una llamada (su función y cada argumento con su nombre).
+ */
+export function slimWidth(base: number, model?: ControlModel): number {
+  // Cada carácter de un campo ocupa unos 7 px; el resto es el operador, los huecos y el margen.
+  const chars = (...texts: string[]) => texts.reduce((sum, text) => sum + text.length, 0) * 7.2
+  if (model?.kind === 'expression') {
+    return Math.min(440, Math.max(base, 272, Math.ceil(chars(model.left, model.right) + 130)))
+  }
+  if (model?.kind === 'condition') {
+    return Math.min(440, Math.max(base, 272, Math.ceil(chars(model.field, model.value) + 130)))
+  }
+  if (model?.kind === 'args') {
+    const longest = Math.max(0, ...model.args.map((arg) => arg.value.length + arg.name.length))
+    return Math.min(360, Math.max(base, 236, Math.ceil(longest * 7.2 + 70)))
+  }
+  return base
+}
+
+/**
+ * El alto de una tarjeta esbelta que lleva ese editor, ese comentario y, si no tiene editor, su
+ * código. Cabe justo: sin aire de más arriba ni abajo.
+ */
+export function slimHeight(
+  model: ControlModel | undefined,
+  linked: readonly string[] = [],
+  note?: string,
+  hasCode = false,
+): number {
+  const body = model ? slimControlHeight(model, linked) + SLIM.gap : hasCode ? SLIM.code : 0
+  return Math.ceil(SLIM.frame + SLIM.head + SLIM.gap + body + noteHeight(note, 'normal'))
+}
+
 /** Lo que el tamaño base de cada densidad ya acoge sin crecer (medido: alto de tarjeta − marco). */
 const ROOM: Record<Density, number> = { compact: 0, normal: 48, expanded: 140 }
 
@@ -177,17 +264,19 @@ export function controlHeight(
       const labeled = full || model.args.length > 1 || shown.some((a) => isLinked(a.name))
       const hidden = model.args.length - shown.length
       return stack([
-        ...(model.target ? [ROW.note] : []),
-        ...shown.map(() => (labeled ? ROW.labeled : ROW.input)),
+        ...(model.target ? [ROW.input] : []),
+        // En una tarjeta esbelta el nombre del argumento va a la izquierda del campo, no encima.
+        ...shown.map(() => (labeled && full ? ROW.labeled : ROW.input)),
         ...(hidden > 0 ? [ROW.note] : []),
       ])
     }
     case 'condition':
-      return stack([ROW.input, ROW.input, ...(full && model.hits ? [ROW.note] : [])])
+      // Esbelta: campo, operador y valor en una fila. Expandida: apilados, con sus marcadores.
+      return full ? stack([ROW.input, ROW.input, ...(model.hits ? [ROW.note] : [])]) : ROW.input
     case 'expression':
-      // Los dos operandos van en filas distintas: dos puertos en la misma fila se taparían. Catorce
-      // píxeles de margen: el extremo plano de un retorno tiene un marco algo mayor que el de una operación.
-      return stack([ROW.input, ROW.input]) + 14
+      // La fórmula: operando, operador y operando. En una fila cuando cabe (los puertos se reparten
+      // a lo alto del borde); apilados en expandido.
+      return full ? stack([ROW.input, ROW.op, ROW.input]) : ROW.input
     case 'signature':
       // Cada parámetro es una fila (nombre y valor por defecto), y debajo el botón de añadir.
       return stack([...model.params.map(() => ROW.input), ROW.add])

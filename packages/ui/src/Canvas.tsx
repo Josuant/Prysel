@@ -12,8 +12,9 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import {
-  docHeadroom,
   extraHeight,
+  slimHeight,
+  slimWidth,
   getKind,
   nodeSize,
   type Density,
@@ -25,6 +26,7 @@ import {
 } from '@prysel/morphology'
 import {
   PARAM_GUTTER,
+  SCOPE_FRAME,
   channelOf,
   layout,
   type Axis,
@@ -34,12 +36,24 @@ import {
 import { EdgeDefs } from './Edge.tsx'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
-import { dragTerritory } from './drag.ts'
-import { nodeFrame } from './flow/frame.ts'
+import { dragTerritory, territoryAt } from './drag.ts'
+import { isLoopTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
 import { QuickAdd } from './QuickAdd.tsx'
+import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
+import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
+import { FUNCTION_CHIP, useChipDrag } from './flow/useChipDrag.ts'
+import {
+  MODULE,
+  TRAY,
+  chipSize,
+  functionChipSize,
+  isChipKind,
+  planChips,
+  type FunctionChip,
+} from './chips.ts'
 import { checkConnection, connectAction, dropTarget, outputName, type Link } from './connect.ts'
 import type { NodeEdit } from './MorphNode.tsx'
 import '@xyflow/react/dist/base.css'
@@ -89,8 +103,12 @@ export interface CanvasNode {
   params?: readonly string[]
   /** Los campos que aceptan un cable (por su puerto). */
   inputs?: readonly string[]
+  /** La sentencia que lo envuelve (una función, un bucle, una decisión); sin ella, es del programa. */
+  owner?: string
   /** Qué clase de valor sale del nodo: colorea su puerto y decide adónde se puede conectar. */
   valueType?: ValueType
+  /** Es un `return` de esta función: su salida va al puerto de retorno de la función. */
+  returns?: string
 }
 
 export interface CanvasProps {
@@ -101,6 +119,12 @@ export interface CanvasProps {
   onControlChange?: (id: string, next: ControlModel) => void
   /** Lo que el usuario le hace a un nodo: reescribirlo como código, eliminarlo, duplicarlo, renombrarlo. */
   onAction?: (action: NodeAction) => void
+  /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
+  addTarget?: string | null
+  /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
+  palette?: readonly FunctionChip[]
+  /** La cajita del programa admite añadir variables (no cuando se ve una sola función). */
+  addToModule?: boolean
   /** El nodo seleccionado, si lo lleva quien usa el lienzo (para poder enfocar lo que acaba de crear). */
   selected?: string | null
   onSelect?: (id: string | null) => void
@@ -121,7 +145,7 @@ export interface CanvasProps {
    * ilustración: útil para los ejemplos pequeños, donde poder moverlos solo sería ruido.
    */
   interactive?: boolean
-  /** Muestra las acciones de cabecera de cada nodo (duplicar, editar). */
+  /** Habilita el menú de cada nodo (clic derecho): duplicar, editar como código, eliminar… */
   showActions?: boolean
   /** Muestra el chip de estado de cada nodo. Falso cuando no hay ejecución que mostrar. */
   showStatus?: boolean
@@ -147,13 +171,40 @@ export interface CanvasProps {
 const edgeKey = (edge: SemanticEdge) =>
   `${edge.from}${edge.fromPort ? `:${edge.fromPort}` : ''}-${edge.to}-${edge.toPort ?? ''}-${edge.relation}`
 
-const NODE_TYPES = { prysel: PryselNode }
+const NODE_TYPES = { prysel: PryselNode, chip: ChipNode, tray: TrayNode }
+
+/** Todo lo que el lienzo dibuja: nodos, chips y la cajita del programa. */
+type AnyFlowNode = PryselFlowNode | ChipFlowNode | TrayFlowNode
+
+/** Funciones de uso común que se ofrecen al elegir a quién llama una llamada. */
+const COMMON_CALLS = [
+  'print',
+  'input',
+  'len',
+  'range',
+  'int',
+  'float',
+  'str',
+  'bool',
+  'list',
+  'dict',
+  'sum',
+  'min',
+  'max',
+  'abs',
+  'round',
+  'sorted',
+]
+
+/** Dónde empieza la cajita del programa. */
+const MODULE_TRAY_AT = { x: 28, y: 28 }
 const EDGE_TYPES = { prysel: PryselEdge }
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
 const MAX_HEIGHT = 640
 
 type Point = { x: number; y: number }
 const NO_POSITIONS: Record<string, Point> = {}
+const NO_SIZES: Record<string, { w: number; h: number }> = {}
 
 export function Canvas(props: CanvasProps) {
   return (
@@ -170,6 +221,9 @@ function CanvasInner({
   stateOf,
   onControlChange,
   onAction,
+  addTarget,
+  palette,
+  addToModule = true,
   selected: selectedProp,
   onSelect,
   onEnter,
@@ -222,6 +276,10 @@ function CanvasInner({
   const [quick, setQuick] = useState<{ x: number; y: number; from: string; port?: string } | null>(
     null,
   )
+  /** El menú de un nodo, abierto donde se hizo clic derecho. */
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  /** Un nodo al que el menú le ha pedido renombrarse: el contador abre su cuadro cada vez. */
+  const [renaming, setRenaming] = useState<{ id: string; n: number }>({ id: '', n: 0 })
   /** Por qué no se pudo conectar: un aviso breve, para que el rechazo no parezca un fallo. */
   const [notice, setNotice] = useState<string | null>(null)
   useEffect(() => {
@@ -237,6 +295,18 @@ function CanvasInner({
   const connectable = interactive && onAction !== undefined
   /** Mientras se arrastra, el nodo sigue al puntero: interpolar su posición lo haría ir por detrás. */
   const [dragging, setDragging] = useState(false)
+  /** Un nodo arrastrado a otra función (o fuera de la suya): a dónde iría al soltarlo, y de dónde sale. */
+  const [reparent, setReparent] = useState<{
+    id: string
+    to: string | null
+    from: string | null
+  } | null>(null)
+  /** Lo que el usuario ha ensanchado a mano (las funciones): mandan sobre el tamaño que propone la gramática. */
+  const [resizedState, setResizedState] = useState<{
+    key: string
+    sizes: Record<string, { w: number; h: number }>
+  }>({ key: fitKey, sizes: {} })
+  const resized = resizedState.key === fitKey ? resizedState.sizes : NO_SIZES
 
   const { setViewport } = useReactFlow()
   const frameRef = useRef<HTMLDivElement>(null)
@@ -250,6 +320,47 @@ function CanvasInner({
   )
 
   const byId = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
+
+  /** El reparto en chips: qué va en cada cajita, qué se coloca en el plano y qué casillas llevan uno. */
+  const plan = useMemo(
+    () =>
+      planChips(nodes, edges, {
+        canAdd: connectable,
+        ...(palette ? { palette } : {}),
+        addToModule,
+      }),
+    [nodes, edges, connectable, palette, addToModule],
+  )
+
+  /** De todo lo que puede dar un valor: los nodos, y las funciones que se ofrecen como chips. */
+  const lookup = useMemo(() => {
+    const all = new Map(byId)
+    for (const fn of palette ?? []) {
+      if (all.has(fn.id)) continue
+      all.set(fn.id, {
+        id: fn.id,
+        kind: 'abstraction.collapsed',
+        label: fn.name,
+        provides: fn.name,
+        params: [...fn.params],
+      })
+    }
+    return all
+  }, [byId, palette])
+
+  /** ¿Es un chip acoplado a una cajita (o el de una función)? Esos no se colocan: se llevan a una casilla. */
+  const isDockedChip = useCallback(
+    (id: string) => plan.docked.has(id) || id.startsWith(FUNCTION_CHIP),
+    [plan],
+  )
+
+  const chipDrag = useChipDrag({
+    lookup,
+    onLink: (link) => {
+      onAction?.(connectAction(link))
+    },
+    onRefuse: setNotice,
+  })
 
   /**
    * Qué campos de cada nodo reciben una conexión: lo dice el grafo, no la interfaz.
@@ -273,41 +384,67 @@ function CanvasInner({
     return map
   }, [edges, byId])
 
-  const { placements, bounds, scopes } = useMemo(() => {
+  const {
+    placements,
+    bounds: layoutBounds,
+    scopes,
+  } = useMemo(() => {
     const graph: SemanticGraph = {
-      nodes: nodes.map((node) => {
+      nodes: plan.flowNodes.map((node) => {
         const spec = getKind(node.kind)
         const d = densityOf(node)
         const base = nodeSize(spec, d, node.metrics)
+        const tray = plan.trays.get(node.id)
+        const head = territoryHeadroom(node) + (tray ? tray.h + TRAY.below : 0)
         return {
           id: node.id,
           role: spec.role,
           // El editor manda sobre el alto: si no cabe, el campo se recorta y su puerto cae fuera.
-          size: { w: base.w, h: base.h + extraHeight(node.control, d, linked[node.id], node.note) },
-          // La documentación de una función, si el nodo es un territorio, se lee en su cabecera.
-          ...(node.note && node.contains ? { headroom: docHeadroom(node.note) } : {}),
+          // Un valor suelto (que no cabe en ninguna cajita) es una píldora, no una tarjeta.
+          size: isChipKind(node)
+            ? chipSize(node)
+            : d === 'normal'
+              ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+                {
+                  w: slimWidth(base.w, node.control),
+                  h: slimHeight(node.control, linked[node.id], node.note, node.code !== undefined),
+                }
+              : {
+                  w: base.w,
+                  h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
+                },
+          // La documentación, el editor de un bucle y la cajita de chips viven en la cabecera de un territorio.
+          ...(head > 0 ? { headroom: head } : {}),
+          ...(tray ? { headerWidth: tray.w } : {}),
+          // Un bucle con cuerpo envuelve lo que repite, igual que una función.
+          ...(isLoopTerritory(node) ? { territory: true } : {}),
+          ...(node.contains && resized[node.id] ? { minSize: resized[node.id] } : {}),
           // Los parámetros salen del borde de la función: sus etiquetas y sus cables piden sitio.
           ...(node.params?.length && node.contains ? { gutter: PARAM_GUTTER } : {}),
           ...(node.contains ? { contains: node.contains } : {}),
         }
       }),
-      edges,
+      edges: plan.flowEdges,
     }
     return layout(graph, {
       axis,
       ...(gapX === undefined ? {} : { gapX }),
       ...(gapY === undefined ? {} : { gapY }),
     })
-  }, [nodes, edges, densityOf, axis, gapX, gapY, linked])
+  }, [plan, densityOf, axis, gapX, gapY, linked, resized])
 
   // Lo que un ámbito envuelve ya lo dice el espacio: la conexión de la función a su propio
   // cuerpo (sus parámetros) sería una línea redundante que cruza su cabecera.
   const visibleEdges = useMemo(
     () =>
-      edges.filter(
-        (edge) => edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to),
-      ),
-    [edges, scopes],
+      edges.filter((edge) => {
+        // Lo que sale de un chip acoplado no se dibuja como un cable: el chip se ve en la casilla.
+        if (plan.docked.has(edge.from)) return false
+        // El retorno de un bucle territorio lo dibuja el propio bucle (su carril de repetición).
+        if (edge.relation === 'feedback' && scopes[edge.to]?.includes(edge.from)) return false
+        return edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to)
+      }),
+    [edges, scopes, plan],
   )
 
   const parentOf = useMemo(() => {
@@ -334,14 +471,25 @@ function CanvasInner({
 
   // El destino tiene que ser estable entre renders: si cambia de identidad en cada uno,
   // la animación se relanzaría sin parar en vez de avanzar.
+  // La cajita del programa va arriba del todo, y el resto del plano baja lo que ocupa.
+  const moduleTray = plan.trays.get(MODULE)
+  const shiftY = moduleTray ? moduleTray.h + 24 : 0
+  const bounds = useMemo(
+    () => ({
+      w: Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0),
+      h: layoutBounds.h + shiftY,
+    }),
+    [layoutBounds, moduleTray, shiftY],
+  )
+
   const motionItems = useMemo(
     () =>
       placements.map((placement) => ({
         id: placement.id,
         value: placement,
-        position: moved[placement.id] ?? { x: placement.x, y: placement.y },
+        position: moved[placement.id] ?? { x: placement.x, y: placement.y + shiftY },
       })),
-    [placements, moved],
+    [placements, moved, shiftY],
   )
 
   // El movimiento: las posiciones se interpolan, así que un nodo se puede seguir con la vista.
@@ -385,21 +533,21 @@ function CanvasInner({
     const found: Record<string, string[]> = {}
     for (const node of nodes) {
       const slots = (node.inputs ?? []).filter(
-        (slot) => checkConnection(byId, { ...connecting, to: node.id, slot }).ok,
+        (slot) => checkConnection(lookup, { ...connecting, to: node.id, slot }).ok,
       )
       if (slots.length > 0) found[node.id] = slots
     }
     return found
-  }, [connecting, nodes, byId])
+  }, [connecting, nodes, lookup])
 
   const onConnect = useCallback(
     (connection: Connection) => {
       const link = linkOf(connection)
-      const verdict = checkConnection(byId, link)
+      const verdict = checkConnection(lookup, link)
       if (verdict.ok) onAction?.(connectAction(link))
       else setNotice(verdict.reason)
     },
-    [byId, linkOf, onAction],
+    [lookup, linkOf, onAction],
   )
 
   const onConnectEnd = useCallback(
@@ -418,7 +566,7 @@ function CanvasInner({
         }
         const slot = state.toHandle?.id
         const verdict = slot
-          ? checkConnection(byId, { ...origin, to: state.toNode.id, slot })
+          ? checkConnection(lookup, { ...origin, to: state.toNode.id, slot })
           : null
         setNotice(
           verdict && !verdict.ok
@@ -435,14 +583,62 @@ function CanvasInner({
         setQuick({ ...origin, x: point.clientX - frame.left, y: point.clientY - frame.top })
       }
     },
-    [byId, eligible, onAction],
+    [byId, lookup, eligible, onAction],
   )
+
+  /** Lo que ofrece el menú de un nodo: lo que se hacía con los iconos de su cabecera, y más. */
+  const menuItems = (id: string): NodeMenuItem[] => {
+    const node = byId.get(id)
+    if (!node) return []
+    const items: NodeMenuItem[] = []
+    if (node.renamable) {
+      items.push({
+        label: 'Renombrar',
+        onSelect: () => {
+          setRenaming((previous) => ({ id, n: previous.n + 1 }))
+        },
+      })
+    }
+    if (node.openable && onEnter) {
+      items.push({
+        label: node.opens ? `Ver la función de ${node.label}` : scopes[id] ? 'Plegar' : 'Abrir',
+        onSelect: () => {
+          onEnter(id)
+        },
+      })
+    }
+    items.push(
+      {
+        label: 'Duplicar',
+        onSelect: () => {
+          onAction?.({ type: 'duplicate', id })
+        },
+      },
+      {
+        label: 'Editar como código',
+        onSelect: () => {
+          setCodeFor({ key: fitKey, id })
+        },
+      },
+      {
+        label: 'Eliminar',
+        danger: true,
+        hint: 'Supr',
+        onSelect: () => {
+          onAction?.({ type: 'delete', id })
+        },
+      },
+    )
+    return items
+  }
 
   /** Suelta el cable seleccionado: el campo vuelve a un valor neutro. */
   const disconnect = useCallback(
     (edge: SemanticEdge) => {
       if (edge.toPort === undefined) return
-      onAction?.({ type: 'disconnect', id: edge.to, slot: edge.toPort })
+      // Un cable al retorno de una función que se dibuja saltándose su `return`: soltarlo es quitar ese `return`.
+      if (edge.via !== undefined) onAction?.({ type: 'delete', id: edge.via })
+      else onAction?.({ type: 'disconnect', id: edge.to, slot: edge.toPort })
       setEdgeState(null)
     },
     [onAction, setEdgeState],
@@ -469,9 +665,164 @@ function CanvasInner({
     }
   }
 
-  const flowNodes: PryselFlowNode[] = animated.flatMap((item) => {
+  /** Añadir una variable al principio de un contexto (donde se inicializan). */
+  const onAddChip = useCallback(
+    (context: string) => {
+      onAction?.({
+        type: 'add',
+        template: 'variable',
+        at: 'start',
+        ...(context === MODULE ? {} : { into: context }),
+      })
+    },
+    [onAction],
+  )
+  /** Al seleccionar un chip, dónde se usa: su conexión no se dibuja, así que se marcan las casillas. */
+  const litSlots = useMemo(() => {
+    const map: Record<string, string[]> = {}
+    if (selectedId === null || !plan.docked.has(selectedId)) return map
+    for (const edge of edges) {
+      if (edge.from !== selectedId || !edge.toPort) continue
+      ;(map[edge.to] ??= []).push(edge.toPort)
+    }
+    return map
+  }, [selectedId, plan, edges])
+
+  /** A quién se puede llamar: las funciones del programa (como chips) y las de uso común. */
+  const callees = useMemo(
+    () => [...new Set([...(palette ?? []).map((fn) => fn.name), ...COMMON_CALLS])],
+    [palette],
+  )
+  /**
+   * Un cambio en el editor de un nodo. Cambiar a quién llama una llamada no es solo reescribir un
+   * nombre: la lista de argumentos se ajusta a los parámetros de la nueva función, y eso lo sabe la
+   * acción `callee`, no el campo.
+   */
+  const changeControl = useCallback(
+    (id: string, next: ControlModel) => {
+      const before = byId.get(id)?.control
+      if (
+        onAction &&
+        before?.kind === 'args' &&
+        next.kind === 'args' &&
+        before.target !== '' &&
+        before.target !== next.target &&
+        next.target.trim() !== ''
+      ) {
+        onAction({ type: 'callee', id, callee: next.target.trim() })
+        return
+      }
+      onControlChange?.(id, next)
+    },
+    [byId, onAction, onControlChange],
+  )
+  /** Quitar el chip de una casilla: vuelve a un valor neutro. */
+  const onClearChip = useCallback(
+    (id: string, slot: string) => {
+      onAction?.({ type: 'disconnect', id, slot })
+    },
+    [onAction],
+  )
+
+  /** Se ensancha una función a mano: se recuerda su tamaño, y la gramática lo respeta como mínimo. */
+  const onResize = useCallback(
+    (id: string, size: { w: number; h: number }) => {
+      setResizedState((previous) => ({
+        key: fitKey,
+        sizes: { ...(previous.key === fitKey ? previous.sizes : NO_SIZES), [id]: size },
+      }))
+    },
+    [fitKey],
+  )
+
+  /** Las funciones que se ven, con dónde están ahora: sobre ellas se puede soltar un nodo. */
+  const territories = useMemo(
+    () =>
+      animated
+        .filter((item) => scopes[item.id] !== undefined)
+        .map((item) => ({
+          id: item.id,
+          x: item.position.x,
+          y: item.position.y,
+          w: item.value.size.w,
+          h: item.value.size.h,
+        })),
+    [animated, scopes],
+  )
+
+  /** Mientras se arrastra un nodo: ¿a qué función pertenecería si se soltara ahora? */
+  const onNodeDrag = useCallback(
+    (node: { id: string; position: Point }) => {
+      // Solo los nodos cambian de función; una función arrastrada se lleva lo suyo, no se reubica.
+      if (!connectable || scopes[node.id] !== undefined) return
+      const box = animated.find((item) => item.id === node.id)?.value.size
+      if (!box) return
+      const center = { x: node.position.x + box.w / 2, y: node.position.y + box.h / 2 }
+      const to = territoryAt(center, territories, new Set([node.id, ...descendantsOf(node.id)]))
+      const from = parentOf[node.id] ?? null
+      setReparent((previous) => {
+        if (to === from) return previous === null ? previous : null
+        return previous?.id === node.id && previous.to === to ? previous : { id: node.id, to, from }
+      })
+    },
+    [animated, connectable, descendantsOf, parentOf, scopes, territories],
+  )
+
+  /** Al soltar: si el nodo ha cambiado de función, se mueve su sentencia en el código. */
+  const onNodeDrop = useCallback(
+    (id: string) => {
+      const change = reparent
+      setReparent(null)
+      if (!change || change.id !== id) return
+      if (change.to !== null) {
+        onAction?.({ type: 'move', id, into: change.to })
+      } else if (change.from !== null) {
+        // Fuera de todas: detrás de la función más externa en la que estaba.
+        let outer = change.from
+        for (let up = parentOf[outer]; up !== undefined; up = parentOf[up]) outer = up
+        onAction?.({ type: 'move', id, after: outer })
+      }
+      // El nodo se vuelve a colocar donde lo pone la gramática, ya en su función.
+      setMovedState((previous) => {
+        if (previous.key !== fitKey) return previous
+        const rest = Object.fromEntries(
+          Object.entries(previous.positions).filter(([key]) => key !== id),
+        )
+        return { key: fitKey, positions: rest }
+      })
+    },
+    [fitKey, onAction, parentOf, reparent],
+  )
+
+  /** Un valor que no cabe en ninguna cajita se coloca en el plano, pero también como píldora. */
+  const chipNode = (
+    node: CanvasNode,
+    position: Point,
+    size: { w: number; h: number },
+  ): ChipFlowNode => ({
+    id: node.id,
+    type: 'chip' as const,
+    position,
+    ...nodeFrame(size),
+    selected: node.id === selectedId,
+    zIndex: 5,
+    draggable: interactive,
+    selectable: interactive,
+    data: {
+      chip: node,
+      size,
+      ...(onControlChange ? { onControlChange: changeControl } : {}),
+      ...(onAction
+        ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
+        : {}),
+      renameSignal: renaming.id === node.id ? renaming.n : 0,
+    },
+  })
+
+  const flowNodes: AnyFlowNode[] = animated.flatMap((item): AnyFlowNode[] => {
     const node = byId.get(item.id)
     if (!node) return []
+    if (isChipKind(node)) return [chipNode(node, item.position, item.value.size)]
     // Es un territorio solo si el layout le ha encontrado un interior: colapsada, una función es un nodo más.
     const container = scopes[item.id] !== undefined
     return [
@@ -493,19 +844,106 @@ function CanvasInner({
           axis,
           size: item.value.size,
           container,
-          showActions,
+          renameSignal: renaming.id === node.id ? renaming.n : 0,
           showStatus,
           linkedSlots: linked[node.id] ?? [],
           connectable,
           eligible: eligible ? (eligible[node.id] ?? []) : null,
+          // Al arrastrar un nodo: la función que lo recibiría, y la que lo perdería.
+          drop: reparent?.to === node.id ? 'into' : reparent?.from === node.id ? 'out' : undefined,
+          addTarget: addTarget === node.id,
+          // La cajita de chips del territorio, y lo que llevan las casillas de este nodo.
+          tray: container ? plan.trays.get(node.id) : undefined,
+          chipSlots: plan.chipSlots[node.id],
+          chipOnly: plan.chipOnly[node.id],
+          callees,
+          litSlots: litSlots[node.id],
+          hotSlot:
+            chipDrag.hover?.nodeId === node.id
+              ? { slot: chipDrag.hover.slot, ok: chipDrag.hover.ok }
+              : null,
+          ...(connectable ? { onAddChip, onClearChip } : {}),
+          ...(container && interactive ? { onResize } : {}),
           phase: item.phase,
-          ...(onControlChange ? { onControlChange } : {}),
+          ...(onControlChange ? { onControlChange: changeControl } : {}),
           ...(onAction ? { onNodeEdit } : {}),
           ...(onEnter ? { onEnter } : {}),
         },
       },
     ]
   })
+
+  /**
+   * Los chips acoplados y la cajita del programa. Cada cajita cuelga de su contexto: si el
+   * territorio se mueve o se anima, sus chips van con él. Un chip que se lleva sigue al puntero.
+   */
+  const dockedNodes: AnyFlowNode[] = []
+  {
+    const positionOf = new Map(animated.map((item) => [item.id, item.position]))
+    for (const [context, tray] of plan.trays) {
+      let origin: Point | undefined
+      if (context === MODULE) {
+        origin = MODULE_TRAY_AT
+        dockedNodes.push({
+          id: 'tray:module',
+          type: 'tray' as const,
+          position: origin,
+          ...nodeFrame({ w: tray.w, h: tray.h }),
+          zIndex: 0,
+          draggable: false,
+          selectable: false,
+          focusable: false,
+          data: {
+            tray,
+            label: 'Variables y funciones del programa',
+            ...(connectable && addToModule
+              ? {
+                  onAdd: () => {
+                    onAddChip(MODULE)
+                  },
+                }
+              : {}),
+          },
+        })
+      } else {
+        const at = positionOf.get(context)
+        const owner = byId.get(context)
+        if (!at || !owner || scopes[context] === undefined) continue
+        const inset = SCOPE_FRAME.side + (owner.params?.length && owner.contains ? PARAM_GUTTER : 0)
+        origin = { x: at.x + inset, y: at.y + SCOPE_FRAME.top + territoryHeadroom(owner) }
+      }
+      const variables = plan.chipsOf.get(context) ?? []
+      for (const placed of tray.chips) {
+        const chip = variables.find((candidate) => candidate.id === placed.id)
+        const fn = chip
+          ? undefined
+          : plan.functions.find((f) => `${FUNCTION_CHIP}${f.id}` === placed.id)
+        if (!chip && !fn) continue
+        const size = chip ? chipSize(chip) : functionChipSize(fn as FunctionChip)
+        const carried = chipDrag.carried?.id === placed.id ? chipDrag.carried.position : undefined
+        dockedNodes.push({
+          id: placed.id,
+          type: 'chip' as const,
+          position: carried ?? { x: origin.x + placed.x, y: origin.y + placed.y },
+          ...nodeFrame(size),
+          zIndex: 5,
+          draggable: interactive,
+          selectable: interactive && chip !== undefined,
+          selected: placed.id === selectedId,
+          data: {
+            size,
+            ...(chip ? { chip } : {}),
+            ...(fn ? { fn } : {}),
+            ...(onControlChange ? { onControlChange: changeControl } : {}),
+            ...(onAction
+              ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
+              : {}),
+            renameSignal: renaming.id === placed.id ? renaming.n : 0,
+          },
+        })
+      }
+    }
+  }
 
   // Lo que las conexiones tienen que esquivar: cada nodo y cada territorio, donde están ahora.
   const obstacles = useMemo(
@@ -540,6 +978,7 @@ function CanvasInner({
       axis,
       ...(connectable &&
       edge.toPort !== undefined &&
+      (edge.toPort !== 'return' || edge.via !== undefined) &&
       byId.get(edge.to)?.inputs?.includes(edge.toPort)
         ? {
             removable: true,
@@ -555,10 +994,15 @@ function CanvasInner({
   }))
 
   const onNodesChange = useCallback(
-    (changes: NodeChange<PryselFlowNode>[]) => {
+    (changes: NodeChange<AnyFlowNode>[]) => {
       for (const change of changes) {
         if (change.type !== 'position' || !change.position) continue
         const { id, position } = change
+        // Un chip se lleva hasta una casilla y vuelve a su cajita: no cambia de sitio en el plano.
+        if (isDockedChip(id)) {
+          chipDrag.carry(id, position)
+          continue
+        }
         const inside = descendantsOf(id)
         // Una instantánea: el actualizador de estado no debe leer una referencia mutable.
         const shown = shownRef.current
@@ -568,7 +1012,7 @@ function CanvasInner({
         })
       }
     },
-    [descendantsOf, fitKey],
+    [descendantsOf, fitKey, isDockedChip, chipDrag],
   )
 
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
@@ -648,7 +1092,7 @@ function CanvasInner({
         <EdgeDefs />
       </svg>
       <ReactFlow
-        nodes={flowNodes}
+        nodes={[...flowNodes, ...dockedNodes]}
         edges={flowEdges}
         nodeTypes={NODE_TYPES}
         edgeTypes={EDGE_TYPES}
@@ -657,7 +1101,7 @@ function CanvasInner({
         onNodeClick={
           interactive
             ? (_, node) => {
-                select(node.id)
+                if (node.id !== 'tray:module' && !node.id.startsWith(FUNCTION_CHIP)) select(node.id)
               }
             : undefined
         }
@@ -673,6 +1117,24 @@ function CanvasInner({
             ? () => {
                 select(null)
                 setQuick(null)
+                setMenu(null)
+              }
+            : undefined
+        }
+        onNodeContextMenu={
+          connectable && showActions
+            ? (event, node) => {
+                // El menú del navegador no pinta nada aquí: se abre el del nodo, junto al puntero.
+                event.preventDefault()
+                const frame = frameRef.current?.getBoundingClientRect()
+                if (!frame) return
+                select(node.id)
+                setQuick(null)
+                setMenu({
+                  id: node.id,
+                  x: event.clientX - frame.left,
+                  y: event.clientY - frame.top,
+                })
               }
             : undefined
         }
@@ -693,7 +1155,7 @@ function CanvasInner({
             : undefined
         }
         onConnectEnd={connectable ? onConnectEnd : undefined}
-        isValidConnection={(connection) => checkConnection(byId, linkOf(connection)).ok}
+        isValidConnection={(connection) => checkConnection(lookup, linkOf(connection)).ok}
         connectionRadius={22}
         connectOnClick={false}
         deleteKeyCode={null}
@@ -702,15 +1164,27 @@ function CanvasInner({
             ? (_, node) => {
                 // Arrastrar un nodo lo selecciona: React Flow mueve a la vez todo lo seleccionado,
                 // y si quedara otro nodo elegido se desplazaría también, sumándose a mi propio arrastre.
-                select(node.id)
+                if (!node.id.startsWith(FUNCTION_CHIP)) select(node.id)
                 setDragging(true)
+              }
+            : undefined
+        }
+        onNodeDrag={
+          interactive
+            ? (event, node) => {
+                if (isDockedChip(node.id)) {
+                  const point = 'touches' in event ? event.touches[0] : event
+                  if (point) chipDrag.over(node.id, point)
+                } else onNodeDrag(node)
               }
             : undefined
         }
         onNodeDragStop={
           interactive
-            ? () => {
+            ? (_, node) => {
                 setDragging(false)
+                if (isDockedChip(node.id)) chipDrag.drop(node.id)
+                else onNodeDrop(node.id)
               }
             : undefined
         }
@@ -749,6 +1223,17 @@ function CanvasInner({
           </Panel>
         )}
       </ReactFlow>
+      {menu && byId.get(menu.id) && (
+        <NodeMenu
+          x={menu.x}
+          y={menu.y}
+          title={byId.get(menu.id)?.label ?? ''}
+          items={menuItems(menu.id)}
+          onClose={() => {
+            setMenu(null)
+          }}
+        />
+      )}
       {notice !== null && (
         <p className="canvas__notice" role="status">
           {notice}

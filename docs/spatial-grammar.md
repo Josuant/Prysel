@@ -68,7 +68,7 @@ La pertenencia es una relación espacial antes que una línea. Un `def` no es un
 
 El layout lo resuelve **de dentro hacia fuera**. Cada ámbito coloca primero su contenido en su propio plano, y toma el tamaño que ese contenido necesita (`SCOPE_FRAME`: cabecera arriba, margen a los lados). Después el programa de fuera trata a cada ámbito como un solo bloque del tamaño justo. Por eso lo de dentro nunca se sale ni se mezcla con lo de fuera, y los ámbitos se anidan a cualquier profundidad.
 
-- Es un ámbito todo nodo de rol `abstraction` que tiene nodos dentro **en el plano**. Una función colapsada no lo es: sus miembros ya no están, y se dibuja como un nodo más.
+- Es un ámbito todo nodo de rol `abstraction` —y todo bucle con cuerpo (`GraphNode.territory`)— que tiene nodos dentro **en el plano**. Una función colapsada no lo es: sus miembros ya no están, y se dibuja como un nodo más.
 - Lo que un ámbito abarca incluye lo transitivo: el cuerpo de un bucle dentro de la función sigue dentro de la función.
 - Las conexiones que cruzan el borde se recogen en él para ordenar el plano de fuera, pero siguen apuntando al nodo real de dentro: el dato entra en el territorio.
 - La arista de la función a su propio cuerpo (una llamada recursiva) no se dibuja: el espacio ya dice que pertenece. Las que salen de un **parámetro** sí: cada parámetro es un puerto en el borde del territorio, y de él parte el cable hasta el campo de dentro que lo usa (ver «Conectar»). Una función con parámetros reserva a su izquierda una zona para ellos (`GraphNode.gutter`).
@@ -151,6 +151,88 @@ Un cable **es** una variable: arrastrar de una salida a un campo escribe en ese 
 - **Añadir** desde el menú con una función o un bucle seleccionados lo pone **dentro**; si el cuerpo era solo `pass`, lo sustituye. Una función nueva nace con dos parámetros y `return a + b`, para que se vean sus puertos y sus cables.
 
 Todo son `NodeAction` (`connect`, `disconnect`, `add` con `connect`), que pasan por la misma cola y las mismas garantías que el resto.
+
+### Chips y cables: cuándo se usa cada uno
+
+Hay dos maneras de pasar un valor a una casilla, y no son intercambiables. La regla es una pregunta: **¿tiene procedencia que el lector deba seguir?**
+
+| Es…                                                                                                                                         | Ejemplo                                            | Se dibuja como                       | Se conecta                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------- |
+| Una **inicialización**: un valor escalar con nombre, que el contexto prepara antes de empezar a actuar                                      | `limite = 20`, `nombre = "Ana"`, `activo = True`   | **Chip** en la cajita de su contexto | **Soltándolo** en la casilla: el chip aparece dentro, sin cable |
+| Algo que **se calcula** o **llega**: el resultado de una llamada u operación, un `input`, la variable de un bucle, un parámetro, un retorno | `suma = a + b`, `n = float(input())`, `for i in …` | **Nodo** con su puerto               | **Cable** visible, con su recorrido                             |
+| Un dato **dentro** de un nodo                                                                                                               | el `0` de `x + 0`                                  | Su casilla                           | Se escribe                                                      |
+
+Lo que hace a algo un chip (`dockChips`, pura y probada):
+
+- Es un **valor escalar** (número, texto, verdadero/falso, `None`) asignado a un nombre. Una lista o un diccionario son estructura, no una píldora: siguen siendo nodos compactos.
+- Es una sentencia **del propio bloque** del contexto (su función, su bucle, el programa), no de una rama de un `if`: un valor que solo existe en una rama es flujo condicional, y se queda en su sitio (con forma de píldora, pero con cable).
+- Viene **antes de la primera sentencia que actúa**. Los `import`, las listas y las funciones definidas no cortan la preparación; una llamada, una operación o un bucle, sí. Un valor asignado a mitad de camino es parte del flujo.
+- Su contexto se dibuja como territorio (si dentro solo hubiera chips no habría cuerpo, y se quedan como nodos).
+
+La consecuencia de la regla es que un **cable siempre significa cálculo o procedencia**: nunca es solo «aquí se usa la constante `limite`». Los chips quitan del plano justo el ruido que no cuenta nada (los cables desde cada constante hasta cada uso) y dejan los cables para lo que sí hay que seguir. Si un valor se **reasigna** después (`total = 0` y más tarde `total = total + n`), el primero es el chip y lo posterior, un nodo: cada uso se resuelve al último que lo define.
+
+**Cómo funciona un chip**
+
+- **Cajita por contexto**: cada función, cada bucle y el programa tienen una cajita en su cabecera (`TRAY`) donde se agrupan sus chips, con un botón **＋ variable** que añade una **al principio** del contexto (`add` con `at: 'start'`: antes de su primera sentencia; en el archivo, tras los `import`; sustituye un `pass`). Una cajita vacía dice «variable» para que se entienda qué es. Crece con sus chips (salta de fila a 460 px) y el territorio se ensancha y se alarga lo que pida (`GraphNode.headerWidth`, `headroom`).
+- **Siempre compacto**: `nombre = valor`, con el valor editable en su sitio (un número, un texto, un interruptor). Renombrar (doble clic o su menú) cambia todos sus usos.
+- **Se arrastra, no se mueve**: se lleva hasta una casilla y, al soltarlo, vuelve a su cajita. Mientras se arrastra, la casilla bajo el puntero se marca en verde si lo admite (misma validación que un cable: `checkConnection`) o en rojo con su motivo. Al soltarlo se escribe el nombre en el código.
+- **Se ve dónde está**: la casilla que lo recibe lo muestra **dentro**, coloreado por su clase de valor y con una × para quitarlo. Al seleccionar un chip se marcan todas las casillas donde se usa: su conexión no se dibuja, así que se señala.
+- **Todas las casillas que reciben un valor lo aceptan**: operandos, argumentos, el mensaje de un `print`, los lados de una condición, la secuencia de un bucle, la casilla de una función a la que llamar.
+
+### Llamar a una función: elegirla, y sus casillas aparecen
+
+El nodo de una llamada tiene una casilla para **a quién llama**, con un desplegable con las funciones del programa y las de uso común (`print`, `len`, `range`…), y acepta el **chip de una función** (las funciones del programa se ofrecen como chips `ƒ nombre(a, b)` en la cajita del programa). Al elegir otra, la acción `callee` (`changeCallee`) escribe:
+
+- el nuevo nombre, y la **lista de argumentos ajustada a sus parámetros** (los valores que había se conservan por posición; los que faltan quedan en `None`): cada parámetro tiene su casilla, que acepta chips o cables;
+- si la función **devuelve algo** y la llamada estaba suelta (`f(x)`), su resultado se guarda en una variable (`resultado`, `resultado_2`…), que es la salida del nodo.
+
+Una llamada sin argumentos a una función también tiene editor (es donde se elige a quién llamar). `print` e `input` no repiten su nombre en un campo: lo dice el título.
+
+### Tarjetas esbeltas: solo lo relevante
+
+En densidad normal un nodo enseña lo justo, y su alto sale de lo que lleva dentro (`slimHeight`), no de un tamaño de serie:
+
+- **Cabecera**: el icono del tipo (el nombre va en su tooltip), el nombre del nodo y el chevron. Sin pie: la línea del archivo va en el tooltip y el estado solo aparece si pasa algo (`running`, `error`…). En expandido se conserva todo.
+- **Una fórmula en una fila**: una operación es `A · operador · B`; una decisión, `campo · operador · valor` (titulada «Si»). Sus puertos, que caerían uno sobre otro, se reparten a lo alto del borde.
+- **Los argumentos** llevan su nombre a la izquierda del campo, no encima; `print("Hola")` es una sola fila con el mensaje (crece solo si es largo o de varias líneas).
+- **Sin iconos de copiar, editar y borrar**: están en el **menú del nodo** (clic derecho, o la tecla de menú con el nodo enfocado): renombrar, plegar/abrir, duplicar, editar como código y eliminar (Supr).
+
+### Bucles: un territorio que envuelve lo que repite
+
+Un `for` o un `while` con cuerpo se dibuja como un **territorio**, igual que una función: envuelve físicamente lo que repite, y los bucles anidados son territorios dentro de territorios, como la indentación. Un bucle vacío, o plegado, es la tarjeta de siempre (con su editor).
+
+- **Todo lo que nace dentro es suyo, a cualquier profundidad**: el analizador declara como contenido del bucle también las ramas de un `if` y los bucles anidados (antes solo los hijos directos, y el intercambio de una burbuja quedaba fuera del marco).
+- **La cabecera lleva el editor**: `para [n] en [range(10)]` (o `mientras [condición]`), con el puerto de su secuencia o condición. Pide sitio propio a la cabecera (`LOOP_HEADROOM`).
+- **La variable de iteración es un puerto** del borde izquierdo (`param:n`), con su chip, del que salen los cables hacia lo de dentro: es el mismo mecanismo que los parámetros de una función. Conectarla, o crear un nodo desde ella, lo pone dentro del bucle.
+- **El carril de repetición**: una línea discontinua en movimiento suave sale del final del cuerpo, recorre el borde de abajo y sube hasta la cabecera, con la etiqueta «repite». Sustituye a la arista de retorno (`feedback`), que dibujada como cable cruzaba el diagrama. Con `prefers-reduced-motion` no se anima.
+- **`break` y `continue` son nodos propios** (`control.break`, `control.continue`), no código opaco. Se conectan, con un cable de control, al bucle **más cercano** que afectan: `break` al puerto **termina** del borde derecho (por donde sigue el flujo al acabar el bucle) y `continue` al puerto **siguiente**, junto a la cabecera (la vuelta que se salta no termina al final, sino al principio). Un `break` dentro de una función no cruza a un bucle que la rodea. Esos puertos solo se dibujan cuando hay alguien que llega a ellos.
+- **Plegar**: el chevron de la cabecera (o el modo compacto) pliega el bucle a una tarjeta con su editor; las conexiones internas se van con él.
+- **Meter y sacar** funciona igual que con las funciones (se decide por el territorio más interno bajo el nodo), y lo que entra va antes de un `break`, `continue` o `return` final.
+
+El progreso de una ejecución (`i / N`) ya lo lleva el modelo del editor (`current` / `total`) y se dibuja en la cabecera cuando hay ejecución que mostrar.
+
+### El retorno es la salida de la función
+
+Un `return` no es un nodo más: es lo que la función **da**. `foldReturns` (en `program.ts`, tras plegar) lo trata así:
+
+- Un `return suma` que solo devuelve una variable **no se dibuja**: el cable va de donde se calcula `suma` directamente a un puerto `devuelve` en el borde derecho de la función, y eso ya dice que ese valor es lo que sale. La arista lleva `via` (el `return` real), que es donde se escribe al cambiarla.
+- Un `return a + b` es una operación: se dibuja como tal (título «devuelve»), con su salida a ese puerto.
+- Se quedan a la vista los retornos a los que llega un cable de control (una decisión o un bucle: perderían su camino) y una función cuyo cuerpo sería solo su retorno (sin nada dentro no habría territorio).
+- Conectar algo a `devuelve` escribe el `return` (cambia el valor si ya había uno, lo añade al final si no); solo vale lo que se calcula dentro de la función o uno de sus parámetros. Soltar ese cable quita el `return`.
+
+### Una operación se lee como una fórmula
+
+Operando **A**, el operador en medio y operando **B**, cada uno en su fila con su puerto a su altura; el resultado sale a la derecha. Los puertos de un campo se miden en píxeles **del nodo** (no de pantalla): con el lienzo acercado, medirlos en pantalla los descolocaba respecto de su campo.
+
+### Meter y sacar nodos de una función
+
+Una función es un territorio, y pertenecer a ella es una decisión espacial **y** de código, así que las dos cosas van juntas:
+
+- **Arrastrar un nodo sobre una función** lo mete: la función se marca con un borde discontinuo y «Suelta para meterlo en «f»». **Arrastrarlo fuera de la suya** lo saca: «Suelta fuera para sacarlo de «f»», en ámbar. Se decide por el centro del nodo y el territorio más interno que lo contiene (`territoryAt`); al soltar, la acción `move` mueve su sentencia en el archivo.
+- `moveNode` se lleva la sentencia entera —cuerpo y comentarios pegados— cambiándole la sangría; deja un `pass` donde no queda nada y no mueve algo dentro de sí mismo. Lo que entra en una función va **antes de su `return` final** (detrás no se ejecutaría), y un cuerpo que era solo `pass` se sustituye. Vale también para añadir desde el menú.
+- Solo cambian de función los nodos; una función arrastrada se lleva lo suyo.
+- **Dónde va lo que se añade** está siempre a la vista junto al botón («Dentro de «sumar»», «Después de «x»», «Al final del programa»), y la función destino se marca en el lienzo.
+- **El tamaño de una función se cambia** desde el agarre de su esquina inferior derecha (con la función seleccionada). La gramática lo respeta como **mínimo**: nunca queda por debajo de su contenido, y lo de dentro no se mueve (el espacio de más queda a la derecha y abajo). No se guarda en el archivo.
 
 ### Por qué a veces desaparecían las conexiones
 
@@ -281,7 +363,12 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 - **Conectar un cable existente a otro campo** (arrastrar el extremo de un cable ya tendido) y **cables desde un puerto de entrada** hacia una salida nueva: hoy se conecta desde salidas.
 - **Un nodo sin nombre como origen** (`print(x)` no define nada; `float(input())` sin asignar): para usarlos habría que introducir una variable.
 - **Insertar un conversor** (`float()`) al rechazar una clase: hoy solo se rechaza y se explica.
-- **Bucles como territorio**: un `for` con cuerpo se pinta como nodo con su retorno, no como marco que expone su variable de iteración como puerto (la variable sí sale por su puerto normal).
+- **Mover dentro del mismo bloque** (reordenar sentencias): arrastrar a otra función ya reubica el código, pero no hay gesto para cambiar el orden dentro de una misma función.
+- **Meter una función dentro de otra** arrastrándola (hoy solo se reubican nodos).
+- **Bucles con desempaquetado** (`for k, v in items`): la variable es un patrón, no un identificador, y no ofrece puerto; y la cláusula `else` de un bucle no se representa.
+- **Chips de más tipos** (listas, diccionarios) y **funciones definidas dentro de otra** como chips de su contexto: hoy solo los escalares, y las funciones solo se ofrecen en la cajita del programa.
+- **Arrastrar un chip a un cable ya tendido**, o dejar que un chip nazca de un nodo (convertir una operación con solo literales en su valor): hoy el chip se crea con «＋ variable».
+- **Un puerto de salida arrastrable en el bucle**: `termina` y `siguiente` solo reciben los cables que ya están en el código; no se puede arrastrar un `break` nuevo hasta ellos.
 - **Auto-layout jerárquico** (Dagre/ELK): el reparto lo hace la gramática espacial; Mayús+F solo le devuelve lo que el usuario movió.
 - **Reordenar y mover sentencias** (arrastrar un nodo a otro sitio del flujo de control, o a otro bloque): hoy se duplica y se elimina, pero no se mueve.
 - **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.
