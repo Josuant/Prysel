@@ -2342,3 +2342,76 @@ button.fn-menu__crumb:hover {
   border-radius: 4px;
   background: var(--field);
 }
+
+/* ── La franja de vueltas de un bucle: reproducir, deslizador y una curva por lo que se vigila ── */
+.laps-slot {
+  position: absolute;
+  z-index: 2;
+  height: 36px;
+  overflow: hidden;
+}
+.laps {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--line-faint);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.laps__play {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: none;
+  color: var(--ink);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+.laps__play:hover {
+  border-color: var(--accent);
+}
+.laps__lap {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.laps__range {
+  flex: 1 1 60px;
+  min-width: 40px;
+  max-width: 220px;
+  accent-color: var(--accent);
+}
+.laps__curve {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+.laps__name {
+  color: var(--ink);
+  font-family: var(--font-code, ui-monospace, monospace);
+  font-weight: 600;
+}
+.laps__curve path {
+  stroke: var(--accent);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.laps__curve circle {
+  fill: var(--ink);
+}
+.laps__value {
+  min-width: 34px;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}

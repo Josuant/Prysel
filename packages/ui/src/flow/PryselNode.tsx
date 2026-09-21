@@ -23,6 +23,8 @@ import type { MotionPhase } from '../motion.ts'
 import type { CanvasNode } from '../Canvas.tsx'
 import { isLoopTerritory, territoryHeadroom } from './frame.ts'
 import { TrayBox } from './ChipNode.tsx'
+import { LapsStrip } from './LapsStrip.tsx'
+import { LAPS_HEADROOM } from '../laps.ts'
 import { TRAY, resultNames, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
 
@@ -235,6 +237,14 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-selected={selected ? '' : undefined}
       data-add-target={data.addTarget ? '' : undefined}
     >
+      {container && node.laps && (
+        <div
+          className="laps-slot"
+          style={{ left: insetLeft, right: insetLeft, top: headTop - LAPS_HEADROOM }}
+        >
+          <LapsStrip laps={node.laps} exclude={node.params ?? []} label={node.label} />
+        </div>
+      )}
       {tray && (
         <div className="tray-slot" style={{ left: insetLeft, top: headTop }}>
           <TrayBox

@@ -154,6 +154,10 @@ export function App() {
 
   /** Los bucles que ya dieron vueltas, y la vuelta que se mira en cada uno (por defecto, la última). */
   const [scrub, setScrub] = useState<Record<string, number>>({})
+  // Mientras algo corre, la vuelta que se mira es la última (se sigue en vivo): una elección de la ejecución anterior no vale.
+  if (Object.keys(scrub).length > 0 && Object.values(runs).some((r) => r.state === 'running')) {
+    setScrub({})
+  }
   const refs = useMemo(
     () => (program ? loopRefs(program, top, runs) : new Map<string, LoopRef>()),
     [program, top, runs],
@@ -171,6 +175,19 @@ export function App() {
       // Solo la propia sentencia lleva lo observado: sus nodos de dentro no definen nombres del programa.
       const inner = inLoops.get(node.id)
       const laps = refs.get(node.id)
+      // Un bucle que ya dio vueltas se recorre en su propia cabecera: la vuelta que se mira y sus valores.
+      const lapsView = laps
+        ? {
+            n: laps.view.n,
+            done: laps.view.done,
+            idx: laps.view.idx,
+            names: laps.view.names,
+            position: positionOf(laps.view, scrub[node.id]),
+            onPosition: (position: number) => {
+              setScrub((previous) => ({ ...previous, [node.id]: position }))
+            },
+          }
+        : undefined
       const view = top.get(node.id) === node.id ? runs[node.id] : undefined
       if (!view) {
         // Un nodo de dentro de un bucle: lo que valió en la vuelta que se mira; un bucle, cuántas dio.
@@ -178,6 +195,7 @@ export function App() {
           ? {
               ...shown,
               ...(laps ? { meta: `línea ${node.line} · ${laps.view.n} vueltas` } : {}),
+              ...(lapsView ? { laps: lapsView } : {}),
               ...(inner ? { observed: inner } : {}),
             }
           : shown
@@ -197,9 +215,10 @@ export function App() {
         ...(Object.keys(observed).length > 0 || inner
           ? { observed: { ...observed, ...inner } }
           : {}),
+        ...(lapsView ? { laps: lapsView } : {}),
       }
     })
-  }, [program, pending, runs, top, refs, inLoops])
+  }, [program, pending, runs, top, refs, inLoops, scrub])
 
   const viewOf = (id: string): RunView | undefined => {
     const statement = top.get(id)

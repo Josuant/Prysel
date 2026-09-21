@@ -102,3 +102,19 @@ Los tipos observados afinan el aspecto de un nodo, pero nunca cambian lo que sig
 **Límites:** un bucle anidado solo conserva la serie de la última vuelta del de fuera; los valores son escalares o descripciones (no el tensor de cada vuelta); `async for` no se anota; los bucles de un código que se ejecuta con `exec` dentro del programa del usuario, tampoco. Solo se ve el bucle en el fragmento que lo define: un visor de curva de un bucle dentro de una función colgada de un panel plegado no se enseña.
 
 **Pendiente:** el nodo **Cadena de pasos** (pandas) con vista previa por paso, y el **Bucle de entrenamiento** como nodo propio (época i/N y curvas en vivo dentro del propio territorio, hoy en el panel); probar en un VS Code real y generar un `.vsix`; ejecutar una sola línea dentro de una función.
+
+## Paso 6: el bucle de entrenamiento, dentro de su territorio
+
+Un bucle que ya dio vueltas lleva una **franja de vueltas** en la cabecera de su territorio (`ui/src/laps.ts`, `flow/LapsStrip.tsx`), entre su editor (`para epoch en range(40)`) y la cajita de variables. No hay que abrir ningún panel:
+
+- **▶ reproducir:** recorre las vueltas de la primera a la última (una cada 110 ms) mientras los chips de dentro del bucle van cambiando de valor; se detiene con el mismo botón o al tocar el deslizador. Si se pulsa al final, empieza de nuevo.
+- **Deslizador de vuelta** (`vuelta 8/40`): elige la vuelta que se mira. Es la misma que la del panel de salida: los dos se mueven a la vez.
+- **Una curva por lo que vale la pena vigilar**, con un punto en la vuelta que se mira y su valor: `loss`, `precisión`, `error`, `score`, `reward`… primero, y luego el resto; como mucho tres; nunca la variable del propio bucle ni un contador (`0, 1, 2, …`).
+- **En vivo:** mientras el bucle corre, la franja sigue la última vuelta (`vuelta 16/16 …`); al terminar queda en la última. Al volver a ejecutar, una elección de la ejecución anterior se descarta.
+- La cabecera pide sitio para la franja solo cuando el bucle dio vueltas (`territoryHeadroom` suma `LAPS_HEADROOM`), así que el territorio crece lo justo y el resto del diagrama se recoloca con él.
+
+Es el bucle de entrenamiento como nodo propio sin un nodo nuevo: cualquier `for`/`while` con números que cambian (descenso de gradiente, épocas de un modelo, una simulación) se recorre igual. Sigue siendo de solo lectura: no escribe nada en el archivo.
+
+**Comprobado:** 1108 tests (curvas elegidas, geometría, formato, franja, cabecera del territorio) y el webview contra un anfitrión simulado: la franja aparece al ejecutar, reproducir avanza y para donde se le dice, los chips cambian con la vuelta, y en una segunda ejecución sigue en vivo hasta la última.
+
+**Pendiente:** el nodo **Cadena de pasos** (pandas) con vista previa por paso; probar en un VS Code real y generar un `.vsix`; ejecutar una sola línea dentro de una función; un bucle anidado solo conserva la serie de la última vuelta del de fuera.

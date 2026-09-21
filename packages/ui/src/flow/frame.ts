@@ -1,3 +1,4 @@
+import { LAPS_HEADROOM } from '../laps.ts'
 import {
   HEADER_EDITOR_KINDS,
   LOOP_HEADROOM,
@@ -43,11 +44,14 @@ export function territoryHeadroom(node: {
   note?: string | undefined
   control?: unknown
   contains?: readonly string[] | undefined
+  /** Un bucle que ya dio vueltas lleva su franja de vueltas en la cabecera. */
+  laps?: unknown
 }): number {
   if ((node.contains?.length ?? 0) === 0) return 0
   return (
     (node.note ? docHeadroom(node.note) : 0) +
-    (isTerritory(node) && HEADER_EDITOR_KINDS.has(node.kind) && node.control ? LOOP_HEADROOM : 0)
+    (isTerritory(node) && HEADER_EDITOR_KINDS.has(node.kind) && node.control ? LOOP_HEADROOM : 0) +
+    (isTerritory(node) && node.laps ? LAPS_HEADROOM : 0)
   )
 }
 
