@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  ACTION_TITLES,
   buildShape,
   getKind,
   nodeSize,
@@ -23,6 +24,7 @@ import {
 } from '@prysel/morphology'
 import { StatusChip, TypeBadge } from './Badge.tsx'
 import { Control, type ControlModel } from './controls.tsx'
+import type { ChipSlot } from './chips.ts'
 import { SlotStateContext, type SlotState } from './fields.tsx'
 import { Icon } from './Icon.tsx'
 
@@ -93,7 +95,16 @@ export interface MorphNodeProps {
    */
   linkedSlots?: string[]
   /** Las casillas que llevan un chip dentro (una variable que se arrastró hasta ellas), por puerto. */
-  chipSlots?: Readonly<Record<string, { name: string; type: ValueType }>>
+  chipSlots?: Readonly<Record<string, ChipSlot>>
+  /**
+   * La tarjeta se dibuja en **una sola línea** (operaciones y llamadas): icono, nombre, y la fórmula
+   * o la llamada al lado. Solo en la tarjeta esbelta.
+   */
+  line?: boolean
+  /** Lo que asigna la línea (`A = funcion()`): el nombre es un chip que se arrastra a una casilla. */
+  result?: { name: string; type: ValueType }
+  /** El usuario agarra el chip del resultado: el lienzo lleva el arrastre. */
+  onGrabResult?: (event: React.PointerEvent<HTMLElement>) => void
   /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
   hotSlot?: { slot: string; ok: boolean; convert?: boolean } | null
   /** Quita el chip de una casilla (la deja en un valor neutro). */
@@ -199,6 +210,38 @@ function RenameBox({ label, onDone }: { label: string; onDone: (to: string | nul
   )
 }
 
+/** El nombre que asigna una línea, como pastilla: se lleva hasta una casilla, y con doble clic se renombra. */
+function ResultChip({
+  name,
+  type,
+  renamable,
+  signal,
+  onRename,
+  onGrab,
+}: {
+  name: string
+  type: ValueType
+  renamable: boolean
+  signal: number
+  onRename: (to: string) => void
+  onGrab?: (event: React.PointerEvent<HTMLElement>) => void
+}) {
+  return (
+    <span
+      className="vchip vchip--result nodrag"
+      data-type={type}
+      title={`${name}: arrástrala a una casilla que reciba un valor`}
+      onPointerDown={(event) => {
+        // Escribir o seleccionar dentro del cuadro de renombrar no es llevarse el chip.
+        if (event.target instanceof HTMLInputElement) return
+        onGrab?.(event)
+      }}
+    >
+      <Title label={name} renamable={renamable} tag="span" signal={signal} onRename={onRename} />
+    </span>
+  )
+}
+
 /** De `def suma(a, b):` interesa lo que el título no dice: `(a, b)`. */
 function signatureOf(code: string): string {
   return code.replace(/^\s*(?:async\s+)?(?:def|class)\s+\w+/, '').replace(/:\s*$/, '')
@@ -229,6 +272,9 @@ export function MorphNode({
   container = false,
   linkedSlots,
   chipSlots,
+  line = false,
+  result,
+  onGrabResult,
   hotSlot = null,
   onClearChip,
   callees,
@@ -249,6 +295,10 @@ export function MorphNode({
   // Una tarjeta esbelta: solo lo relevante. El icono dice el tipo, el nombre va en la cabecera y el
   // pie (línea, estado) se pide con el tooltip o en expandido. Un territorio y expandido conservan todo.
   const slim = !container && !compact && density !== 'expanded'
+  // Una operación o una llamada se leen de corrido: icono, nombre, y lo que hacen, en una sola línea.
+  const lined = slim && line && (control?.kind === 'expression' || control?.kind === 'args')
+  const lineTitle =
+    control?.kind === 'args' ? ACTION_TITLES[control.target] : result ? undefined : label
   // Una decisión con su editor ya dice lo que compara: el título repetiría los mismos campos.
   const shownLabel =
     slim && kind === 'control.condition' && control?.kind === 'condition' ? 'Si' : label
@@ -341,6 +391,7 @@ export function MorphNode({
         data-state={state}
         data-density={container ? 'normal' : density}
         data-slim={slim ? '' : undefined}
+        data-line={lined ? '' : undefined}
         data-lod={lod}
         data-modifier={modifier}
         data-raised={raised ? '' : undefined}
@@ -408,6 +459,62 @@ export function MorphNode({
                 <StatusChip state={state} showLabel={false} className="node__glance-state" />
               ) : null}
             </div>
+          ) : lined && control ? (
+            <>
+              <div className="node__line" {...(meta ? { title: meta } : {})}>
+                <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} iconOnly />
+                {result && (
+                  <>
+                    <ResultChip
+                      name={result.name}
+                      type={result.type}
+                      renamable={renamable}
+                      signal={renameSignal}
+                      onRename={(to) => onAction?.({ type: 'rename', to })}
+                      {...(onGrabResult ? { onGrab: onGrabResult } : {})}
+                    />
+                    <span className="node__eq">=</span>
+                  </>
+                )}
+                {lineTitle && (
+                  <Title
+                    label={lineTitle}
+                    renamable={false}
+                    tag="span"
+                    onRename={() => undefined}
+                  />
+                )}
+                <div className="node__control">
+                  <Control
+                    model={control}
+                    level="summary"
+                    line
+                    onChange={onControlChange}
+                    {...(editable ? { editable } : {})}
+                    {...(suggestions ? { suggestions } : {})}
+                    {...(linkedSlots ? { linked: linkedSlots } : {})}
+                  />
+                </div>
+                {showStatus && state !== 'dormant' && (
+                  <StatusChip state={state} showLabel={false} />
+                )}
+                {onToggleDensity && (
+                  <button
+                    type="button"
+                    className="node__action nodrag"
+                    aria-label={toggleLabel ?? 'Expandir nodo'}
+                    onClick={onToggleDensity}
+                  >
+                    <Icon name="chevron" size={13} />
+                  </button>
+                )}
+              </div>
+              {note && (
+                <p className="node__note" title={note}>
+                  {note}
+                </p>
+              )}
+            </>
           ) : (
             <>
               <header className="node__head" {...(slim && meta ? { title: meta } : {})}>

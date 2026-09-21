@@ -13,6 +13,9 @@ import {
 } from '@xyflow/react'
 import {
   extraHeight,
+  isLineCard,
+  lineHeight,
+  lineWidth,
   slimHeight,
   slimWidth,
   getKind,
@@ -37,7 +40,7 @@ import { EdgeDefs } from './Edge.tsx'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
 import { dragTerritory, territoryAt } from './drag.ts'
-import { isLoopTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
+import { hasParamPorts, isLoopTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
@@ -51,8 +54,11 @@ import {
   chipSize,
   functionChipSize,
   isChipKind,
+  iterChipSize,
+  parseIterChip,
   planChips,
   promoteTarget,
+  resultName,
   type FunctionChip,
 } from './chips.ts'
 import {
@@ -334,10 +340,11 @@ function CanvasInner({
     () =>
       planChips(nodes, edges, {
         canAdd: connectable,
+        density: densityOf,
         ...(palette ? { palette } : {}),
         addToModule,
       }),
-    [nodes, edges, connectable, palette, addToModule],
+    [nodes, edges, connectable, palette, addToModule, densityOf],
   )
 
   /** De todo lo que puede dar un valor: los nodos, y las funciones que se ofrecen como chips. */
@@ -358,7 +365,8 @@ function CanvasInner({
 
   /** ¿Es un chip acoplado a una cajita (o el de una función)? Esos no se colocan: se llevan a una casilla. */
   const isDockedChip = useCallback(
-    (id: string) => plan.docked.has(id) || id.startsWith(FUNCTION_CHIP),
+    (id: string) =>
+      plan.docked.has(id) || id.startsWith(FUNCTION_CHIP) || parseIterChip(id) !== null,
     [plan],
   )
 
@@ -369,6 +377,57 @@ function CanvasInner({
     },
     onRefuse: setNotice,
   })
+
+  /**
+   * El chip del resultado de una línea (`A = funcion()`) vive dentro de su tarjeta, no es un nodo del
+   * lienzo: al agarrarlo se lleva una copia (el «fantasma») hasta una casilla, con la misma
+   * validación que cualquier chip, y al soltarlo vuelve a su sitio.
+   */
+  const [ghost, setGhost] = useState<{
+    name: string
+    type: ValueType
+    x: number
+    y: number
+  } | null>(null)
+  const chipDragRef = useRef(chipDrag)
+  useEffect(() => {
+    chipDragRef.current = chipDrag
+  })
+  const grabResult = useCallback(
+    (id: string, event: React.PointerEvent<HTMLElement>) => {
+      if (event.button !== 0) return
+      const source = byId.get(id)
+      if (!source) return
+      const from = { x: event.clientX, y: event.clientY }
+      let moved = false
+      const move = (e: PointerEvent) => {
+        if (!moved && Math.hypot(e.clientX - from.x, e.clientY - from.y) < 5) return
+        moved = true
+        const frame = frameRef.current?.getBoundingClientRect()
+        if (frame) {
+          setGhost({
+            name: source.provides ?? source.label,
+            type: source.valueType ?? 'any',
+            x: e.clientX - frame.left,
+            y: e.clientY - frame.top,
+          })
+        }
+        chipDragRef.current.over(id, e)
+      }
+      const up = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+        window.removeEventListener('pointercancel', up)
+        if (!moved) return
+        setGhost(null)
+        chipDragRef.current.drop(id)
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up)
+      window.addEventListener('pointercancel', up)
+    },
+    [byId],
+  )
 
   /**
    * Qué campos de cada nodo reciben una conexión: lo dice el grafo, no la interfaz.
@@ -411,16 +470,32 @@ function CanvasInner({
           // Un valor suelto (que no cabe en ninguna cajita) es una píldora, no una tarjeta.
           size: isChipKind(node)
             ? chipSize(node)
-            : d === 'normal'
-              ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+            : d === 'normal' && isLineCard(node.kind, node.control)
+              ? // Una operación o una llamada: una sola línea, con su nombre como chip.
                 {
-                  w: slimWidth(base.w, node.control),
-                  h: slimHeight(node.control, linked[node.id], node.note, node.code !== undefined),
+                  w: lineWidth(
+                    node.control,
+                    resultName(node, d),
+                    linked[node.id],
+                    node.openable ? 26 : 0,
+                  ),
+                  h: lineHeight(node.note),
                 }
-              : {
-                  w: base.w,
-                  h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
-                },
+              : d === 'normal'
+                ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+                  {
+                    w: slimWidth(base.w, node.control),
+                    h: slimHeight(
+                      node.control,
+                      linked[node.id],
+                      node.note,
+                      node.code !== undefined,
+                    ),
+                  }
+                : {
+                    w: base.w,
+                    h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
+                  },
           // La documentación, el editor de un bucle y la cajita de chips viven en la cabecera de un territorio.
           ...(head > 0 ? { headroom: head } : {}),
           ...(tray ? { headerWidth: tray.w } : {}),
@@ -428,7 +503,7 @@ function CanvasInner({
           ...(isLoopTerritory(node) ? { territory: true } : {}),
           ...(node.contains && resized[node.id] ? { minSize: resized[node.id] } : {}),
           // Los parámetros salen del borde de la función: sus etiquetas y sus cables piden sitio.
-          ...(node.params?.length && node.contains ? { gutter: PARAM_GUTTER } : {}),
+          ...(hasParamPorts(node) ? { gutter: PARAM_GUTTER } : {}),
           ...(node.contains ? { contains: node.contains } : {}),
         }
       }),
@@ -447,7 +522,9 @@ function CanvasInner({
     () =>
       edges.filter((edge) => {
         // Lo que sale de un chip acoplado no se dibuja como un cable: el chip se ve en la casilla.
-        if (plan.docked.has(edge.from)) return false
+        // Lo mismo con la variable de un bucle: es un chip de su cajita.
+        // Y el resultado de una línea (`A = funcion()`) que llega a una casilla que enseña su nombre.
+        if (plan.docked.has(edge.from) || plan.hidden.has(edge)) return false
         // El retorno de un bucle territorio lo dibuja el propio bucle (su carril de repetición).
         if (edge.relation === 'feedback' && scopes[edge.to]?.includes(edge.from)) return false
         return edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to)
@@ -680,7 +757,7 @@ function CanvasInner({
     if (edgeId !== null && cable) {
       event.preventDefault()
       disconnect(cable)
-    } else if (selectedId !== null && scopes[selectedId] === undefined) {
+    } else if (selectedId !== null && byId.has(selectedId) && scopes[selectedId] === undefined) {
       // Un territorio (una función, un bucle) lleva mucho dentro: eliminarlo pide el botón, no una tecla.
       event.preventDefault()
       onAction?.({ type: 'delete', id: selectedId })
@@ -702,10 +779,15 @@ function CanvasInner({
   /** Al seleccionar un chip, dónde se usa: su conexión no se dibuja, así que se marcan las casillas. */
   const litSlots = useMemo(() => {
     const map: Record<string, string[]> = {}
-    if (selectedId === null || !plan.docked.has(selectedId)) return map
+    if (selectedId === null) return map
+    const iter = parseIterChip(selectedId)
+    if (!iter && !plan.docked.has(selectedId) && !plan.results.has(selectedId)) return map
     for (const edge of edges) {
-      if (edge.from !== selectedId || !edge.toPort) continue
-      ;(map[edge.to] ??= []).push(edge.toPort)
+      if (!edge.toPort) continue
+      const mine = iter
+        ? edge.from === iter.loop && edge.fromPort === `param:${iter.name}`
+        : edge.from === selectedId && (plan.docked.has(selectedId) || plan.hidden.has(edge))
+      if (mine) (map[edge.to] ??= []).push(edge.toPort)
     }
     return map
   }, [selectedId, plan, edges])
@@ -878,6 +960,8 @@ function CanvasInner({
           tray: container ? plan.trays.get(node.id) : undefined,
           chipSlots: plan.chipSlots[node.id],
           chipOnly: plan.chipOnly[node.id],
+          line: isLineCard(node.kind, node.control) && densityOf(node) === 'normal',
+          ...(connectable ? { onGrabResult: grabResult } : {}),
           callees,
           litSlots: litSlots[node.id],
           hotSlot:
@@ -935,17 +1019,23 @@ function CanvasInner({
         const at = positionOf.get(context)
         const owner = byId.get(context)
         if (!at || !owner || scopes[context] === undefined) continue
-        const inset = SCOPE_FRAME.side + (owner.params?.length && owner.contains ? PARAM_GUTTER : 0)
+        const inset = SCOPE_FRAME.side + (hasParamPorts(owner) ? PARAM_GUTTER : 0)
         origin = { x: at.x + inset, y: at.y + SCOPE_FRAME.top + territoryHeadroom(owner) }
       }
       const variables = plan.chipsOf.get(context) ?? []
       for (const placed of tray.chips) {
         const chip = variables.find((candidate) => candidate.id === placed.id)
-        const fn = chip
-          ? undefined
-          : plan.functions.find((f) => `${FUNCTION_CHIP}${f.id}` === placed.id)
-        if (!chip && !fn) continue
-        const size = chip ? chipSize(chip) : functionChipSize(fn as FunctionChip)
+        const iter = chip ? null : parseIterChip(placed.id)
+        const fn =
+          chip || iter
+            ? undefined
+            : plan.functions.find((f) => `${FUNCTION_CHIP}${f.id}` === placed.id)
+        if (!chip && !fn && !iter) continue
+        const size = chip
+          ? chipSize(chip)
+          : iter
+            ? iterChipSize(iter.name)
+            : functionChipSize(fn as FunctionChip)
         const carried = chipDrag.carried?.id === placed.id ? chipDrag.carried.position : undefined
         dockedNodes.push({
           id: placed.id,
@@ -954,12 +1044,13 @@ function CanvasInner({
           ...nodeFrame(size),
           zIndex: 5,
           draggable: interactive,
-          selectable: interactive && chip !== undefined,
+          selectable: interactive && fn === undefined,
           selected: placed.id === selectedId,
           data: {
             size,
             ...(chip ? { chip } : {}),
             ...(fn ? { fn } : {}),
+            ...(iter ? { iter: { name: iter.name } } : {}),
             ...(onControlChange ? { onControlChange: changeControl } : {}),
             ...(onAction
               ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
@@ -1259,6 +1350,16 @@ function CanvasInner({
             setMenu(null)
           }}
         />
+      )}
+      {ghost && (
+        <span
+          className="vchip vchip--result vchip--ghost"
+          data-type={ghost.type}
+          style={{ left: ghost.x, top: ghost.y }}
+          aria-hidden
+        >
+          <span className="node__title type-node-title">{ghost.name}</span>
+        </span>
       )}
       {notice !== null && (
         <p className="canvas__notice" role="status">

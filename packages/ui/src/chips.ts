@@ -1,4 +1,4 @@
-import type { ValueType } from '@prysel/morphology'
+import { isLineCard, type ControlModel, type Density, type ValueType } from '@prysel/morphology'
 import type { SemanticEdge } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
 
@@ -48,6 +48,68 @@ export interface FunctionChip {
 }
 
 export const CHIP_H = 28
+
+/**
+ * El nombre que una operación o una llamada de una línea ofrece como chip: lo que asigna
+ * (`A = funcion()`). Ese nombre **es** el título de la tarjeta, y se arrastra hasta una casilla como
+ * cualquier chip: así el resultado no necesita un cable por cada sitio donde se usa.
+ */
+export function resultName(
+  node: Pick<CanvasNode, 'kind' | 'control' | 'provides'>,
+  density: Density,
+): string | undefined {
+  if (density !== 'normal' || node.provides === undefined) return undefined
+  return isLineCard(node.kind, node.control) ? node.provides : undefined
+}
+
+/** El texto que hay hoy en una casilla de un editor, si el editor tiene esa casilla. */
+export function slotText(control: ControlModel | undefined, slot: string): string | undefined {
+  switch (control?.kind) {
+    case 'expression':
+      return slot === 'left' ? control.left : slot === 'right' ? control.right : undefined
+    case 'condition':
+      return slot === 'field' ? control.field : slot === 'value' ? control.value : undefined
+    case 'loop':
+      return slot === 'iterable' ? control.iterable : undefined
+    case 'args':
+      if (slot === 'callee') return control.target
+      return slot.startsWith('arg:')
+        ? control.args.find((arg) => arg.name === slot.slice('arg:'.length))?.value
+        : undefined
+    default:
+      return undefined
+  }
+}
+
+/**
+ * La variable de iteración de un bucle (`for n in …`) también es un chip: no se inicializa, se
+ * **recibe** en cada vuelta, pero se porta igual que una constante. Vive en la cajita del bucle,
+ * diferenciada (color y icono del bucle, sin valor), y se suelta en las casillas de dentro: así el
+ * cuerpo no se llena de cables desde la cabecera hasta cada uso.
+ */
+export interface IterVar {
+  /** El id del chip: `iter:nombre@id-del-bucle`. */
+  id: string
+  loop: string
+  name: string
+}
+
+const ITER = 'iter:'
+
+export const iterChipId = (loop: string, name: string): string => `${ITER}${name}@${loop}`
+
+/** De un id de chip a la variable de bucle que representa, o `null` si es otra cosa. */
+export function parseIterChip(id: string): { loop: string; name: string } | null {
+  if (!id.startsWith(ITER)) return null
+  const at = id.indexOf('@')
+  return at < 0 ? null : { name: id.slice(ITER.length, at), loop: id.slice(at + 1) }
+}
+
+/** Lo que mide el chip de una variable de bucle: un icono y su nombre. */
+export const iterChipSize = (name: string): { w: number; h: number } => ({
+  w: Math.ceil(34 + name.length * CHAR),
+  h: CHIP_H,
+})
 
 /** La cajita de chips de un contexto. */
 export const TRAY = {
@@ -248,6 +310,13 @@ export function dockChips(nodes: readonly CanvasNode[]): Map<string, string> {
   return docked
 }
 
+/** Lo que lleva una casilla que recibe un chip. `iter`: es la variable de un bucle. */
+export interface ChipSlot {
+  name: string
+  type: ValueType
+  iter?: true
+}
+
 export interface ChipPlan {
   /** A qué contexto pertenece cada chip acoplado (el id del contexto, o `MODULE`). */
   docked: ReadonlyMap<string, string>
@@ -259,15 +328,38 @@ export interface ChipPlan {
   trays: ReadonlyMap<string, TrayLayout>
   /** Los chips acoplados de cada contexto, en el orden del código. */
   chipsOf: ReadonlyMap<string, CanvasNode[]>
+  /** Las variables de iteración de cada bucle con cuerpo: chips en su cajita, no puertos con cables. */
+  iterVars: ReadonlyMap<string, IterVar[]>
+  /** Los nodos que ofrecen su resultado como chip (`A = funcion()`): llevan su nombre como pastilla. */
+  results: ReadonlySet<string>
+  /** Las conexiones que no se dibujan porque son un chip en una casilla (constantes, bucles, resultados). */
+  hidden: ReadonlySet<SemanticEdge>
   /** Qué casillas de cada nodo llevan un chip dentro. */
-  chipSlots: Readonly<Record<string, Record<string, { name: string; type: ValueType }>>>
+  chipSlots: Readonly<Record<string, Record<string, ChipSlot>>>
   /** Las casillas de cada nodo que solo reciben chips: no necesitan puerto para un cable. */
   chipOnly: Readonly<Record<string, string[]>>
   /** Los chips de función que se ofrecen en la cajita del programa. */
   functions: readonly FunctionChip[]
 }
 
+/**
+ * Si una conexión es la variable de un bucle llegando a una casilla de dentro, el nombre de esa
+ * variable: se dibuja como chip en la casilla, no como cable. El retorno de una función no es una
+ * casilla (es su puerto): ese cable se queda.
+ */
+export function iterName(
+  iterVars: ReadonlyMap<string, readonly IterVar[]>,
+  edge: Pick<SemanticEdge, 'from' | 'fromPort' | 'toPort'>,
+): string | undefined {
+  if (!edge.fromPort?.startsWith('param:') || edge.toPort === undefined) return undefined
+  if (edge.toPort === 'return') return undefined
+  const name = edge.fromPort.slice('param:'.length)
+  return iterVars.get(edge.from)?.some((v) => v.name === name) ? name : undefined
+}
+
 export interface ChipOptions {
+  /** La densidad con la que se dibuja cada nodo: solo en normal un resultado es un chip. */
+  density?: (node: CanvasNode) => Density
   /** Se pueden añadir variables (el lienzo es editable). */
   canAdd: boolean
   /** Las funciones del programa, para ofrecerlas como chips. */
@@ -296,12 +388,26 @@ export function planChips(
   }
   for (const list of chipsOf.values()) list.sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
 
+  const iterVars = new Map<string, IterVar[]>()
   const trays = new Map<string, TrayLayout>()
   for (const node of nodes) {
     const hasBody = (node.contains ?? []).some((id) => byId.has(id) && !docked.has(id))
     const isContext = node.kind === 'abstraction.collapsed' || node.kind === 'control.loop'
     if (!isContext || !hasBody) continue
-    const items = (chipsOf.get(node.id) ?? []).map((chip) => ({ id: chip.id, ...chipSize(chip) }))
+    // Un bucle enseña su variable (o las de su patrón) primero: es lo que llega, antes de lo que se prepara.
+    const vars =
+      node.kind === 'control.loop'
+        ? (node.params ?? []).map((name) => ({
+            id: iterChipId(node.id, name),
+            loop: node.id,
+            name,
+          }))
+        : []
+    if (vars.length > 0) iterVars.set(node.id, vars)
+    const items = [
+      ...vars.map((v) => ({ id: v.id, ...iterChipSize(v.name) })),
+      ...(chipsOf.get(node.id) ?? []).map((chip) => ({ id: chip.id, ...chipSize(chip) })),
+    ]
     const tray = trayLayout(items, options.canAdd)
     if (tray) trays.set(node.id, tray)
   }
@@ -312,7 +418,25 @@ export function planChips(
   const moduleTray = trayLayout(moduleItems, options.canAdd && options.addToModule !== false)
   if (moduleTray) trays.set(MODULE, moduleTray)
 
-  const chipSlots: Record<string, Record<string, { name: string; type: ValueType }>> = {}
+  const results = new Set(
+    nodes
+      .filter(
+        (node) =>
+          options.density !== undefined && resultName(node, options.density(node)) !== undefined,
+      )
+      .map((node) => node.id),
+  )
+  /** Un resultado llega a una casilla que enseña justo su nombre: ahí se ve el chip, no hace falta el cable. */
+  const asChip = (edge: SemanticEdge): boolean => {
+    const from = byId.get(edge.from)
+    const to = byId.get(edge.to)
+    if (!from || !to || !results.has(from.id) || edge.toPort === undefined) return false
+    if (edge.toPort === 'return' || edge.relation === 'feedback') return false
+    if (options.density?.(to) === 'compact' || !to.inputs?.includes(edge.toPort)) return false
+    return slotText(to.control, edge.toPort)?.trim() === from.provides
+  }
+  const hidden = new Set<SemanticEdge>()
+  const chipSlots: Record<string, Record<string, ChipSlot>> = {}
   const fromChips: Record<string, Record<string, number>> = {}
   const total: Record<string, Record<string, number>> = {}
   for (const edge of edges) {
@@ -320,7 +444,25 @@ export function planChips(
     const bucket = (total[edge.to] ??= {})
     bucket[edge.toPort] = (bucket[edge.toPort] ?? 0) + 1
     const from = byId.get(edge.from)
+    const iter = iterName(iterVars, edge)
+    if (iter !== undefined) {
+      const slots = (chipSlots[edge.to] ??= {})
+      slots[edge.toPort] = { name: iter, type: 'any', iter: true }
+      const mine = (fromChips[edge.to] ??= {})
+      mine[edge.toPort] = (mine[edge.toPort] ?? 0) + 1
+      hidden.add(edge)
+      continue
+    }
+    if (from?.provides !== undefined && asChip(edge)) {
+      const slots = (chipSlots[edge.to] ??= {})
+      slots[edge.toPort] = { name: from.provides, type: from.valueType ?? 'any' }
+      const mine = (fromChips[edge.to] ??= {})
+      mine[edge.toPort] = (mine[edge.toPort] ?? 0) + 1
+      hidden.add(edge)
+      continue
+    }
     if (!from || !docked.has(from.id) || from.provides === undefined) continue
+    hidden.add(edge)
     const slots = (chipSlots[edge.to] ??= {})
     slots[edge.toPort] = { name: from.provides, type: from.valueType ?? 'any' }
     const mine = (fromChips[edge.to] ??= {})
@@ -335,9 +477,15 @@ export function planChips(
   return {
     docked,
     flowNodes: nodes.filter((node) => !docked.has(node.id)),
-    flowEdges: edges.filter((edge) => !docked.has(edge.from) && !docked.has(edge.to)),
+    flowEdges: edges.filter(
+      (edge) =>
+        !docked.has(edge.from) && !docked.has(edge.to) && iterName(iterVars, edge) === undefined,
+    ),
     trays,
     chipsOf,
+    iterVars,
+    results,
+    hidden,
     chipSlots,
     chipOnly,
     functions,

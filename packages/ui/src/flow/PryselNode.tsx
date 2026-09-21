@@ -12,7 +12,6 @@ import {
   getKind,
   shapeFor,
   slotTypeOf,
-  type ValueType,
   type Density,
   type NodeState,
 } from '@prysel/morphology'
@@ -21,9 +20,9 @@ import { MorphNode, type MeasuredSlot, type NodeEdit } from '../MorphNode.tsx'
 import type { ControlModel } from '../controls.tsx'
 import type { MotionPhase } from '../motion.ts'
 import type { CanvasNode } from '../Canvas.tsx'
-import { isLoopTerritory, territoryHeadroom } from './frame.ts'
+import { hasParamPorts, isLoopTerritory, territoryHeadroom } from './frame.ts'
 import { TrayBox } from './ChipNode.tsx'
-import { TRAY, type TrayLayout } from '../chips.ts'
+import { TRAY, resultName, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
 
 /**
@@ -64,7 +63,11 @@ export interface PryselNodeData extends Record<string, unknown> {
   /** Añadir una variable al principio de este contexto. */
   onAddChip?: (context: string) => void
   /** Las casillas de este nodo que llevan un chip dentro. */
-  chipSlots?: Readonly<Record<string, { name: string; type: ValueType }>> | undefined
+  chipSlots?: Readonly<Record<string, ChipSlot>> | undefined
+  /** Se dibuja en una sola línea (una operación o una llamada), con su resultado como chip. */
+  line?: boolean
+  /** El usuario agarra el chip del resultado para llevarlo a una casilla. */
+  onGrabResult?: (id: string, event: React.PointerEvent<HTMLElement>) => void
   /** Las casillas que solo reciben chips: no llevan puerto para un cable. */
   chipOnly?: readonly string[] | undefined
   /** La casilla sobre la que está un chip que se arrastra. */
@@ -123,6 +126,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   }, [])
 
   const inputs = node.inputs ?? []
+  /** Lo que asigna una línea, ofrecido como chip. */
+  const result = resultName(node, density)
   /** Una función dibujada como territorio recibe su retorno en un puerto del borde derecho. */
   const takesReturn = container && inputs.includes('return')
   /**
@@ -158,13 +163,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
     ? slots.filter((slot) => inputs.includes(slot.id) && !linkedSlots.includes(slot.id))
     : []
   /** Los parámetros de una función que se dibuja como territorio: puertos de salida a su interior. */
-  const params = container && connectable ? (node.params ?? []) : []
+  const params = container && connectable && hasParamPorts(node) ? (node.params ?? []) : []
   /** Donde acaba la cabecera del territorio: el contenido empieza justo debajo. */
   const headTop = SCOPE_FRAME.top + territoryHeadroom(node)
   const tray = container ? data.tray : undefined
   const contentTop = headTop + (tray ? tray.h + TRAY.below : 0)
   /** Lo que hay a la izquierda del contenido de un territorio: su margen y la zona de sus puertos. */
-  const insetLeft = SCOPE_FRAME.side + (node.params?.length && node.contains ? PARAM_GUTTER : 0)
+  const insetLeft = SCOPE_FRAME.side + (hasParamPorts(node) ? PARAM_GUTTER : 0)
   /** Un bucle con cuerpo: envuelve lo que repite, y su variable, su salida y su retorno son puertos. */
   const isLoop = container && isLoopTerritory(node)
   /** Hay un `continue` dentro: su cable vuelve a la cabecera por este puerto. */
@@ -465,6 +470,19 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         focused={selected}
         linkedSlots={linkedSlots}
         {...(data.chipSlots ? { chipSlots: data.chipSlots } : {})}
+        {...(data.line ? { line: true } : {})}
+        {...(data.line && result
+          ? {
+              result: { name: result, type: node.valueType ?? 'any' },
+              ...(data.onGrabResult
+                ? {
+                    onGrabResult: (event: React.PointerEvent<HTMLElement>) => {
+                      data.onGrabResult?.(id, event)
+                    },
+                  }
+                : {}),
+            }
+          : {})}
         hotSlot={data.hotSlot ?? null}
         {...(data.callees ? { callees: data.callees } : {})}
         {...(data.litSlots ? { litSlots: data.litSlots } : {})}

@@ -8,9 +8,13 @@ import {
   chipValue,
   dockChips,
   isChipKind,
+  iterChipId,
   packChips,
+  parseIterChip,
   planChips,
   promoteTarget,
+  resultName,
+  slotText,
   trayLayout,
 } from '../src/chips.ts'
 
@@ -303,5 +307,155 @@ describe('subir un valor del flujo a las inicializaciones', () => {
     const s = node('s', { line: 2, owner: 'f' })
     const x = value('x', 3, { owner: 'f' })
     expect(promoteTarget([f, s, x], x)).toBe('s')
+  })
+})
+
+describe('la variable de un bucle es un chip', () => {
+  const loop = node('bucle', {
+    kind: 'control.loop',
+    line: 1,
+    params: ['n'],
+    provides: 'n',
+    contains: ['dentro'],
+  })
+  const dentro = node('dentro', { line: 2, owner: 'bucle', inputs: ['left'] })
+  const cable = (toPort: string, to = 'dentro'): SemanticEdge => ({
+    from: 'bucle',
+    fromPort: 'param:n',
+    to,
+    toPort,
+    relation: 'dependency',
+  })
+
+  it('el id del chip lleva el bucle y el nombre, y se lee de vuelta', () => {
+    const id = iterChipId('for:2:0', 'clave')
+    expect(parseIterChip(id)).toEqual({ loop: 'for:2:0', name: 'clave' })
+    expect(parseIterChip('x')).toBeNull()
+  })
+
+  it('va primero en la cajita del bucle, antes de sus inicializaciones', () => {
+    const inicial = value('tope', 2, { owner: 'bucle' })
+    const plan = planChips([loop, inicial, dentro], [], { canAdd: false })
+    const tray = plan.trays.get('bucle')
+    expect(tray?.chips.map((chip) => chip.id)).toEqual([iterChipId('bucle', 'n'), 'tope'])
+  })
+
+  it('un patrón tiene un chip por nombre', () => {
+    const pares = { ...loop, params: ['a', 'b'] }
+    const plan = planChips([pares, dentro], [], { canAdd: false })
+    expect(plan.iterVars.get('bucle')?.map((v) => v.name)).toEqual(['a', 'b'])
+  })
+
+  it('su cable no se dibuja: la casilla enseña el chip', () => {
+    const plan = planChips([loop, dentro], [cable('left')], { canAdd: false })
+    expect(plan.flowEdges).toEqual([])
+    expect(plan.chipSlots['dentro']?.['left']).toEqual({ name: 'n', type: 'any', iter: true })
+    expect(plan.chipOnly['dentro']).toEqual(['left'])
+  })
+
+  it('un cable del retorno no es una casilla: se queda', () => {
+    const plan = planChips([loop, dentro], [cable('return', 'bucle')], { canAdd: false })
+    expect(plan.flowEdges).toHaveLength(1)
+  })
+
+  it('un bucle sin cuerpo no tiene cajita ni chips', () => {
+    const vacio = { ...loop, contains: [] }
+    expect(planChips([vacio], [], { canAdd: false }).iterVars.size).toBe(0)
+  })
+
+  it('una función no: sus parámetros siguen siendo puertos con cable', () => {
+    const def = node('def', {
+      kind: 'abstraction.collapsed',
+      line: 1,
+      params: ['p'],
+      contains: ['dentro'],
+    })
+    expect(planChips([def, dentro], [], { canAdd: false }).iterVars.size).toBe(0)
+  })
+})
+
+describe('el resultado de una línea es un chip', () => {
+  const call = (id: string, provides: string | undefined, args: [string, string][] = []) =>
+    node(id, {
+      kind: 'transform.call',
+      line: 1,
+      ...(provides === undefined ? {} : { provides }),
+      control: { kind: 'args', target: 'f', args: args.map(([name, value]) => ({ name, value })) },
+      inputs: args.map(([name]) => `arg:${name}`),
+    })
+  const normal = () => 'normal' as const
+
+  it('una llamada o una operación que asigna un nombre lo ofrece', () => {
+    expect(resultName(call('x', 'x'), 'normal')).toBe('x')
+    expect(
+      resultName(
+        node('op', {
+          kind: 'transform.operation',
+          provides: 'op',
+          control: { kind: 'expression', left: 'a', operator: '+', right: 'b', operators: ['+'] },
+        }),
+        'normal',
+      ),
+    ).toBe('op')
+  })
+
+  it('sin nombre asignado (print) o fuera de la tarjeta esbelta, no', () => {
+    expect(resultName(call('p', undefined), 'normal')).toBeUndefined()
+    expect(resultName(call('x', 'x'), 'compact')).toBeUndefined()
+    expect(resultName(call('x', 'x'), 'expanded')).toBeUndefined()
+  })
+
+  it('lee lo que hay escrito en una casilla', () => {
+    const control = call('c', 'c', [['a', 'x']]).control
+    expect(slotText(control, 'arg:a')).toBe('x')
+    expect(slotText(control, 'callee')).toBe('f')
+    expect(slotText(control, 'arg:z')).toBeUndefined()
+    const formula = { kind: 'expression', left: 'p', operator: '+', right: 'q', operators: [] }
+    expect(slotText(formula as CanvasNode['control'], 'right')).toBe('q')
+  })
+
+  it('su cable no se dibuja cuando la casilla enseña el nombre', () => {
+    const x = call('x', 'x')
+    const uso = call('uso', 'uso', [['a', 'x']])
+    const plan = planChips([x, uso], [edge('x', 'uso', 'arg:a')], {
+      canAdd: false,
+      density: normal,
+    })
+    expect(plan.results.has('x')).toBe(true)
+    expect(plan.hidden.size).toBe(1)
+    expect(plan.chipSlots['uso']?.['arg:a']).toEqual({ name: 'x', type: 'any' })
+    expect(plan.chipOnly['uso']).toEqual(['arg:a'])
+    // El layout sigue necesitándolo para colocar a cada uno tras el suyo.
+    expect(plan.flowEdges).toHaveLength(1)
+  })
+
+  it('si la casilla escribe otra cosa (x + 1), el cable se queda: no habría pastilla', () => {
+    const x = call('x', 'x')
+    const uso = call('uso', 'uso', [['a', 'x + 1']])
+    const plan = planChips([x, uso], [edge('x', 'uso', 'arg:a')], {
+      canAdd: false,
+      density: normal,
+    })
+    expect(plan.hidden.size).toBe(0)
+  })
+
+  it('el retorno de una función no es una casilla: su cable se queda', () => {
+    const x = call('x', 'x')
+    const def = node('def', { kind: 'abstraction.collapsed', inputs: ['return'], contains: ['x'] })
+    const plan = planChips([def, x], [edge('x', 'def', 'return')], {
+      canAdd: false,
+      density: normal,
+    })
+    expect(plan.hidden.size).toBe(0)
+  })
+
+  it('en compacto no hay casillas que enseñen el chip: los cables se dibujan', () => {
+    const x = call('x', 'x')
+    const uso = call('uso', 'uso', [['a', 'x']])
+    const plan = planChips([x, uso], [edge('x', 'uso', 'arg:a')], {
+      canAdd: false,
+      density: () => 'compact',
+    })
+    expect(plan.hidden.size).toBe(0)
   })
 })

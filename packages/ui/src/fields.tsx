@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { ValueType } from '@prysel/morphology'
+import type { ChipSlot } from './chips.ts'
 import { Icon } from './Icon.tsx'
 
 /** Primitivas de edición. Todo lo que el usuario puede tocar dentro de una tarjeta vive aquí. */
@@ -44,7 +44,7 @@ export interface Slot {
  * contexto para no cruzar cada editor con tres parámetros más.
  */
 export interface SlotState {
-  chips: Readonly<Record<string, { name: string; type: ValueType }>>
+  chips: Readonly<Record<string, ChipSlot>>
   /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
   hot: { slot: string; ok: boolean; convert?: boolean } | null
   /** Quita el chip de una casilla. Sin él, no se puede quitar desde aquí. */
@@ -67,7 +67,7 @@ function useSlotState(slot: Slot | undefined, value: string) {
   return {
     chip,
     attrs: {
-      'data-chip': chip?.type,
+      'data-chip': chip?.iter ? 'iter' : chip?.type,
       'data-hot': hot ? (hot.ok ? (hot.convert ? 'convert' : 'ok') : 'no') : undefined,
       'data-lit': slot && state.lit?.includes(slot.id) ? '' : undefined,
     },

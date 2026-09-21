@@ -23,6 +23,16 @@ export const isLoopTerritory = (node: { kind: string; contains?: readonly string
   node.kind === 'control.loop' && (node.contains?.length ?? 0) > 0
 
 /**
+ * ¿Sus parámetros salen por puertos del borde izquierdo? Los de una función sí (un cable por uso); la
+ * variable de un bucle es un chip de su cajita, y no ocupa el borde.
+ */
+export const hasParamPorts = (node: {
+  kind: string
+  params?: readonly string[] | undefined
+  contains?: readonly string[] | undefined
+}): boolean => node.kind !== 'control.loop' && (node.params?.length ?? 0) > 0 && !!node.contains
+
+/**
  * Lo que la cabecera de un territorio pide sobre el margen de serie: la documentación de una función
  * o de un bucle, y el editor del bucle (`para x en …`), que vive en su cabecera.
  */

@@ -1,5 +1,12 @@
 import { useContext } from 'react'
-import { ACTION_CALLS, INLINE_ARGS, type ControlId, type ControlModel } from '@prysel/morphology'
+import {
+  ACTION_CALLS,
+  INLINE_ARGS,
+  labelsArgs,
+  lineArgs,
+  type ControlId,
+  type ControlModel,
+} from '@prysel/morphology'
 import {
   Chips,
   CodeBlock,
@@ -45,6 +52,8 @@ export interface ControlProps {
   editable?: readonly string[]
   /** Nombres que se pueden usar en los campos que son expresiones: se ofrecen al escribir. */
   suggestions?: readonly string[]
+  /** La llamada se escribe en una sola línea, `funcion(a, b)`, en vez de un campo por fila. */
+  line?: boolean
 }
 
 /** Los editores que saben escribirse de vuelta en el código. El resto se enseña tal cual, sin tocar. */
@@ -81,7 +90,15 @@ export function Control(props: ControlProps) {
   )
 }
 
-function Editor({ model, level, onChange, linked = [], editable, suggestions }: ControlProps) {
+function Editor({
+  model,
+  level,
+  onChange,
+  linked = [],
+  editable,
+  suggestions,
+  line = false,
+}: ControlProps) {
   const state = useContext(SlotStateContext)
   const isLinked = (slot: string) => linked.includes(slot)
   const patch = <M extends ControlModel>(next: Partial<M>) =>
@@ -259,6 +276,48 @@ function Editor({ model, level, onChange, linked = [], editable, suggestions }: 
       )
 
     case 'args': {
+      // Una llamada de una línea: `funcion(a, b)`, con cada casilla al lado de la anterior.
+      if (line) {
+        const { shown, hidden } = lineArgs(model.args, linked)
+        const labeled = labelsArgs(model.args)
+        return (
+          <div className="control-line">
+            {model.target && !ACTION_CALLS.has(model.target) && (
+              <TextInput
+                value={model.target}
+                slot={{ id: 'callee', label: 'Función' }}
+                placeholder="función"
+                {...(state.callees && state.callees.length > 0
+                  ? { suggestions: state.callees }
+                  : {})}
+                onChange={on('target', (target: string) => patch({ target }))}
+              />
+            )}
+            <span className="control-line__paren">(</span>
+            {shown.map((arg) => {
+              const index = model.args.indexOf(arg)
+              return (
+                <span key={arg.name} className="control-line__arg">
+                  {labeled && <span className="control-line__name">{arg.name}</span>}
+                  <TextInput
+                    value={arg.value}
+                    slot={{ id: `arg:${arg.name}`, label: arg.name }}
+                    linked={isLinked(`arg:${arg.name}`)}
+                    {...(suggestions ? { suggestions } : {})}
+                    onChange={on(`args.${arg.name}`, (value: string) =>
+                      patch({
+                        args: model.args.map((a, j) => (j === index ? { ...a, value } : a)),
+                      }),
+                    )}
+                  />
+                </span>
+              )
+            })}
+            {hidden > 0 && <span className="type-field-label muted">+{hidden}</span>}
+            <span className="control-line__paren">)</span>
+          </div>
+        )
+      }
       // Un argumento que recibe una conexión nunca se esconde: si dos cables llegan a este nodo,
       // hay que ver a qué argumento entra cada uno. Y con su nombre, o no se sabría cuál es cuál.
       const shown = model.args

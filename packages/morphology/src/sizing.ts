@@ -221,6 +221,86 @@ export function slimWidth(base: number, model?: ControlModel): number {
 }
 
 /**
+ * La tarjeta de **una sola línea**: icono, nombre (lo que asigna), y la operación o la llamada con sus
+ * casillas al lado — `Σ suma  a + b`, `ƒ x = suma(a, b)`. Solo las operaciones y las llamadas; el
+ * resto de nodos sigue apilando cabecera y editor.
+ */
+export const isLineCard = (kind: string, control: ControlModel | undefined): boolean =>
+  (kind === 'transform.operation' || kind === 'transform.call' || kind === 'effect.io') &&
+  (control?.kind === 'expression' || control?.kind === 'args')
+
+/** El título fijo de las llamadas de acción, que ya dicen qué hacen: no se repite su nombre en un campo. */
+export const ACTION_TITLES: Readonly<Record<string, string>> = {
+  print: 'Imprimir',
+  input: 'Pedir dato',
+}
+
+/** Un argumento que se llama `arg1` o `valor` no dice nada: solo se rotula el que tiene nombre propio. */
+const GENERIC_ARG = /^(arg\d+|valor)$/
+export const labelsArgs = (args: readonly { name: string }[]): boolean =>
+  args.length > 1 && args.some((arg) => !GENERIC_ARG.test(arg.name))
+
+/** Cuántos argumentos se enseñan en la línea: los de siempre, y los conectados nunca se esconden. */
+export function lineArgs<T extends { name: string }>(
+  args: readonly T[],
+  linked: readonly string[] = [],
+): { shown: T[]; hidden: number } {
+  const shown = args.filter(
+    (arg, index) => index === 0 || args.length <= INLINE_ARGS || linked.includes(`arg:${arg.name}`),
+  )
+  return { shown, hidden: args.length - shown.length }
+}
+
+const CH = 7.8
+/**
+ * Lo que mide un campo de una línea: su texto, el margen del campo y el sitio de la × del chip o de la
+ * flecha del desplegable, que van dentro; con un mínimo para poder escribir.
+ */
+const lineField = (text: string, min = 60) => Math.max(min, Math.ceil(text.length * CH + 18 + 34))
+
+/**
+ * Lo que mide una tarjeta de una línea: el icono, el nombre que asigna (o el título de la acción), y
+ * la fórmula o la llamada. El nombre asignado es un chip (`result`): pastilla, y el signo igual.
+ */
+export function lineWidth(
+  model: ControlModel | undefined,
+  result: string | undefined,
+  linked: readonly string[] = [],
+  /** Lo que ocupan otros elementos de la línea (el chevron que abre la función llamada). */
+  extra = 0,
+): number {
+  const icon = 28
+  const gap = 6
+  const chip = result === undefined ? 0 : Math.ceil(result.length * CH + 24) + gap + 10 + gap
+  let inner = 0
+  let title = 0
+  if (model?.kind === 'expression') {
+    inner = lineField(model.left) + gap + 46 + gap + lineField(model.right)
+  } else if (model?.kind === 'args') {
+    const action = ACTION_CALLS.has(model.target)
+    const label = labelsArgs(model.args)
+    const { shown, hidden } = lineArgs(model.args, linked)
+    title = action ? Math.ceil((ACTION_TITLES[model.target]?.length ?? 8) * CH + 8) + gap : 0
+    inner =
+      (model.target && !action ? lineField(model.target, 72) + gap : 0) +
+      10 +
+      shown.reduce(
+        (sum, arg) =>
+          sum + lineField(arg.value, 60) + (label ? Math.ceil(arg.name.length * 6.4) + 4 : 0) + gap,
+        0,
+      ) +
+      (hidden > 0 ? 26 : 0) +
+      10
+  }
+  return Math.min(560, Math.max(180, 30 + icon + gap + chip + title + inner + extra))
+}
+
+/** El alto de una tarjeta de una línea: el marco y una fila (más su comentario, si lo tiene). */
+export function lineHeight(note?: string): number {
+  return Math.ceil(SLIM.frame + SLIM.input + noteHeight(note, 'normal'))
+}
+
+/**
  * El alto de una tarjeta esbelta que lleva ese editor, ese comentario y, si no tiene editor, su
  * código. Cabe justo: sin aire de más arriba ni abajo.
  */

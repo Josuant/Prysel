@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { CanvasNode } from '../Canvas.tsx'
+import { parseIterChip } from '../chips.ts'
 import { checkConnection, convertNotice, type Link } from '../connect.ts'
 
 /**
@@ -27,9 +28,15 @@ export interface ChipHover {
 /** El chip de una función lleva el id de su definición detrás de este prefijo. */
 export const FUNCTION_CHIP = 'fn:'
 
-/** De qué nodo sale el valor de un chip: la variable, o la definición de la función. */
-export const chipSource = (chipId: string): string =>
-  chipId.startsWith(FUNCTION_CHIP) ? chipId.slice(FUNCTION_CHIP.length) : chipId
+/**
+ * De dónde sale el valor de un chip: la variable, la definición de la función, o el puerto de la
+ * variable de un bucle.
+ */
+export function chipSource(chipId: string): { from: string; port?: string } {
+  const iter = parseIterChip(chipId)
+  if (iter) return { from: iter.loop, port: `param:${iter.name}` }
+  return { from: chipId.startsWith(FUNCTION_CHIP) ? chipId.slice(FUNCTION_CHIP.length) : chipId }
+}
 
 /** La casilla que hay bajo un punto de la pantalla, y el nodo al que pertenece. */
 export function slotAt(x: number, y: number): { nodeId: string; slot: string } | null {
@@ -75,7 +82,7 @@ export function useChipDrag({
         return
       }
       const verdict = checkConnection(lookup, {
-        from: chipSource(chipId),
+        ...chipSource(chipId),
         to: hit.nodeId,
         slot: hit.slot,
       })
@@ -105,7 +112,7 @@ export function useChipDrag({
       if (!target) return
       if (target.ok) {
         onLink({
-          from: chipSource(chipId),
+          ...chipSource(chipId),
           to: target.nodeId,
           slot: target.slot,
           ...(target.convert ? { convert: target.convert } : {}),

@@ -16,7 +16,13 @@ export { NODE_KINDS, getKind, type NodeKindId } from './kinds.ts'
 export {
   DENSITY_BASE,
   ACTION_CALLS,
+  ACTION_TITLES,
   INLINE_ARGS,
+  isLineCard,
+  labelsArgs,
+  lineArgs,
+  lineHeight,
+  lineWidth,
   slimControlHeight,
   slimHeight,
   slimWidth,

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { CanvasNode } from '../src/Canvas.tsx'
+import { iterChipId } from '../src/chips.ts'
+import { chipSource } from '../src/flow/useChipDrag.ts'
 import { addPlace, checkConnection, connectAction, dropTarget, outputName } from '../src/connect.ts'
 
 const node = (id: string, extra: Partial<CanvasNode> = {}): CanvasNode => ({
@@ -178,5 +180,24 @@ describe('el menú de añadir sabe dónde poner las cosas', () => {
       place: { into: 'f' },
     })
     expect(addPlace(undefined, null)).toEqual({ where: 'Al final del programa', place: {} })
+  })
+})
+
+describe('de dónde sale el valor de un chip', () => {
+  it('la variable de un bucle sale por el puerto de su bucle', () => {
+    expect(chipSource(iterChipId('for:2:0', 'n'))).toEqual({ from: 'for:2:0', port: 'param:n' })
+  })
+
+  it('una constante es su propio nodo, y una función su definición', () => {
+    expect(chipSource('x')).toEqual({ from: 'x' })
+    expect(chipSource('fn:def')).toEqual({ from: 'def' })
+  })
+
+  it('la variable de un bucle se conecta a lo que hay dentro, como un parámetro', () => {
+    const all = new Map(NODES).set('for', node('for', { kind: 'control.loop', params: ['i'] }))
+    all.set('dentro', node('dentro', { inputs: ['left'], scope: ['i'] }))
+    expect(
+      checkConnection(all, { ...chipSource(iterChipId('for', 'i')), to: 'dentro', slot: 'left' }),
+    ).toEqual({ ok: true, name: 'i' })
   })
 })
