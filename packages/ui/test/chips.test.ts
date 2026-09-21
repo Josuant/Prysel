@@ -8,6 +8,7 @@ import {
   chipValue,
   dockChips,
   isChipKind,
+  mentions,
   iterChipId,
   packChips,
   parseIterChip,
@@ -363,14 +364,41 @@ describe('la variable de un bucle es un chip', () => {
     expect(planChips([vacio], [], { canAdd: false }).iterVars.size).toBe(0)
   })
 
-  it('una función no: sus parámetros siguen siendo puertos con cable', () => {
+  it('los parámetros de una función también son chips de su cajita', () => {
     const def = node('def', {
       kind: 'abstraction.collapsed',
       line: 1,
       params: ['p'],
       contains: ['dentro'],
     })
-    expect(planChips([def, dentro], [], { canAdd: false }).iterVars.size).toBe(0)
+    const uso: SemanticEdge = { ...cable('left'), from: 'def', fromPort: 'param:p' }
+    const plan = planChips([def, dentro], [uso], { canAdd: false })
+    expect(plan.iterVars.get('def')?.map((v) => v.name)).toEqual(['p'])
+    expect(plan.flowEdges).toEqual([])
+    // Se distingue de la variable de un bucle: el parámetro lo recibe la función, no una vuelta.
+    expect(plan.chipSlots['dentro']?.['left']).toEqual({ name: 'p', type: 'any', param: true })
+  })
+
+  it('lo que devuelve una función es una pastilla, no un cable, si es una variable', () => {
+    const def = node('def', {
+      kind: 'abstraction.collapsed',
+      line: 1,
+      params: ['p'],
+      inputs: ['return'],
+      contains: ['dentro'],
+    })
+    const devuelve: SemanticEdge = {
+      from: 'def',
+      fromPort: 'param:p',
+      to: 'def',
+      toPort: 'return',
+      relation: 'transform',
+      via: 'ret',
+    }
+    const plan = planChips([def, dentro], [devuelve], { canAdd: false, density: () => 'normal' })
+    expect(plan.chipSlots['def']?.['return']).toMatchObject({ name: 'p', param: true })
+    expect(plan.chipOnly['def']).toEqual(['return'])
+    expect(plan.hidden.has(devuelve)).toBe(true)
   })
 })
 
@@ -429,9 +457,20 @@ describe('el resultado de una línea es un chip', () => {
     expect(plan.flowEdges).toHaveLength(1)
   })
 
-  it('si la casilla escribe otra cosa (x + 1), el cable se queda: no habría pastilla', () => {
+  it('si la casilla escribe otra cosa (x + 1) sin ser el nombre, no hay pastilla pero el texto ya lo dice', () => {
     const x = call('x', 'x')
     const uso = call('uso', 'uso', [['a', 'x + 1']])
+    const plan = planChips([x, uso], [edge('x', 'uso', 'arg:a')], {
+      canAdd: false,
+      density: normal,
+    })
+    expect(plan.hidden.size).toBe(1)
+    expect(plan.chipSlots['uso']?.['arg:a']?.name).toBe('x')
+  })
+
+  it('si la casilla no nombra al origen, el cable se queda: no se sabría de dónde viene', () => {
+    const x = call('x', 'x')
+    const uso = call('uso', 'uso', [['a', 'otra']])
     const plan = planChips([x, uso], [edge('x', 'uso', 'arg:a')], {
       canAdd: false,
       density: normal,
@@ -455,6 +494,68 @@ describe('el resultado de una línea es un chip', () => {
     const plan = planChips([x, uso], [edge('x', 'uso', 'arg:a')], {
       canAdd: false,
       density: () => 'compact',
+    })
+    expect(plan.hidden.size).toBe(0)
+  })
+})
+
+describe('todos los valores son chips: cuándo un cable sobra', () => {
+  const normal = () => 'normal' as const
+
+  it('un nombre se menciona entero, no como parte de otro ni como atributo', () => {
+    expect(mentions('x', 'x')).toBe(true)
+    expect(mentions('x + 1', 'x')).toBe(true)
+    expect(mentions('len(xs) + x', 'x')).toBe(true)
+    expect(mentions('xs', 'x')).toBe(false)
+    expect(mentions('a.x', 'x')).toBe(false)
+    expect(mentions('x2', 'x')).toBe(false)
+    expect(mentions('a', '')).toBe(false)
+  })
+
+  it('cualquier nodo que asigna su título es un chip: comprensión, importación, lambda', () => {
+    for (const kind of [
+      'transform.comprehension',
+      'transform.lambda',
+      'external.import',
+    ] as const) {
+      expect(resultName(node('n', { kind, provides: 'n' }), 'normal')).toBe('n')
+    }
+    // Si el título no es el nombre que asigna, no es una pastilla.
+    expect(
+      resultName(
+        node('n', { kind: 'external.import', label: 'import x', provides: 'x' }),
+        'normal',
+      ),
+    ).toBeUndefined()
+    // Ni una decisión, ni un bucle, ni una función.
+    expect(resultName(node('n', { kind: 'control.loop', provides: 'n' }), 'normal')).toBeUndefined()
+    expect(
+      resultName(node('n', { kind: 'abstraction.collapsed', provides: 'n' }), 'normal'),
+    ).toBeUndefined()
+  })
+
+  it('un nodo sin casillas (una comprensión) que usa el nombre en su código no necesita cable', () => {
+    const xs = node('xs', { kind: 'transform.call', provides: 'xs', line: 1 })
+    const ys = node('ys', {
+      kind: 'transform.comprehension',
+      provides: 'ys',
+      code: '[x * 2 for x in xs]',
+    })
+    const plan = planChips([xs, ys], [{ from: 'xs', to: 'ys', relation: 'transform' }], {
+      canAdd: false,
+      density: normal,
+    })
+    expect(plan.hidden.size).toBe(1)
+    // Pero el layout sigue sabiendo que ys va después de xs.
+    expect(plan.flowEdges).toHaveLength(1)
+  })
+
+  it('una conexión de control nunca se oculta', () => {
+    const cond = node('if', { kind: 'control.condition', provides: undefined })
+    const dentro = node('dentro', { kind: 'transform.call', provides: 'dentro', code: 'if' })
+    const plan = planChips([cond, dentro], [{ from: 'if', to: 'dentro', relation: 'branch' }], {
+      canAdd: false,
+      density: normal,
     })
     expect(plan.hidden.size).toBe(0)
   })

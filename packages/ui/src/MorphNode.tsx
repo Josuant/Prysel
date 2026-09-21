@@ -519,14 +519,26 @@ export function MorphNode({
             <>
               <header className="node__head" {...(slim && meta ? { title: meta } : {})}>
                 <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} iconOnly={slim} />
-                {(container || slim) && (
-                  <Title
-                    label={shownLabel}
+                {/* Lo que asigna el nodo es una pastilla: se lleva a una casilla como cualquier chip. */}
+                {slim && result ? (
+                  <ResultChip
+                    name={result.name}
+                    type={result.type}
                     renamable={renamable}
-                    tag="span"
                     signal={renameSignal}
                     onRename={(to) => onAction?.({ type: 'rename', to })}
+                    {...(onGrabResult ? { onGrab: onGrabResult } : {})}
                   />
+                ) : (
+                  (container || slim) && (
+                    <Title
+                      label={shownLabel}
+                      renamable={renamable}
+                      tag="span"
+                      signal={renameSignal}
+                      onRename={(to) => onAction?.({ type: 'rename', to })}
+                    />
+                  )
                 )}
                 {container && code && (
                   <code className="node__signature type-code">{signatureOf(code)}</code>

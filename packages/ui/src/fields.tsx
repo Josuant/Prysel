@@ -67,7 +67,7 @@ function useSlotState(slot: Slot | undefined, value: string) {
   return {
     chip,
     attrs: {
-      'data-chip': chip?.iter ? 'iter' : chip?.type,
+      'data-chip': chip?.iter ? 'iter' : chip?.param ? 'param' : chip?.type,
       'data-hot': hot ? (hot.ok ? (hot.convert ? 'convert' : 'ok') : 'no') : undefined,
       'data-lit': slot && state.lit?.includes(slot.id) ? '' : undefined,
     },

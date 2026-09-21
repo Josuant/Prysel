@@ -1,5 +1,5 @@
 import { isLineCard, type ControlModel, type Density, type ValueType } from '@prysel/morphology'
-import type { SemanticEdge } from '@prysel/spatial'
+import { channelOf, type SemanticEdge } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
 
 /**
@@ -55,11 +55,26 @@ export const CHIP_H = 28
  * cualquier chip: así el resultado no necesita un cable por cada sitio donde se usa.
  */
 export function resultName(
-  node: Pick<CanvasNode, 'kind' | 'control' | 'provides'>,
+  node: Pick<CanvasNode, 'kind' | 'control' | 'provides' | 'label'>,
   density: Density,
 ): string | undefined {
-  if (density !== 'normal' || node.provides === undefined) return undefined
-  return isLineCard(node.kind, node.control) ? node.provides : undefined
+  if (density !== 'normal' || node.provides === undefined || node.label !== node.provides) {
+    return undefined
+  }
+  // Un valor literal ya es un chip por sí mismo; un territorio y una decisión no asignan nada.
+  if (isChipKind(node)) return undefined
+  if (isLineCard(node.kind, node.control)) return node.provides
+  return RESULT_FAMILIES.some((family) => node.kind.startsWith(family)) ? node.provides : undefined
+}
+
+/** Las familias de nodo cuyo título es el nombre que asignan: cálculos, efectos, importaciones y datos. */
+const RESULT_FAMILIES = ['transform.', 'effect.', 'external.', 'data.', 'value.']
+
+/** ¿Nombra este texto a `name` como una variable entera (no como parte de otra ni como atributo)? */
+export function mentions(text: string, name: string): boolean {
+  if (name === '') return false
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(^|[^\\w.])${escaped}(?!\\w)`).test(text)
 }
 
 /** El texto que hay hoy en una casilla de un editor, si el editor tiene esa casilla. */
@@ -315,6 +330,8 @@ export interface ChipSlot {
   name: string
   type: ValueType
   iter?: true
+  /** Es el parámetro de una función. */
+  param?: true
 }
 
 export interface ChipPlan {
@@ -394,15 +411,13 @@ export function planChips(
     const hasBody = (node.contains ?? []).some((id) => byId.has(id) && !docked.has(id))
     const isContext = node.kind === 'abstraction.collapsed' || node.kind === 'control.loop'
     if (!isContext || !hasBody) continue
-    // Un bucle enseña su variable (o las de su patrón) primero: es lo que llega, antes de lo que se prepara.
-    const vars =
-      node.kind === 'control.loop'
-        ? (node.params ?? []).map((name) => ({
-            id: iterChipId(node.id, name),
-            loop: node.id,
-            name,
-          }))
-        : []
+    // Un bucle enseña su variable (o las de su patrón), y una función sus parámetros, primero: es lo
+    // que llega, antes de lo que se prepara.
+    const vars = (node.params ?? []).map((name) => ({
+      id: iterChipId(node.id, name),
+      loop: node.id,
+      name,
+    }))
     if (vars.length > 0) iterVars.set(node.id, vars)
     const items = [
       ...vars.map((v) => ({ id: v.id, ...iterChipSize(v.name) })),
@@ -426,45 +441,56 @@ export function planChips(
       )
       .map((node) => node.id),
   )
-  /** Un resultado llega a una casilla que enseña justo su nombre: ahí se ve el chip, no hace falta el cable. */
+  /** El nombre con el que un valor llega por esta conexión: el de un parámetro, o lo que define su origen. */
+  const nameOf = (edge: SemanticEdge): string | undefined =>
+    edge.fromPort?.startsWith('param:')
+      ? edge.fromPort.slice('param:'.length)
+      : byId.get(edge.from)?.provides
+  /**
+   * Un valor llega a un nodo que ya lo nombra: en su casilla (`x`, o `x + 1`), o en su texto si no tiene
+   * casillas. El cable no cuenta nada que no diga ya el nombre, y solo ensucia: no se dibuja. La conexión
+   * de un valor sin nombre (`return a + b`) y las de control se quedan. En compacto no hay casillas que
+   * lo enseñen, y los cables se conservan.
+   */
   const asChip = (edge: SemanticEdge): boolean => {
-    const from = byId.get(edge.from)
+    if (options.density === undefined) return false
     const to = byId.get(edge.to)
-    if (!from || !to || !results.has(from.id) || edge.toPort === undefined) return false
-    if (edge.toPort === 'return' || edge.relation === 'feedback') return false
-    if (options.density?.(to) === 'compact' || !to.inputs?.includes(edge.toPort)) return false
-    return slotText(to.control, edge.toPort)?.trim() === from.provides
+    if (!to || edge.relation === 'feedback' || channelOf(edge) !== 'data') return false
+    if (options.density(to) === 'compact') return false
+    if (edge.toPort === 'return') return edge.via !== undefined
+    const name = nameOf(edge)
+    if (name === undefined) return false
+    if (edge.toPort === undefined) {
+      return mentions(`${to.code ?? ''} ${JSON.stringify(to.control ?? '')}`, name)
+    }
+    if (!to.inputs?.includes(edge.toPort)) return false
+    const text = slotText(to.control, edge.toPort)
+    return text !== undefined && mentions(text, name)
   }
   const hidden = new Set<SemanticEdge>()
   const chipSlots: Record<string, Record<string, ChipSlot>> = {}
   const fromChips: Record<string, Record<string, number>> = {}
   const total: Record<string, Record<string, number>> = {}
   for (const edge of edges) {
-    if (!edge.toPort) continue
-    const bucket = (total[edge.to] ??= {})
-    bucket[edge.toPort] = (bucket[edge.toPort] ?? 0) + 1
+    if (edge.toPort) {
+      const bucket = (total[edge.to] ??= {})
+      bucket[edge.toPort] = (bucket[edge.toPort] ?? 0) + 1
+    }
     const from = byId.get(edge.from)
-    const iter = iterName(iterVars, edge)
-    if (iter !== undefined) {
-      const slots = (chipSlots[edge.to] ??= {})
-      slots[edge.toPort] = { name: iter, type: 'any', iter: true }
-      const mine = (fromChips[edge.to] ??= {})
-      mine[edge.toPort] = (mine[edge.toPort] ?? 0) + 1
-      hidden.add(edge)
-      continue
-    }
-    if (from?.provides !== undefined && asChip(edge)) {
-      const slots = (chipSlots[edge.to] ??= {})
-      slots[edge.toPort] = { name: from.provides, type: from.valueType ?? 'any' }
-      const mine = (fromChips[edge.to] ??= {})
-      mine[edge.toPort] = (mine[edge.toPort] ?? 0) + 1
-      hidden.add(edge)
-      continue
-    }
-    if (!from || !docked.has(from.id) || from.provides === undefined) continue
+    const bound = iterName(iterVars, edge)
+    const fromDocked = from !== undefined && docked.has(from.id) && from.provides !== undefined
+    if (bound === undefined && !fromDocked && !asChip(edge)) continue
     hidden.add(edge)
+    const name = bound ?? nameOf(edge)
+    if (!edge.toPort || name === undefined) continue
+    // La variable de un bucle y el parámetro de una función se distinguen del resto (y entre sí).
+    const owner = edge.fromPort?.startsWith('param:') ? from : undefined
     const slots = (chipSlots[edge.to] ??= {})
-    slots[edge.toPort] = { name: from.provides, type: from.valueType ?? 'any' }
+    slots[edge.toPort] = owner
+      ? owner.kind === 'control.loop'
+        ? { name, type: 'any', iter: true }
+        : { name, type: 'any', param: true }
+      : { name, type: from?.valueType ?? 'any' }
     const mine = (fromChips[edge.to] ??= {})
     mine[edge.toPort] = (mine[edge.toPort] ?? 0) + 1
   }

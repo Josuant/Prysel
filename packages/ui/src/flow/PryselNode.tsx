@@ -15,12 +15,12 @@ import {
   type Density,
   type NodeState,
 } from '@prysel/morphology'
-import { PARAM_GUTTER, SCOPE_FRAME, type Axis } from '@prysel/spatial'
+import { SCOPE_FRAME, type Axis } from '@prysel/spatial'
 import { MorphNode, type MeasuredSlot, type NodeEdit } from '../MorphNode.tsx'
 import type { ControlModel } from '../controls.tsx'
 import type { MotionPhase } from '../motion.ts'
 import type { CanvasNode } from '../Canvas.tsx'
-import { hasParamPorts, isLoopTerritory, territoryHeadroom } from './frame.ts'
+import { isLoopTerritory, territoryHeadroom } from './frame.ts'
 import { TrayBox } from './ChipNode.tsx'
 import { TRAY, resultName, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
@@ -66,6 +66,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   chipSlots?: Readonly<Record<string, ChipSlot>> | undefined
   /** Se dibuja en una sola línea (una operación o una llamada), con su resultado como chip. */
   line?: boolean
+  /** Se lleva un chip ahora mismo: las casillas ocultas (lo que devuelve una función) se enseñan. */
+  chipDragging?: boolean
   /** El usuario agarra el chip del resultado para llevarlo a una casilla. */
   onGrabResult?: (id: string, event: React.PointerEvent<HTMLElement>) => void
   /** Las casillas que solo reciben chips: no llevan puerto para un cable. */
@@ -87,9 +89,6 @@ export interface PryselNodeData extends Record<string, unknown> {
 }
 
 export type PryselFlowNode = Node<PryselNodeData, 'prysel'>
-
-/** Cuánto se separan los puertos de los parámetros a lo largo del borde de su función. */
-const PARAM_STEP = 26
 
 /**
  * El carril de repetición de un bucle: sale del final del cuerpo (abajo a la derecha), recorre el
@@ -130,6 +129,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   const result = resultName(node, density)
   /** Una función dibujada como territorio recibe su retorno en un puerto del borde derecho. */
   const takesReturn = container && inputs.includes('return')
+  /** Lo que devuelve, cuando es una variable: una pastilla en el borde, no un cable. */
+  const returnChip = takesReturn ? data.chipSlots?.['return'] : undefined
+  /** Lo que devuelve es un valor sin nombre (`return a + b`): ese sí es un cable. */
+  const returnCable =
+    takesReturn &&
+    ((linkedSlots.includes('return') && !(data.chipOnly ?? []).includes('return')) ||
+      eligible?.includes('return') === true)
   /**
    * Dos casillas en la misma fila (`a + b`) tendrían sus puertos uno encima del otro: se reparten a
    * lo alto del borde, alrededor del centro de la fila, para poder elegir cuál.
@@ -162,23 +168,16 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   const open = connectable
     ? slots.filter((slot) => inputs.includes(slot.id) && !linkedSlots.includes(slot.id))
     : []
-  /** Los parámetros de una función que se dibuja como territorio: puertos de salida a su interior. */
-  const params = container && connectable && hasParamPorts(node) ? (node.params ?? []) : []
   /** Donde acaba la cabecera del territorio: el contenido empieza justo debajo. */
   const headTop = SCOPE_FRAME.top + territoryHeadroom(node)
   const tray = container ? data.tray : undefined
   const contentTop = headTop + (tray ? tray.h + TRAY.below : 0)
   /** Lo que hay a la izquierda del contenido de un territorio: su margen y la zona de sus puertos. */
-  const insetLeft = SCOPE_FRAME.side + (hasParamPorts(node) ? PARAM_GUTTER : 0)
+  const insetLeft = SCOPE_FRAME.side
   /** Un bucle con cuerpo: envuelve lo que repite, y su variable, su salida y su retorno son puertos. */
   const isLoop = container && isLoopTerritory(node)
   /** Hay un `continue` dentro: su cable vuelve a la cabecera por este puerto. */
   const hasNext = isLoop && linkedSlots.includes('next')
-  // Con un `continue`, su puerto ocupa el primer sitio junto a la cabecera: los parámetros bajan un paso.
-  const paramY = (index: number) =>
-    Math.min(size.h - 18, contentTop + 8 + (hasNext ? PARAM_STEP : 0) + index * PARAM_STEP)
-  const paramX = (index: number) => Math.min(size.w - 18, SCOPE_FRAME.top + 8 + index * PARAM_STEP)
-  const paramAt = (index: number) => (horizontal ? paramY(index) : paramX(index))
 
   // Dónde están los puertos depende de la forma del nodo, de su tamaño y de dónde ha quedado cada
   // campo conectado. Como el nodo llega ya medido, React Flow no se entera de que eso cambió:
@@ -196,7 +195,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
     contentTop,
     ...connected.map((slot) => `${slot.id}@${slot.y}`),
     ...open.map((slot) => `${slot.id}@${slot.y}`),
-    ...params,
+    returnCable,
   ].join('|')
   useEffect(() => {
     updateNodeInternals(id)
@@ -306,7 +305,52 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         </>
       )}
 
-      {takesReturn && (
+      {/* Lo que devuelve la función: una pastilla en el borde (o un hueco donde soltar un chip), o un cable si no tiene nombre. */}
+      {takesReturn && (returnChip || (connectable && data.chipDragging)) && (
+        <div
+          className="return-slot"
+          data-side={horizontal ? 'right' : 'bottom'}
+          style={along(horizontal ? geo.handles.out.y : geo.handles.out.x)}
+        >
+          <span className="return-slot__label type-badge">devuelve</span>
+          <span
+            className="input return-slot__pill"
+            data-slot="return"
+            data-slot-label="Devuelve"
+            data-chip={
+              returnChip
+                ? returnChip.iter
+                  ? 'iter'
+                  : returnChip.param
+                    ? 'param'
+                    : returnChip.type
+                : undefined
+            }
+            data-hot={data.hotSlot?.slot === 'return' ? (data.hotSlot.ok ? 'ok' : 'no') : undefined}
+            title={
+              returnChip
+                ? `${returnChip.name}: lo que devuelve la función`
+                : 'Suelta aquí lo que devuelve'
+            }
+          >
+            {returnChip?.name ?? ''}
+            {returnChip && data.onClearChip && (
+              <button
+                type="button"
+                className="chip-clear nodrag"
+                aria-label={`Quitar ${returnChip.name} de lo que devuelve`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  data.onClearChip?.(id, 'return')
+                }}
+              >
+                <Icon name="x" size={11} />
+              </button>
+            )}
+          </span>
+        </div>
+      )}
+      {returnCable && (
         <>
           <Handle
             type="target"
@@ -397,34 +441,6 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         />
       )}
 
-      {/* Los parámetros de la función: de aquí salen los cables hacia lo que hay dentro de ella. */}
-      {params.map((name, index) => (
-        <Handle
-          key={`param:${name}`}
-          type="source"
-          id={`param:${name}`}
-          position={targetSide}
-          style={along(paramAt(index))}
-          title={`Parámetro ${name}`}
-          isConnectable
-          data-type="any"
-          data-gives=""
-          data-param=""
-        />
-      ))}
-      {params.map((name, index) => (
-        <span
-          key={`param-label:${name}`}
-          className="port-label type-badge"
-          data-side={horizontal ? 'inside' : 'inside-top'}
-          data-rail={isLoop ? '' : undefined}
-          style={along(paramAt(index))}
-          aria-hidden
-        >
-          {name}
-        </span>
-      ))}
-
       {/* El retorno del bucle: un carril que vuelve del final del cuerpo a la cabecera. */}
       {isLoop && horizontal && (
         <>
@@ -471,7 +487,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         linkedSlots={linkedSlots}
         {...(data.chipSlots ? { chipSlots: data.chipSlots } : {})}
         {...(data.line ? { line: true } : {})}
-        {...(data.line && result
+        {...(result
           ? {
               result: { name: result, type: node.valueType ?? 'any' },
               ...(data.onGrabResult

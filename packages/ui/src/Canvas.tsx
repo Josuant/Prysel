@@ -28,7 +28,6 @@ import {
   type ValueType,
 } from '@prysel/morphology'
 import {
-  PARAM_GUTTER,
   SCOPE_FRAME,
   channelOf,
   layout,
@@ -40,7 +39,7 @@ import { EdgeDefs } from './Edge.tsx'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
 import { dragTerritory, territoryAt } from './drag.ts'
-import { hasParamPorts, isLoopTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
+import { isLoopTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
@@ -55,6 +54,7 @@ import {
   functionChipSize,
   isChipKind,
   iterChipSize,
+  iterName,
   parseIterChip,
   planChips,
   promoteTarget,
@@ -502,8 +502,6 @@ function CanvasInner({
           // Un bucle con cuerpo envuelve lo que repite, igual que una función.
           ...(isLoopTerritory(node) ? { territory: true } : {}),
           ...(node.contains && resized[node.id] ? { minSize: resized[node.id] } : {}),
-          // Los parámetros salen del borde de la función: sus etiquetas y sus cables piden sitio.
-          ...(hasParamPorts(node) ? { gutter: PARAM_GUTTER } : {}),
           ...(node.contains ? { contains: node.contains } : {}),
         }
       }),
@@ -516,20 +514,51 @@ function CanvasInner({
     })
   }, [plan, densityOf, axis, gapX, gapY, linked, resized])
 
+  /**
+   * La procedencia a demanda: al seleccionar un nodo se dibujan sus cables ocultos (de dónde le llegan
+   * los valores y a quién los da). Solo entre nodos que tienen puertos; un chip de una cajita o de un
+   * bucle no los tiene, y a esos se les marcan las casillas.
+   */
+  const revealed = useMemo(() => {
+    const shown = new Set<SemanticEdge>()
+    if (selectedId === null) return shown
+    for (const edge of plan.hidden) {
+      if (edge.from !== selectedId && edge.to !== selectedId) continue
+      const from = byId.get(edge.from)
+      const to = byId.get(edge.to)
+      if (!from || !to || isChipKind(from) || isChipKind(to)) continue
+      if (plan.docked.has(edge.from) || iterName(plan.iterVars, edge) !== undefined) continue
+      shown.add(edge)
+    }
+    return shown
+  }, [selectedId, plan, byId])
+
+  /** Las casillas que solo reciben chips y no llevan puerto, salvo las que ahora enseñan su cable. */
+  const chipOnly = useMemo(() => {
+    const map: Record<string, string[]> = {}
+    for (const [id, slots] of Object.entries(plan.chipOnly)) {
+      const open = new Set<string>()
+      for (const edge of revealed) if (edge.to === id && edge.toPort) open.add(edge.toPort)
+      map[id] = open.size === 0 ? slots : slots.filter((slot) => !open.has(slot))
+    }
+    return map
+  }, [plan, revealed])
+
   // Lo que un ámbito envuelve ya lo dice el espacio: la conexión de la función a su propio
   // cuerpo (sus parámetros) sería una línea redundante que cruza su cabecera.
   const visibleEdges = useMemo(
     () =>
       edges.filter((edge) => {
-        // Lo que sale de un chip acoplado no se dibuja como un cable: el chip se ve en la casilla.
-        // Lo mismo con la variable de un bucle: es un chip de su cajita.
-        // Y el resultado de una línea (`A = funcion()`) que llega a una casilla que enseña su nombre.
-        if (plan.docked.has(edge.from) || plan.hidden.has(edge)) return false
+        // Un valor que llega a un nodo que ya lo nombra (una constante, la variable de un bucle, un
+        // parámetro, el resultado de otra línea) no se dibuja como cable: es un chip en su casilla.
+        if (plan.docked.has(edge.from) || (plan.hidden.has(edge) && !revealed.has(edge))) {
+          return false
+        }
         // El retorno de un bucle territorio lo dibuja el propio bucle (su carril de repetición).
         if (edge.relation === 'feedback' && scopes[edge.to]?.includes(edge.from)) return false
         return edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to)
       }),
-    [edges, scopes, plan],
+    [edges, scopes, plan, revealed],
   )
 
   const parentOf = useMemo(() => {
@@ -781,12 +810,11 @@ function CanvasInner({
     const map: Record<string, string[]> = {}
     if (selectedId === null) return map
     const iter = parseIterChip(selectedId)
-    if (!iter && !plan.docked.has(selectedId) && !plan.results.has(selectedId)) return map
     for (const edge of edges) {
-      if (!edge.toPort) continue
+      if (!edge.toPort || !plan.hidden.has(edge)) continue
       const mine = iter
         ? edge.from === iter.loop && edge.fromPort === `param:${iter.name}`
-        : edge.from === selectedId && (plan.docked.has(selectedId) || plan.hidden.has(edge))
+        : edge.from === selectedId
       if (mine) (map[edge.to] ??= []).push(edge.toPort)
     }
     return map
@@ -823,9 +851,15 @@ function CanvasInner({
   /** Quitar el chip de una casilla: vuelve a un valor neutro. */
   const onClearChip = useCallback(
     (id: string, slot: string) => {
+      // Lo que devuelve una función es una sentencia `return`: quitarlo es quitarla.
+      if (slot === 'return') {
+        const via = edges.find((edge) => edge.to === id && edge.toPort === 'return')?.via
+        if (via !== undefined) onAction?.({ type: 'delete', id: via })
+        return
+      }
       onAction?.({ type: 'disconnect', id, slot })
     },
-    [onAction],
+    [edges, onAction],
   )
 
   /** Se ensancha una función a mano: se recuerda su tamaño, y la gramática lo respeta como mínimo. */
@@ -959,7 +993,8 @@ function CanvasInner({
           // La cajita de chips del territorio, y lo que llevan las casillas de este nodo.
           tray: container ? plan.trays.get(node.id) : undefined,
           chipSlots: plan.chipSlots[node.id],
-          chipOnly: plan.chipOnly[node.id],
+          chipOnly: chipOnly[node.id],
+          chipDragging: chipDrag.carried !== null || ghost !== null,
           line: isLineCard(node.kind, node.control) && densityOf(node) === 'normal',
           ...(connectable ? { onGrabResult: grabResult } : {}),
           callees,
@@ -1019,7 +1054,7 @@ function CanvasInner({
         const at = positionOf.get(context)
         const owner = byId.get(context)
         if (!at || !owner || scopes[context] === undefined) continue
-        const inset = SCOPE_FRAME.side + (hasParamPorts(owner) ? PARAM_GUTTER : 0)
+        const inset = SCOPE_FRAME.side
         origin = { x: at.x + inset, y: at.y + SCOPE_FRAME.top + territoryHeadroom(owner) }
       }
       const variables = plan.chipsOf.get(context) ?? []
@@ -1050,7 +1085,9 @@ function CanvasInner({
             size,
             ...(chip ? { chip } : {}),
             ...(fn ? { fn } : {}),
-            ...(iter ? { iter: { name: iter.name } } : {}),
+            ...(iter
+              ? { iter: { name: iter.name, param: byId.get(iter.loop)?.kind !== 'control.loop' } }
+              : {}),
             ...(onControlChange ? { onControlChange: changeControl } : {}),
             ...(onAction
               ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }

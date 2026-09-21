@@ -20,7 +20,7 @@ export interface ChipNodeData extends Record<string, unknown> {
   /** O la función. */
   fn?: FunctionChip
   /** O la variable de iteración de un bucle. */
-  iter?: { name: string }
+  iter?: { name: string; param?: boolean }
   size: { w: number; h: number }
   onControlChange?: (id: string, next: ControlModel) => void
   onRename?: (id: string, to: string) => void
@@ -49,11 +49,15 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
     return (
       <div
         className="vchip"
-        data-type="iter"
+        data-type={data.iter.param ? 'param' : 'iter'}
         data-selected={selected ? '' : undefined}
-        title={`${data.iter.name}: lo que toma el bucle en cada vuelta; arrástrala a una casilla de dentro`}
+        title={
+          data.iter.param
+            ? `${data.iter.name}: lo que recibe la función; arrástrala a una casilla de dentro`
+            : `${data.iter.name}: lo que toma el bucle en cada vuelta; arrástrala a una casilla de dentro`
+        }
       >
-        <Icon name="loop" size={12} className="vchip__icon" />
+        <Icon name={data.iter.param ? 'function' : 'loop'} size={12} className="vchip__icon" />
         <span className="vchip__name">{data.iter.name}</span>
       </div>
     )
