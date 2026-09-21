@@ -48,3 +48,18 @@ Los tipos observados afinan el aspecto de un nodo, pero nunca cambian lo que sig
 4. **Celdas, desactualizado y caché.** Ejecución manual con marcas; reactiva opcional por territorio.
 5. **Nodos de dominio:** cadena de pandas, figura, modelo, bucle con deslizador.
 6. **Barridos, comparación y coste.**
+
+## Resultado de la prueba del motor (paso 2)
+
+**Descartada: la API de kernels de la extensión Jupyter** (leída en `ms-toolsai.jupyter` 2025.9.1). `kernels.getKernel(uri)` solo devuelve un kernel si el usuario ya lo arrancó para un notebook o una Interactive Window (`userStartedKernel`); no arranca ninguno. Además exige confianza en el espacio de trabajo y un **diálogo modal de consentimiento** por extensión («¿conceder acceso a kernels?»), y solo entrega salidas MIME, sin tipo ni forma. Un `.py` normal no tendría kernel.
+
+**Elegido: un motor propio y mínimo**, `packages/extension/runtime/prysel_runner.py` (solo biblioteca estándar) y su cliente `src/kernel.ts` (sin dependencia de `vscode`):
+
+- Un proceso de Python con un espacio de nombres vivo; el protocolo son líneas de JSON por un **socket local** con clave (no por la entrada estándar: en Windows, una lectura bloqueada sobre esa tubería cuelga imports como el de numpy; se comprobó).
+- Ejecuta un fragmento y devuelve la salida (en directo), el valor de la última expresión (como Jupyter), el resumen de **cada nombre que el fragmento define o muta** (asignaciones, imports, `def`, receptores de métodos: `model.fit(X)`, `xs.append(1)`) y las figuras de matplotlib como PNG. El grafo no tiene que saber qué cambia un bucle.
+- Resúmenes por forma, sin importar las librerías: tipo, forma, dtype, dispositivo, bytes, muestra y rango de arrays/tensores; columnas con tipo y nulos y primeras filas de algo con `columns`/`dtypes`/`head`; miniatura de imágenes PIL. Nunca el dato entero.
+- Errores con la **línea dentro del fragmento** (base 1): línea del archivo = línea donde empieza el nodo + línea − 1. Un `KeyboardInterrupt` (interrumpir) corta un bucle infinito y el motor sigue vivo; si el proceso muere, lo dice.
+- Medido: arranque ≈ 130 ms; ida y vuelta ≈ 0,2 ms; importar numpy y resumir un array de 2000×2000 ≈ 140 ms, con una respuesta de ~130 bytes.
+- Se ejecutó un programa real nodo a nodo (grafo → texto de cada sentencia de primer nivel → motor): cada chip trae tipo y forma (`X · (200, 2) float64`, `centers · (3, 2)`), incluidos los resultados múltiples y lo que cambia un bucle.
+
+**Límites conocidos:** interrumpir no corta una llamada nativa larga (un `fit` de sklearn): habrá que ofrecer «reiniciar». `input()` acaba con `EOFError` (no hay entrada). El código de funciones anidadas y de compuestas se ejecuta entero: la granularidad es la sentencia de primer nivel. Falta elegir el intérprete (API de `ms-python`), empaquetar `runtime/` con la extensión, y conectar el cliente con el lienzo (estados por nodo, chips tipados).
