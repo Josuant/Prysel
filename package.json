@@ -19,7 +19,9 @@
     "format:check": "prettier --check .",
     "typecheck": "pnpm -r --parallel typecheck",
     "test": "vitest run",
-    "verify": "pnpm tokens:check && pnpm lint && pnpm typecheck && pnpm test && pnpm format:check"
+    "verify": "pnpm tokens:check && pnpm lint && pnpm typecheck && pnpm test && pnpm format:check",
+    "package:extension": "pnpm --filter prysel-extension package",
+    "e2e:extension": "pnpm --filter prysel-extension e2e"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

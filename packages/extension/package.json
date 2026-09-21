@@ -15,6 +15,7 @@
   ],
   "activationEvents": [
     "onCommand:prysel.openCanvas",
+    "onCommand:prysel.runAll",
     "onView:prysel.canvasView"
   ],
   "main": "./dist/extension.js",
@@ -23,6 +24,21 @@
       {
         "command": "prysel.openCanvas",
         "title": "Abrir lienzo",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.runAll",
+        "title": "Ejecutar el archivo",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.interrupt",
+        "title": "Interrumpir la ejecución",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.restart",
+        "title": "Reiniciar el motor",
         "category": "Prysel"
       }
     ],
@@ -59,13 +75,13 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
-    "typecheck": "tsc -p tsconfig.json"
-  },
-  "dependencies": {
-    "@prysel/python": "workspace:*",
-    "@vscode/tree-sitter-wasm": "^0.3.1"
+    "typecheck": "tsc -p tsconfig.json",
+    "package": "node scripts/package.mjs",
+    "e2e": "node e2e/run.mjs"
   },
   "devDependencies": {
+    "@prysel/python": "workspace:*",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
     "@prysel/design-tokens": "workspace:*",
     "@prysel/morphology": "workspace:*",
     "@prysel/spatial": "workspace:*",
@@ -88,5 +104,16 @@
       "supported": "limited",
       "description": "En un espacio de trabajo sin confianza el lienzo se puede ver y editar, pero no ejecutar código."
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prysel/prysel.git"
+  },
+  "keywords": [
+    "python",
+    "visual",
+    "diagram",
+    "notebook",
+    "data science"
+  ]
 }

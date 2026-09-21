@@ -1,6 +1,6 @@
 import { build as esbuildBuild, context as esbuildContext } from 'esbuild'
 import { build as viteBuild } from 'vite'
-import { cp } from 'node:fs/promises'
+import { cp, mkdir } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,7 +20,8 @@ const esbuildOptions = {
   format: 'cjs',
   target: 'node20',
   sourcemap: true,
-  external: ['vscode', '@vscode/tree-sitter-wasm'],
+  // tree-sitter va dentro del paquete: solo `vscode` lo pone el editor.
+  external: ['vscode'],
   logLevel: 'info',
 }
 
@@ -39,9 +40,19 @@ async function copyRuntime() {
   await cp(resolve(root, 'runtime'), resolve(root, 'dist', 'runtime'), { recursive: true })
 }
 
+/** El runtime de tree-sitter y la gramática de Python: los únicos wasm que hacen falta (unos 660 KB). */
+async function copyWasm() {
+  const from = resolve(root, 'node_modules', '@vscode', 'tree-sitter-wasm', 'wasm')
+  await mkdir(resolve(root, 'dist', 'wasm'), { recursive: true })
+  for (const file of ['tree-sitter.wasm', 'tree-sitter-python.wasm']) {
+    await cp(resolve(from, file), resolve(root, 'dist', 'wasm', file))
+  }
+}
+
 async function main() {
   await buildExtension()
   await copyRuntime()
+  await copyWasm()
   await viteBuild({ configFile: resolve(root, 'webview/vite.config.mjs') })
   if (!watch) console.log('Prysel: extensión y webview compilados en dist/')
 }

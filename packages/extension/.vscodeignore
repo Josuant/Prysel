@@ -7,3 +7,4 @@ runtime/**
 tsconfig.json
 **/*.map
 **/*.ts
+e2e/**

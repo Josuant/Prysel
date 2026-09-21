@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import * as vscode from 'vscode'
@@ -6,6 +7,7 @@ import { validEdits, type TextEdit } from '@prysel/python/edits'
 import { Kernel } from './kernel.ts'
 import { parseHostMessage, type Theme, type WebviewMessage } from './protocol.ts'
 import { Session } from './session.ts'
+import type { KernelStatus, RunState } from './runs.ts'
 
 /**
  * Extensión de VS Code (cascarón, M0.5).
@@ -17,16 +19,27 @@ import { Session } from './session.ts'
 
 const require = createRequire(__filename)
 
-/** El wasm de tree-sitter: la misma build que embarca VS Code. */
+/**
+ * El wasm de tree-sitter: la misma build que embarca VS Code. Empaquetada, junto al código compilado
+ * (`dist/wasm`); en desarrollo y en las pruebas, en `node_modules`.
+ */
 function wasmLocations(): { runtime: string; language: string } {
-  const wasmDir = dirname(require.resolve('@vscode/tree-sitter-wasm/wasm/tree-sitter.js'))
+  const bundled = join(__dirname, 'wasm')
+  const wasmDir = existsSync(join(bundled, 'tree-sitter.wasm'))
+    ? bundled
+    : dirname(require.resolve('@vscode/tree-sitter-wasm/wasm/tree-sitter.js'))
   return { runtime: wasmDir, language: join(wasmDir, 'tree-sitter-python.wasm') }
 }
 
 let parser: PythonParser | null = null
 let parserPromise: Promise<PythonParser> | null = null
+/** Por qué no se pudo cargar el parser la última vez, si no se pudo. */
+let parserError: string | null = null
 let panel: vscode.WebviewPanel | null = null
 let currentDoc: vscode.TextDocument | null = null
+
+/** Cuántas veces un webview avisó de que ya cargó (`ready`): es lo que dice que su página arrancó de verdad. */
+let webviewsReady = 0
 
 /** Todos los webviews abiertos (panel y vista de la barra): reciben el mismo estado. */
 const webviews = new Set<vscode.Webview>()
@@ -115,10 +128,19 @@ function mayRun(): boolean {
 
 /** El parser se carga una sola vez y de forma perezosa: registrar comandos no debe esperarlo. */
 function getParser(): Promise<PythonParser> {
-  parserPromise ??= createPythonParser(wasmLocations()).then((created) => {
-    parser = created
-    return created
-  })
+  parserPromise ??= createPythonParser(wasmLocations()).then(
+    (created) => {
+      parser = created
+      parserError = null
+      return created
+    },
+    (error: unknown) => {
+      // Un fallo no se recuerda para siempre: la próxima petición lo vuelve a intentar.
+      parserPromise = null
+      parserError = messageOf(error)
+      throw error
+    },
+  )
   return parserPromise
 }
 
@@ -144,6 +166,16 @@ function postToAll(message: WebviewMessage) {
   for (const webview of webviews) webview.postMessage(message)
 }
 
+/** Analiza un documento y deja su sesión de ejecución al día con lo que hay escrito. */
+async function analyse(doc: vscode.TextDocument) {
+  const parser = await getParser()
+  const text = doc.getText()
+  const program = buildProgram(parser.parse(text), text)
+  // Los resultados siguen a sus sentencias aunque el texto se haya movido.
+  sessionFor(doc).update(program, text)
+  return program
+}
+
 /** Analiza el documento activo y manda el programa a todos los webviews. */
 async function refresh() {
   if (webviews.size === 0) return
@@ -154,11 +186,7 @@ async function refresh() {
     return
   }
   try {
-    const parser = await getParser()
-    const text = doc.getText()
-    const program = buildProgram(parser.parse(text), text)
-    // Los resultados siguen a sus sentencias aunque el texto se haya movido.
-    sessionFor(doc).update(program, text)
+    const program = await analyse(doc)
     postToAll({ type: 'update', program, file: basename(doc.fileName), version: doc.version })
     postRuns()
   } catch {
@@ -243,6 +271,7 @@ function wireWebview(webview: vscode.Webview) {
       else session?.restart()
       return
     }
+    webviewsReady++
     postToAll({ type: 'theme', theme: themeKind() })
     void refresh().then(() => {
       // Un lienzo recién abierto no tiene las imágenes de lo que ya se ejecutó: se le mandan.
@@ -298,9 +327,64 @@ class CanvasViewProvider implements vscode.WebviewViewProvider {
   }
 }
 
-export function activate(context: vscode.ExtensionContext) {
+/**
+ * Lo que la extensión ofrece a otras extensiones y a las pruebas: cómo está la sesión de ejecución de un
+ * documento (el activo, si no se dice).
+ */
+export interface PryselApi {
+  state(uri?: vscode.Uri): {
+    /** El parser de Python: cargado, pendiente o con el motivo por el que no cargó. */
+    parser: string
+    kernel: KernelStatus
+    problem: string | null
+    /** El estado de cada sentencia de primer nivel, en el orden del archivo. */
+    states: RunState[]
+    /** Lo que imprimieron las sentencias, junto. */
+    stdout: string
+    /** Cuántas veces un webview avisó de que cargó. */
+    webviewsReady: number
+    /** El documento que se está enseñando y los que tienen una sesión (para entender qué pasa). */
+    document: string | null
+    sessions: string[]
+  }
+}
+
+/** El documento sobre el que actúan los comandos de ejecución: el activo, si es Python. */
+function targetDocument(): vscode.TextDocument | null {
+  const doc = vscode.window.activeTextEditor?.document ?? currentDoc
+  return doc?.languageId === 'python' ? doc : null
+}
+
+export function activate(context: vscode.ExtensionContext): PryselApi {
   // El comando y la vista se registran de forma síncrona: el parser se carga aparte.
   context.subscriptions.push(
+    vscode.commands.registerCommand('prysel.runAll', async () => {
+      const doc = targetDocument()
+      if (!doc) {
+        void vscode.window.showInformationMessage(
+          'Prysel: abre un archivo de Python para ejecutarlo.',
+        )
+        return
+      }
+      if (!mayRun()) return
+      try {
+        await analyse(doc)
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Prysel: no se pudo analizar el archivo. ${messageOf(error)}`,
+        )
+        return
+      }
+      await sessionFor(doc).run('all')
+    }),
+    vscode.commands.registerCommand('prysel.interrupt', () => {
+      const doc = targetDocument()
+      if (doc) sessions.get(doc.uri.toString())?.interrupt()
+    }),
+    vscode.commands.registerCommand('prysel.restart', () => {
+      const doc = targetDocument()
+      if (doc) sessions.get(doc.uri.toString())?.restart()
+    }),
     vscode.commands.registerCommand('prysel.openCanvas', async () => {
       try {
         await getParser()
@@ -330,19 +414,44 @@ export function activate(context: vscode.ExtensionContext) {
       const key = doc.uri.toString()
       sessions.get(key)?.dispose()
       sessions.delete(key)
+      // Lo que se enseñaba se cerró: se pasa a lo que haya abierto, o al lienzo vacío.
+      if (currentDoc?.uri.toString() === key) {
+        currentDoc = null
+        void refresh()
+      }
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (!currentDoc) return
       if (event.document.uri.toString() === currentDoc.uri.toString()) void refresh()
     }),
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      currentDoc = editor?.document ?? null
+      // Sin editor de texto (el foco pasó al propio lienzo, o a otro panel) se sigue enseñando el mismo
+      // documento: si no, el diagrama se vaciaría justo al pulsar sobre él.
+      if (!editor) return
+      currentDoc = editor.document
       void refresh()
     }),
     vscode.window.onDidChangeActiveColorTheme(() => {
       postToAll({ type: 'theme', theme: themeKind() })
     }),
   )
+  return {
+    state(uri) {
+      const key = (uri ?? targetDocument()?.uri)?.toString()
+      const session = key === undefined ? undefined : sessions.get(key)
+      const views = session ? Object.values(session.views()) : []
+      return {
+        parser: parser ? 'cargado' : parserError ? `falló: ${parserError}` : 'pendiente',
+        kernel: session?.status ?? 'stopped',
+        problem: session?.problem ?? null,
+        states: views.map((view) => view.state),
+        stdout: views.map((view) => view.stdout ?? '').join(''),
+        webviewsReady,
+        document: currentDoc?.uri.toString() ?? null,
+        sessions: [...sessions.keys()],
+      }
+    },
+  }
 }
 
 export function deactivate() {

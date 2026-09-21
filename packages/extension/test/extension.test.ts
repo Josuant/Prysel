@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   warnings: [] as string[],
   document: null as unknown,
   closeListeners: [] as ((doc: unknown) => void)[],
+  editorListeners: [] as ((editor: unknown) => void)[],
   /** Cada prueba carga la extensión de nuevo: lo que publica una anterior no cuenta. */
   epoch: 0,
 }))
@@ -54,7 +55,10 @@ vi.mock('vscode', () => {
       },
       activeColorTheme: { kind: 2 },
       registerWebviewViewProvider: () => ({ dispose() {} }),
-      onDidChangeActiveTextEditor: () => ({ dispose() {} }),
+      onDidChangeActiveTextEditor: (listener: (editor: unknown) => void) => {
+        state.editorListeners.push(listener)
+        return { dispose() {} }
+      },
       onDidChangeActiveColorTheme: () => ({ dispose() {} }),
       showWarningMessage: (text: string) => {
         state.warnings.push(text)
@@ -133,6 +137,8 @@ describe.skipIf(!available)('la extensión con una API de VS Code simulada', () 
     state.posted.length = 0
     state.warnings.length = 0
     state.commands.clear()
+    state.editorListeners.length = 0
+    state.closeListeners.length = 0
     state.document = fakeDocument()
     vi.resetModules()
     const extension = await import('../src/extension.ts')
@@ -215,6 +221,34 @@ describe.skipIf(!available)('la extensión con una API de VS Code simulada', () 
     state.onMessage?.({ type: 'run', version: 1, ids: 'all' })
     await wait(() => (last('runs') as (Posted & { kernel: string }) | undefined)?.kernel === 'idle')
     expect(asked).toEqual(['entorno'])
+    deactivate()
+  })
+
+  it('pasar el foco al propio lienzo (sin editor de texto) no vacía el diagrama', async () => {
+    // En VS Code, al pulsar sobre un webview `activeTextEditor` pasa a ser `undefined`.
+    state.posted.length = 0
+    for (const listener of state.editorListeners) listener(undefined)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(state.posted.some((m) => m.type === 'update' && m['program'] === null)).toBe(false)
+    // Y ejecutar sigue actuando sobre el mismo archivo.
+    await state.commands.get('prysel.runAll')?.()
+    const runs = last('runs') as Posted & { kernel: string }
+    expect(runs.kernel).toBe('idle')
+    deactivate()
+  })
+
+  it('cambiar a otro editor de texto sí cambia lo que se enseña', async () => {
+    const other = {
+      ...fakeDocument(),
+      fileName: `${HERE}/otro.py`,
+      uri: { fsPath: `${HERE}/otro.py`, toString: () => `file:///${HERE}/otro.py` },
+      getText: () => 'z = 1\n',
+    }
+    state.document = other
+    state.posted.length = 0
+    for (const listener of state.editorListeners) listener({ document: other })
+    await wait(() => last('update') !== undefined)
+    expect((last('update') as Posted & { file: string }).file).toBe('otro.py')
     deactivate()
   })
 

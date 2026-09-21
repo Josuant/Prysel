@@ -1,0 +1,9 @@
+{
+  "name": "prysel-e2e-host",
+  "publisher": "prysel-e2e",
+  "version": "0.0.0",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "description": "Anfitrión vacío: solo hace falta una carpeta de extensión para lanzar las pruebas dentro de VS Code."
+}
