@@ -642,3 +642,43 @@ describe('el orden de ejecución coloca el plano', () => {
     expect(plan.order.map((e) => `${e.from}→${e.to}`)).toEqual(['a→b'])
   })
 })
+
+describe('una operación entre literales es una constante', () => {
+  const formula = (left: string, operator: string, right: string) => ({
+    kind: 'expression' as const,
+    left,
+    operator,
+    right,
+    operators: [operator],
+  })
+  const op = (id: string, line: number, control: ReturnType<typeof formula>, extra = {}) =>
+    node(id, { kind: 'transform.operation', provides: id, line, control, ...extra })
+
+  it('es un chip si sus dos operandos son literales', () => {
+    expect(isChipKind(op('resta', 1, formula('10', '-', '2')))).toBe(true)
+    expect(isChipKind(op('tau', 1, formula('2', '*', '3.14159')))).toBe(true)
+    expect(isChipKind(op('saludo', 1, formula('"hola "', '+', '"mundo"')))).toBe(true)
+  })
+
+  it('si un operando es una variable, sigue siendo un nodo', () => {
+    expect(isChipKind(op('r', 1, formula('a', '+', '2')))).toBe(false)
+    expect(isChipKind(op('r', 1, formula('1', '+', 'f(2)')))).toBe(false)
+  })
+
+  it('sin nombre asignado no es un chip', () => {
+    const anon = node('x', { kind: 'transform.operation', control: formula('1', '+', '2') })
+    expect(isChipKind(anon)).toBe(false)
+  })
+
+  it('se resume como su fórmula', () => {
+    expect(chipValue(op('resta', 1, formula('10', '-', '2')))).toBe('10 - 2')
+  })
+
+  it('en el arranque de un contexto no corta la preparación y se acopla', () => {
+    const tau = op('tau', 1, formula('2', '*', '3.14'))
+    const dos = value('k', 2)
+    const otra = node('a', { kind: 'transform.call', line: 3 })
+    const docked = dockChips([tau, dos, otra])
+    expect([...docked.keys()].sort()).toEqual(['k', 'tau'])
+  })
+})

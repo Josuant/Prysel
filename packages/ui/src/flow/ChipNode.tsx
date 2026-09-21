@@ -97,7 +97,13 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
 
 /** El campo que se escribe al editar el valor de un chip: el valor mismo, los elementos o las entradas. */
 const editedField = (chip: CanvasNode): string =>
-  chip.control?.kind === 'list' ? 'items' : chip.control?.kind === 'dict' ? 'entries' : 'value'
+  chip.control?.kind === 'list'
+    ? 'items'
+    : chip.control?.kind === 'dict'
+      ? 'entries'
+      : chip.control?.kind === 'expression'
+        ? 'left'
+        : 'value'
 
 /** El nombre de un chip: con doble clic (o desde su menú) se renombra en todos los sitios donde se usa. */
 function ChipName({
@@ -217,7 +223,7 @@ function ChipValue({
         onChange({ ...control, value })
       }}
     />
-  ) : control?.kind === 'list' || control?.kind === 'dict' ? (
+  ) : control?.kind === 'list' || control?.kind === 'dict' || control?.kind === 'expression' ? (
     <ChipCollection chip={chip} control={control} onChange={onChange} editable={editable} />
   ) : (
     <span className="vchip__value">{chipValue(chip)}</span>

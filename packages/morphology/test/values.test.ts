@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   ACTION_CALLS,
   accepts,
+  isConstantExpression,
+  isLiteralText,
   slimControlHeight,
   slimHeight,
   slimWidth,
@@ -160,5 +162,39 @@ describe('la tarjeta esbelta mide lo que lleva dentro', () => {
     expect(slimWidth(224, formula)).toBeGreaterThan(224)
     expect(slimWidth(224, { kind: 'number', value: 1 })).toBe(224)
     expect(slimWidth(300, formula)).toBe(300)
+  })
+})
+
+describe('las operaciones entre literales', () => {
+  const formula = (left: string, operator: string, right: string): ControlModel => ({
+    kind: 'expression',
+    left,
+    operator,
+    right,
+    operators: [operator],
+  })
+
+  it('reconoce un literal y nada más', () => {
+    for (const text of ['1', '-2', '3.14', '.5', '1e3', '"a"', "'b'", 'True', 'False', ' 7 ']) {
+      expect(isLiteralText(text), text).toBe(true)
+    }
+    for (const text of ['x', 'f(1)', '1 + 2', '"a" + "b"', 'None', '', 'a.b', '[1]']) {
+      expect(isLiteralText(text), text).toBe(false)
+    }
+  })
+
+  it('una constante son dos literales', () => {
+    expect(isConstantExpression(formula('10', '-', '2'))).toBe(true)
+    expect(isConstantExpression(formula('a', '-', '2'))).toBe(false)
+    expect(isConstantExpression(undefined)).toBe(false)
+    expect(isConstantExpression({ kind: 'number', value: 1 })).toBe(false)
+  })
+
+  it('con dos literales se sabe la clase que sale', () => {
+    expect(valueTypeOf('transform.operation', formula('1', '+', '2'))).toBe('number')
+    expect(valueTypeOf('transform.operation', formula('"a"', '+', '"b"'))).toBe('text')
+    expect(valueTypeOf('transform.operation', formula('1', '<', '2'))).toBe('boolean')
+    // Sin literales no se sabe: una suma puede ser de números o de textos.
+    expect(valueTypeOf('transform.operation', formula('a', '+', 'b'))).toBe('any')
   })
 })

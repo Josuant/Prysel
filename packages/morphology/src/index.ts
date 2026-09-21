@@ -5,6 +5,8 @@ export {
   VALUE_NAMES,
   VALUE_TYPES,
   accepts,
+  isConstantExpression,
+  isLiteralText,
   slotAccepts,
   slotTypeOf,
   valueTypeOf,

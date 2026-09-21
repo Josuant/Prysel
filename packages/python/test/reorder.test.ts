@@ -219,3 +219,25 @@ describe('crear desde un puerto de orden', () => {
     ).toBe(source)
   })
 })
+
+describe('las constantes calculadas cuentan como inicializaciones', () => {
+  it('al principio de lo que actúa va tras una operación entre literales', () => {
+    const text = act('def f():\n    n = 0\n    t = 2 * 3\n    a = g()\nx = k()\n', (p) => ({
+      type: 'move',
+      id: at(p, 5).id,
+      into: at(p, 1).id,
+      start: true,
+    }))
+    expect(text).toBe('def f():\n    n = 0\n    t = 2 * 3\n    x = k()\n    a = g()\n')
+  })
+
+  it('pero una operación con una variable ya actúa', () => {
+    const text = act('def f(p):\n    n = 0\n    t = p * 3\n    a = g()\nx = k()\n', (p) => ({
+      type: 'move',
+      id: at(p, 5).id,
+      into: at(p, 1).id,
+      start: true,
+    }))
+    expect(text).toBe('def f(p):\n    n = 0\n    x = k()\n    t = p * 3\n    a = g()\n')
+  })
+})

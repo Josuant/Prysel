@@ -1,3 +1,4 @@
+import { isConstantExpression } from '@prysel/morphology'
 import type { ControlModel, NodeAction, TemplateId } from '@prysel/morphology'
 import type { Program, ProgramNode } from './program.ts'
 import type { Source, Span, TextEdit } from './source.ts'
@@ -627,7 +628,11 @@ function resolvePlace(
       : { into: decision.id, region: regionOf(elseHead, elseEnd, r.indent, r.bodyIndent) }
   }
   if (into !== undefined && start) {
-    const first = inside(into).find((n) => !SETUP.has(n.kind))
+    const first = inside(into).find(
+      (n) =>
+        !SETUP.has(n.kind) &&
+        !(n.kind === 'transform.operation' && isConstantExpression(n.control)),
+    )
     return first ? { before: first.id } : { into }
   }
   return {

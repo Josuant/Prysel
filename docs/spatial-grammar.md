@@ -177,6 +177,7 @@ Cuándo un cable de datos **no se dibuja** (`planChips`, pura y probada): cuando
 Lo que hace a algo un chip (`dockChips`, pura y probada):
 
 - Es un **valor literal** asignado a un nombre: un escalar (número, texto, verdadero/falso, `None`) o una **lista / diccionario literal** (`numeros = [5, 3, 1]`), que se resume (`[5, 3, 1]`, `{a: 1, …}`, 20 caracteres como máximo) y se edita en un panel bajo el chip (los mismos editores que en un nodo: añadir y quitar elementos o claves). Una colección **calculada** (`sorted(x)`, una comprensión) no es un literal: sigue siendo un nodo.
+- **Una operación entre literales también es un valor**: `TAU = 2 * 3.14159`, `limite = 10 - 2`, `saludo = "hola " + "mundo"`. No depende de nadie: es una constante con nombre (`isConstantExpression`, `isLiteralText`), y se dibuja como chip (`limite = 10 - 2`), con su fórmula editable en un panel. Con una variable en un operando (`a + 2`) deja de serlo y vuelve a ser una tarjeta. Cuenta como inicialización: no corta la preparación del contexto ni desplaza el principio de lo que actúa.
 - Es una sentencia **del propio bloque** del contexto (su función, su bucle, el programa), no de una rama de un `if`: un valor que solo existe en una rama es flujo condicional, y se queda en su sitio (con forma de píldora, pero con cable).
 - Viene **antes de la primera sentencia que actúa**. Los `import` y las funciones definidas no cortan la preparación; una llamada, una operación o un bucle, sí. Un valor asignado a mitad de camino es parte del flujo, y el menú del nodo lo puede **subir a las variables del contexto** («Subir a las variables del contexto», `promoteTarget`): lo mueve antes de la primera sentencia de su bloque, salvo que el nombre ya exista antes (cambiaría lo que ven los usos de en medio) o esté en la rama de un `if` (dejaría de ser condicional).
 - Su contexto se dibuja como territorio (si dentro solo hubiera chips no habría cuerpo, y se quedan como nodos).
@@ -402,7 +403,6 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 ## Lo que falta
 
 - Micro-interfaces semánticas: sustituir la línea de código literal de cada nodo (`print`, `input`…) por controles reales — un desplegable para un operador lógico, un campo de formulario para un literal.
-- **Un valor de una operación con solo literales como chip** (`resta = 10 - 2` → `resta` con su valor): hoy la operación sigue siendo una tarjeta con su nombre como pastilla.
 - **Un nodo sin nombre como origen** (`print(x)` no define nada; `float(input())` sin asignar): para usarlos habría que introducir una variable.
 - **Meter una función dentro de otra** arrastrándola (hoy solo se reubican nodos).
 - **La cláusula `else` de un bucle** no se representa.

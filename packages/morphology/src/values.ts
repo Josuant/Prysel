@@ -33,6 +33,32 @@ const COMPARISONS = new Set(['<', '<=', '>', '>=', '==', '!=', 'in', 'not in', '
 /** Operadores que Python solo admite entre números (`+`, `*` y `%` también valen con textos). */
 const NUMERIC_ONLY = new Set(['-', '/', '//', '**', '-=', '/=', '//=', '**='])
 
+const NUMBER_LITERAL = /^[+-]?(?:\d[\d_]*\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/
+const STRING_LITERAL = /^(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')$/
+
+/** ¿Es un literal (un número, un texto entre comillas, True o False) y nada más? */
+export function isLiteralText(text: string): boolean {
+  const t = text.trim()
+  return NUMBER_LITERAL.test(t) || STRING_LITERAL.test(t) || t === 'True' || t === 'False'
+}
+
+/** La clase de un literal ya reconocido como tal. */
+function literalType(text: string): ValueType {
+  const t = text.trim()
+  if (NUMBER_LITERAL.test(t)) return 'number'
+  return t === 'True' || t === 'False' ? 'boolean' : 'text'
+}
+
+/**
+ * ¿Es una operación entre literales (`10 - 2`, `"a" + "b"`)? No depende de nadie ni de nada: es una
+ * constante con nombre, y se trata como tal (un chip).
+ */
+export function isConstantExpression(control: ControlModel | undefined): boolean {
+  return (
+    control?.kind === 'expression' && isLiteralText(control.left) && isLiteralText(control.right)
+  )
+}
+
 /** La clase del valor que sale de un nodo, según lo que enseña su editor y, si no, su tipo. */
 export function valueTypeOf(kind: NodeKindId, control?: ControlModel): ValueType {
   switch (control?.kind) {
@@ -55,6 +81,8 @@ export function valueTypeOf(kind: NodeKindId, control?: ControlModel): ValueType
     }
     case 'expression':
       if (COMPARISONS.has(control.operator)) return 'boolean'
+      // Con dos literales se sabe qué sale: `1 + 2` es un número y `"a" + "b"` un texto.
+      if (isConstantExpression(control)) return literalType(control.left)
       return NUMERIC_ONLY.has(control.operator) ? 'number' : 'any'
     default:
       break

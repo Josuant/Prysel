@@ -1,4 +1,10 @@
-import { isLineCard, type ControlModel, type Density, type ValueType } from '@prysel/morphology'
+import {
+  isConstantExpression,
+  isLineCard,
+  type ControlModel,
+  type Density,
+  type ValueType,
+} from '@prysel/morphology'
 import { channelOf, type SemanticEdge } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
 
@@ -33,9 +39,14 @@ const CHIP_KINDS: ReadonlySet<string> = new Set([
  * `None`, que el analizador haya sabido representarlo: una lista con `*resto` no cabe en una píldora.
  */
 export const isChipKind = (node: Pick<CanvasNode, 'kind' | 'provides' | 'control'>): boolean =>
-  CHIP_KINDS.has(node.kind) &&
   node.provides !== undefined &&
-  (node.control !== undefined || node.kind === 'value.none')
+  ((CHIP_KINDS.has(node.kind) && (node.control !== undefined || node.kind === 'value.none')) ||
+    // Una operación entre literales (`TAU = 2 * 3.14159`) es una constante: se porta como un valor.
+    isConstantOperation(node))
+
+/** Una operación cuyos dos operandos son literales: no depende de nada. */
+const isConstantOperation = (node: Pick<CanvasNode, 'kind' | 'control'>): boolean =>
+  node.kind === 'transform.operation' && isConstantExpression(node.control)
 
 /** Un chip que representa una función del programa: se arrastra a una llamada. */
 export interface FunctionChip {
@@ -156,6 +167,8 @@ export function chipValue(node: Pick<CanvasNode, 'control'>): string {
         `{${control.entries.map(([key, value]) => `${key}: ${value}`).join(', ')}}`,
         20,
       )
+    case 'expression':
+      return summary(`${control.left} ${control.operator} ${control.right}`, 20)
     case 'number':
       return String(control.value)
     case 'text': {
@@ -305,7 +318,7 @@ export function dockChips(nodes: readonly CanvasNode[]): Map<string, string> {
       .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))
     const setup = new Set<string>()
     for (const node of own) {
-      if (!SETUP_KINDS.has(node.kind)) break
+      if (!SETUP_KINDS.has(node.kind) && !isConstantOperation(node)) break
       setup.add(node.id)
     }
     leading.set(owner, setup)
