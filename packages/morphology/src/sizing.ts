@@ -237,6 +237,10 @@ export const isLineCard = (kind: string, control: ControlModel | undefined): boo
 /** Un nombre que Python admite como variable: si el destino de una asignación lo es, va como chip. */
 export const isPlainName = (text: string): boolean => /^[\p{L}_][\p{L}\p{N}_]*$/u.test(text.trim())
 
+/** `a` o `a, b, c`: uno o varios nombres, sin nada más. */
+export const isNameList = (text: string): boolean =>
+  text.split(',').every((part) => isPlainName(part))
+
 /** El título fijo de las llamadas de acción, que ya dicen qué hacen: no se repite su nombre en un campo. */
 export const ACTION_TITLES: Readonly<Record<string, string>> = {
   print: 'Imprimir',
@@ -272,14 +276,18 @@ const lineField = (text: string, min = 60) => Math.max(min, Math.ceil(text.lengt
  */
 export function lineWidth(
   model: ControlModel | undefined,
-  result: string | undefined,
+  result: string | readonly string[] | undefined,
   linked: readonly string[] = [],
   /** Lo que ocupan otros elementos de la línea (el chevron que abre la función llamada). */
   extra = 0,
 ): number {
   const icon = 28
   const gap = 6
-  const chip = result === undefined ? 0 : Math.ceil(result.length * CH + 24) + gap + 10 + gap
+  const names = result === undefined ? [] : typeof result === 'string' ? [result] : result
+  const chip =
+    names.length === 0
+      ? 0
+      : names.reduce((sum, name) => sum + Math.ceil(name.length * CH + 24) + gap, 0) + 10 + gap
   let inner = 0
   let title = 0
   if (model?.kind === 'expression') {
@@ -287,8 +295,9 @@ export function lineWidth(
   } else if (model?.kind === 'assign') {
     // Con un nombre de destino, el chip ya lo dice; con otro (`self.x`), un campo propio y su igual.
     inner =
-      (isPlainName(model.destination) ? 0 : lineField(model.destination) + gap + 10 + gap) +
-      lineField(model.value, 80)
+      (isNameList(model.destination) && names.length > 0
+        ? 0
+        : lineField(model.destination) + gap + 10 + gap) + lineField(model.value, 80)
   } else if (model?.kind === 'args') {
     const action = ACTION_CALLS.has(model.target)
     const label = labelsArgs(model.args)
@@ -305,7 +314,9 @@ export function lineWidth(
       (hidden > 0 ? 26 : 0) +
       10
   }
-  return Math.min(560, Math.max(180, 30 + icon + gap + chip + title + inner + extra))
+  // Varias pastillas abren la línea con más sitio: sin él, sus campos se aprietan hasta no leerse.
+  const cap = names.length > 1 ? 800 : 560
+  return Math.min(cap, Math.max(180, 30 + icon + gap + chip + title + inner + extra))
 }
 
 /** El alto de una tarjeta de una línea: el marco y una fila (más su comentario, si lo tiene). */

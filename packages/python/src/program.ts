@@ -78,6 +78,11 @@ export interface ProgramNode {
   renames?: Record<string, string>
   /** El nombre que este nodo deja definido: lo que sale por su puerto de salida (`total` en `total = 0`). */
   provides?: string
+  /**
+   * Los nombres que deja definidos una asignación de varios valores (`a, b = f()`), en orden: cada uno
+   * sale por su propio puerto (`result:a`) y se ofrece como chip. Con un solo nombre, es `provides`.
+   */
+  results?: string[]
   /** En una función, sus parámetros: cada uno es un puerto de salida hacia lo que hay dentro. */
   params?: string[]
   /**
@@ -243,6 +248,12 @@ class Builder {
   provide(id: string, name: string) {
     const node = this.nodes.find((n) => n.id === id)
     if (node) node.provides ??= name
+  }
+
+  /** Los nombres que deja definidos una asignación de varios (`a, b = f()`): cada uno, un chip. */
+  results(id: string, names: string[]) {
+    const node = this.nodes.find((n) => n.id === id)
+    if (node) node.results = names
   }
 
   /** Un parámetro de función: existe dentro de ella y sale por su propio puerto. */
@@ -418,12 +429,28 @@ function linkReads(
 
 /** Los nombres que un patrón de asignación deja definidos (`clave, valor`, `(a, b)`, `[x, *resto]`). */
 function patternNames(pattern: TsNode): string[] {
-  if (pattern.type === 'identifier') return [pattern.text]
-  return pattern.namedChildren.flatMap((child) => (child ? patternNames(child) : []))
+  return patternIdentifiers(pattern).map((each) => each.text)
 }
+
+/** Los nombres de un patrón, cada uno con su sitio en el texto: un atributo o un elemento (`self.a`) no define ninguno. */
+function patternIdentifiers(pattern: TsNode): TsNode[] {
+  if (pattern.type === 'identifier') return [pattern]
+  if (!PATTERNS.has(pattern.type)) return []
+  return pattern.namedChildren.flatMap((child) => (child ? patternIdentifiers(child) : []))
+}
+
+const PATTERNS: ReadonlySet<string> = new Set([
+  'pattern_list',
+  'tuple_pattern',
+  'list_pattern',
+  'list_splat_pattern',
+])
 
 /** Un nombre que Python admite para una variable o una función. */
 const IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u
+
+/** Una lista de nombres separados por comas (`a, b`, `x, y, z`), sin nada más. */
+const NAME_LIST = /^[\p{L}_][\p{L}\p{N}_]*(\s*,\s*[\p{L}_][\p{L}\p{N}_]*)+$/u
 
 /**
  * Los nombres que un import deja definidos. `import pandas as pd` define `pd`;
@@ -1233,8 +1260,19 @@ function visitAssignment(builder: Builder, assignment: TsNode, line: number, cod
     left?.type === 'tuple_pattern' ||
     left?.type === 'list_pattern'
   ) {
-    // `a, b = f()`: cada nombre del patrón lo define este nodo (`self.x = …` no define `self`).
-    for (const each of patternNames(left)) builder.bind(each, id)
+    // `a, b = f()`: cada nombre del patrón lo define este nodo (`self.x = …` no define `self`), y
+    // cada uno sale por su propio puerto (`result:a`): es un chip que se lleva por separado.
+    const names = patternIdentifiers(left)
+    for (const each of names) {
+      builder.bind(each.text, id, `result:${each.text}`)
+      builder.recordName(id, each.text, each)
+    }
+    // Solo cuando el destino es una lista de nombres limpia (`a, b`, sin `*resto` ni paréntesis).
+    if (names.length >= 2 && NAME_LIST.test(left.text))
+      builder.results(
+        id,
+        names.map((n) => n.text),
+      )
   }
   return id
 }

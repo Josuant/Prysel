@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { CanvasNode } from '../Canvas.tsx'
-import { parseIterChip } from '../chips.ts'
+import { parseIterChip, parseResultChip } from '../chips.ts'
 import { checkConnection, convertNotice, type Link } from '../connect.ts'
 
 /**
@@ -35,6 +35,8 @@ export const FUNCTION_CHIP = 'fn:'
 export function chipSource(chipId: string): { from: string; port?: string } {
   const iter = parseIterChip(chipId)
   if (iter) return { from: iter.loop, port: `param:${iter.name}` }
+  const result = parseResultChip(chipId)
+  if (result) return { from: result.node, port: `result:${result.name}` }
   return { from: chipId.startsWith(FUNCTION_CHIP) ? chipId.slice(FUNCTION_CHIP.length) : chipId }
 }
 

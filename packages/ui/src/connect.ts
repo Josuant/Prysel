@@ -10,7 +10,7 @@ import type { CanvasNode } from './Canvas.tsx'
 /** Los dos extremos de un cable: de qué puerto sale y a qué campo llega. */
 export interface Link {
   from: string
-  /** Un parámetro de función sale por su propio puerto (`param:a`); el resto, por el normal. */
+  /** Un parámetro de función (`param:a`) o un resultado entre varios (`result:a`) salen por su propio puerto; el resto, por el normal. */
   port?: string
   to: string
   slot: string
@@ -29,6 +29,10 @@ export function outputName(node: CanvasNode, port?: string): string | undefined 
   if (port?.startsWith('param:')) {
     const name = port.slice('param:'.length)
     return node.params?.includes(name) ? name : undefined
+  }
+  if (port?.startsWith('result:')) {
+    const name = port.slice('result:'.length)
+    return node.results?.includes(name) ? name : undefined
   }
   return node.provides
 }

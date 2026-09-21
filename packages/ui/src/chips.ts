@@ -89,6 +89,25 @@ export function resultName(
   return RESULT_FAMILIES.some((family) => node.kind.startsWith(family)) ? node.provides : undefined
 }
 
+/**
+ * Los nombres que una línea ofrece como chips: el que asigna (`A = f()`) o, si asigna varios
+ * (`a, b = f()`), cada uno. En compacto y en expandido no hay pastillas: la tarjeta lo dice de otro modo.
+ */
+export function resultNames(
+  node: Pick<CanvasNode, 'kind' | 'control' | 'provides' | 'label' | 'results'>,
+  density: Density,
+): string[] {
+  if (density === 'normal' && node.provides === undefined && node.results !== undefined) {
+    const lined = isLineCard(node.kind, node.control)
+    // Un editor de destino y valor (`a, b = b, a`) lo dice con los mismos chips.
+    return lined || RESULT_FAMILIES.some((family) => node.kind.startsWith(family))
+      ? [...node.results]
+      : []
+  }
+  const one = resultName(node, density)
+  return one === undefined ? [] : [one]
+}
+
 /** Las familias de nodo cuyo título es el nombre que asignan: cálculos, efectos, importaciones y datos. */
 const RESULT_FAMILIES = ['transform.', 'effect.', 'external.', 'data.', 'value.']
 
@@ -146,6 +165,18 @@ export interface IterVar {
 const ITER = 'iter:'
 
 export const iterChipId = (loop: string, name: string): string => `${ITER}${name}@${loop}`
+
+const RESULT = 'result:'
+
+/** El chip de uno de los resultados de una línea que asigna varios: su nombre y la línea de la que sale. */
+export const resultChipId = (node: string, name: string): string => `${RESULT}${name}@${node}`
+
+/** De un id de chip a la línea y el nombre de un resultado suyo, o `null` si es otra cosa. */
+export function parseResultChip(id: string): { node: string; name: string } | null {
+  if (!id.startsWith(RESULT)) return null
+  const at = id.indexOf('@')
+  return at < 0 ? null : { name: id.slice(RESULT.length, at), node: id.slice(at + 1) }
+}
 
 /** De un id de chip a la variable de bucle que representa, o `null` si es otra cosa. */
 export function parseIterChip(id: string): { loop: string; name: string } | null {
@@ -521,7 +552,7 @@ export function planChips(
     nodes
       .filter(
         (node) =>
-          options.density !== undefined && resultName(node, options.density(node)) !== undefined,
+          options.density !== undefined && resultNames(node, options.density(node)).length > 0,
       )
       .map((node) => node.id),
   )
@@ -529,7 +560,9 @@ export function planChips(
   const nameOf = (edge: SemanticEdge): string | undefined =>
     edge.fromPort?.startsWith('param:')
       ? edge.fromPort.slice('param:'.length)
-      : byId.get(edge.from)?.provides
+      : edge.fromPort?.startsWith('result:')
+        ? edge.fromPort.slice('result:'.length)
+        : byId.get(edge.from)?.provides
   /**
    * Un valor llega a un nodo que ya lo nombra: en su casilla (`x`, o `x + 1`), o en su texto si no tiene
    * casillas. El cable no cuenta nada que no diga ya el nombre, y solo ensucia: no se dibuja. La conexión

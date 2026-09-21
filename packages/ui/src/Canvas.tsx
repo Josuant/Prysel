@@ -58,7 +58,8 @@ import {
   parseIterChip,
   planChips,
   promoteTarget,
-  resultName,
+  resultChipId,
+  resultNames,
   type FunctionChip,
 } from './chips.ts'
 import {
@@ -118,6 +119,8 @@ export interface CanvasNode {
   scope?: readonly string[]
   /** El nombre que el nodo deja definido: lo que sale por su puerto de salida, si sale algo. */
   provides?: string
+  /** Los nombres que deja definidos una asignación de varios valores (`a, b = f()`): cada uno, un chip. */
+  results?: readonly string[]
   /** En una función, sus parámetros: cada uno es un puerto de salida hacia lo que hay dentro. */
   params?: readonly string[]
   /** Los campos que aceptan un cable (por su puerto). */
@@ -428,10 +431,12 @@ function CanvasInner({
     chipDragRef.current = chipDrag
   })
   const grabResult = useCallback(
-    (id: string, event: React.PointerEvent<HTMLElement>) => {
+    (id: string, event: React.PointerEvent<HTMLElement>, name?: string) => {
       if (event.button !== 0) return
       const source = byId.get(id)
       if (!source) return
+      // Un resultado entre varios (`a, b = f()`) es un chip propio: sale por su puerto.
+      const chip = name !== undefined && source.provides === undefined ? resultChipId(id, name) : id
       const from = { x: event.clientX, y: event.clientY }
       let moved = false
       const move = (e: PointerEvent) => {
@@ -440,13 +445,13 @@ function CanvasInner({
         const frame = frameRef.current?.getBoundingClientRect()
         if (frame) {
           setGhost({
-            name: source.provides ?? source.label,
+            name: name ?? source.provides ?? source.label,
             type: source.valueType ?? 'any',
             x: e.clientX - frame.left,
             y: e.clientY - frame.top,
           })
         }
-        chipDragRef.current.over(id, e)
+        chipDragRef.current.over(chip, e)
       }
       const up = () => {
         window.removeEventListener('pointermove', move)
@@ -454,7 +459,7 @@ function CanvasInner({
         window.removeEventListener('pointercancel', up)
         if (!moved) return
         setGhost(null)
-        chipDragRef.current.drop(id)
+        chipDragRef.current.drop(chip)
       }
       window.addEventListener('pointermove', move)
       window.addEventListener('pointerup', up)
@@ -509,7 +514,7 @@ function CanvasInner({
                 {
                   w: lineWidth(
                     node.control,
-                    resultName(node, d),
+                    resultNames(node, d),
                     linked[node.id],
                     node.openable ? 26 : 0,
                   ),
@@ -667,7 +672,8 @@ function CanvasInner({
   const onNodeEdit = useCallback(
     (id: string, edit: NodeEdit) => {
       if (edit.type === 'open-code') setCodeFor({ key: fitKey, id })
-      else if (edit.type === 'rename') onAction?.({ type: 'rename', id, to: edit.to })
+      else if (edit.type === 'rename')
+        onAction?.({ type: 'rename', id, to: edit.to, ...(edit.from ? { from: edit.from } : {}) })
       else onAction?.({ type: edit.type, id })
     },
     [fitKey, onAction],
@@ -1203,7 +1209,11 @@ function CanvasInner({
     source: edge.from,
     target: edge.to,
     // En compacto un nodo no tiene casillas (ni puertos por campo): todo entra y sale por el borde.
-    sourceHandle: edge.fromPort && !isCompact(edge.from) ? edge.fromPort : 'out',
+    // Un resultado entre varios es un chip: su cable, si se dibuja, sale por el puerto normal.
+    sourceHandle:
+      edge.fromPort && !edge.fromPort.startsWith('result:') && !isCompact(edge.from)
+        ? edge.fromPort
+        : 'out',
     targetHandle: edge.toPort && !isCompact(edge.to) ? edge.toPort : 'in',
     type: 'prysel' as const,
     ...(edge.label === undefined ? {} : { label: edge.label }),

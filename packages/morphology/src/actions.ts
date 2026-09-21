@@ -41,7 +41,7 @@ export type NodeAction =
   | { type: 'delete'; id: string }
   | { type: 'duplicate'; id: string }
   /** Cambiar el nombre de lo que el nodo define, en todos los sitios donde se usa. */
-  | { type: 'rename'; id: string; to: string }
+  | { type: 'rename'; id: string; to: string; from?: string }
   /**
    * Añadir una plantilla: detrás de un nodo, o dentro de una función o un bucle (`into`), o al final
    * del archivo. Con `connect`, la plantilla nace ya alimentada por el valor de otro nodo: es lo que

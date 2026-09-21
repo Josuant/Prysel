@@ -670,6 +670,10 @@ function outputName(source: ProgramNode, port?: string): string | undefined {
     const name = port.slice('param:'.length)
     return source.params?.includes(name) ? name : undefined
   }
+  if (port?.startsWith('result:')) {
+    const name = port.slice('result:'.length)
+    return source.results?.includes(name) ? name : undefined
+  }
   return source.provides
 }
 
@@ -797,9 +801,11 @@ export function disconnectNode(program: Program, id: string, slot: string): Chan
 }
 
 /** Cambia el nombre de lo que define un nodo (una variable, una función), en todos sus usos. */
-export function renameNode(program: Program, id: string, to: string): Change {
+export function renameNode(program: Program, id: string, to: string, from?: string): Change {
   const node = nodeById(program, id)
-  return { edits: node ? renameEdits(node, node.label, to) : [] }
+  // Con varios nombres (`a, b = f()`), la acción dice cuál; sin ella, el del nodo.
+  const current = from !== undefined && node?.results?.includes(from) ? from : node?.label
+  return { edits: node && current !== undefined ? renameEdits(node, current, to) : [] }
 }
 
 /** Convierte lo que el usuario hizo en un nodo o en el menú de añadir en ediciones de texto. */
@@ -812,7 +818,7 @@ export function actionEdits(program: Program, action: NodeAction): Change {
     case 'duplicate':
       return duplicateNode(program, action.id)
     case 'rename':
-      return renameNode(program, action.id, action.to)
+      return renameNode(program, action.id, action.to, action.from)
     case 'add': {
       const source = action.connect ? nodeById(program, action.connect.from) : undefined
       const fill = source && action.connect ? outputName(source, action.connect.port) : undefined

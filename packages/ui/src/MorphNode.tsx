@@ -44,7 +44,8 @@ export type NodeEdit =
   | { type: 'open-code' }
   | { type: 'delete' }
   | { type: 'duplicate' }
-  | { type: 'rename'; to: string }
+  /** `from`: cuál de los nombres de una asignación de varios (`a, b = f()`); sin él, el del nodo. */
+  | { type: 'rename'; to: string; from?: string }
 
 export interface MorphNodeProps {
   kind: NodeKindId
@@ -102,10 +103,13 @@ export interface MorphNodeProps {
    * o la llamada al lado. Solo en la tarjeta esbelta.
    */
   line?: boolean
-  /** Lo que asigna la línea (`A = funcion()`): el nombre es un chip que se arrastra a una casilla. */
-  result?: { name: string; type: ValueType }
-  /** El usuario agarra el chip del resultado: el lienzo lleva el arrastre. */
-  onGrabResult?: (event: React.PointerEvent<HTMLElement>) => void
+  /**
+   * Lo que asigna la línea (`A = funcion()`, o `a, b = f()`): cada nombre es un chip que se arrastra a
+   * una casilla.
+   */
+  results?: readonly { name: string; type: ValueType }[]
+  /** El usuario agarra el chip de un resultado: el lienzo lleva el arrastre. */
+  onGrabResult?: (event: React.PointerEvent<HTMLElement>, name: string) => void
   /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
   hotSlot?: { slot: string; ok: boolean; convert?: boolean } | null
   /** Quita el chip de una casilla (la deja en un valor neutro). */
@@ -274,7 +278,7 @@ export function MorphNode({
   linkedSlots,
   chipSlots,
   line = false,
-  result,
+  results = [],
   onGrabResult,
   hotSlot = null,
   onClearChip,
@@ -304,9 +308,24 @@ export function MorphNode({
   const lineTitle =
     control?.kind === 'args'
       ? ACTION_TITLES[control.target]
-      : result || control?.kind === 'assign'
+      : results.length > 0 || control?.kind === 'assign'
         ? undefined
         : label
+  // Cada nombre que asigna la línea es una pastilla; con varios, se renombra cada uno por separado.
+  const several = results.length > 1
+  const resultChips = results.map((result) => (
+    <ResultChip
+      key={result.name}
+      name={result.name}
+      type={result.type}
+      renamable={renamable || (several && onAction !== undefined)}
+      signal={renameSignal}
+      onRename={(to) =>
+        onAction?.({ type: 'rename', to, ...(several ? { from: result.name } : {}) })
+      }
+      {...(onGrabResult ? { onGrab: (event) => onGrabResult(event, result.name) } : {})}
+    />
+  ))
   // Una decisión con su editor ya dice lo que compara: el título repetiría los mismos campos.
   const shownLabel =
     slim && kind === 'control.condition' && control?.kind === 'condition' ? 'Si' : label
@@ -471,16 +490,9 @@ export function MorphNode({
             <>
               <div className="node__line" {...(meta ? { title: meta } : {})}>
                 <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} iconOnly />
-                {result && (
+                {results.length > 0 && (
                   <>
-                    <ResultChip
-                      name={result.name}
-                      type={result.type}
-                      renamable={renamable}
-                      signal={renameSignal}
-                      onRename={(to) => onAction?.({ type: 'rename', to })}
-                      {...(onGrabResult ? { onGrab: onGrabResult } : {})}
-                    />
+                    {resultChips}
                     <span className="node__eq">=</span>
                   </>
                 )}
@@ -528,26 +540,17 @@ export function MorphNode({
               <header className="node__head" {...(slim && meta ? { title: meta } : {})}>
                 <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} iconOnly={slim} />
                 {/* Lo que asigna el nodo es una pastilla: se lleva a una casilla como cualquier chip. */}
-                {slim && result ? (
-                  <ResultChip
-                    name={result.name}
-                    type={result.type}
-                    renamable={renamable}
-                    signal={renameSignal}
-                    onRename={(to) => onAction?.({ type: 'rename', to })}
-                    {...(onGrabResult ? { onGrab: onGrabResult } : {})}
-                  />
-                ) : (
-                  (container || slim) && (
-                    <Title
-                      label={shownLabel}
-                      renamable={renamable}
-                      tag="span"
-                      signal={renameSignal}
-                      onRename={(to) => onAction?.({ type: 'rename', to })}
-                    />
-                  )
-                )}
+                {slim && results.length > 0
+                  ? resultChips
+                  : (container || slim) && (
+                      <Title
+                        label={shownLabel}
+                        renamable={renamable}
+                        tag="span"
+                        signal={renameSignal}
+                        onRename={(to) => onAction?.({ type: 'rename', to })}
+                      />
+                    )}
                 {container && code && kind === 'abstraction.collapsed' && (
                   <code className="node__signature type-code">{signatureOf(code)}</code>
                 )}

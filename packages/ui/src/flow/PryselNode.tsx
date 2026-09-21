@@ -23,7 +23,7 @@ import type { MotionPhase } from '../motion.ts'
 import type { CanvasNode } from '../Canvas.tsx'
 import { isLoopTerritory, territoryHeadroom } from './frame.ts'
 import { TrayBox } from './ChipNode.tsx'
-import { TRAY, resultName, type ChipSlot, type TrayLayout } from '../chips.ts'
+import { TRAY, resultNames, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
 
 /**
@@ -70,7 +70,7 @@ export interface PryselNodeData extends Record<string, unknown> {
   /** Se lleva un chip ahora mismo: las casillas ocultas (lo que devuelve una función) se enseñan. */
   chipDragging?: boolean
   /** El usuario agarra el chip del resultado para llevarlo a una casilla. */
-  onGrabResult?: (id: string, event: React.PointerEvent<HTMLElement>) => void
+  onGrabResult?: (id: string, event: React.PointerEvent<HTMLElement>, name?: string) => void
   /** Las casillas que solo reciben chips: no llevan puerto para un cable. */
   chipOnly?: readonly string[] | undefined
   /** La casilla sobre la que está un chip que se arrastra. */
@@ -126,8 +126,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   }, [])
 
   const inputs = node.inputs ?? []
-  /** Lo que asigna una línea, ofrecido como chip. */
-  const result = resultName(node, density)
+  /** Lo que asigna una línea, ofrecido como chips (uno, o uno por cada nombre de `a, b = f()`). */
+  const results = resultNames(node, density)
   /** Una función dibujada como territorio recibe su retorno en un puerto del borde derecho. */
   const takesReturn = container && inputs.includes('return')
   /** Lo que devuelve, cuando es una variable: una pastilla en el borde, no un cable. */
@@ -558,13 +558,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         linkedSlots={linkedSlots}
         {...(data.chipSlots ? { chipSlots: data.chipSlots } : {})}
         {...(data.line ? { line: true } : {})}
-        {...(result
+        {...(results.length > 0
           ? {
-              result: { name: result, type: node.valueType ?? 'any' },
+              results: results.map((name) => ({ name, type: node.valueType ?? 'any' })),
               ...(data.onGrabResult
                 ? {
-                    onGrabResult: (event: React.PointerEvent<HTMLElement>) => {
-                      data.onGrabResult?.(id, event)
+                    onGrabResult: (event: React.PointerEvent<HTMLElement>, name: string) => {
+                      data.onGrabResult?.(id, event, name)
                     },
                   }
                 : {}),

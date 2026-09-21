@@ -2,7 +2,7 @@ import { useContext } from 'react'
 import {
   ACTION_CALLS,
   INLINE_ARGS,
-  isPlainName,
+  isNameList,
   labelsArgs,
   lineArgs,
   type ControlId,
@@ -511,7 +511,7 @@ function Editor({
 
     case 'assign': {
       // En una línea, un destino que es un nombre ya lo dice el chip que la abre: solo el valor.
-      const named = isPlainName(model.destination)
+      const named = isNameList(model.destination)
       const showTarget = !line || !named
       const valueField = (
         <TextInput

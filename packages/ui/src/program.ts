@@ -46,6 +46,8 @@ export interface SourceNode {
   renames?: Record<string, string>
   /** El nombre que el nodo deja definido: lo que sale por su puerto de salida. */
   provides?: string
+  /** Los nombres de una asignación de varios valores: cada uno sale por su puerto. */
+  results?: string[]
   /** Los parámetros de una función: cada uno es un puerto de salida hacia su interior. */
   params?: string[]
   /** Qué campos aceptan un cable. Aquí solo importa cuáles. */
@@ -105,6 +107,7 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
       ].slice(-40),
     // Lo que sale y lo que entra: es lo que se puede conectar arrastrando.
     ...(node.provides === undefined ? {} : { provides: node.provides }),
+    ...(node.results && node.results.length > 0 ? { results: node.results } : {}),
     ...(node.params && node.params.length > 0 ? { params: node.params } : {}),
     ...(node.inputs && Object.keys(node.inputs).length > 0
       ? { inputs: Object.keys(node.inputs) }
