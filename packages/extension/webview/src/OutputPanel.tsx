@@ -261,7 +261,7 @@ function Table({ table }: { table: NonNullable<Summary['table']> }) {
         <tbody>
           {table.rows.map((row, i) => (
             <tr key={i}>
-              {row.map((cell, j) => (
+              {(Array.isArray(row) ? row : [row]).map((cell, j) => (
                 <td key={j} className="px-2 py-0.5 whitespace-nowrap text-ink-muted">
                   {cell === null ? <span className="text-ink-faint">nulo</span> : String(cell)}
                 </td>

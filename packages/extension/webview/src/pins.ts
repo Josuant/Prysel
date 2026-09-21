@@ -20,6 +20,8 @@ export interface PinKey {
 export const FIGURE = 'figura:'
 /** Una curva de un bucle: `serie:línea:columna|nombre`. */
 export const SERIES = 'serie:'
+/** Lo que valía una cadena tras un paso: `paso:línea:columna|índice` (0: el receptor). */
+export const STEP = 'paso:'
 
 export const pinNodeId = (key: PinKey): string => `pin:${key.hash}:${key.name}`
 export const isPinNode = (id: string): boolean => id.startsWith('pin:')
@@ -84,10 +86,20 @@ const cell = (value: unknown): string | number | boolean | null =>
       ? value
       : String(value)
 
+/** Cómo se llama un visor: la variable, el nombre de la curva o el paso de la cadena. */
+function titleOf(name: string): string {
+  if (name.startsWith(SERIES)) return name.slice(SERIES.length).split('|')[1] ?? name
+  if (name.startsWith(STEP)) {
+    const index = Number(name.slice(STEP.length).split('|')[1])
+    return index === 0 ? 'receptor' : `paso ${index}`
+  }
+  return name
+}
+
 /** El contenido de un visor a partir de lo observado. */
 export function contentOf(key: PinKey, view: RunView, assets: Assets | undefined): ViewerContent {
   const isFigure = key.name.startsWith(FIGURE)
-  const title = isFigure ? 'figura' : key.name.startsWith(SERIES) ? '' : key.name
+  const title = isFigure ? 'figura' : titleOf(key.name)
   if (view.state === 'never') {
     return { title, subtitle: 'sin ejecutar', text: ['Ejecuta el nodo para ver su valor.'] }
   }
@@ -129,17 +141,39 @@ export function contentOf(key: PinKey, view: RunView, assets: Assets | undefined
       : { title, stale, text: ['La figura ya no está: vuelve a ejecutar el nodo.'] }
   }
 
+  if (key.name.startsWith(STEP)) {
+    const [chain = '', at = ''] = key.name.slice(STEP.length).split('|')
+    const index = Number(at)
+    const found = view.chains?.[chain]?.[index]
+    const label = index === 0 ? 'receptor' : `paso ${index}`
+    return found
+      ? summaryContent(label, found, stale, undefined, key.name)
+      : { title: label, stale, text: ['Este paso ya no se evaluó: vuelve a ejecutar el nodo.'] }
+  }
+
   const summary: Summary | undefined = key.name === '_' ? view.result : view.values?.[key.name]
   if (!summary) return { title, stale, text: ['Este nodo ya no deja este valor.'] }
+  return summaryContent(title, summary, stale, assets, key.name)
+}
+
+/** El contenido de un visor a partir del resumen de un valor. */
+function summaryContent(
+  title: string,
+  summary: Summary,
+  stale: boolean,
+  assets: Assets | undefined,
+  name: string,
+): ViewerContent {
   const content: ViewerContent = { title, subtitle: describeSummary(summary), stale }
   const text: string[] = []
   if (summary.table) {
     content.table = {
       columns: summary.table.columns,
-      rows: summary.table.rows.map((row) => row.map(cell)),
+      // Una fila que no es una lista (algo se aplanó por el camino) se enseña como una sola celda.
+      rows: summary.table.rows.map((row) => (Array.isArray(row) ? row.map(cell) : [cell(row)])),
     }
   }
-  const thumbnail = assets?.images[key.name]
+  const thumbnail = assets?.images[name]
   if (thumbnail) {
     const size = pngSize(thumbnail)
     content.image = { src: png(thumbnail), w: size?.w ?? 200, h: size?.h ?? 200 }

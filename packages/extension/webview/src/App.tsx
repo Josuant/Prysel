@@ -25,11 +25,14 @@ import {
   type RunState,
   type RunView,
 } from '../../src/runs.ts'
+import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { OutputPanel } from './OutputPanel.tsx'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
+import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
 import {
   FIGURE,
   SERIES,
+  STEP,
   contentOf,
   pinNodeId,
   resolvePins,
@@ -143,11 +146,14 @@ export function App() {
     remember(next, allPins)
   }
   /** Fija el valor de una sentencia en un visor del lienzo, o lo quita si ya estaba. */
-  const pin = (key: PinKey) => {
-    const next = { ...allPins, [file ?? '']: togglePin(pins, key) }
-    setAllPins(next)
-    remember(density, next)
-  }
+  const pin = useCallback(
+    (key: PinKey) => {
+      const next = { ...allPins, [file ?? '']: togglePin(pins, key) }
+      setAllPins(next)
+      vscode.setState({ density, pins: next } satisfies SavedState)
+    },
+    [allPins, pins, file, density],
+  )
 
   /** A qué sentencia de primer nivel pertenece cada nodo: es la unidad que se ejecuta. */
   const top = useMemo(() => (program ? topLevelOf(program) : new Map<string, string>()), [program])
@@ -168,12 +174,39 @@ export function App() {
     [program, refs, scrub],
   )
 
+  /** Las cadenas de pasos que ya se evaluaron: lo que valía tras cada paso. */
+  const chainsOf = useMemo(
+    () => (program ? chainRefs(program, top, runs) : new Map<string, ChainRef>()),
+    [program, top, runs],
+  )
+
   const source = useMemo(() => {
     if (!program) return []
     return toCanvasNodes(program.nodes).map((node) => {
       const shown = pending[node.id] ? { ...node, control: pending[node.id] } : node
       // Solo la propia sentencia lleva lo observado: sus nodos de dentro no definen nombres del programa.
       const inner = inLoops.get(node.id)
+      // Una cadena que ya se evaluó enseña, junto a cada paso, lo que quedaba tras él (y se puede ver en un visor).
+      const chained = chainsOf.get(node.id)
+      const steps = chained
+        ? chained.previews.map((summary, index) => ({
+            ...(summary ? { short: describeSummary(summary), long: describeStep(summary) } : {}),
+            ...(viewableStep(summary)
+              ? {
+                  onView: () => {
+                    const hash = runs[chained.statement]?.hash
+                    if (hash !== undefined) {
+                      pin({
+                        id: chained.statement,
+                        hash,
+                        name: `${STEP}${chained.key}|${index}`,
+                      })
+                    }
+                  },
+                }
+              : {}),
+          }))
+        : undefined
       const laps = refs.get(node.id)
       // Un bucle que ya dio vueltas se recorre en su propia cabecera: la vuelta que se mira y sus valores.
       const lapsView = laps
@@ -191,12 +224,13 @@ export function App() {
       const view = top.get(node.id) === node.id ? runs[node.id] : undefined
       if (!view) {
         // Un nodo de dentro de un bucle: lo que valió en la vuelta que se mira; un bucle, cuántas dio.
-        return inner || laps
+        return inner || laps || steps
           ? {
               ...shown,
               ...(laps ? { meta: `línea ${node.line} · ${laps.view.n} vueltas` } : {}),
               ...(lapsView ? { laps: lapsView } : {}),
               ...(inner ? { observed: inner } : {}),
+              ...(steps ? { steps } : {}),
             }
           : shown
       }
@@ -216,9 +250,10 @@ export function App() {
           ? { observed: { ...observed, ...inner } }
           : {}),
         ...(lapsView ? { laps: lapsView } : {}),
+        ...(steps ? { steps } : {}),
       }
     })
-  }, [program, pending, runs, top, refs, inLoops, scrub])
+  }, [program, pending, runs, top, refs, inLoops, scrub, chainsOf, pin])
 
   const viewOf = (id: string): RunView | undefined => {
     const statement = top.get(id)
@@ -405,80 +440,84 @@ export function App() {
 
       <main className="min-h-0 flex-1 p-3">
         {program && program.nodes.length > 0 ? (
-          <Canvas
-            nodes={canvasNodes}
-            edges={canvasEdges}
-            density={density}
-            onEnter={view.enter}
-            onControlChange={changeControl}
-            onAction={act}
-            onRun={(id) => {
-              run([id])
-            }}
-            stateOf={stateOf}
-            extraMenu={viewerMenu}
-            onUnpin={(id) => {
-              const key = pins.find((p) => pinNodeId(p) === id)
-              if (key) pin(key)
-            }}
-            addTarget={'into' in place ? place.into : null}
-            palette={palette}
-            addToModule={view.focus === null}
-            selected={selected}
-            onSelect={setSelected}
-            interactive
-            height="fill"
-            fitKey={view.viewKey}
-            showActions
-            showStatus={started}
-            ariaLabel={canvasLabel}
-          />
+          <ErrorBoundary label="No se pudo dibujar el lienzo" resetKey={program}>
+            <Canvas
+              nodes={canvasNodes}
+              edges={canvasEdges}
+              density={density}
+              onEnter={view.enter}
+              onControlChange={changeControl}
+              onAction={act}
+              onRun={(id) => {
+                run([id])
+              }}
+              stateOf={stateOf}
+              extraMenu={viewerMenu}
+              onUnpin={(id) => {
+                const key = pins.find((p) => pinNodeId(p) === id)
+                if (key) pin(key)
+              }}
+              addTarget={'into' in place ? place.into : null}
+              palette={palette}
+              addToModule={view.focus === null}
+              selected={selected}
+              onSelect={setSelected}
+              interactive
+              height="fill"
+              fitKey={view.viewKey}
+              showActions
+              showStatus={started}
+              ariaLabel={canvasLabel}
+            />
+          </ErrorBoundary>
         ) : (
           <EmptyState />
         )}
       </main>
 
       {outputOpen && selectedView && selectedView.state !== 'never' && statementNode && (
-        <OutputPanel
-          title={statementNode.label}
-          view={selectedView}
-          assets={selectedView.seq === undefined ? undefined : assets.get(selectedView.seq)}
-          pinned={(name) =>
-            pins.some((p) => sameKey(p, { id: statementNode.id, hash: selectedView.hash, name }))
-          }
-          onPin={(name) => {
-            pin({ id: statementNode.id, hash: selectedView.hash, name })
-          }}
-          {...(selectedLoop && selectedView
-            ? {
-                loop: {
-                  view: selectedLoop.view,
-                  position: positionOf(selectedLoop.view, scrub[selectedLoop.node]),
-                  onPosition: (position: number) => {
-                    setScrub((previous) => ({ ...previous, [selectedLoop.node]: position }))
-                  },
-                  pinned: (name: string) =>
-                    pins.some((p) =>
-                      sameKey(p, {
+        <ErrorBoundary label="No se pudo dibujar la salida" resetKey={selectedView}>
+          <OutputPanel
+            title={statementNode.label}
+            view={selectedView}
+            assets={selectedView.seq === undefined ? undefined : assets.get(selectedView.seq)}
+            pinned={(name) =>
+              pins.some((p) => sameKey(p, { id: statementNode.id, hash: selectedView.hash, name }))
+            }
+            onPin={(name) => {
+              pin({ id: statementNode.id, hash: selectedView.hash, name })
+            }}
+            {...(selectedLoop && selectedView
+              ? {
+                  loop: {
+                    view: selectedLoop.view,
+                    position: positionOf(selectedLoop.view, scrub[selectedLoop.node]),
+                    onPosition: (position: number) => {
+                      setScrub((previous) => ({ ...previous, [selectedLoop.node]: position }))
+                    },
+                    pinned: (name: string) =>
+                      pins.some((p) =>
+                        sameKey(p, {
+                          id: selectedLoop.statement,
+                          hash: selectedView.hash,
+                          name: SERIES + selectedLoop.key + '|' + name,
+                        }),
+                      ),
+                    onPin: (name: string) => {
+                      pin({
                         id: selectedLoop.statement,
                         hash: selectedView.hash,
                         name: SERIES + selectedLoop.key + '|' + name,
-                      }),
-                    ),
-                  onPin: (name: string) => {
-                    pin({
-                      id: selectedLoop.statement,
-                      hash: selectedView.hash,
-                      name: SERIES + selectedLoop.key + '|' + name,
-                    })
+                      })
+                    },
                   },
-                },
-              }
-            : {})}
-          onClose={() => {
-            setOutputOpen(false)
-          }}
-        />
+                }
+              : {})}
+            onClose={() => {
+              setOutputOpen(false)
+            }}
+          />
+        </ErrorBoundary>
       )}
     </div>
   )

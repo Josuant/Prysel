@@ -568,6 +568,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         linkedSlots={linkedSlots}
         {...(data.chipSlots ? { chipSlots: data.chipSlots } : {})}
         {...(data.line ? { line: true } : {})}
+        {...(node.steps ? { steps: node.steps } : {})}
         {...(results.length > 0
           ? {
               results: results.map((name) => ({

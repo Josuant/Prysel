@@ -4,6 +4,8 @@ import {
   INLINE_ARGS,
   isNameList,
   labelsArgs,
+  moveStep,
+  parseChainStep,
   lineArgs,
   type ControlId,
   type ControlModel,
@@ -27,6 +29,7 @@ import {
   TextInput,
 } from './fields.tsx'
 import { Icon } from './Icon.tsx'
+import type { StepInfo } from './steps.ts'
 
 /**
  * El modelo de cada editor gráfico. Es lo que convierte a un nodo en algo manipulable:
@@ -53,6 +56,8 @@ export interface ControlProps {
   editable?: readonly string[]
   /** Nombres que se pueden usar en los campos que son expresiones: se ofrecen al escribir. */
   suggestions?: readonly string[]
+  /** Lo que se observó de cada paso de una cadena (índice 0: el receptor), para enseñarlo junto a él. */
+  steps?: readonly StepInfo[]
   /** La llamada se escribe en una sola línea, `funcion(a, b)`, en vez de un campo por fila. */
   line?: boolean
 }
@@ -65,6 +70,7 @@ const WRITABLE: ReadonlySet<string> = new Set([
   'expression',
   'condition',
   'args',
+  'chain',
   'loop',
   'assign',
   'with',
@@ -102,6 +108,7 @@ function Editor({
   linked = [],
   editable,
   suggestions,
+  steps: observed,
   line = false,
 }: ControlProps) {
   const state = useContext(SlotStateContext)
@@ -362,6 +369,119 @@ function Editor({
             <span className="type-field-label muted">
               +{hidden} {hidden === 1 ? 'argumento' : 'argumentos'}
             </span>
+          )}
+        </div>
+      )
+    }
+
+    case 'chain': {
+      const rewrite = on('chain', (steps: typeof model.steps) => patch({ steps }))
+      const changeStep = (index: number, change: Partial<(typeof model.steps)[number]>) =>
+        patch({
+          steps: model.steps.map((step, j) => (j === index ? { ...step, ...change } : step)),
+        })
+      const preview = (at: number) => {
+        const info = observed?.[at]
+        return info?.short ? (
+          <button
+            type="button"
+            className="chain__preview"
+            title={info.long ?? info.short}
+            disabled={!info.onView}
+            onClick={info.onView}
+          >
+            {info.short}
+          </button>
+        ) : null
+      }
+      return (
+        <div className="chain">
+          <div className="chain__row">
+            <TextInput
+              value={model.receiver}
+              slot={{ id: 'receiver', label: 'Receptor' }}
+              linked={isLinked('receiver')}
+              {...(suggestions ? { suggestions } : {})}
+              onChange={on('receiver', (receiver: string) => patch({ receiver }))}
+            />
+            {preview(0)}
+          </div>
+          {model.steps.map((step, i) => (
+            <div className="chain__row" key={i}>
+              {step.kind === 'index' ? (
+                <span className="chain__glue">[</span>
+              ) : (
+                <>
+                  <span className="chain__glue">.</span>
+                  <TextInput
+                    value={step.name}
+                    onChange={on(`steps[${i}].name`, (name: string) => changeStep(i, { name }))}
+                  />
+                </>
+              )}
+              {step.kind === 'call' && <span className="chain__glue">(</span>}
+              {step.kind !== 'attr' && (
+                <TextInput
+                  value={step.args}
+                  placeholder={step.kind === 'call' ? 'argumentos' : 'índice'}
+                  {...(suggestions ? { suggestions } : {})}
+                  onChange={on(`steps[${i}].args`, (args: string) => changeStep(i, { args }))}
+                />
+              )}
+              {step.kind !== 'attr' && (
+                <span className="chain__glue">{step.kind === 'call' ? ')' : ']'}</span>
+              )}
+              {preview(i + 1)}
+              {rewrite && (
+                <span className="chain__tools">
+                  <button
+                    type="button"
+                    aria-label={`Subir el paso ${i + 1}`}
+                    title="Subir"
+                    disabled={i === 0}
+                    onClick={() => {
+                      rewrite(moveStep(model.steps, i, i - 1))
+                    }}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Bajar el paso ${i + 1}`}
+                    title="Bajar"
+                    disabled={i === model.steps.length - 1}
+                    onClick={() => {
+                      rewrite(moveStep(model.steps, i, i + 1))
+                    }}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Quitar el paso ${i + 1}`}
+                    title="Quitar el paso"
+                    disabled={model.steps.length <= 1}
+                    onClick={() => {
+                      rewrite(model.steps.filter((_, j) => j !== i))
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              )}
+            </div>
+          ))}
+          {rewrite && (
+            <div className="chain__row chain__add">
+              <TextInput
+                value=""
+                placeholder='＋ paso: head(3), ["col"], .T'
+                onChange={(text: string) => {
+                  const step = parseChainStep(text)
+                  if (step) rewrite([...model.steps, step])
+                }}
+              />
+            </div>
           )}
         </div>
       )

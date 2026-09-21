@@ -34,6 +34,9 @@ function valueAt(model: ControlModel, path: string): Scalar | undefined {
   if (path.startsWith('args.') && model.kind === 'args') {
     return model.args.find((arg) => arg.name === path.slice('args.'.length))?.value
   }
+  const step = /^steps\[(\d+)\]\.(name|args)$/.exec(path)
+  if (step && model.kind === 'chain')
+    return model.steps[Number(step[1])]?.[step[2] as 'name' | 'args']
   const indexed = /^params\[(\d+)\]\.name$/.exec(path)
   if (indexed && model.kind === 'signature') return model.params[Number(indexed[1])]?.name
   if (path.startsWith('params.') && model.kind === 'signature') {
@@ -92,6 +95,11 @@ function render(source: Source, value: Scalar): string | null {
       // Una expresión vacía o de varias líneas rompería la estructura del código: no se escribe.
       return text === '' || /[\r\n]/.test(text) ? null : text
     }
+    case 'arguments': {
+      // Los argumentos de un paso pueden quedar vacíos (`.sum()`), pero no ocupar varias líneas.
+      const text = String(value).trim()
+      return /[\r\n]/.test(text) ? null : text
+    }
     case 'list':
       // Un contenido delimitado se reescribe con `listContent`, que necesita el editor entero.
       return null
@@ -149,6 +157,26 @@ const KEYWORDS = new Set(
   ).split(' '),
 )
 
+/** Una cadena de pasos escrita de nuevo en una línea, o `null` si algo de ella no se puede escribir. */
+export function chainText(model: Extract<ControlModel, { kind: 'chain' }>): string | null {
+  const multiline = (text: string) => /[\r\n]/.test(text)
+  const receiver = model.receiver.trim()
+  if (receiver === '' || multiline(receiver) || model.steps.length === 0) return null
+  let text = receiver
+  for (const step of model.steps) {
+    const args = step.args.trim()
+    if (multiline(args)) return null
+    if (step.kind === 'index') {
+      if (args === '') return null
+      text += `[${args}]`
+    } else {
+      if (!isIdentifier(step.name.trim())) return null
+      text += `.${step.name.trim()}${step.kind === 'call' ? `(${args})` : ''}`
+    }
+  }
+  return text
+}
+
 /** ¿Es un nombre que Python admite para una variable, una función o un parámetro? */
 export function isIdentifier(name: string): boolean {
   return /^[\p{L}_][\p{L}\p{N}_]*$/u.test(name) && !KEYWORDS.has(name)
@@ -167,6 +195,18 @@ export function renameEdits(node: Editable, from: string, to: string): TextEdit[
 export function editsFor(node: Editable, next: ControlModel): TextEdit[] {
   const { control, sources } = node
   if (!control || control.kind !== next.kind) return []
+  // Quitar, añadir o cambiar de tipo un paso de una cadena reescribe la cadena entera; cambiar el texto
+  // de los pasos que hay (también intercambiar dos del mismo tipo) reescribe cada trozo en su sitio.
+  if (control.kind === 'chain' && next.kind === 'chain') {
+    const same =
+      control.steps.length === next.steps.length &&
+      control.steps.every((step, i) => step.kind === next.steps[i]?.kind)
+    if (!same) {
+      const whole = sources?.['chain']
+      const text = chainText(next)
+      return whole && text !== null ? [{ start: whole.start, end: whole.end, text }] : []
+    }
+  }
   const edits: TextEdit[] = []
 
   for (const [path, source] of Object.entries(sources ?? {})) {

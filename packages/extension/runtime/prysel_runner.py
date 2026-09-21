@@ -59,7 +59,8 @@ def _clean(value, depth=0):
         return value if math.isfinite(value) else None
     if isinstance(value, (str, int, bool)) or value is None:
         return value
-    if depth > 4:
+    # Un evento con un resumen dentro (evento → resumen → tabla → filas → fila) llega a 5 niveles.
+    if depth > 8:
         return str(value)
     if isinstance(value, dict):
         return {str(k): _clean(v, depth + 1) for k, v in value.items()}
@@ -116,12 +117,12 @@ def _shape_of(obj):
         return None
 
 
-def _table(frame):
+def _table(frame, nulls_too=True):
     """Cabecera, tipos y nulos de algo con forma de DataFrame (`columns` y `dtypes`)."""
     columns = list(frame.columns)[:MAX_COLUMNS]
     info = []
     try:
-        nulls = frame.isna().sum()
+        nulls = frame.isna().sum() if nulls_too else None
     except Exception:
         nulls = None
     for name in columns:
@@ -149,7 +150,7 @@ def _image(obj):
         return None
 
 
-def summarize(obj):
+def summarize(obj, light=False):
     """Lo que el lienzo enseña de un valor: su tipo, su forma y una vista corta. Nunca el dato entero."""
     cls = type(obj)
     out = {"type": cls.__name__, "module": cls.__module__.split(".")[0]}
@@ -187,14 +188,15 @@ def summarize(obj):
         return out
     if hasattr(obj, "columns") and hasattr(obj, "dtypes") and hasattr(obj, "head"):
         try:
-            out["table"] = _table(obj)
+            out["table"] = _table(obj, not light)
         except Exception as error:
             out["repr"] = f"<{_short(str(error), 80)}>"
         return out
     if hasattr(obj, "shape") and hasattr(obj, "dtype"):
         # Un array o un tensor: unos pocos elementos bastan para reconocerlo.
         try:
-            flat = obj.reshape(-1)[:MAX_ITEMS]
+            # Un array o un tensor se aplana; una serie de pandas no tiene `reshape`, pero sí `head`.
+            flat = obj.reshape(-1)[:MAX_ITEMS] if hasattr(obj, "reshape") else obj.head(MAX_ITEMS)
             out["sample"] = [_clean(v) for v in flat.tolist()]
             if hasattr(obj, "min") and getattr(obj, "size", 0) and str(dtype)[:1] in "fiu":
                 out["range"] = [_clean(obj.min().item()), _clean(obj.max().item())]
@@ -430,9 +432,123 @@ def instrument(tree, frag):
         return tree
 
 
+def _spine(expression):
+    """Una cadena de llamadas, índices y atributos, de la raíz hacia fuera (como la ve el analizador).
+
+    Los atributos del principio (`os.path`, `self.model`) son el camino hasta el receptor, no pasos.
+    """
+    steps = []
+    current = expression
+    while True:
+        if isinstance(current, ast.Call) and isinstance(current.func, ast.Attribute):
+            steps.append(("call", current))
+            current = current.func.value
+        elif isinstance(current, ast.Attribute):
+            steps.append(("attr", current))
+            current = current.value
+        elif isinstance(current, ast.Subscript):
+            steps.append(("index", current))
+            current = current.value
+        else:
+            break
+    steps.reverse()
+    lead = 0
+    while lead < len(steps) and steps[lead][0] == "attr":
+        lead += 1
+    receiver = current if lead == 0 else steps[lead - 1][1]
+    return receiver, steps[lead:]
+
+
+class _Chains(ast.NodeTransformer):
+    """Envuelve cada paso de una cadena para anotar lo que vale tras él, sin evaluar nada dos veces.
+
+        df.groupby("a").sum()   →   __prysel_step__(f, k, 2, 2, __prysel_step__(f, k, 1, 2,
+                                        __prysel_step__(f, k, 0, 2, df).groupby("a")).sum())
+
+    Solo el valor de una sentencia (`x = …`, `…`, `return …`): es lo que el lienzo enseña como cadena.
+    """
+
+    def __init__(self, frag):
+        self.frag = frag
+
+    def wrap(self, node, index, total, key):
+        call = ast.Call(
+            func=ast.Name(id="__prysel_step__", ctx=ast.Load()),
+            args=[
+                ast.Constant(self.frag),
+                ast.Constant(key),
+                ast.Constant(index),
+                ast.Constant(total),
+                node,
+            ],
+            keywords=[],
+        )
+        return ast.copy_location(call, node)
+
+    def rewrite(self, expression):
+        if not isinstance(expression, (ast.Call, ast.Attribute, ast.Subscript)):
+            return expression
+        receiver, steps = _spine(expression)
+        if len(steps) < 2:
+            return expression
+        key = f"{expression.lineno}:{expression.col_offset}"
+        total = len(steps)
+        current = self.wrap(receiver, 0, total, key)
+        for i, (kind, node) in enumerate(steps, start=1):
+            if kind == "call":
+                node.func.value = current
+            else:
+                node.value = current
+            current = self.wrap(node, i, total, key)
+        return current
+
+    def visit_Assign(self, node):
+        self.generic_visit(node)
+        node.value = self.rewrite(node.value)
+        return node
+
+    def visit_AnnAssign(self, node):
+        self.generic_visit(node)
+        if node.value is not None:
+            node.value = self.rewrite(node.value)
+        return node
+
+    def visit_AugAssign(self, node):
+        self.generic_visit(node)
+        node.value = self.rewrite(node.value)
+        return node
+
+    def visit_Expr(self, node):
+        self.generic_visit(node)
+        node.value = self.rewrite(node.value)
+        return node
+
+    def visit_Return(self, node):
+        self.generic_visit(node)
+        if node.value is not None:
+            node.value = self.rewrite(node.value)
+        return node
+
+    def visit_Lambda(self, node):
+        return node
+
+
+def instrument_chains(tree, frag):
+    """El árbol con las cadenas anotadas; si algo falla, el de siempre."""
+    try:
+        if isinstance(tree, ast.Expression):
+            tree.body = _Chains(frag).rewrite(tree.body)
+            return ast.fix_missing_locations(tree)
+        return ast.fix_missing_locations(_Chains(frag).visit(tree))
+    except Exception:
+        return tree
+
+
 class Runner:
     def __init__(self):
         self.loops = {}
+        self.chain_now = {}
+        self.chain_count = {}
         self.current = None
         self.namespace = self.fresh()
         self.stdout = _Stream("stdout")
@@ -448,6 +564,7 @@ class Runner:
             "__prysel_loop__": self.loop_start,
             "__prysel_tick__": self.loop_tick,
             "__prysel_end__": self.loop_end,
+            "__prysel_step__": self.chain_step,
         }
 
     # ── los bucles ─────────────────────────────────────────────────────────────
@@ -505,6 +622,41 @@ class Runner:
             if series.dirty:
                 self.emit_series(frag, key, series)
 
+    # ── las cadenas ────────────────────────────────────────────────────────────
+
+    def chain_step(self, frag, key, index, total, value):
+        """Anota lo que vale una cadena tras cada paso y devuelve el valor tal cual."""
+        slot = (frag, key)
+        if index == 0:
+            count = self.chain_count.get(slot, (0, 0.0))[0] + 1
+            now = time.perf_counter()
+            # Una cadena dentro de un bucle no se anota en cada vuelta: las primeras, de vez en cuando y,
+            # si cada llamada es lenta, todas.
+            record = count <= 3 or count % 64 == 0 or now - self.chain_count.get(slot, (0, 0.0))[1] > 0.25
+            self.chain_count[slot] = (count, now if record else self.chain_count.get(slot, (0, 0.0))[1])
+            self.chain_now[slot] = [None] * (total + 1) if record else None
+        recorded = self.chain_now.get(slot)
+        if recorded is not None:
+            try:
+                summary = summarize(value, light=True)
+                summary.pop("image", None)
+                recorded[index] = summary
+            except Exception:
+                pass
+            if index == total:
+                self.emit_chain(frag, key)
+        return value
+
+    def emit_chain(self, frag, key):
+        recorded = self.chain_now.pop((frag, key), None)
+        if recorded is not None:
+            emit({"ev": "steps", "id": self.current, "frag": frag, "chain": key, "previews": recorded})
+
+    def flush_chains(self):
+        # Una cadena que falló a medias: se avisa de los pasos que llegaron a evaluarse.
+        for frag, key in list(self.chain_now):
+            self.emit_chain(frag, key)
+
     # ── ejecución ──────────────────────────────────────────────────────────────
 
     def compile(self, code, run):
@@ -519,8 +671,10 @@ class Runner:
             more, more_receivers = touched(tail)
             names += [n for n in more if n not in names]
             receivers |= {n for n in more_receivers if n not in names[: len(names) - len(more)]}
-        tree = instrument(tree, run)
+        tree = instrument_chains(instrument(tree, run), run)
         body = compile(tree, name, "exec")
+        if tail is not None:
+            tail = instrument_chains(tail, run)
         last = compile(tail, name, "eval") if tail is not None else None
         return body, last, names, receivers
 
@@ -549,6 +703,7 @@ class Runner:
         finally:
             self.running.clear()
             self.flush_loops()
+            self.flush_chains()
             sys.stdout, sys.stderr = saved
             self.stdout.run = self.stderr.run = None
         asked = request.get("watch", [])
@@ -665,6 +820,8 @@ class Runner:
                 elif op == "reset":
                     self.namespace = self.fresh()
                     self.loops.clear()
+                    self.chain_now.clear()
+                    self.chain_count.clear()
                     emit({"ev": "reset"})
                 elif op == "vars":
                     names = {

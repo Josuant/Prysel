@@ -26,6 +26,7 @@ import {
 import { StatusChip, TypeBadge } from './Badge.tsx'
 import { Control, type ControlModel } from './controls.tsx'
 import type { ChipSlot } from './chips.ts'
+import type { StepInfo } from './steps.ts'
 import { SlotStateContext, type SlotState } from './fields.tsx'
 import { Icon } from './Icon.tsx'
 
@@ -108,6 +109,8 @@ export interface MorphNodeProps {
    * una casilla.
    */
   results?: readonly { name: string; type: ValueType; hint?: string; title?: string }[]
+  /** Lo que se observó de cada paso de una cadena, para el editor de pasos. */
+  steps?: readonly StepInfo[]
   /** El usuario agarra el chip de un resultado: el lienzo lleva el arrastre. */
   onGrabResult?: (event: React.PointerEvent<HTMLElement>, name: string) => void
   /** La casilla sobre la que está un chip que se arrastra, y si valdría soltarlo ahí. */
@@ -290,6 +293,7 @@ export function MorphNode({
   chipSlots,
   line = false,
   results = [],
+  steps,
   onGrabResult,
   hotSlot = null,
   onClearChip,
@@ -640,6 +644,7 @@ export function MorphNode({
                       <Control
                         model={control}
                         level={level}
+                        {...(steps ? { steps } : {})}
                         onChange={onControlChange}
                         {...(editable ? { editable } : {})}
                         {...(suggestions ? { suggestions } : {})}

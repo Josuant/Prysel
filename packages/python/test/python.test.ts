@@ -339,7 +339,14 @@ describe('un nodo enseña lo que significa, no la sintaxis que lo escribió', ()
     expect(nodes.map((n) => n.control)).toEqual([
       { kind: 'assign', destination: 'r', value: 'f(*args)' },
       { kind: 'assign', destination: 'ok', value: '1 < x < 3' },
-      { kind: 'assign', destination: 'z', value: 'df.groupby("k").sum()' },
+      {
+        kind: 'chain',
+        receiver: 'df',
+        steps: [
+          { kind: 'call', name: 'groupby', args: '"k"' },
+          { kind: 'call', name: 'sum', args: '' },
+        ],
+      },
     ])
   })
 

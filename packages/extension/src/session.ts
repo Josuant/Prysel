@@ -1,5 +1,5 @@
 import type { Program } from '@prysel/python'
-import type { Kernel, LoopSeries, RunResult, Summary } from './kernel.ts'
+import type { ChainSteps, Kernel, LoopSeries, RunResult, Summary } from './kernel.ts'
 import {
   freshness,
   planAll,
@@ -64,6 +64,8 @@ export class Session {
   private fragments = new Map<string, string>()
   /** Los valores por vuelta de cada bucle, por `texto de la sentencia|línea:columna`. */
   private loops = new Map<string, LoopSeries>()
+  /** Lo que valía cada cadena de pasos tras cada paso, por `texto de la sentencia|línea:columna`. */
+  private chains = new Map<string, (Summary | null)[]>()
   private queue: Promise<void> = Promise.resolve()
   private cancelled = false
   private disposed = false
@@ -83,6 +85,8 @@ export class Session {
     const alive = new Set(next.map((stmt) => stmt.hash))
     for (const key of this.loops.keys())
       if (!alive.has(key.split('|')[0] ?? '')) this.loops.delete(key)
+    for (const key of this.chains.keys())
+      if (!alive.has(key.split('|')[0] ?? '')) this.chains.delete(key)
     if (this.running) {
       // Lo que se está ejecutando sigue siendo la misma sentencia aunque se haya movido de línea.
       const { hash } = this.running
@@ -119,6 +123,8 @@ export class Session {
       }
       const loops = this.loopsOf(stmt.hash)
       if (loops) view.loops = loops
+      const chains = this.chainsOf(stmt.hash)
+      if (chains) view.chains = chains
       views[stmt.id] = view
     }
     return views
@@ -133,6 +139,24 @@ export class Session {
       found[loop] = { n: series.n, idx: series.idx, names: series.names, done: series.done }
     }
     return Object.keys(found).length > 0 ? found : undefined
+  }
+
+  /** Las cadenas de una sentencia con lo que valían tras cada paso. */
+  private chainsOf(hash: string): Record<string, (Summary | null)[]> | undefined {
+    const found: Record<string, (Summary | null)[]> = {}
+    for (const [key, previews] of this.chains) {
+      const [owner, chain] = key.split('|')
+      if (owner === hash && chain !== undefined) found[chain] = previews
+    }
+    return Object.keys(found).length > 0 ? found : undefined
+  }
+
+  /** Lo que una cadena anota al evaluarse: se guarda con la sentencia que la define y se avisa. */
+  private onChain(steps: ChainSteps) {
+    const hash = this.fragments.get(steps.frag)
+    if (hash === undefined) return
+    this.chains.set(`${hash}|${steps.chain}`, steps.previews)
+    this.notify({ type: 'views' })
   }
 
   /** Lo que un bucle anota mientras corre: se guarda con la sentencia que lo definió y se avisa. */
@@ -221,6 +245,9 @@ export class Session {
       for (const key of [...this.loops.keys()]) {
         if (key.startsWith(`${stmt.hash}|`)) this.loops.delete(key)
       }
+      for (const key of [...this.chains.keys()]) {
+        if (key.startsWith(`${stmt.hash}|`)) this.chains.delete(key)
+      }
       // Solo se recuerdan los últimos fragmentos: un programa largo no los acumula sin fin.
       while (this.fragments.size > 500)
         this.fragments.delete(this.fragments.keys().next().value ?? '')
@@ -229,6 +256,9 @@ export class Session {
         watch: stmt.names,
         onIteration: (series) => {
           this.onLoop(series)
+        },
+        onSteps: (steps) => {
+          this.onChain(steps)
         },
       })
       const at = this.running?.id ?? stmt.id
@@ -240,6 +270,7 @@ export class Session {
         this.problem = result.error.message
         this.records.clear()
         this.loops.clear()
+        this.chains.clear()
         this.notify({ type: 'views' })
         return
       }
@@ -293,6 +324,7 @@ export class Session {
     this.kernel = null
     this.records.clear()
     this.loops.clear()
+    this.chains.clear()
     this.running = null
     this.status = 'stopped'
     this.problem = null

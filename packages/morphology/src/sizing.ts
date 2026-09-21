@@ -192,6 +192,9 @@ export function slimControlHeight(
     }
     case 'signature':
       return slimStack([...model.params.map(() => SLIM.input), SLIM.add])
+    case 'chain':
+      // El receptor, un paso por fila y, debajo, dónde escribir uno nuevo.
+      return slimStack([SLIM.input, ...model.steps.map(() => SLIM.input), SLIM.add])
     case 'loop':
       // Con progreso (una ejecución en marcha) lleva una fila más.
       return model.total === undefined ? SLIM.input : SLIM.input + SLIM.rowGap + SLIM.note
@@ -216,6 +219,14 @@ export function slimWidth(base: number, model?: ControlModel): number {
   if (model?.kind === 'with' || model?.kind === 'handler') {
     const text = model.kind === 'with' ? model.context : model.type
     return Math.min(440, Math.max(base, 236, Math.ceil(chars(text, model.name) + 140)))
+  }
+  if (model?.kind === 'chain') {
+    // Cada fila: `.método(argumentos)` y, a la derecha, lo que se observó de su resultado.
+    const longest = Math.max(
+      model.receiver.length,
+      ...model.steps.map((step) => step.name.length + step.args.length),
+    )
+    return Math.min(500, Math.max(base, 340, Math.ceil(longest * 7.2 + 250)))
   }
   if (model?.kind === 'args') {
     const longest = Math.max(0, ...model.args.map((arg) => arg.value.length + arg.name.length))
@@ -377,6 +388,8 @@ export function controlHeight(
     case 'condition':
       // Esbelta: campo, operador y valor en una fila. Expandida: apilados, con sus marcadores.
       return full ? stack([ROW.input, ROW.input, ...(model.hits ? [ROW.note] : [])]) : ROW.input
+    case 'chain':
+      return stack([ROW.input, ...model.steps.map(() => ROW.input), ROW.add])
     case 'assign':
       // Destino y valor: en una fila cuando cabe; apilados en expandido.
       return full ? stack([ROW.input, ROW.input]) : ROW.input

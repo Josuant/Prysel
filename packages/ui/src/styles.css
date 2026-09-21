@@ -2415,3 +2415,80 @@ button.fn-menu__crumb:hover {
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Una cadena de pasos: una fila por paso, con lo que se observó de su resultado a la derecha ── */
+.chain {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.chain__row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+.chain__row .input {
+  width: auto;
+  min-width: 36px;
+  field-sizing: content;
+}
+.chain__row > .input:first-of-type:last-of-type,
+.chain__add .input {
+  flex: 1 1 auto;
+}
+.chain__glue {
+  flex: none;
+  color: var(--ink-faint);
+  font-family: var(--font-code, ui-monospace, monospace);
+}
+.chain__preview {
+  flex: none;
+  max-width: 132px;
+  margin-left: auto;
+  padding: 1px 6px;
+  overflow: hidden;
+  border: 1px solid var(--line-faint);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+.chain__preview:not(:disabled) {
+  cursor: pointer;
+}
+.chain__preview:not(:disabled):hover {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.chain__tools {
+  display: none;
+  flex: none;
+  gap: 1px;
+}
+.chain__row:hover .chain__tools,
+.chain__row:focus-within .chain__tools {
+  display: inline-flex;
+}
+.chain__tools button {
+  width: 18px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.chain__tools button:hover:not(:disabled) {
+  color: var(--ink);
+}
+.chain__tools button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}

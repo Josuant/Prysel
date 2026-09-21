@@ -1,5 +1,6 @@
 export * from './types.ts'
-export type { ControlModel } from './controls.ts'
+export type { ChainStep, ControlModel } from './controls.ts'
+export { chainStepText, moveStep, parseChainStep } from './chain.ts'
 export { TEMPLATES, TEMPLATE_IDS, type NodeAction, type TemplateId } from './actions.ts'
 export {
   VALUE_NAMES,

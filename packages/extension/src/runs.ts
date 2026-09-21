@@ -55,6 +55,11 @@ export interface RunView {
   stderr?: string
   /** Hay imágenes o figuras: se piden por `seq`. */
   assets?: boolean
+  /**
+   * Las cadenas de pasos de la sentencia, por `línea:columna` dentro de ella: lo que valía tras cada paso
+   * (índice 0: el receptor). `null` si ese paso no llegó a evaluarse.
+   */
+  chains?: Record<string, (Summary | null)[]>
   /** Los bucles de la sentencia (también los de dentro de sus funciones), por `línea:columna` dentro de ella. */
   loops?: Record<string, LoopView>
   error?: RunFailure

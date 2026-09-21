@@ -74,6 +74,17 @@ export interface LoopSeries {
   done: boolean
 }
 
+/**
+ * Lo que valía una cadena tras cada paso: `previews[0]` es el receptor y `previews[i]` lo que queda tras el
+ * paso `i`. `null` si ese paso no llegó a evaluarse (la cadena falló antes). `chain` es dónde está
+ * (`línea:columna` dentro del fragmento `frag` que la definió), como en los bucles.
+ */
+export interface ChainSteps {
+  frag: string
+  chain: string
+  previews: (Summary | null)[]
+}
+
 export interface RunOptions {
   id?: string
   /** Nombres cuyo valor se resume al terminar. */
@@ -82,6 +93,8 @@ export interface RunOptions {
   onStream?: (name: 'stdout' | 'stderr', text: string) => void
   /** Cada vez que un bucle anota sus vueltas (con aviso espaciado, no una por vuelta). */
   onIteration?: (series: LoopSeries) => void
+  /** Cada vez que se evalúa una cadena de pasos: lo que valía tras cada uno. */
+  onSteps?: (steps: ChainSteps) => void
 }
 
 interface Event {
@@ -244,6 +257,13 @@ export class Kernel {
           idx: event['idx'] as number[],
           names: event['names'] as LoopSeries['names'],
           done: event['done'] === true,
+        })
+        break
+      case 'steps':
+        options.onSteps?.({
+          frag: String(event['frag']),
+          chain: String(event['chain']),
+          previews: event['previews'] as (Summary | null)[],
         })
         break
       case 'result':

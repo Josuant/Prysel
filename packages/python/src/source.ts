@@ -13,7 +13,7 @@ export interface Span {
 
 export interface Source extends Span {
   /** Cómo se vuelve a escribir un valor nuevo en ese sitio. */
-  as: 'expression' | 'operator' | 'number' | 'boolean' | 'string' | 'list'
+  as: 'expression' | 'operator' | 'number' | 'boolean' | 'string' | 'list' | 'arguments'
   /** El delimitador de una cadena (`"`, `'`, `"""`), para escapar bien lo que se escriba dentro. */
   quote?: string
   /** El texto original: un número conserva su forma (`5.0` sigue siendo un flotante). */

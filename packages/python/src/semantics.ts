@@ -1,4 +1,4 @@
-import type { ControlModel } from '@prysel/morphology'
+import type { ChainStep, ControlModel } from '@prysel/morphology'
 import type { Node as TsNode } from '@vscode/tree-sitter-wasm'
 import type { Source } from './source.ts'
 import { calleeName, field, named, readNames } from './tree.ts'
@@ -114,6 +114,7 @@ export function inputsOf(
         'type',
         'bases',
         'destination',
+        'receiver',
       ].includes(path)
     ) {
       found[path] ??= source
@@ -357,6 +358,130 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
   }
 }
 
+interface StepNode {
+  kind: ChainStep['kind']
+  node: TsNode
+  /** El nombre del método o del atributo. */
+  name?: TsNode
+  /** Dónde empiezan y acaban los argumentos o el índice (sin los paréntesis ni los corchetes). */
+  inner?: { start: number; end: number }
+}
+
+/** Sin los paréntesis que envuelven una expresión (`(df.a().b())`), que es como se escribe una cadena en varias líneas. */
+export function unwrapParens(expression: TsNode): TsNode {
+  let current = expression
+  while (current.type === 'parenthesized_expression') {
+    const inner = named(current).filter((child) => child.type !== 'comment')
+    const only = inner.length === 1 ? inner[0] : undefined
+    if (!only) break
+    current = only
+  }
+  return current
+}
+
+/**
+ * Una expresión de llamadas, índices y atributos encadenados, de la raíz hacia fuera. Los atributos
+ * del principio (`os.path`, `self.model`) son el camino hasta el receptor, no pasos: por eso
+ * `os.path.join(a, b)` es una sola llamada y `df.groupby("a").sum()` son dos pasos.
+ */
+function spineOf(expression: TsNode): { receiver: TsNode; steps: StepNode[] } | null {
+  const steps: StepNode[] = []
+  let current = expression
+  for (;;) {
+    if (current.type === 'call') {
+      const callee = field(current, 'function')
+      const list = field(current, 'arguments')
+      if (callee?.type !== 'attribute') break
+      // Un generador como único argumento (`f(x for x in y)`) no tiene paréntesis propios: no se representa.
+      if (list?.type !== 'argument_list') return null
+      const name = field(callee, 'attribute')
+      const object = field(callee, 'object')
+      if (!name || !object) return null
+      steps.push({
+        kind: 'call',
+        node: current,
+        name,
+        inner: { start: list.startIndex + 1, end: list.endIndex - 1 },
+      })
+      current = object
+    } else if (current.type === 'attribute') {
+      const name = field(current, 'attribute')
+      const object = field(current, 'object')
+      if (!name || !object) return null
+      steps.push({ kind: 'attr', node: current, name })
+      current = object
+    } else if (current.type === 'subscript') {
+      const value = field(current, 'value')
+      const open = current.children.find((child) => child?.type === '[')
+      const close = [...current.children].reverse().find((child) => child?.type === ']')
+      if (!value || !open || !close) return null
+      steps.push({
+        kind: 'index',
+        node: current,
+        inner: { start: open.endIndex, end: close.startIndex },
+      })
+      current = value
+    } else {
+      break
+    }
+  }
+  steps.reverse()
+  let lead = 0
+  while (lead < steps.length && steps[lead]?.kind === 'attr') lead++
+  const receiver = lead === 0 ? current : (steps[lead - 1]?.node ?? current)
+  return { receiver, steps: steps.slice(lead) }
+}
+
+/** Lo que puede ser la cima de una cadena: una llamada, un índice o un atributo (`df["fecha"].dt.month`). */
+const CHAINED: ReadonlySet<string> = new Set(['call', 'subscript', 'attribute'])
+
+/** ¿Es una cadena de al menos dos pasos? Es lo que se enseña como pasos, cada uno con su vista previa. */
+export function isChain(expression: TsNode | null): boolean {
+  if (!expression) return false
+  const inner = unwrapParens(expression)
+  if (!CHAINED.has(inner.type)) return false
+  return (spineOf(inner)?.steps.length ?? 0) >= 2
+}
+
+/**
+ * `df.groupby("mes")["monto"].sum().reset_index()` como un receptor y una lista de pasos. Cada trozo de
+ * texto que se puede reescribir sin descolocar nada tiene su sitio (`receiver`, `steps[i].name`,
+ * `steps[i].args`), y la cadena entera también (`chain`): quitar, añadir o cambiar de tipo un paso
+ * reescribe toda la cadena. Solo si cada trozo cabe en una línea; lo demás se enseña como código.
+ */
+function chain(expression: TsNode): Semantics | null {
+  const whole = unwrapParens(expression)
+  if (!CHAINED.has(whole.type)) return null
+  const spine = spineOf(whole)
+  if (!spine || spine.steps.length < 2) return null
+  const { receiver, steps } = spine
+  const texts = [receiver.text]
+  const model: ChainStep[] = []
+  const sources: Record<string, Source> = {
+    receiver: span(receiver, 'expression'),
+    chain: span(whole, 'expression'),
+  }
+  const ports: Record<string, string> = {}
+  route(receiver, 'receiver', ports)
+  for (const [i, step] of steps.entries()) {
+    const args = step.inner
+      ? whole.text.slice(step.inner.start - whole.startIndex, step.inner.end - whole.startIndex)
+      : ''
+    texts.push(step.name?.text ?? '', args)
+    model.push({ kind: step.kind, name: step.name?.text ?? '', args })
+    if (step.name) sources[`steps[${i}].name`] = span(step.name, 'expression')
+    if (step.inner) {
+      sources[`steps[${i}].args`] = {
+        start: step.inner.start,
+        end: step.inner.end,
+        as: 'arguments',
+      }
+    }
+  }
+  if (texts.some((text) => /[\r\n]/.test(text))) return null
+  return { control: { kind: 'chain', receiver: receiver.text, steps: model }, ports, sources }
+}
+
 /** Lo que enseña un nodo que calcula o guarda una expresión. `null` = mostrar el código. */
 export function semanticsOf(expression: TsNode | null, context: SemanticContext): Semantics | null {
   if (!expression) return null
@@ -367,7 +492,11 @@ export function semanticsOf(expression: TsNode | null, context: SemanticContext)
     case 'comparison_operator':
       return operation(expression)
     case 'call':
-      return call(expression, context)
+      return chain(expression) ?? call(expression, context)
+    case 'subscript':
+    case 'attribute':
+    case 'parenthesized_expression':
+      return chain(expression)
     default:
       return null
   }

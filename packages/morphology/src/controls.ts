@@ -32,6 +32,12 @@ export type ControlModel =
   | { kind: 'dict'; entries: [string, string][] }
   | { kind: 'table'; columns: string[]; rows: string[][]; sortBy?: string }
   | { kind: 'args'; target: string; args: { name: string; value: string }[] }
+  /**
+   * Una cadena de pasos: `df.groupby("mes")["monto"].sum().reset_index()`. El receptor es de donde parte
+   * (`df`) y cada paso es una llamada a un método (`groupby("mes")`), un índice (`["monto"]`) o un atributo
+   * (`.dt`). `args` es el texto entre los paréntesis o los corchetes, tal cual está escrito.
+   */
+  | { kind: 'chain'; receiver: string; steps: ChainStep[] }
   | { kind: 'expression'; left: string; operator: string; right: string; operators: string[] }
   | {
       kind: 'condition'
@@ -89,3 +95,10 @@ export type ControlModel =
       hash: string
     }
   | { kind: 'code'; source: string }
+
+/** Un paso de una cadena: una llamada (`name` es el método), un índice (`name` vacío) o un atributo. */
+export interface ChainStep {
+  kind: 'call' | 'index' | 'attr'
+  name: string
+  args: string
+}

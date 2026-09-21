@@ -49,6 +49,7 @@ import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
+import type { StepInfo } from './steps.ts'
 import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
   MODULE,
@@ -124,6 +125,8 @@ export interface CanvasNode {
   provides?: string
   /** Los nombres que deja definidos una asignación de varios valores (`a, b = f()`): cada uno, un chip. */
   results?: readonly string[]
+  /** Lo que se observó de cada paso de una cadena (índice 0: el receptor). */
+  steps?: readonly StepInfo[]
   /** Un bucle que ya dio vueltas: lo que valió cada nombre en cada una, para recorrerlas en su cabecera. */
   laps?: LapsView
   /** Es un visor: enseña el valor que otro nodo dejó al ejecutarse. No es una sentencia del programa. */

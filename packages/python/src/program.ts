@@ -5,6 +5,8 @@ import type { NodeRange, Source, Span } from './source.ts'
 import {
   assignOf,
   assignSources,
+  isChain,
+  unwrapParens,
   augmented,
   classOf,
   classSources,
@@ -83,6 +85,12 @@ export interface ProgramNode {
    * sale por su propio puerto (`result:a`) y se ofrece como chip. Con un solo nombre, es `provides`.
    */
   results?: string[]
+  /**
+   * Dónde empieza la cadena de pasos de este nodo, si lo es: la línea del archivo (base 1) y la columna
+   * en bytes de UTF-8, que es como la cuenta el intérprete de Python. Es lo que ata lo que se observó al
+   * ejecutar (la vista previa de cada paso) a este nodo.
+   */
+  anchor?: { line: number; col: number }
   /** En una función, sus parámetros: cada uno es un puerto de salida hacia lo que hay dentro. */
   params?: string[]
   /**
@@ -173,7 +181,11 @@ function kindOfExpression(expression: TsNode | null): NodeKindId {
     case 'boolean_operator':
     case 'unary_operator':
       return 'transform.operation'
+    case 'parenthesized_expression':
+      // Una cadena en varias líneas, entre paréntesis: es lo que es la cadena.
+      return isChain(expression) ? kindOfExpression(unwrapParens(expression)) : 'opaque.code'
     case 'subscript':
+      if (isChain(expression)) return 'transform.call'
       // `df[df.amount > X]` es un filtro: una condición, no un acceso cualquiera.
       return expression.text.includes('>') ||
         expression.text.includes('<') ||
@@ -231,12 +243,24 @@ class Builder {
 
   add(node: ProgramNode, binds?: string): string {
     node.scope = this.names()
+    const chainAt = node.control?.kind === 'chain' ? node.sources?.['chain']?.start : undefined
+    if (chainAt !== undefined) node.anchor = this.anchorAt(chainAt)
     this.nodes.push(node)
     if (binds) {
       this.bind(binds, node.id)
       node.provides = binds
     }
     return node.id
+  }
+
+  /** La línea (base 1) y la columna en bytes de UTF-8 de una posición del texto. */
+  private anchorAt(offset: number): { line: number; col: number } {
+    const before = this.source.slice(0, offset)
+    const lineStart = before.lastIndexOf('\n') + 1
+    return {
+      line: before.split('\n').length,
+      col: new TextEncoder().encode(before.slice(lineStart)).length,
+    }
   }
 
   bind(name: string, id: string, port?: string) {
