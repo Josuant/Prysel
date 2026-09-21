@@ -106,14 +106,14 @@ describe('el programa no repite lo que ya dice la llamada', () => {
 })
 
 describe('una función se ve aparte, en un lienzo limpio', () => {
-  it('enseña solo su contenido, sin ella misma alrededor', () => {
+  it('enseña su contenido, envuelto por ella misma: es donde están sus parámetros', () => {
     const view = programView(NODES, EDGES, 'suma')
-    expect(ids(view.nodes)).toEqual(['ret'])
+    expect(ids(view.nodes)).toEqual(['suma', 'ret'])
   })
 
   it('sin lo de fuera: ni sus llamadores ni el resto del programa', () => {
     const view = programView(NODES, EDGES, '_main')
-    expect(ids(view.nodes).sort()).toEqual(['call', 'if', 'msg1', 'msg2'])
+    expect(ids(view.nodes).sort()).toEqual(['_main', 'call', 'if', 'msg1', 'msg2'])
     expect(view.edges.every((e) => e.from !== 'numero2')).toBe(true)
   })
 

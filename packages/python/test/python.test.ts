@@ -124,11 +124,17 @@ describe('el grafo resultante se puede dibujar', () => {
     const big = Array.from({ length: 200 }, (_, i) => `v${i} = v${Math.max(0, i - 1)} + ${i}`).join(
       '\n',
     )
-    const started = performance.now()
-    const program = parse(big)
-    const elapsed = performance.now() - started
+    // Se mide lo que cuesta cada tecla, no el primer análisis del proceso (que paga la compilación
+    // del propio código) ni un pico de carga de la máquina: se queda con el mejor de varios.
+    const times: number[] = []
+    let program = parse(big)
+    for (let i = 0; i < 5; i++) {
+      const started = performance.now()
+      program = parse(big)
+      times.push(performance.now() - started)
+    }
     expect(program.nodes).toHaveLength(200)
-    expect(elapsed).toBeLessThan(120)
+    expect(Math.min(...times)).toBeLessThan(120)
   })
 })
 

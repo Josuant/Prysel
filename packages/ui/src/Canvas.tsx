@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
+  Panel,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  type Connection,
+  type Edge,
+  type FinalConnectionState,
   type NodeChange,
 } from '@xyflow/react'
 import {
@@ -17,8 +21,10 @@ import {
   type NodeAction,
   type NodeKindId,
   type NodeState,
+  type ValueType,
 } from '@prysel/morphology'
 import {
+  PARAM_GUTTER,
   channelOf,
   layout,
   type Axis,
@@ -33,6 +39,8 @@ import { nodeFrame } from './flow/frame.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
+import { QuickAdd } from './QuickAdd.tsx'
+import { checkConnection, connectAction, dropTarget, outputName, type Link } from './connect.ts'
 import type { NodeEdit } from './MorphNode.tsx'
 import '@xyflow/react/dist/base.css'
 
@@ -75,6 +83,14 @@ export interface CanvasNode {
   line?: number
   /** Los nombres que se pueden usar en sus campos (las variables definidas antes): son las sugerencias. */
   scope?: readonly string[]
+  /** El nombre que el nodo deja definido: lo que sale por su puerto de salida, si sale algo. */
+  provides?: string
+  /** En una función, sus parámetros: cada uno es un puerto de salida hacia lo que hay dentro. */
+  params?: readonly string[]
+  /** Los campos que aceptan un cable (por su puerto). */
+  inputs?: readonly string[]
+  /** Qué clase de valor sale del nodo: colorea su puerto y decide adónde se puede conectar. */
+  valueType?: ValueType
 }
 
 export interface CanvasProps {
@@ -126,6 +142,10 @@ export interface CanvasProps {
   ariaLabel?: string
   className?: string
 }
+
+/** La identidad de un cable, con la que se selecciona. */
+const edgeKey = (edge: SemanticEdge) =>
+  `${edge.from}${edge.fromPort ? `:${edge.fromPort}` : ''}-${edge.to}-${edge.toPort ?? ''}-${edge.relation}`
 
 const NODE_TYPES = { prysel: PryselNode }
 const EDGE_TYPES = { prysel: PryselEdge }
@@ -183,15 +203,38 @@ function CanvasInner({
       : selectedState?.key === fitKey
         ? selectedState.id
         : null
+  /** El cable seleccionado (para desconectarlo), si es de los que se pueden soltar. */
+  const [edgeState, setEdgeState] = useState<{ key: string; id: string } | null>(null)
+  const edgeId = edgeState?.key === fitKey ? edgeState.id : null
   const select = useCallback(
     (id: string | null) => {
       setSelectedState(id === null ? null : { key: fitKey, id })
+      setEdgeState(null)
       onSelect?.(id)
     },
     [fitKey, onSelect],
   )
   /** El nodo que se está editando como código, mientras el panel está abierto. */
   const [codeFor, setCodeFor] = useState<{ key: string; id: string } | null>(null)
+  /** De dónde sale el cable que se está arrastrando ahora mismo. */
+  const [connecting, setConnecting] = useState<{ from: string; port?: string } | null>(null)
+  /** El menú de «crear un nodo ya conectado», abierto donde se soltó el cable en el vacío. */
+  const [quick, setQuick] = useState<{ x: number; y: number; from: string; port?: string } | null>(
+    null,
+  )
+  /** Por qué no se pudo conectar: un aviso breve, para que el rechazo no parezca un fallo. */
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => {
+    if (notice === null) return
+    const timer = setTimeout(() => {
+      setNotice(null)
+    }, 3600)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [notice])
+  /** Se puede conectar arrastrando: hay un lienzo con el que interactuar y dónde escribir el resultado. */
+  const connectable = interactive && onAction !== undefined
   /** Mientras se arrastra, el nodo sigue al puntero: interpolar su posición lo haría ir por detrás. */
   const [dragging, setDragging] = useState(false)
 
@@ -218,8 +261,10 @@ function CanvasInner({
     for (const edge of edges) {
       if (!edge.toPort) continue
       const from = byId.get(edge.from)
+      // Un parámetro sí llega a un campo de dentro: es un cable de verdad, con su puerto.
       const isBody =
         from !== undefined &&
+        !edge.fromPort?.startsWith('param:') &&
         getKind(from.kind).role === 'abstraction' &&
         from.contains?.includes(edge.to)
       if (isBody) continue
@@ -241,6 +286,8 @@ function CanvasInner({
           size: { w: base.w, h: base.h + extraHeight(node.control, d, linked[node.id], node.note) },
           // La documentación de una función, si el nodo es un territorio, se lee en su cabecera.
           ...(node.note && node.contains ? { headroom: docHeadroom(node.note) } : {}),
+          // Los parámetros salen del borde de la función: sus etiquetas y sus cables piden sitio.
+          ...(node.params?.length && node.contains ? { gutter: PARAM_GUTTER } : {}),
           ...(node.contains ? { contains: node.contains } : {}),
         }
       }),
@@ -256,7 +303,10 @@ function CanvasInner({
   // Lo que un ámbito envuelve ya lo dice el espacio: la conexión de la función a su propio
   // cuerpo (sus parámetros) sería una línea redundante que cruza su cabecera.
   const visibleEdges = useMemo(
-    () => edges.filter((edge) => !scopes[edge.from]?.includes(edge.to)),
+    () =>
+      edges.filter(
+        (edge) => edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to),
+      ),
     [edges, scopes],
   )
 
@@ -318,6 +368,107 @@ function CanvasInner({
   )
   const codeNode = codeFor?.key === fitKey ? byId.get(codeFor.id) : undefined
 
+  /** Los extremos de una conexión de React Flow, como los entiende el diagrama. */
+  const linkOf = useCallback((connection: Connection | Edge): Link => {
+    const port = connection.sourceHandle
+    return {
+      from: connection.source,
+      ...(port?.startsWith('param:') ? { port } : {}),
+      to: connection.target,
+      slot: connection.targetHandle ?? '',
+    }
+  }, [])
+
+  /** Mientras se arrastra un cable: dónde valdría soltarlo (los demás puertos se apagan). */
+  const eligible = useMemo(() => {
+    if (!connecting) return null
+    const found: Record<string, string[]> = {}
+    for (const node of nodes) {
+      const slots = (node.inputs ?? []).filter(
+        (slot) => checkConnection(byId, { ...connecting, to: node.id, slot }).ok,
+      )
+      if (slots.length > 0) found[node.id] = slots
+    }
+    return found
+  }, [connecting, nodes, byId])
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      const link = linkOf(connection)
+      const verdict = checkConnection(byId, link)
+      if (verdict.ok) onAction?.(connectAction(link))
+      else setNotice(verdict.reason)
+    },
+    [byId, linkOf, onAction],
+  )
+
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+      setConnecting(null)
+      const from = state.fromHandle
+      if (state.isValid || !from || from.type !== 'source' || !state.fromNode) return
+      const port = from.id?.startsWith('param:') ? from.id : undefined
+      const origin = { from: state.fromNode.id, ...(port ? { port } : {}) }
+      if (state.toNode) {
+        // Soltado sobre un nodo pero no sobre un puerto: si solo hay un campo donde valga, es ese.
+        const slots = eligible?.[state.toNode.id] ?? []
+        if (!state.toHandle && slots.length === 1 && slots[0] !== undefined) {
+          onAction?.(connectAction({ ...origin, to: state.toNode.id, slot: slots[0] }))
+          return
+        }
+        const slot = state.toHandle?.id
+        const verdict = slot
+          ? checkConnection(byId, { ...origin, to: state.toNode.id, slot })
+          : null
+        setNotice(
+          verdict && !verdict.ok
+            ? verdict.reason
+            : 'Suelta el cable sobre el puerto del campo donde quieres usarlo.',
+        )
+        return
+      }
+      // En el vacío: se ofrece crear un nodo ya conectado.
+      const frame = frameRef.current?.getBoundingClientRect()
+      const point = 'changedTouches' in event ? event.changedTouches[0] : event
+      const source = byId.get(origin.from)
+      if (frame && point && source && outputName(source, port) !== undefined) {
+        setQuick({ ...origin, x: point.clientX - frame.left, y: point.clientY - frame.top })
+      }
+    },
+    [byId, eligible, onAction],
+  )
+
+  /** Suelta el cable seleccionado: el campo vuelve a un valor neutro. */
+  const disconnect = useCallback(
+    (edge: SemanticEdge) => {
+      if (edge.toPort === undefined) return
+      onAction?.({ type: 'disconnect', id: edge.to, slot: edge.toPort })
+      setEdgeState(null)
+    },
+    [onAction, setEdgeState],
+  )
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement
+    if (target.closest('input, textarea, select, [contenteditable="true"]')) return
+    if (event.shiftKey && event.key.toLowerCase() === 'f') {
+      // Reordenar: la gramática vuelve a colocar todo, olvidando lo que se movió a mano.
+      event.preventDefault()
+      setMovedState({ key: fitKey, positions: NO_POSITIONS })
+      return
+    }
+    if (!connectable || (event.key !== 'Delete' && event.key !== 'Backspace')) return
+    const cable = visibleEdges.find((edge) => edgeKey(edge) === edgeId)
+    if (edgeId !== null && cable) {
+      event.preventDefault()
+      disconnect(cable)
+    } else if (selectedId !== null && scopes[selectedId] === undefined) {
+      // Un territorio (una función, un bucle) lleva mucho dentro: eliminarlo pide el botón, no una tecla.
+      event.preventDefault()
+      onAction?.({ type: 'delete', id: selectedId })
+    }
+  }
+
   const flowNodes: PryselFlowNode[] = animated.flatMap((item) => {
     const node = byId.get(item.id)
     if (!node) return []
@@ -345,6 +496,8 @@ function CanvasInner({
           showActions,
           showStatus,
           linkedSlots: linked[node.id] ?? [],
+          connectable,
+          eligible: eligible ? (eligible[node.id] ?? []) : null,
           phase: item.phase,
           ...(onControlChange ? { onControlChange } : {}),
           ...(onAction ? { onNodeEdit } : {}),
@@ -368,7 +521,8 @@ function CanvasInner({
   )
 
   const flowEdges: PryselFlowEdge[] = visibleEdges.map((edge) => ({
-    id: `${edge.from}-${edge.to}-${edge.toPort ?? ''}-${edge.relation}`,
+    id: edgeKey(edge),
+    selected: edgeId === edgeKey(edge),
     source: edge.from,
     target: edge.to,
     sourceHandle: edge.fromPort ?? 'out',
@@ -384,6 +538,16 @@ function CanvasInner({
       obstacles,
       parentOf,
       axis,
+      ...(connectable &&
+      edge.toPort !== undefined &&
+      byId.get(edge.to)?.inputs?.includes(edge.toPort)
+        ? {
+            removable: true,
+            onRemove: () => {
+              disconnect(edge)
+            },
+          }
+        : {}),
       ...(lit ? { emphasis: lit.has(edge.from) || lit.has(edge.to) ? 'active' : 'dim' } : {}),
       live:
         stateOf !== undefined && stateOf(edge.from) === 'success' && stateOf(edge.to) !== 'dormant',
@@ -454,6 +618,8 @@ function CanvasInner({
   const canvasHeight = height ?? Math.max(minHeight, Math.min(bounds.h, MAX_HEIGHT))
 
   return (
+    // El lienzo recoge el teclado (Supr, Mayús+F) cuando se ha hecho clic en él.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
       className={['canvas stage rounded-lg border border-border-card', className]
         .filter(Boolean)
@@ -462,8 +628,20 @@ function CanvasInner({
       style={{ height: canvasHeight === 'fill' ? '100%' : canvasHeight }}
       data-interactive={interactive ? '' : undefined}
       data-selection={selectedId === null ? undefined : ''}
+      data-linking={connecting ? '' : undefined}
       role="group"
       aria-label={ariaLabel ?? 'Diagrama del programa'}
+      onKeyDown={interactive ? onKeyDown : undefined}
+      onPointerDown={
+        interactive
+          ? (event) => {
+              if (!(event.target as HTMLElement).closest('input, textarea, select, button')) {
+                frameRef.current?.focus({ preventScroll: true })
+              }
+            }
+          : undefined
+      }
+      tabIndex={interactive ? -1 : undefined}
     >
       {/* Las puntas de flecha viven en un svg propio: React Flow no las declara por nosotros. */}
       <svg className="canvas__defs" aria-hidden>
@@ -483,13 +661,42 @@ function CanvasInner({
               }
             : undefined
         }
+        onEdgeClick={
+          connectable
+            ? (_, edge) => {
+                setEdgeState({ key: fitKey, id: edge.id })
+              }
+            : undefined
+        }
         onPaneClick={
           interactive
             ? () => {
                 select(null)
+                setQuick(null)
               }
             : undefined
         }
+        onConnect={connectable ? onConnect : undefined}
+        onConnectStart={
+          connectable
+            ? (_, { nodeId, handleId, handleType }) => {
+                setQuick(null)
+                setConnecting(
+                  handleType === 'source' && nodeId !== null
+                    ? {
+                        from: nodeId,
+                        ...(handleId?.startsWith('param:') ? { port: handleId } : {}),
+                      }
+                    : null,
+                )
+              }
+            : undefined
+        }
+        onConnectEnd={connectable ? onConnectEnd : undefined}
+        isValidConnection={(connection) => checkConnection(byId, linkOf(connection)).ok}
+        connectionRadius={22}
+        connectOnClick={false}
+        deleteKeyCode={null}
         onNodeDragStart={
           interactive
             ? (_, node) => {
@@ -511,7 +718,7 @@ function CanvasInner({
         maxZoom={1.6}
         proOptions={{ hideAttribution: true }}
         nodesDraggable={interactive}
-        nodesConnectable={false}
+        nodesConnectable={connectable}
         elementsSelectable={interactive}
         panOnDrag={interactive}
         zoomOnScroll={interactive}
@@ -527,7 +734,49 @@ function CanvasInner({
         elevateNodesOnSelect={false}
       >
         {interactive && <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />}
+        {interactive && Object.keys(moved).length > 0 && (
+          <Panel position="top-right">
+            <button
+              type="button"
+              className="canvas__tool"
+              title="Volver a colocar todo (Mayús+F)"
+              onClick={() => {
+                setMovedState({ key: fitKey, positions: NO_POSITIONS })
+              }}
+            >
+              Reordenar
+            </button>
+          </Panel>
+        )}
       </ReactFlow>
+      {notice !== null && (
+        <p className="canvas__notice" role="status">
+          {notice}
+        </p>
+      )}
+      {quick && byId.get(quick.from) && (
+        <QuickAdd
+          x={quick.x}
+          y={quick.y}
+          type={byId.get(quick.from)?.valueType ?? 'any'}
+          name={outputName(byId.get(quick.from) as CanvasNode, quick.port) ?? ''}
+          onPick={(template) => {
+            const source = byId.get(quick.from)
+            if (source) {
+              onAction?.({
+                type: 'add',
+                template,
+                ...dropTarget(source, quick.port),
+                connect: { from: quick.from, ...(quick.port ? { port: quick.port } : {}) },
+              })
+            }
+            setQuick(null)
+          }}
+          onClose={() => {
+            setQuick(null)
+          }}
+        />
+      )}
       {codeNode?.text !== undefined && (
         <CodePanel
           // Una clave por nodo: al pasar a editar otro, el panel empieza de nuevo con su texto.

@@ -6,6 +6,7 @@ import { actionEdits, applyEdits, editsFor } from '@prysel/python/edits'
 import {
   AddNodeMenu,
   Canvas,
+  addPlace,
   FunctionMenu,
   Segmented,
   toCanvasNodes,
@@ -44,7 +45,16 @@ def _main():
 const NO_EDGES: SemanticEdge[] = []
 
 export function LiveParser() {
-  const [source, setSource] = useState(EXAMPLE)
+  // `?code=` (texto en Base64) sustituye al ejemplo: permite enlazar o capturar un programa concreto.
+  const [source, setSource] = useState(() => {
+    const given = new URLSearchParams(location.search).get('code')
+    if (given === null) return EXAMPLE
+    try {
+      return new TextDecoder().decode(Uint8Array.from(atob(given), (c) => c.charCodeAt(0)))
+    } catch {
+      return EXAMPLE
+    }
+  })
   const [program, setProgram] = useState<Program | null>(null)
   // `?live=normal` abre la demo en esa densidad: permite fotografiar una vista exacta.
   const [density, setDensity] = useState<Density>(() => {
@@ -129,19 +139,13 @@ export function LiveParser() {
   const canvasNodes = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
   const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density)
   const nodes = view.nodes
-  const anchor = program?.nodes.find((n) => n.id === selected)
-  /** Dónde va lo que se añade: tras el nodo seleccionado, al final de la función que se ve, o del archivo. */
-  const addWhere = anchor
-    ? `Después de «${anchor.label}»`
-    : view.focus
-      ? `Al final de ${view.focus.name}`
-      : 'Al final del programa'
+  /** Dónde va lo que se añade: dentro del territorio seleccionado, tras otro nodo, o al final de lo que se ve. */
+  const { where: addWhere, place } = addPlace(
+    program?.nodes.find((n) => n.id === selected),
+    view.focus,
+  )
   const add = (template: TemplateId) => {
-    act({
-      type: 'add',
-      template,
-      ...(anchor ? { after: anchor.id } : view.focus ? { into: view.focus.id } : {}),
-    })
+    act({ type: 'add', template, ...place })
   }
 
   return (

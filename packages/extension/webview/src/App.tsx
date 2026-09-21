@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Density } from '@prysel/morphology'
 import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
-import { AddNodeMenu, Canvas, FunctionMenu, toCanvasNodes, useProgramView } from '@prysel/ui'
+import {
+  AddNodeMenu,
+  Canvas,
+  FunctionMenu,
+  addPlace,
+  toCanvasNodes,
+  useProgramView,
+} from '@prysel/ui'
 import { actionEdits } from '@prysel/python/edits'
 import type { NodeAction, TemplateId } from '@prysel/morphology'
 import { parseWebviewMessage, type Theme } from '../../src/protocol.ts'
@@ -87,19 +94,13 @@ export function App() {
     if (action.type === 'delete' && action.id === selected) setSelected(null)
     submit((current) => actionEdits(current, action))
   }
-  const anchor = program?.nodes.find((n) => n.id === selected)
-  /** Dónde va lo que se añade: tras el nodo seleccionado, al final de la función que se ve, o del archivo. */
-  const addWhere = anchor
-    ? `Después de «${anchor.label}»`
-    : view.focus
-      ? `Al final de ${view.focus.name}`
-      : 'Al final del programa'
+  /** Dónde va lo que se añade: dentro del territorio seleccionado, tras otro nodo, o al final de lo que se ve. */
+  const { where: addWhere, place } = addPlace(
+    program?.nodes.find((n) => n.id === selected),
+    view.focus,
+  )
   const add = (template: TemplateId) => {
-    act({
-      type: 'add',
-      template,
-      ...(anchor ? { after: anchor.id } : view.focus ? { into: view.focus.id } : {}),
-    })
+    act({ type: 'add', template, ...place })
   }
   const canvasLabel = program
     ? `Diagrama de ${file ?? 'Python'}: ${program.nodes.length} nodos y ${program.edges.length} conexiones`

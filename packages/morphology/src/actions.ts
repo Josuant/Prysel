@@ -38,5 +38,22 @@ export type NodeAction =
   | { type: 'duplicate'; id: string }
   /** Cambiar el nombre de lo que el nodo define, en todos los sitios donde se usa. */
   | { type: 'rename'; id: string; to: string }
-  /** Añadir una plantilla: detrás de un nodo, o dentro de una función (`into`), o al final del archivo. */
-  | { type: 'add'; template: TemplateId; after?: string; into?: string }
+  /**
+   * Añadir una plantilla: detrás de un nodo, o dentro de una función o un bucle (`into`), o al final
+   * del archivo. Con `connect`, la plantilla nace ya alimentada por el valor de otro nodo: es lo que
+   * pasa al soltar un cable en el vacío.
+   */
+  | {
+      type: 'add'
+      template: TemplateId
+      after?: string
+      into?: string
+      connect?: { from: string; port?: string }
+    }
+  /**
+   * Conectar la salida de un nodo (`port`: el parámetro de una función, si sale de uno) a un campo de
+   * otro: el campo pasa a leer el nombre que el origen define, sin escribirlo a mano.
+   */
+  | { type: 'connect'; from: string; to: string; slot: string; port?: string }
+  /** Soltar un cable: el campo vuelve a un valor neutro. */
+  | { type: 'disconnect'; id: string; slot: string }

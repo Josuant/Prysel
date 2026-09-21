@@ -18,6 +18,11 @@
   --color-state-error: var(--state-error);
   --color-state-selected: var(--state-selected);
   --color-border-card: var(--border-card);
+  --color-socket-number: var(--socket-number);
+  --color-socket-text: var(--socket-text);
+  --color-socket-boolean: var(--socket-boolean);
+  --color-socket-collection: var(--socket-collection);
+  --color-socket-any: var(--socket-any);
   --color-grid-dot: var(--grid-dot);
   --color-field: var(--field);
   --color-badge-value-bg: var(--badge-value-bg);

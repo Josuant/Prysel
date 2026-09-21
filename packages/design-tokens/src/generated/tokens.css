@@ -42,6 +42,11 @@
   --state-error: #b3213a;
   --state-selected: #1a5fb4;
   --border-card: #e5e8ee;
+  --socket-number: #0b7fa0;
+  --socket-text: #0b7a5a;
+  --socket-boolean: #a86200;
+  --socket-collection: #7a49e0;
+  --socket-any: #6b7280;
   --grid-dot: #e0e4ea;
   --field: #f7f8fa;
   --badge-value-bg: #fdf3e3;
@@ -92,6 +97,11 @@
   --state-error: #ff8fa3;
   --state-selected: #7cb2ff;
   --border-card: #262c36;
+  --socket-number: #4cc9ea;
+  --socket-text: #4dd6a8;
+  --socket-boolean: #f0b04a;
+  --socket-collection: #b7a2ff;
+  --socket-any: #8a94a3;
   --grid-dot: #1d232c;
   --field: #11151b;
   --badge-value-bg: #33290f;
@@ -143,6 +153,11 @@
     --state-error: #ff8fa3;
     --state-selected: #7cb2ff;
     --border-card: #262c36;
+    --socket-number: #4cc9ea;
+    --socket-text: #4dd6a8;
+    --socket-boolean: #f0b04a;
+    --socket-collection: #b7a2ff;
+    --socket-any: #8a94a3;
     --grid-dot: #1d232c;
     --field: #11151b;
     --badge-value-bg: #33290f;

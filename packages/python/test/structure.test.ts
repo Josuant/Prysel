@@ -351,7 +351,7 @@ describe('añadir un nodo', () => {
 
   it('una función nueva se separa con dos líneas en blanco', () => {
     const { text } = act('a = 1\n', () => ({ type: 'add', template: 'function' }))
-    expect(text).toBe('a = 1\n\n\ndef nueva_funcion():\n    pass\n')
+    expect(text).toBe('a = 1\n\n\ndef nueva_funcion(a, b):\n    return a + b\n')
   })
 
   it('un bloque con varias líneas se sangra entero', () => {

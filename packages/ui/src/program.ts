@@ -1,5 +1,11 @@
 import { useCallback, useMemo, useState } from 'react'
-import { getKind, type ControlModel, type Density, type NodeKindId } from '@prysel/morphology'
+import {
+  getKind,
+  valueTypeOf,
+  type ControlModel,
+  type Density,
+  type NodeKindId,
+} from '@prysel/morphology'
 import {
   collapse,
   groupsFromContainers,
@@ -36,6 +42,14 @@ export interface SourceNode {
   names?: Record<string, unknown>
   /** Qué campos del editor son nombres que se pueden renombrar. */
   renames?: Record<string, string>
+  /** El nombre que el nodo deja definido: lo que sale por su puerto de salida. */
+  provides?: string
+  /** Los parámetros de una función: cada uno es un puerto de salida hacia su interior. */
+  params?: string[]
+  /** Qué campos aceptan un cable. Aquí solo importa cuáles. */
+  inputs?: Record<string, unknown>
+  /** Los nombres que el nodo puede leer: lo definido antes, en su ámbito. */
+  scope?: string[]
   calls?: string
   note?: string
 }
@@ -76,10 +90,22 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
     ...(node.names?.[node.label] !== undefined && IDENTIFIER.test(node.label)
       ? { renamable: true }
       : {}),
-    // Lo que se puede escribir en un campo: las variables definidas antes que este nodo.
-    scope: [
-      ...new Set(defined.filter((d) => d.line < node.line && d.id !== node.id).map((d) => d.label)),
-    ].slice(-40),
+    // Lo que se puede escribir en un campo: lo que el analizador dice que está al alcance del nodo
+    // (sus variables, sus parámetros, lo definido antes) o, sin él, las variables anteriores.
+    scope:
+      node.scope ??
+      [
+        ...new Set(
+          defined.filter((d) => d.line < node.line && d.id !== node.id).map((d) => d.label),
+        ),
+      ].slice(-40),
+    // Lo que sale y lo que entra: es lo que se puede conectar arrastrando.
+    ...(node.provides === undefined ? {} : { provides: node.provides }),
+    ...(node.params && node.params.length > 0 ? { params: node.params } : {}),
+    ...(node.inputs && Object.keys(node.inputs).length > 0
+      ? { inputs: Object.keys(node.inputs) }
+      : {}),
+    valueType: valueTypeOf(node.kind, node.control),
     // En lugar del chip de estado (no hay ejecución), se muestra la línea de origen.
     meta: `línea ${node.line}`,
     ...(node.ops === undefined ? {} : { metrics: { ops: node.ops } }),
@@ -152,8 +178,12 @@ export function programView(
     for (const id of nodes.find((n) => n.id === fn.id)?.contains ?? []) hidden.add(id)
   }
 
+  // La función enfocada se ve como un territorio que envuelve su cuerpo: es donde están sus
+  // parámetros, los puertos desde los que se cablea lo que hay dentro.
   const inside =
-    focus === null ? null : new Set(nodes.find((node) => node.id === focus)?.contains ?? [])
+    focus === null
+      ? null
+      : new Set([focus, ...(nodes.find((node) => node.id === focus)?.contains ?? [])])
   const visible = (id: string) => !hidden.has(id) && (inside === null || inside.has(id))
 
   return {
@@ -239,7 +269,12 @@ export function useProgramView(
   )
 
   const base = useMemo(() => programView(nodes, edges, focus?.id ?? null), [nodes, edges, focus])
-  const scopes = useMemo(() => base.nodes.filter(isFoldable).map((node) => node.id), [base])
+  // La función que se está viendo nunca se pliega: sería quedarse sin ver lo que se pidió ver.
+  const scopes = useMemo(
+    () =>
+      base.nodes.filter((node) => isFoldable(node) && node.id !== focus?.id).map((node) => node.id),
+    [base, focus],
+  )
   const foldedSet = useMemo(
     () => new Set(scopes.filter((id) => (mode === 'compact') !== flipped.has(id))),
     [scopes, mode, flipped],

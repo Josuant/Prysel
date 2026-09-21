@@ -252,9 +252,18 @@ describe('el alto lo decide el contenido', () => {
   })
 
   it('un argumento conectado nunca se esconde, así que cuenta para el alto', () => {
-    const hidden = controlHeight(call(['a', 'b', 'c']), 'normal', [])
-    const shown = controlHeight(call(['a', 'b', 'c']), 'normal', ['arg:c'])
+    // Con más argumentos de los que caben en línea, los que no tienen cable se esconden.
+    const many = ['a', 'b', 'c', 'd', 'e', 'f']
+    const hidden = controlHeight(call(many), 'normal', [])
+    const shown = controlHeight(call(many), 'normal', ['arg:f'])
     expect(shown).toBeGreaterThan(hidden)
+  })
+
+  it('una llamada con pocos argumentos los enseña todos: cada uno es un puerto al que cablear', () => {
+    const few = controlHeight(call(['a', 'b', 'c']), 'normal', [])
+    const one = controlHeight(call(['a']), 'normal', [])
+    expect(few).toBeGreaterThan(one)
+    expect(controlHeight(call(['a', 'b', 'c']), 'normal', ['arg:c'])).toBe(few)
   })
 
   it('en compacto no hay editor: una píldora no crece', () => {

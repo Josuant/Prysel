@@ -1,4 +1,4 @@
-import type { ControlId, ControlModel } from '@prysel/morphology'
+import { INLINE_ARGS, type ControlId, type ControlModel } from '@prysel/morphology'
 import {
   Chips,
   CodeBlock,
@@ -260,7 +260,9 @@ function Editor({ model, level, onChange, linked = [], editable, suggestions }: 
       // hay que ver a qué argumento entra cada uno. Y con su nombre, o no se sabría cuál es cuál.
       const shown = model.args
         .map((arg, index) => ({ arg, index, linked: isLinked(`arg:${arg.name}`) }))
-        .filter(({ index, linked }) => full || index === 0 || linked)
+        .filter(
+          ({ index, linked }) => full || index === 0 || linked || model.args.length <= INLINE_ARGS,
+        )
       const hidden = model.args.length - shown.length
       return (
         <div className="control-stack">
@@ -294,7 +296,8 @@ function Editor({ model, level, onChange, linked = [], editable, suggestions }: 
 
     case 'expression':
       return (
-        <Row>
+        <div className="control-stack">
+          {/* Apiladas a propósito: dos puertos a la misma altura se taparían y no se podría elegir. */}
           <TextInput
             value={model.left}
             slot={{ id: 'left', label: 'Izquierda' }}
@@ -302,20 +305,22 @@ function Editor({ model, level, onChange, linked = [], editable, suggestions }: 
             {...(suggestions ? { suggestions } : {})}
             onChange={on('left', (left: string) => patch({ left }))}
           />
-          <Select
-            value={model.operator}
-            options={model.operators}
-            compact
-            onChange={on('operator', (operator: string) => patch({ operator }))}
-          />
-          <TextInput
-            value={model.right}
-            slot={{ id: 'right', label: 'Derecha' }}
-            linked={isLinked('right')}
-            {...(suggestions ? { suggestions } : {})}
-            onChange={on('right', (right: string) => patch({ right }))}
-          />
-        </Row>
+          <Row>
+            <Select
+              value={model.operator}
+              options={model.operators}
+              compact
+              onChange={on('operator', (operator: string) => patch({ operator }))}
+            />
+            <TextInput
+              value={model.right}
+              slot={{ id: 'right', label: 'Derecha' }}
+              linked={isLinked('right')}
+              {...(suggestions ? { suggestions } : {})}
+              onChange={on('right', (right: string) => patch({ right }))}
+            />
+          </Row>
+        </div>
       )
 
     case 'condition':

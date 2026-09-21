@@ -26,5 +26,6 @@ export {
 } from './program.ts'
 export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'
 export { AddNodeMenu, type AddNodeMenuProps } from './AddNodeMenu.tsx'
+export { addPlace, checkConnection, type Link, type Verdict } from './connect.ts'
 export { CodePanel, type CodePanelProps } from './CodePanel.tsx'
 export type { NodeEdit } from './MorphNode.tsx'

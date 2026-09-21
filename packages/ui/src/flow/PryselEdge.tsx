@@ -35,6 +35,9 @@ export interface PryselEdgeData extends Record<string, unknown> {
   emphasis?: 'active' | 'dim'
   live?: boolean
   failed?: boolean
+  /** Es un cable de datos que se puede soltar: se puede seleccionar y aparece su botón de desconectar. */
+  removable?: boolean
+  onRemove?: () => void
 }
 
 export type PryselFlowEdge = FlowEdge<PryselEdgeData, 'prysel'>
@@ -56,6 +59,7 @@ export function PryselEdge({
   data,
   label,
   markerEnd,
+  selected,
 }: EdgeProps<PryselFlowEdge>) {
   const relation = data?.relation ?? 'dependency'
   const channel = data?.channel ?? 'data'
@@ -113,8 +117,27 @@ export function PryselEdge({
       data-emphasis={data?.emphasis}
       data-live={data?.live ? '' : undefined}
       data-failed={data?.failed ? '' : undefined}
+      data-selected={selected ? '' : undefined}
     >
+      {/* Un cable es fino: se ancha su zona de clic para poder seleccionarlo y desconectarlo. */}
+      {data?.removable && <path className="edge__hit" d={path} />}
       <path className="edge__line" d={path} markerEnd={markerEnd} />
+      {data?.removable && selected && (
+        <EdgeLabelRenderer>
+          <button
+            type="button"
+            className="edge__remove nodrag nopan"
+            aria-label="Desconectar"
+            title="Desconectar (Supr)"
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelAt.x}px, ${labelAt.y}px)`,
+            }}
+            onClick={data.onRemove}
+          >
+            ×
+          </button>
+        </EdgeLabelRenderer>
+      )}
       {data?.live && (
         <circle className="edge__pulse" r={3.5}>
           <animateMotion dur="1.5s" repeatCount="indefinite" path={path} />

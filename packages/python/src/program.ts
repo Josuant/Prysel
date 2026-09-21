@@ -6,6 +6,7 @@ import {
   augmented,
   condition as conditionOf,
   loop,
+  inputsOf,
   loopSources,
   moduleOf,
   moduleSources,
@@ -67,6 +68,17 @@ export interface ProgramNode {
   names?: Record<string, Span[]>
   /** Qué campos del editor son nombres que se pueden renombrar (por camino) y cómo se llaman ahora. */
   renames?: Record<string, string>
+  /** El nombre que este nodo deja definido: lo que sale por su puerto de salida (`total` en `total = 0`). */
+  provides?: string
+  /** En una función, sus parámetros: cada uno es un puerto de salida hacia lo que hay dentro. */
+  params?: string[]
+  /**
+   * Qué campos aceptan un cable, por su puerto, y qué trozo del texto se sustituye por el nombre
+   * del nodo de origen al conectarlo.
+   */
+  inputs?: Record<string, Source>
+  /** Los nombres que este nodo puede leer: lo que hay definido justo antes de él, en su ámbito. */
+  scope?: string[]
   /**
    * Lo que el código dice de sí mismo: los comentarios que lo acompañan (en línea o justo encima)
    * y, en una función, su docstring y los comentarios que la explican. Nada se pierde en silencio.
@@ -182,20 +194,47 @@ class Builder {
   readonly nodes: ProgramNode[] = []
   readonly edges: SemanticEdge[] = []
   readonly unsupported: Program['unsupported'] = []
-  private readonly scope = new Map<string, string>()
+  /** Qué nodo define cada nombre y, si es un parámetro, por qué puerto de la función sale. */
+  private readonly scope = new Map<string, { id: string; port?: string }>()
+  /** Los nombres visibles ahora, ya calculados: los nodos consecutivos comparten la misma lista. */
+  private visible: string[] | null = null
   /** Funciones definidas hasta ahora y sus parámetros: nombran los argumentos de cada llamada. */
   readonly functions = new Map<string, string[]>()
   /** Y el nodo que las define: es lo que permite ir de una llamada a su cuerpo. */
   readonly functionIds = new Map<string, string>()
 
   add(node: ProgramNode, binds?: string): string {
+    node.scope = this.names()
     this.nodes.push(node)
-    if (binds) this.scope.set(binds, node.id)
+    if (binds) {
+      this.bind(binds, node.id)
+      node.provides = binds
+    }
     return node.id
   }
 
-  bind(name: string, id: string) {
-    this.scope.set(name, id)
+  bind(name: string, id: string, port?: string) {
+    this.scope.set(name, port === undefined ? { id } : { id, port })
+    this.visible = null
+  }
+
+  /** Lo que el nodo deja definido (su puerto de salida). El primer nombre manda. */
+  provide(id: string, name: string) {
+    const node = this.nodes.find((n) => n.id === id)
+    if (node) node.provides ??= name
+  }
+
+  /** Un parámetro de función: existe dentro de ella y sale por su propio puerto. */
+  bindParam(name: string, id: string) {
+    this.bind(name, id, `param:${name}`)
+    const node = this.nodes.find((n) => n.id === id)
+    if (node) (node.params ??= []).push(name)
+  }
+
+  /** Los identificadores visibles ahora (los más recientes): lo que se puede escribir en un campo. */
+  private names(): string[] {
+    this.visible ??= [...this.scope.keys()].filter((name) => IDENTIFIER.test(name)).slice(-80)
+    return this.visible
   }
 
   /** Anota un sitio donde aparece un nombre que define este nodo (su declaración o un uso). */
@@ -274,11 +313,12 @@ class Builder {
     const saved = new Map(this.scope)
     return () => {
       this.scope.clear()
-      for (const [name, id] of saved) this.scope.set(name, id)
+      for (const [name, at] of saved) this.scope.set(name, at)
+      this.visible = null
     }
   }
 
-  resolve(name: string): string | undefined {
+  resolve(name: string): { id: string; port?: string } | undefined {
     return this.scope.get(name)
   }
 
@@ -289,16 +329,23 @@ class Builder {
     toPort?: string,
     label?: string,
     channel?: Channel,
+    fromPort?: string,
   ) {
     if (from === to) return
     const exists = this.edges.some(
-      (e) => e.from === from && e.to === to && e.toPort === toPort && e.relation === relation,
+      (e) =>
+        e.from === from &&
+        e.to === to &&
+        e.toPort === toPort &&
+        e.fromPort === fromPort &&
+        e.relation === relation,
     )
     if (exists) return
     this.edges.push({
       from,
       to,
       relation,
+      ...(fromPort === undefined ? {} : { fromPort }),
       ...(toPort === undefined ? {} : { toPort }),
       ...(label === undefined ? {} : { label }),
       ...(channel === undefined ? {} : { channel }),
@@ -318,16 +365,19 @@ function linkReads(
   // conexión solo se tienda una vez por nombre.
   for (const at of readIdentifiers(expression)) {
     const source = builder.resolve(at.text)
-    if (source) builder.recordName(source, at.text, at)
+    if (source) builder.recordName(source.id, at.text, at)
   }
   names.forEach((name, index) => {
     const source = builder.resolve(name)
     if (!source) return
     // El primero es la entrada principal (el receptor); el resto, dependencias con nombre.
     const relation: Relation = index === 0 ? 'transform' : 'dependency'
-    builder.link(source, target, relation, ports?.[name])
+    builder.link(source.id, target, relation, ports?.[name], undefined, undefined, source.port)
   })
 }
+
+/** Un nombre que Python admite para una variable o una función. */
+const IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u
 
 /**
  * Los nombres que un import deja definidos. `import pandas as pd` define `pd`;
@@ -536,6 +586,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       })
       // Un import puede dejar definidos varios nombres, y todos apuntan al mismo nodo.
       for (const name of bound) builder.bind(name, id)
+      if (bound[0]) builder.provide(id, bound[0])
       const imported = statement.type === 'import_statement' ? field(statement, 'name') : null
       const alias = imported?.type === 'aliased_import' ? field(imported, 'alias') : null
       if (alias) {
@@ -579,9 +630,11 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         line,
         ...(control ? { control } : {}),
         ...(control ? sourcesOf(loopSources(iterable)) : {}),
+        ...(control ? inputsIn(inputsOf(loopSources(iterable))) : {}),
       })
       linkReads(builder, id, iterable, iterablePorts(iterable))
       if (variable) builder.bind(variable.text, id)
+      if (variable?.type === 'identifier') builder.provide(id, variable.text)
       if (variable?.type === 'identifier') {
         builder.recordName(id, variable.text, variable)
         builder.rename(id, 'variable', variable.text)
@@ -681,8 +734,11 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       if (params) {
         for (const param of params.namedChildren) {
           if (!param) continue
-          const paramName = param.type === 'identifier' ? param.text : field(param, 'name')?.text
-          if (paramName) builder.bind(paramName, id)
+          const paramName =
+            param.type === 'identifier'
+              ? param.text
+              : (field(param, 'name') ?? param.namedChildren[0])?.text
+          if (paramName) builder.bindParam(paramName, id)
         }
         for (const { path, node } of parameterNames(params)) {
           builder.recordName(id, node.text, node)
@@ -788,18 +844,26 @@ function visitAssignment(builder: Builder, assignment: TsNode, line: number, cod
     sem?.ports ?? (kind === 'control.condition' ? conditionPorts(right) : callPorts(right)),
   )
   builder.bind(name, id)
-  if (left?.type === 'identifier') builder.recordName(id, name, left)
+  if (left?.type === 'identifier') {
+    builder.recordName(id, name, left)
+    builder.provide(id, name)
+  }
   return id
 }
 
 const sourcesOf = (sources: Record<string, Source> | undefined) => (sources ? { sources } : {})
+const inputsIn = (inputs: Record<string, Source> | undefined) => (inputs ? { inputs } : {})
 
 /** El editor de un nodo y de dónde sale cada campo, si la sentencia se pudo representar. */
 function fromSemantics(
   sem: Semantics | null | undefined,
-): Pick<ProgramNode, 'control' | 'sources'> {
+): Pick<ProgramNode, 'control' | 'sources' | 'inputs'> {
   if (!sem) return {}
-  return { control: sem.control, ...(sem.sources ? { sources: sem.sources } : {}) }
+  return {
+    control: sem.control,
+    ...(sem.sources ? { sources: sem.sources } : {}),
+    ...inputsIn(inputsOf(sem.sources, sem.inputs)),
+  }
 }
 
 /** `{ calls }` si la expresión es una llamada a una función que este archivo define. */

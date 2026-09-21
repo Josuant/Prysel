@@ -25,6 +25,11 @@ export interface Semantics {
    * sin descolocar nada; el resto de campos se ven pero no se editan.
    */
   sources?: Record<string, Source>
+  /**
+   * Los campos que reciben un valor de otro nodo y qué trozo del texto se sustituye al conectarlo,
+   * por su puerto. Los de expresión salen de `sources`; aquí solo van los que no coinciden con él.
+   */
+  inputs?: Record<string, Source>
 }
 
 export interface SemanticContext {
@@ -84,6 +89,24 @@ const inside = (node: TsNode): Source => ({
   end: node.endIndex - 1,
   as: 'list',
 })
+
+/**
+ * Los campos de un editor que aceptan un cable: los de expresión (un operando, un argumento, la
+ * secuencia de un bucle…), por su puerto. Un operador o un módulo no son valores: no reciben nada.
+ * `extra` añade los que no son una expresión tal cual (el mensaje de un `print`).
+ */
+export function inputsOf(
+  sources: Record<string, Source> | undefined,
+  extra: Record<string, Source> = {},
+): Record<string, Source> | undefined {
+  const found: Record<string, Source> = { ...extra }
+  for (const [path, source] of Object.entries(sources ?? {})) {
+    if (source.as !== 'expression') continue
+    if (path.startsWith('args.')) found[`arg:${path.slice(5)}`] ??= source
+    else if (['left', 'right', 'field', 'value', 'iterable'].includes(path)) found[path] ??= source
+  }
+  return Object.keys(found).length > 0 ? found : undefined
+}
 
 /** Registra en `ports` a qué campo entra cada nombre que lee `expression`. El primero manda. */
 function route(expression: TsNode | null, port: string, ports: Record<string, string>) {
@@ -269,6 +292,8 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
         control: { kind: 'text', value: message, multiline: true, placeholder: 'Mensaje' },
         ports,
         ...(at ? { sources: { value: at } } : {}),
+        // Conectar una variable a un mensaje lo sustituye entero: `print("Hola")` → `print(nombre)`.
+        inputs: { value: span(only, 'string') },
       }
     }
   }

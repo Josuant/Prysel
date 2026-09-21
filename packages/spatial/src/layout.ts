@@ -409,6 +409,8 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     inner: LayoutResult
     /** Lo que mide la cabecera: el contenido empieza justo debajo. */
     top: number
+    /** Lo que hay a la izquierda del contenido: el margen y, si la hay, la zona de puertos. */
+    left: number
   }
   const frames = new Map<string, Frame>()
   /** El tamaño de cada nodo tal como lo ven los de su nivel: un ámbito mide lo que abarca. */
@@ -437,11 +439,12 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     )
     const own = byId.get(scope)?.size.w ?? 0
     const top = SCOPE_FRAME.top + (byId.get(scope)?.headroom ?? 0)
+    const left = SCOPE_FRAME.side + (byId.get(scope)?.gutter ?? 0)
     const size = {
-      w: Math.max(inner.bounds.w + SCOPE_FRAME.side * 2, own),
+      w: Math.max(inner.bounds.w + left + SCOPE_FRAME.side, own),
       h: inner.bounds.h + top + SCOPE_FRAME.bottom,
     }
-    frames.set(scope, { size, inner, top })
+    frames.set(scope, { size, inner, top, left })
     sizes.set(scope, size)
     return size
   }
@@ -479,7 +482,7 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     for (const child of frame.inner.placements) {
       settle({
         ...child,
-        x: placement.x + SCOPE_FRAME.side + child.x,
+        x: placement.x + frame.left + child.x,
         y: placement.y + frame.top + child.y,
       })
     }

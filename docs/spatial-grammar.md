@@ -71,7 +71,7 @@ El layout lo resuelve **de dentro hacia fuera**. Cada ámbito coloca primero su 
 - Es un ámbito todo nodo de rol `abstraction` que tiene nodos dentro **en el plano**. Una función colapsada no lo es: sus miembros ya no están, y se dibuja como un nodo más.
 - Lo que un ámbito abarca incluye lo transitivo: el cuerpo de un bucle dentro de la función sigue dentro de la función.
 - Las conexiones que cruzan el borde se recogen en él para ordenar el plano de fuera, pero siguen apuntando al nodo real de dentro: el dato entra en el territorio.
-- La arista de la función a su propio cuerpo (los parámetros) no se dibuja: la firma `(a, b)` va en la cabecera y el espacio ya dice que pertenece.
+- La arista de la función a su propio cuerpo (una llamada recursiva) no se dibuja: el espacio ya dice que pertenece. Las que salen de un **parámetro** sí: cada parámetro es un puerto en el borde del territorio, y de él parte el cable hasta el campo de dentro que lo usa (ver «Conectar»). Una función con parámetros reserva a su izquierda una zona para ellos (`GraphNode.gutter`).
 - Todo lo que nace dentro del `def` es suyo, a cualquier profundidad: el analizador declara el cuerpo entero (no solo el primer nivel), y el layout asigna cada nodo a su **ámbito más interno**, sin depender del orden en que se declaren.
 - Se dibuja translúcido, con la pestaña de carpeta del tipo función a cualquier densidad, para que lo de dentro se lea sobre él.
 
@@ -136,6 +136,21 @@ Los campos no bastan: para _escribir_ un programa hay que poder crear, quitar y 
 - **Ver / escribir el código** (panel «Código»): cualquier nodo se puede reescribir como texto Python. Es la red de seguridad de la edición 100 % desde el diagrama: lo que aún no tenga un editor propio (un `with`, un `try`, una clase) se puede escribir aquí. Lo que no analiza como Python se rechaza antes de tocar el archivo (`replaceCode`).
 
 Todas las operaciones de estructura pasan por la misma cola que los campos: **una sola en vuelo**, y las que esperan se calculan _cuando les toca_ (guardadas como función del programa, no como ediciones ya calculadas), porque sus desplazamientos habrían caducado. Deshacer es el del editor: cada operación es un único `WorkspaceEdit`.
+
+### Conectar: los cables se escriben arrastrando
+
+Un cable **es** una variable: arrastrar de una salida a un campo escribe en ese campo el nombre que la salida define. No hay que teclear el nombre a mano.
+
+- **Qué sale.** Cada nodo que deja algo definido (`total = 0`, una función, la variable de un bucle, un `import`) ofrece un puerto de salida (`ProgramNode.provides`). Una función ofrece además **un puerto por parámetro**, en el borde de su territorio (`params`), con los cables ya trazados hacia lo que hay dentro: la función se cablea como un grupo con entradas.
+- **Qué entra.** Cada campo que acepta un valor (un operando, un argumento, la secuencia de un bucle, el mensaje de un `print`) tiene su puerto, a su altura (`ProgramNode.inputs`: el puerto y qué trozo del texto se sustituye). Un puerto libre es un **aro**; con cable, está relleno; el de un parámetro es **cuadrado**. Los dos operandos de una operación van en filas distintas: dos puertos a la misma altura se taparían y no se podría elegir.
+- **Clases de valor.** El color del puerto dice qué transporta: número (cian), texto (esmeralda), verdadero/falso (ámbar), colección (púrpura), cualquiera (gris). Son tokens del design system (`socket-*`), y el color no es la única señal (aro / relleno / cuadrado).
+- **Qué se rechaza.** `checkConnection` (pura, en `connect.ts`) mira antes de escribir: el nombre tiene que estar **al alcance del destino** (`ProgramNode.scope`: lo definido antes, en su ámbito; así un parámetro no sale de su función ni se usa algo que se define después) y la clase tiene que encajar (`slotAccepts`: a una resta no se le conecta un texto). Es deliberadamente conservador: solo se rechaza lo que Python no admitiría nunca; `+`, `*` y `%` valen con textos, y lo que no se sabe (`any`) se acepta. El rechazo se explica en un aviso, no es un fallo mudo.
+- **Mientras se arrastra**, solo se encienden los puertos donde valdría soltar, con la etiqueta de su campo; el resto se apaga. Soltar sobre un nodo, y no sobre un puerto, conecta si solo hay un campo posible.
+- **Soltar en el vacío** abre un menú de crear un nodo **ya conectado** (`QuickAdd`), con lo que más sentido tiene para esa clase de valor (a un número: operación, `print`, decisión; a una colección: un bucle que la recorra). Sale detrás del nodo de origen, o **dentro** de la función o el bucle si sale de un parámetro o de la variable del bucle.
+- **Soltar un cable**: clic en él (su zona de clic es más ancha que el trazo) y × o Supr; el campo vuelve a un valor neutro (`0`, `None`, `[]`). Supr sobre un nodo seleccionado lo elimina (no sobre un territorio: eso pide el botón). Mayús+F devuelve a la gramática la colocación de todo.
+- **Añadir** desde el menú con una función o un bucle seleccionados lo pone **dentro**; si el cuerpo era solo `pass`, lo sustituye. Una función nueva nace con dos parámetros y `return a + b`, para que se vean sus puertos y sus cables.
+
+Todo son `NodeAction` (`connect`, `disconnect`, `add` con `connect`), que pasan por la misma cola y las mismas garantías que el resto.
 
 ### Por qué a veces desaparecían las conexiones
 
@@ -250,7 +265,7 @@ El tamaño base de cada densidad da sitio a un editor de una fila. Un editor con
 Enseñar la definición de una función _y_ la llamada que la usa, en el mismo plano, es decir dos veces lo mismo. El programa se ve ahora de dos maneras:
 
 - **Programa**: el flujo del archivo. Una función **usada** (algo de fuera de su cuerpo depende de ella) no se dibuja: ya está en la llamada, cuyo chevron lleva a ella. Una función **sin usar** sí se dibuja, porque si no, no se vería en ningún sitio (típicamente el punto de entrada, `_main`).
-- **Una función**: un lienzo limpio con solo su contenido, sin ella misma alrededor. Se llega desde el menú **Funciones** (lista con firma, número de llamadas y tamaño) o desde el chevron de una llamada; una ruta «Programa › suma(a, b)» lleva de vuelta.
+- **Una función**: un lienzo limpio con su contenido, envuelto por el territorio de la propia función (es donde están sus parámetros: ver «Conectar»). Se llega desde el menú **Funciones** (lista con firma, número de llamadas y tamaño) o desde el chevron de una llamada; una ruta «Programa › suma(a, b)» lleva de vuelta.
 
 Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo seleccionado y lo recorrido (`fitKey`) y se reencuadra. Compacto sigue plegando las funciones sin usar que se dibujan. La lógica es común a la extensión y la galería (`useProgramView`).
 
@@ -262,7 +277,12 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 
 - Micro-interfaces semánticas: sustituir la línea de código literal de cada nodo (`print`, `input`…) por controles reales — un desplegable para un operador lógico, un campo de formulario para un literal.
 - Orden secuencial entre sentencias como conexiones de control (ver arriba).
-- **Conectar arrastrando**: hoy un dato se conecta escribiendo la variable en el campo (con sugerencias del ámbito); falta arrastrar un cable de un puerto a otro y que eso escriba el nombre.
+- **Puertos de ejecución** (la flecha ▸ de entrada y salida que ordena las sentencias): hoy el orden es el del archivo y no se dibuja ni se cablea; conectarlos reordenaría el código y es la decisión abierta del orden secuencial.
+- **Conectar un cable existente a otro campo** (arrastrar el extremo de un cable ya tendido) y **cables desde un puerto de entrada** hacia una salida nueva: hoy se conecta desde salidas.
+- **Un nodo sin nombre como origen** (`print(x)` no define nada; `float(input())` sin asignar): para usarlos habría que introducir una variable.
+- **Insertar un conversor** (`float()`) al rechazar una clase: hoy solo se rechaza y se explica.
+- **Bucles como territorio**: un `for` con cuerpo se pinta como nodo con su retorno, no como marco que expone su variable de iteración como puerto (la variable sí sale por su puerto normal).
+- **Auto-layout jerárquico** (Dagre/ELK): el reparto lo hace la gramática espacial; Mayús+F solo le devuelve lo que el usuario movió.
 - **Reordenar y mover sentencias** (arrastrar un nodo a otro sitio del flujo de control, o a otro bloque): hoy se duplica y se elimina, pero no se mueve.
 - **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.
 - **`with`, `try`, `class` y decoradores como nodos con estructura**: hoy son nodos opacos (se editan como texto en el panel «Código»).

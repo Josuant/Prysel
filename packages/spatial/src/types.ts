@@ -74,6 +74,11 @@ export interface SemanticNode {
   ops?: number
   /** Sitio extra que pide la cabecera de un ámbito (su documentación), sobre `SCOPE_FRAME.top`. */
   headroom?: number
+  /**
+   * Sitio extra a la izquierda, dentro del ámbito, para sus puertos: los parámetros de una función
+   * salen de su borde, y sus etiquetas y sus cables necesitan aire antes de llegar al primer nodo.
+   */
+  gutter?: number
 }
 
 export interface SemanticEdge {
@@ -209,6 +214,9 @@ export interface Placement extends Point {
  * insignia y el nombre; el resto es el margen que separa el contenido del borde.
  */
 export const SCOPE_FRAME = { top: 66, side: 24, bottom: 24 } as const
+
+/** Lo que se reserva a la izquierda de una función con parámetros (ver `GraphNode.gutter`). */
+export const PARAM_GUTTER = 64
 
 export interface LayoutResult {
   placements: Placement[]

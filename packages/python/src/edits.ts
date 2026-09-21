@@ -291,25 +291,48 @@ export function duplicateNode(program: Program, id: string): Change {
   }
 }
 
-/** Las líneas de cada plantilla. Es el Python que aparece al añadir un nodo. */
-const LINES: Record<TemplateId, string[]> = {
-  variable: ['variable = 0'],
-  text: ['texto = "hola"'],
-  boolean: ['activo = True'],
-  list: ['lista = [1, 2, 3]'],
-  dict: ['datos = {"clave": "valor"}'],
-  operation: ['resultado = 1 + 2'],
-  call: ['resultado = funcion(valor)'],
-  input: ['dato = input("Escribe algo: ")'],
-  print: ['print("Hola")'],
-  if: ['if valor > 0:', '    pass'],
-  ifelse: ['if valor > 0:', '    pass', 'else:', '    pass'],
-  for: ['for elemento in range(10):', '    pass'],
-  while: ['while valor > 0:', '    pass'],
-  return: ['return valor'],
-  raise: ['raise ValueError("mensaje")'],
-  import: ['import modulo'],
-  function: ['def nueva_funcion():', '    pass'],
+/**
+ * Las líneas de cada plantilla. Es el Python que aparece al añadir un nodo. Con `fill` (el nombre
+ * de una variable que llega por un cable), el primer campo que admite un valor lo lee de ella.
+ */
+function linesOf(template: TemplateId, fill?: string): string[] {
+  switch (template) {
+    case 'variable':
+      return [`variable = ${fill ?? '0'}`]
+    case 'text':
+      return ['texto = "hola"']
+    case 'boolean':
+      return ['activo = True']
+    case 'list':
+      return [`lista = [${fill ?? '1, 2, 3'}]`]
+    case 'dict':
+      return ['datos = {"clave": "valor"}']
+    case 'operation':
+      return [`resultado = ${fill ?? '1'} + 2`]
+    case 'call':
+      return [`resultado = funcion(${fill ?? 'valor'})`]
+    case 'input':
+      return ['dato = input("Escribe algo: ")']
+    case 'print':
+      return [fill ? `print(${fill})` : 'print("Hola")']
+    case 'if':
+      return [`if ${fill ?? 'valor'} > 0:`, '    pass']
+    case 'ifelse':
+      return [`if ${fill ?? 'valor'} > 0:`, '    pass', 'else:', '    pass']
+    case 'for':
+      return [`for elemento in ${fill ?? 'range(10)'}:`, '    pass']
+    case 'while':
+      return [`while ${fill ?? 'valor'} > 0:`, '    pass']
+    case 'return':
+      return [`return ${fill ?? 'valor'}`]
+    case 'raise':
+      return ['raise ValueError("mensaje")']
+    case 'import':
+      return ['import modulo']
+    // Con dos parámetros y algo que hacer con ellos, para que se vean sus puertos y sus cables.
+    case 'function':
+      return ['def nueva_funcion(a, b):', '    return a + b']
+  }
 }
 
 /** Una función se separa de lo de alrededor con dos líneas en blanco, como pide PEP 8. */
@@ -322,13 +345,15 @@ const SPACED: ReadonlySet<TemplateId> = new Set(['function'])
 export function addTemplate(
   program: Program,
   template: TemplateId,
-  where: { after?: string; into?: string } = {},
+  where: { after?: string; into?: string; fill?: string } = {},
 ): Change {
   const text = program.source
   const eol = eolOf(text)
   let at: number
   let indent = 0
   let prefix = ''
+  /** Un cuerpo que era solo `pass` no se deja colgando: lo nuevo lo sustituye. */
+  let pass: { start: number; end: number } | undefined
 
   const anchor = where.after ? nodeById(program, where.after) : undefined
   const scope = where.into ? nodeById(program, where.into) : undefined
@@ -338,15 +363,36 @@ export function addTemplate(
   } else if (scope?.range) {
     at = lineEnd(text, scope.range.bodyEnd ?? scope.range.end)
     indent = scope.range.bodyIndent ?? scope.range.indent + 4
+    const { head, bodyEnd } = scope.range
+    if (head !== undefined && bodyEnd !== undefined) {
+      const body = text.slice(head, bodyEnd)
+      if (/^\s*pass\s*$/.test(body)) {
+        const start = head + body.indexOf('pass')
+        pass = { start, end: start + 4 }
+      }
+    }
   } else {
     // Al final del archivo. Si no acaba en salto de línea, se pone uno antes.
     at = text.length
     if (text.length > 0 && !text.endsWith('\n')) prefix = eol
   }
 
+  if (pass) {
+    // El primer renglón ocupa el sitio del `pass` (que ya lleva su sangría); el resto va debajo.
+    const lines = linesOf(template, where.fill)
+      .map((line, i) => (i === 0 ? line : ' '.repeat(indent) + line))
+      .join(eol)
+    return {
+      edits: [{ start: pass.start, end: pass.end, text: lines }],
+      select: { line: lineOf(text, pass.start) },
+    }
+  }
+
   const atEndOfFile = at === text.length && !anchor?.range && !scope?.range
   const blanks = SPACED.has(template) && text.trim() !== '' ? [eol, eol] : []
-  const lines = LINES[template].map((line) => ' '.repeat(indent) + line).join(eol)
+  const lines = linesOf(template, where.fill)
+    .map((line) => ' '.repeat(indent) + line)
+    .join(eol)
   // Detrás de una línea, se empieza con un salto; al final del archivo, se cierra con él.
   const body = atEndOfFile
     ? `${prefix}${blanks.join('')}${lines}${eol}`
@@ -356,6 +402,45 @@ export function addTemplate(
     edits: [{ start: at, end: at, text: body }],
     select: { line: lineOf(text, at) + breaks },
   }
+}
+
+/** El nombre que sale por un puerto de un nodo: el del parámetro, o el que el nodo define. */
+function outputName(source: ProgramNode, port?: string): string | undefined {
+  if (port?.startsWith('param:')) {
+    const name = port.slice('param:'.length)
+    return source.params?.includes(name) ? name : undefined
+  }
+  return source.provides
+}
+
+/**
+ * Conecta la salida de un nodo con un campo de otro: el campo pasa a leer el nombre que el origen
+ * define. Solo si ese nombre está al alcance del destino (definido antes, y en su ámbito): un cable
+ * que escribiera un nombre que Python no conoce en ese punto rompería el programa.
+ */
+export function connectNodes(
+  program: Program,
+  action: { from: string; to: string; slot: string; port?: string },
+): Change {
+  const source = nodeById(program, action.from)
+  const target = nodeById(program, action.to)
+  const at = target?.inputs?.[action.slot]
+  const name = source ? outputName(source, action.port) : undefined
+  if (!source || !target || !at || !name || !isIdentifier(name) || source.id === target.id) {
+    return { edits: [] }
+  }
+  if (!target.scope?.includes(name)) return { edits: [] }
+  if (program.source.slice(at.start, at.end) === name) return { edits: [] }
+  return { edits: [{ start: at.start, end: at.end, text: name }] }
+}
+
+/** Suelta el cable de un campo: vuelve a un valor neutro que Python acepta. */
+export function disconnectNode(program: Program, id: string, slot: string): Change {
+  const at = nodeById(program, id)?.inputs?.[slot]
+  if (!at) return { edits: [] }
+  const neutral =
+    at.as === 'string' ? '""' : slot === 'iterable' ? '[]' : slot.startsWith('arg:') ? 'None' : '0'
+  return { edits: [{ start: at.start, end: at.end, text: neutral }] }
 }
 
 /** Cambia el nombre de lo que define un nodo (una variable, una función), en todos sus usos. */
@@ -375,10 +460,18 @@ export function actionEdits(program: Program, action: NodeAction): Change {
       return duplicateNode(program, action.id)
     case 'rename':
       return renameNode(program, action.id, action.to)
-    case 'add':
+    case 'add': {
+      const source = action.connect ? nodeById(program, action.connect.from) : undefined
+      const fill = source && action.connect ? outputName(source, action.connect.port) : undefined
       return addTemplate(program, action.template, {
         ...(action.after === undefined ? {} : { after: action.after }),
         ...(action.into === undefined ? {} : { into: action.into }),
+        ...(fill === undefined || !isIdentifier(fill) ? {} : { fill }),
       })
+    }
+    case 'connect':
+      return connectNodes(program, action)
+    case 'disconnect':
+      return disconnectNode(program, action.id, action.slot)
   }
 }

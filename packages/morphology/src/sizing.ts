@@ -96,6 +96,12 @@ export function nodeSize(
  * decide el contenido, y el layout lo sabe **antes** de pintar.
  */
 // Medidas reales del DOM (a zoom 1): un campo, su etiqueta, la línea de destino y el hueco entre filas.
+/**
+ * Una llamada con hasta este número de argumentos los enseña todos, también en normal: cada uno es un
+ * puerto al que se puede conectar un cable, y uno escondido no se puede cablear.
+ */
+export const INLINE_ARGS = 4
+
 const ROW = { input: 30, labeled: 49, note: 18, gap: 6, label: 19, add: 24 }
 
 /**
@@ -165,7 +171,9 @@ export function controlHeight(
     case 'args': {
       // Un argumento conectado nunca se esconde, y con más de uno cada campo lleva su nombre.
       const isLinked = (name: string) => linked.includes(`arg:${name}`)
-      const shown = model.args.filter((a, i) => full || i === 0 || isLinked(a.name))
+      const shown = model.args.filter(
+        (a, i) => full || i === 0 || isLinked(a.name) || model.args.length <= INLINE_ARGS,
+      )
       const labeled = full || model.args.length > 1 || shown.some((a) => isLinked(a.name))
       const hidden = model.args.length - shown.length
       return stack([
@@ -176,6 +184,10 @@ export function controlHeight(
     }
     case 'condition':
       return stack([ROW.input, ROW.input, ...(full && model.hits ? [ROW.note] : [])])
+    case 'expression':
+      // Los dos operandos van en filas distintas: dos puertos en la misma fila se taparían. Catorce
+      // píxeles de margen: el extremo plano de un retorno tiene un marco algo mayor que el de una operación.
+      return stack([ROW.input, ROW.input]) + 14
     case 'signature':
       // Cada parámetro es una fila (nombre y valor por defecto), y debajo el botón de añadir.
       return stack([...model.params.map(() => ROW.input), ROW.add])

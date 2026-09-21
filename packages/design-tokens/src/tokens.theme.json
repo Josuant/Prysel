@@ -98,6 +98,31 @@
         "usage": "Borde decorativo de una tarjeta de nodo. Nunca es el único indicio de que algo es una tarjeta (siempre hay relleno, insignia y texto), por eso no necesita 3:1."
       },
       {
+        "name": "socket-number",
+        "value": { "light": "#0b7fa0", "dark": "#4cc9ea" },
+        "usage": "Puerto y cable que transportan número, en tono cian. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+      },
+      {
+        "name": "socket-text",
+        "value": { "light": "#0b7a5a", "dark": "#4dd6a8" },
+        "usage": "Puerto y cable que transportan texto, en tono esmeralda. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+      },
+      {
+        "name": "socket-boolean",
+        "value": { "light": "#a86200", "dark": "#f0b04a" },
+        "usage": "Puerto y cable que transportan verdadero / falso, en tono ámbar. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+      },
+      {
+        "name": "socket-collection",
+        "value": { "light": "#7a49e0", "dark": "#b7a2ff" },
+        "usage": "Puerto y cable que transportan colección (lista o diccionario), en tono púrpura. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+      },
+      {
+        "name": "socket-any",
+        "value": { "light": "#6b7280", "dark": "#8a94a3" },
+        "usage": "Puerto y cable que transportan un valor sin clase conocida, en tono gris. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+      },
+      {
         "name": "grid-dot",
         "value": { "light": "#e0e4ea", "dark": "#1d232c" },
         "usage": "Puntos de la retícula del lienzo, sobre void."
