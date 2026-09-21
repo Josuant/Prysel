@@ -125,6 +125,7 @@ export type ControlId =
   | 'loop'
   | 'with'
   | 'handler'
+  | 'class'
   | 'signal'
   | 'io'
   | 'stats'

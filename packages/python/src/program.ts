@@ -4,6 +4,8 @@ import type { Node as TsNode, Tree } from '@vscode/tree-sitter-wasm'
 import type { NodeRange, Source, Span } from './source.ts'
 import {
   augmented,
+  classOf,
+  classSources,
   condition as conditionOf,
   handlerOf,
   handlerSources,
@@ -195,6 +197,7 @@ const COMPOUND = new Set([
   'except_clause',
   'else_clause',
   'finally_clause',
+  'class_definition',
 ])
 
 class Builder {
@@ -277,20 +280,25 @@ class Builder {
   place(id: string, statement: TsNode, extra: { owner?: string; lead?: number }) {
     const node = this.nodes.find((n) => n.id === id)
     if (!node) return
-    const compound = COMPOUND.has(statement.type)
-    const colon = compound ? statement.children.find((c) => c?.type === ':') : undefined
+    // Con decoradores (`@property`), la sentencia empieza en ellos pero lo compuesto es la definición.
+    const core =
+      statement.type === 'decorated_definition'
+        ? (field(statement, 'definition') ?? statement)
+        : statement
+    const compound = COMPOUND.has(core.type)
+    const colon = compound ? core.children.find((c) => c?.type === ':') : undefined
     const body = compound
-      ? (field(statement, statement.type === 'if_statement' ? 'consequence' : 'body') ??
+      ? (field(core, core.type === 'if_statement' ? 'consequence' : 'body') ??
         // Las cláusulas de un try (except, finally) llevan su bloque sin nombre de campo.
-        statement.namedChildren.find((c) => c?.type === 'block') ??
+        core.namedChildren.find((c) => c?.type === 'block') ??
         null)
       : null
     const first = body?.namedChildren.find((c) => c && c.type !== 'comment')
     const indent = statement.startPosition.column
     // Una decisión: dónde acaba cada camino, para poder meter algo al principio del que se quiera.
     const orElse =
-      statement.type === 'if_statement'
-        ? statement.namedChildren.find((c) => c?.type === 'else_clause')
+      core.type === 'if_statement'
+        ? core.namedChildren.find((c) => c?.type === 'else_clause')
         : undefined
     const elseBody = orElse ? field(orElse, 'body') : null
     const elseColon = orElse?.children.find((c) => c?.type === ':')
@@ -303,13 +311,13 @@ class Builder {
       ...(compound
         ? {
             bodyEnd:
-              statement.type === 'if_statement'
+              core.type === 'if_statement'
                 ? statement.endIndex
                 : (body?.endIndex ?? statement.endIndex),
             bodyIndent: first?.startPosition.column ?? indent + 4,
           }
         : {}),
-      ...(statement.type === 'if_statement' && body ? { yesEnd: body.endIndex } : {}),
+      ...(core.type === 'if_statement' && body ? { yesEnd: body.endIndex } : {}),
       ...(orElse && elseColon && elseBody
         ? { elseAt: orElse.startIndex, elseHead: elseColon.endIndex, elseEnd: elseBody.endIndex }
         : {}),
@@ -868,6 +876,75 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       })
       const loop = builder.loops[builder.loops.length - 1]
       if (loop) builder.link(id, loop, 'transform', isBreak ? 'exit' : 'next', undefined, 'control')
+      return id
+    }
+
+    // Una definición con decoradores (`@property`, `@dataclass`): es la misma definición, con sus decoradores dentro de su sentencia.
+    case 'decorated_definition': {
+      const definition = field(statement, 'definition')
+      return definition ? visitStatement(builder, definition) : null
+    }
+
+    // `class`: un territorio como una función. Sus atributos son chips de su cajita y sus métodos, funciones dentro.
+    case 'class_definition': {
+      const id = statementId(statement, 'class')
+      const name = field(statement, 'name')?.text ?? 'clase'
+      const bases = field(statement, 'superclasses')
+      const body = field(statement, 'body')
+      const known = new Set(builder.functions.keys())
+      // Se olvida el `__init__` de una clase anterior: solo vale el de esta.
+      builder.functions.delete('__init__')
+      builder.add(
+        {
+          id,
+          kind: 'abstraction.class',
+          label: name,
+          code,
+          line,
+          control: classOf(bases, []),
+          ...sourcesOf(classSources(bases)),
+          ...inputsIn(inputsOf(classSources(bases))),
+        },
+        name,
+      )
+      const nameNode = field(statement, 'name')
+      if (nameNode) builder.recordName(id, name, nameNode)
+      // De quién hereda se lee fuera de la clase.
+      linkReads(builder, id, bases, portsOf(bases, 'bases'))
+      const restore = builder.pushScope()
+      const outerLoops = builder.loops.splice(0)
+      const doc = docstringOf(body)
+      const own = ownComments(statement)
+      builder.annotate(
+        id,
+        [[...own.header, ...own.after].join('\n'), doc?.text ?? '']
+          .filter((part) => part.trim())
+          .join('\n\n'),
+      )
+      const before = builder.nodes.length
+      if (body) visitBlock(builder, body, { skip: new Set(doc ? [doc.at] : []), owner: id })
+      const inside = builder.nodes.slice(before).map((n) => n.id)
+      builder.loops.push(...outerLoops)
+      restore()
+      // Lo que recibe al crearse son los parámetros de su `__init__` (sin `self`).
+      const init = (builder.functions.get('__init__') ?? []).slice(1)
+      // Los métodos solo se llaman a través de una instancia: no se conocen como funciones sueltas.
+      for (const key of [...builder.functions.keys()]) {
+        if (!known.has(key)) {
+          builder.functions.delete(key)
+          builder.functionIds.delete(key)
+        }
+      }
+      builder.functions.set(name, init)
+      builder.functionIds.set(name, id)
+      const node = builder.nodes.find((n) => n.id === id)
+      if (node) {
+        node.control = classOf(bases, init)
+        if (inside.length > 0) {
+          node.contains = inside
+          node.ops = inside.length
+        }
+      }
       return id
     }
 

@@ -269,6 +269,18 @@ El progreso de una ejecución (`i / N`) ya lo lleva el modelo del editor (`curre
 
 Lo que se define dentro se ve después, como en Python, y las cláusulas se **leen en el orden del archivo** (intento, cada `except`, `else`, `finally`): el orden que las coloca es de lectura, no de ejecución. Una **cláusula no se mueve por sí sola** ni se pone nada «detrás» de ella (`checkOrder`, `CLAUSE_KINDS`): vive dentro de su `try`. Sí reciben nodos por el puerto de inicio de su cuerpo, y «Añadir» sobre un `try` seleccionado escribe al final del intento (antes de sus cláusulas). Plantillas nuevas: «Intentar / si falla» y «Con un recurso (with)». Eliminar el `try` se lleva todas sus cláusulas.
 
+### `class` y decoradores
+
+Una clase es un **territorio como una función** (`abstraction.class`, de rol abstracción y también en `TERRITORY_KINDS`): un marco con su cajita de variables y, dentro, lo que define.
+
+- **Cabecera**: `hereda de [Animal, Otro]` (las bases, editables y sin cable: la casilla ya nombra lo que hereda). El nombre es el título y se renombra en todos sus usos; su docstring es su nota.
+- **Atributos de clase** (`patas = 4`): chips de su cajita, como las constantes de una función.
+- **Métodos**: funciones dentro de la clase, cada una con su cajita (`self` y sus parámetros son chips) y su «devuelve». **No se ofrecen como funciones sueltas** en el menú «Funciones» ni como chips del programa (`functionsOf`): viven en su clase.
+- **Crearla es llamarla**: `Perro("Rex", 3)` es una llamada que lleva a la clase (chevron), con un argumento por cada parámetro de su `__init__` (sin `self`) y el chip `ƒ Perro(nombre, edad)` para soltar en «a quién llamar». Como una función usada, la clase no se dibuja en el flujo del programa: se ve en la llamada y se abre desde ella.
+- **Ámbito**: lo que se define en el cuerpo de la clase es de la clase, no se ve desde fuera. Los `__init__` de clases distintas no se mezclan.
+
+Los **decoradores** (`@property`, `@staticmethod`, `@dataclass`) ya no vuelven opaca la definición: la sentencia empieza en ellos, así que eliminar, duplicar o mover la definición se los lleva, y se puede meter algo en su cuerpo (`place` distingue la sentencia de la definición que decora).
+
 ### El retorno es la salida de la función
 
 Un `return` no es un nodo más: es lo que la función **da**. `foldReturns` (en `program.ts`, tras plegar) lo trata así:
@@ -423,7 +435,7 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 - **Puertos de orden para el `elif` y el `else` de un bucle**: el puerto «falso» de una decisión escribe siempre en el `else` (lo crea detrás de los `elif` si falta); un `elif` concreto y la cláusula `else` de un bucle no tienen puerto, y el segundo tampoco se representa.
 - **Auto-layout jerárquico** (Dagre/ELK): el reparto lo hace la gramática espacial; Mayús+F solo le devuelve lo que el usuario movió.
 - **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.
-- **`class` y decoradores como nodos con estructura**: hoy son nodos opacos (se editan como texto en el panel «Código»). `match` también. Un `try` con `except*` no se representa, y no hay puerto de orden para cada cláusula (se mete algo por el de inicio de su cuerpo).
+- **`match`** (y `except*`) como nodos con estructura: hoy `match` es un nodo opaco (se edita como texto en el panel «Código»). En una clase, `self.x = valor` sigue siendo una tarjeta de asignación genérica, sin un nodo propio de «atributo»; y no hay herencia entre clases dibujada más allá de su casilla de bases.
 - **Deshacer propio**: se apoya en el del editor (una operación = un deshacer); el lienzo no tiene historial propio.
 - **Comentarios**: los que cuelgan entre las ramas de un `if`/`elif`/`else` se recogen solo si tree-sitter los cuelga de la sentencia; los de otras construcciones (`with`, `try`) no se tratan porque esas construcciones aún son nodos opacos.
 - Enrutado: separar en carriles las conexiones que comparten pasillo, y esquivar también a los retornos de bucle.

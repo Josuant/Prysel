@@ -67,6 +67,7 @@ const WRITABLE: ReadonlySet<string> = new Set([
   'loop',
   'with',
   'handler',
+  'class',
   'signature',
   'list',
   'dict',
@@ -526,6 +527,21 @@ function Editor({
               />
             </>
           )}
+        </Row>
+      )
+
+    case 'class':
+      return (
+        <Row>
+          <span className="type-field-label muted">hereda de</span>
+          <TextInput
+            value={model.bases}
+            placeholder="nadie"
+            slot={{ id: 'bases', label: 'Base' }}
+            linked={isLinked('bases')}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('bases', (bases: string) => patch({ bases }))}
+          />
         </Row>
       )
 

@@ -248,6 +248,12 @@ export const SAMPLES: Record<NodeKindId, Sample> = {
     meta: 'externo · 2.2.3',
     control: { kind: 'module', module: 'pandas', alias: 'pd' },
   },
+  'abstraction.class': {
+    label: 'Perro',
+    code: 'class Perro(Animal):',
+    meta: 'animales.py:8',
+    control: { kind: 'class', bases: 'Animal', params: ['nombre', 'edad'] },
+  },
   'abstraction.collapsed': {
     label: 'load_sales',
     code: 'def load_sales(path, sep=","): …',
@@ -340,7 +346,13 @@ export const GROUPS: Group[] = [
     title: 'Fronteras',
     blurb:
       'Lo ajeno, lo encapsulado y lo que aún no se entiende. Aquí viven la transparencia y el desenfoque.',
-    kinds: ['external.import', 'abstraction.collapsed', 'smart.ui', 'opaque.code'],
+    kinds: [
+      'external.import',
+      'abstraction.collapsed',
+      'abstraction.class',
+      'smart.ui',
+      'opaque.code',
+    ],
   },
   {
     title: 'Espacios',

@@ -188,18 +188,18 @@ describe('escribir cualquier nodo como código', () => {
     expect(text).toBe('x = 50  # el tope\n')
   })
 
-  it('lo que no tenía editor (una clase) también se puede escribir, entero', () => {
-    const source = 'class Punto:\n    x = 1\n'
+  it('lo que no tenía editor (un match) también se puede escribir, entero', () => {
+    const source = 'match x:\n    case 1:\n        pass\n'
     const program = parse(source)
     const node = program.nodes[0]
     // Una construcción opaca no tiene cuerpo dibujado: su texto editable es la sentencia entera.
-    expect(node?.text).toBe('class Punto:\n    x = 1')
+    expect(node?.text).toBe('match x:\n    case 1:\n        pass')
     const { text } = act(source, (p) => ({
       type: 'code',
       id: p.nodes[0]?.id ?? '',
-      text: 'class Punto:\n    x = 2',
+      text: 'match x:\n    case 2:\n        pass',
     }))
-    expect(text).toBe('class Punto:\n    x = 2\n')
+    expect(text).toBe('match x:\n    case 2:\n        pass\n')
     expect(valid(text)).toBe(true)
   })
 

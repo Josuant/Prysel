@@ -581,7 +581,8 @@ export function MorphNode({
               {container &&
                 (control?.kind === 'loop' ||
                   control?.kind === 'with' ||
-                  control?.kind === 'handler') && (
+                  control?.kind === 'handler' ||
+                  control?.kind === 'class') && (
                   <div className="node__control node__control--territory">
                     <Control
                       model={control}

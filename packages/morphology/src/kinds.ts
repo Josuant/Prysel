@@ -198,6 +198,24 @@ export const NODE_KINDS = [
     why: 'La misma punta de flecha que una llamada, pero punteada y translúcida: la transformación está definida y aún no se ejecuta.',
   },
 
+  {
+    ...base,
+    id: 'abstraction.class',
+    name: 'Clase',
+    python: 'class Perro(Animal): ...',
+    role: 'abstraction',
+    badge: 'neutral',
+    icon: 'diamond',
+    shape: 'card-double',
+    stroke: 'solid',
+    fill: 'glass',
+    control: 'class',
+    scaleBy: 'ops',
+    footprint: { w: 1.05, h: 1.1 },
+    ports: { in: true, out: true },
+    why: 'Como una función, un territorio de vidrio con complejidad encapsulada; dentro van sus atributos y sus métodos, y se crea llamándola.',
+  },
+
   // ── Control: el camino se decide, se repite o se corta. ──
   {
     ...base,
@@ -522,6 +540,7 @@ export const TERRITORY_KINDS: ReadonlySet<string> = new Set([
   'control.try',
   'control.except',
   'control.clause',
+  'abstraction.class',
 ])
 
 /** ¿Es un tipo que se dibuja como territorio cuando tiene algo dentro? (Las funciones también, aparte.) */
@@ -532,6 +551,7 @@ export const HEADER_EDITOR_KINDS: ReadonlySet<string> = new Set([
   'control.loop',
   'control.with',
   'control.except',
+  'abstraction.class',
 ])
 
 /** La silueta de un territorio: la pestaña de carpeta, sea cual sea el tipo. */

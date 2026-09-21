@@ -586,6 +586,7 @@ const SETUP: ReadonlySet<string> = new Set([
   'data.dict',
   'external.import',
   'abstraction.collapsed',
+  'abstraction.class',
 ])
 
 /** Las cláusulas de un try: viven dentro de él, con su propio cuerpo. */

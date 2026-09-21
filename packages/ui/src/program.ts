@@ -153,21 +153,30 @@ export interface FunctionInfo {
 }
 
 export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): FunctionInfo[] {
-  return nodes.filter(isFunction).map((node) => {
-    const body = new Set(node.contains)
-    const params =
-      node.control?.kind === 'signature' ? node.control.params.map((p) => p.name).join(', ') : ''
-    return {
-      id: node.id,
-      name: node.label,
-      signature: `(${params})`,
-      params: node.control?.kind === 'signature' ? node.control.params.map((p) => p.name) : [],
-      calls: nodes.filter((other) => other.opens === node.id).length,
-      used: edges.some((edge) => edge.from === node.id && !body.has(edge.to)),
-      size: body.size,
-      ...(node.note ? { doc: node.note } : {}),
-    }
-  })
+  // Un método vive dentro de su clase: no es una función que se llame suelta, ni se ofrece como chip.
+  const classes = new Set(nodes.filter((n) => n.kind === 'abstraction.class').map((n) => n.id))
+  return nodes
+    .filter((node) => isFunction(node) && !classes.has(node.owner ?? ''))
+    .map((node) => {
+      const body = new Set(node.contains)
+      // Una función recibe sus parámetros; una clase, los de su `__init__` al crearse.
+      const names =
+        node.control?.kind === 'signature'
+          ? node.control.params.map((p) => p.name)
+          : node.control?.kind === 'class'
+            ? node.control.params
+            : []
+      return {
+        id: node.id,
+        name: node.label,
+        signature: `(${names.join(', ')})`,
+        params: names,
+        calls: nodes.filter((other) => other.opens === node.id).length,
+        used: edges.some((edge) => edge.from === node.id && !body.has(edge.to)),
+        size: body.size,
+        ...(node.note ? { doc: node.note } : {}),
+      }
+    })
 }
 
 export interface FoldedView {

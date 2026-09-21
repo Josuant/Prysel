@@ -103,7 +103,9 @@ export function inputsOf(
   for (const [path, source] of Object.entries(sources ?? {})) {
     if (source.as !== 'expression') continue
     if (path.startsWith('args.')) found[`arg:${path.slice(5)}`] ??= source
-    else if (['left', 'right', 'field', 'value', 'iterable', 'context', 'type'].includes(path)) {
+    else if (
+      ['left', 'right', 'field', 'value', 'iterable', 'context', 'type', 'bases'].includes(path)
+    ) {
       found[path] ??= source
     }
   }
@@ -434,6 +436,24 @@ export function handlerOf(type: TsNode | null, alias: TsNode | null): ControlMod
 /** El tipo de error de un `except` se puede reescribir. */
 export function handlerSources(type: TsNode | null): Record<string, Source> | undefined {
   return type ? { type: span(type, 'expression') } : undefined
+}
+
+/**
+ * `class Perro(Animal):`: de quién hereda y qué recibe al crearse (los parámetros de su `__init__`,
+ * sin `self`). Sin paréntesis, no hereda de nadie explícitamente.
+ */
+export function classOf(bases: TsNode | null, params: string[]): ControlModel {
+  return {
+    kind: 'class',
+    bases: bases ? bases.text.slice(1, -1).trim() : '',
+    params,
+  }
+}
+
+/** Lo que hay entre los paréntesis de una clase se puede reescribir (y se lee, para enlazar lo que nombra). */
+export function classSources(bases: TsNode | null): Record<string, Source> | undefined {
+  if (!bases || bases.text.slice(1, -1).trim() === '') return undefined
+  return { bases: { start: bases.startIndex + 1, end: bases.endIndex - 1, as: 'expression' } }
 }
 
 /** `raise ValueError("mensaje")`: un tipo de error y su mensaje. */

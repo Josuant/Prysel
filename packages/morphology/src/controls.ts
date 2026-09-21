@@ -55,6 +55,11 @@ export type ControlModel =
   | { kind: 'with'; context: string; name: string }
   /** `except ValueError as e:`: qué error se atrapa (vacío: cualquiera) y el nombre con el que se usa dentro. */
   | { kind: 'handler'; type: string; name: string }
+  /**
+   * `class Perro(Animal):`: de quién hereda (el texto entre paréntesis, vacío si de nadie) y lo que
+   * recibe al crearse (los parámetros de su `__init__`, sin `self`).
+   */
+  | { kind: 'class'; bases: string; params: string[] }
   | { kind: 'signal'; errorType: string; types: string[]; message: string }
   | { kind: 'io'; target: string; mode: string; modes: string[] }
   | {

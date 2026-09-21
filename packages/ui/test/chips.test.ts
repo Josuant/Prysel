@@ -723,3 +723,45 @@ describe('with y try también tienen su cajita', () => {
     expect(promoteTarget([ctx, a, x], x)).toBe('a')
   })
 })
+
+describe('una clase en el lienzo', () => {
+  it('lee lo que hay escrito en las casillas de with, except y class', () => {
+    expect(slotText({ kind: 'class', bases: 'Animal', params: [] }, 'bases')).toBe('Animal')
+    expect(slotText({ kind: 'with', context: 'open(f)', name: 'x' }, 'context')).toBe('open(f)')
+    expect(slotText({ kind: 'handler', type: 'ValueError', name: '' }, 'type')).toBe('ValueError')
+    expect(slotText({ kind: 'class', bases: 'A', params: [] }, 'otra')).toBeUndefined()
+  })
+
+  it('lo que hereda deja de ser un cable: la casilla ya lo nombra', () => {
+    const animal = node('Animal', { kind: 'abstraction.class', provides: 'Animal', line: 1 })
+    const perro = node('Perro', {
+      kind: 'abstraction.class',
+      line: 2,
+      inputs: ['bases'],
+      control: { kind: 'class', bases: 'Animal', params: [] },
+    })
+    const herencia: SemanticEdge = {
+      from: 'Animal',
+      to: 'Perro',
+      relation: 'transform',
+      toPort: 'bases',
+    }
+    const plan = planChips([animal, perro], [herencia], { canAdd: false, density: () => 'normal' })
+    expect(plan.hidden.has(herencia)).toBe(true)
+  })
+
+  it('una clase tiene cajita: sus atributos son chips', () => {
+    const clase = node('C', { kind: 'abstraction.class', line: 1, contains: ['patas', 'm'] })
+    const patas = value('patas', 2, { owner: 'C' })
+    const metodo = node('m', {
+      kind: 'abstraction.collapsed',
+      line: 3,
+      owner: 'C',
+      contains: ['x'],
+    })
+    const x = node('x', { line: 4, owner: 'm' })
+    const plan = planChips([clase, patas, metodo, x], [], { canAdd: false })
+    expect(plan.docked.get('patas')).toBe('C')
+    expect(plan.trays.has('C')).toBe(true)
+  })
+})

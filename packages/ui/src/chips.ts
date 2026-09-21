@@ -105,6 +105,12 @@ export function slotText(control: ControlModel | undefined, slot: string): strin
       return slot === 'field' ? control.field : slot === 'value' ? control.value : undefined
     case 'loop':
       return slot === 'iterable' ? control.iterable : undefined
+    case 'class':
+      return slot === 'bases' ? control.bases : undefined
+    case 'with':
+      return slot === 'context' ? control.context : undefined
+    case 'handler':
+      return slot === 'type' ? control.type : undefined
     case 'args':
       if (slot === 'callee') return control.target
       return slot.startsWith('arg:')
@@ -287,6 +293,7 @@ const SETUP_KINDS: ReadonlySet<string> = new Set([
   'data.dict',
   'external.import',
   'abstraction.collapsed',
+  'abstraction.class',
 ])
 
 /**
