@@ -198,6 +198,11 @@ class Builder {
   private readonly scope = new Map<string, { id: string; port?: string }>()
   /** Los nombres visibles ahora, ya calculados: los nodos consecutivos comparten la misma lista. */
   private visible: string[] | null = null
+  /**
+   * De dónde sigue la ejecución cuando termina una sentencia, si no es ella misma: una decisión sigue
+   * desde el final de cada uno de sus caminos (y desde ella si no tiene `else`).
+   */
+  readonly tails = new Map<string, string[]>()
   /** Los bucles que envuelven lo que se está recorriendo, del más interno al más externo: a quién apuntan un `break` o un `continue`. */
   readonly loops: string[] = []
   /** Funciones definidas hasta ahora y sus parámetros: nombran los argumentos de cada llamada. */
@@ -516,6 +521,8 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
   /** Dónde están los comentarios de bloque que esperan a la siguiente sentencia. */
   const comments: { start: number; row: number; endRow: number }[] = []
   let last: { id: string; row: number } | null = null
+  /** De dónde sigue la ejecución: la sentencia anterior (o los finales de los caminos de una decisión). */
+  let flow: string[] = []
   /** Cuántas sentencias tiene el bloque: cuentan también las que no son nodos (un docstring, un `pass`). */
   let statements = 0
 
@@ -564,6 +571,14 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
     }
     produced.push(id)
     last = { id, row: statement.endPosition.row }
+
+    // El orden: cada sentencia a continuación de la anterior. Una definición no se ejecuta aquí (solo
+    // dice qué es la función), y tras un `return`, `raise`, `break` o `continue` no sigue nada.
+    const node = builder.nodes.find((n) => n.id === id)
+    if (node?.kind !== 'abstraction.collapsed') {
+      for (const from of flow) builder.link(from, id, 'sequence')
+      flow = builder.tails.get(id) ?? (node && JUMPS.has(node.kind) ? [] : [id])
+    }
   }
   if (last && pending.length > 0) builder.annotate(last.id, pending.join('\n'))
   for (const id of produced) {
@@ -572,6 +587,14 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
   }
   return produced
 }
+
+/** Las sentencias tras las que la ejecución no sigue con la siguiente del bloque. */
+const JUMPS: ReadonlySet<string> = new Set([
+  'control.return',
+  'control.raise',
+  'control.break',
+  'control.continue',
+])
 
 function visitStatement(builder: Builder, statement: TsNode): string | null {
   const line = statement.startPosition.row + 1
@@ -755,12 +778,28 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const yes = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
       if (yes[0]) builder.link(id, yes[0], 'branch', undefined, 'verdadero')
 
+      // Por dónde sigue la ejecución al acabar: el final de cada camino que no salta, y la propia
+      // decisión si no hay `else` (el camino en el que no se cumple).
+      const tails: string[] = []
+      const endOf = (ids: string[]) => {
+        const last = ids[ids.length - 1]
+        const node = builder.nodes.find((n) => n.id === last)
+        if (last !== undefined && node && !JUMPS.has(node.kind)) tails.push(last)
+      }
+      endOf(yes)
+      if (yes.length === 0) tails.push(id)
+      let hasElse = false
       for (const clause of statement.namedChildren) {
         if (!clause || (clause.type !== 'else_clause' && clause.type !== 'elif_clause')) continue
+        if (clause.type === 'else_clause') hasElse = true
         const clauseBody = field(clause, 'body')
         const no = clauseBody ? visitBlock(builder, clauseBody, { owner: id }) : []
         if (no[0]) builder.link(id, no[0], 'branch', undefined, 'falso')
+        endOf(no)
+        if (no.length === 0) tails.push(id)
       }
+      if (!hasElse) tails.push(id)
+      builder.tails.set(id, [...new Set(tails)])
       return id
     }
 

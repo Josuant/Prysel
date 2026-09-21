@@ -38,6 +38,12 @@ export type Relation =
   | 'feedback'
   /** Dependencia débil: un import, un tipo, un símbolo al que se alude sin que fluya un dato. */
   | 'reference'
+  /**
+   * B se ejecuta justo después de A. Es el **orden** del programa: cada sentencia a continuación de la
+   * anterior, y lo que sigue a una decisión saliendo de sus dos caminos. No se dibuja por defecto (en
+   * un bloque lineal ya lo dice la posición): es lo que la colocación sigue para ordenar el plano.
+   */
+  | 'sequence'
 
 /**
  * El canal por el que viaja una conexión. Son dos lenguajes visuales distintos y no deben
@@ -58,6 +64,7 @@ export const CHANNEL_OF: Record<Relation, Channel> = {
   reference: 'data',
   branch: 'control',
   feedback: 'control',
+  sequence: 'control',
 }
 
 export interface SemanticNode {

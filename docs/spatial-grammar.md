@@ -191,6 +191,18 @@ Los chips del programa y sus parámetros no tienen cable alguno: si un valor se 
 - **Se ve dónde está**: la casilla que lo recibe lo muestra **dentro**, coloreado por su clase de valor y con una × para quitarlo. Al seleccionar un chip se marcan todas las casillas donde se usa: su conexión no se dibuja, así que se señala.
 - **Todas las casillas que reciben un valor lo aceptan**: operandos, argumentos, el mensaje de un `print`, los lados de una condición, la secuencia de un bucle, la casilla de una función a la que llamar.
 
+### El orden de ejecución coloca el plano
+
+Con los datos convertidos en chips, lo que ordena el diagrama es **el orden en que se ejecuta**, no quién usa a quién. El analizador emite una relación propia, `sequence` (canal de control): cada sentencia **detrás de la anterior**, dentro de su bloque (`visitBlock`). Reglas:
+
+- **Una definición no se ejecuta donde se escribe** (`def` solo dice qué es la función): el orden pasa de largo.
+- **Tras una decisión** el orden sale del **final de cada camino** —y de la propia decisión si no hay `else`, que es el camino en que no se cumple—. Un camino que acaba en `return`, `raise`, `break` o `continue` no sigue con lo siguiente, y tras uno de ellos no hay nada.
+- **Un bucle** lleva su cuerpo en cadena, entra a él por su cabecera y sigue tras él con lo que viene después.
+
+El plano se coloca **solo** con ese orden, con el control (ramas, `break`, la vuelta del bucle) y con los datos que aún se dibujan (los de la densidad compacta, o un valor sin nombre): un dato que ya es un chip no coloca nada (`plan.flowEdges`). Lo que no está en el plano —un chip en su cajita, un `return` que se dibuja como salida de la función— no rompe la cadena: se salta y su anterior queda unido a su siguiente (`contractOrder`). El resultado se lee como el archivo: de izquierda a derecha, saltando de fila al llegar al borde, con cada función y cada bucle como un bloque.
+
+**Sin cables de orden a la vista.** En un bloque lineal el orden lo dice la posición, y dibujar una flecha entre cada par de sentencias solo ensuciaría. Los únicos cables que se ven son los de control que sí dicen algo que la posición no dice (las ramas de un `if`, `break`, el carril «repite»). Al seleccionar un nodo se dibuja su orden (lo de antes y lo de después) junto con sus cables de datos ocultos, sin repetir el camino cuando ya lo une un dato.
+
 ### Llamar a una función: elegirla, y sus casillas aparecen
 
 El nodo de una llamada tiene una casilla para **a quién llama**, con un desplegable con las funciones del programa y las de uso común (`print`, `len`, `range`…), y acepta el **chip de una función** (las funciones del programa se ofrecen como chips `ƒ nombre(a, b)` en la cajita del programa). Al elegir otra, la acción `callee` (`changeCallee`) escribe:
@@ -373,7 +385,7 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 
 - Micro-interfaces semánticas: sustituir la línea de código literal de cada nodo (`print`, `input`…) por controles reales — un desplegable para un operador lógico, un campo de formulario para un literal.
 - Orden secuencial entre sentencias como conexiones de control (ver arriba).
-- **Cables de orden (decisión tomada, sin hacer)**: los cables serán solo de orden, y **solo donde sea estrictamente necesario** (ramas, bucles, uniones), no una cadena por cada sentencia consecutiva: en un bloque lineal el orden lo da la posición. Falta que el analizador y la colocación se apoyen en el orden de ejecución (hoy se apoyan en las dependencias de datos, que ya no se dibujan), y poder arrastrar un cable de orden para reordenar (`move`).
+- **Arrastrar cables de orden para reordenar** (`move`), con puertos de ejecución en la decisión (verdadero / falso), en `break` y en `continue`: el orden ya coloca el plano (ver «El orden de ejecución coloca el plano»), pero aún no se puede editar arrastrando; hoy se reordena moviendo el nodo a otro sitio del flujo.
 - **Puertos de ejecución** (la flecha ▸ de entrada y salida que ordena las sentencias): hoy el orden es el del archivo y no se dibuja ni se cablea; conectarlos reordenaría el código y es la decisión abierta del orden secuencial.
 - **Conectar un cable existente a otro campo** (arrastrar el extremo de un cable ya tendido) y **cables desde un puerto de entrada** hacia una salida nueva: hoy se conecta desde salidas.
 - **Un nodo sin nombre como origen** (`print(x)` no define nada; `float(input())` sin asignar): para usarlos habría que introducir una variable.

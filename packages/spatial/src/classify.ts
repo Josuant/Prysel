@@ -12,7 +12,13 @@ import {
  * igual que la morfología deduce la UI de un nodo a partir de su tipo.
  */
 
-const FORWARD: SemanticEdge['relation'][] = ['dependency', 'transform', 'branch', 'merge']
+const FORWARD: SemanticEdge['relation'][] = [
+  'dependency',
+  'transform',
+  'branch',
+  'merge',
+  'sequence',
+]
 
 export function outgoing(graph: SemanticGraph, id: string): SemanticEdge[] {
   return graph.edges.filter((e) => e.from === id && e.relation !== 'feedback')

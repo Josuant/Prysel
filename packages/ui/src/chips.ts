@@ -339,8 +339,14 @@ export interface ChipPlan {
   docked: ReadonlyMap<string, string>
   /** Lo que se coloca en el plano: todo menos los chips acoplados (esos van en su cajita). */
   flowNodes: CanvasNode[]
-  /** Las conexiones que se dibujan en el plano: las que salen de un chip acoplado no. */
+  /**
+   * Las conexiones con las que se coloca el plano: el orden de ejecución, el control (ramas, bucles) y
+   * los datos que aún se dibujan. Los datos que son un chip en una casilla ya no cuentan: solo el
+   * orden manda en cómo se reparten los nodos.
+   */
   flowEdges: SemanticEdge[]
+  /** El orden de ejecución entre lo que se ve, saltando lo que no está en el plano (chips en cajitas). */
+  order: SemanticEdge[]
   /** La cajita de cada contexto que tiene una. */
   trays: ReadonlyMap<string, TrayLayout>
   /** Los chips acoplados de cada contexto, en el orden del código. */
@@ -372,6 +378,50 @@ export function iterName(
   if (edge.toPort === 'return') return undefined
   const name = edge.fromPort.slice('param:'.length)
   return iterVars.get(edge.from)?.some((v) => v.name === name) ? name : undefined
+}
+
+/**
+ * El orden de ejecución entre los nodos que se ven. Un nodo que no está en el plano (un chip en su
+ * cajita, un retorno que se dibuja como salida de la función) no rompe la cadena: se salta, y su
+ * anterior queda unido a su siguiente.
+ */
+export function contractOrder(
+  edges: readonly SemanticEdge[],
+  visible: ReadonlySet<string>,
+): SemanticEdge[] {
+  const next = new Map<string, string[]>()
+  for (const edge of edges) {
+    if (edge.relation !== 'sequence') continue
+    const list = next.get(edge.from)
+    if (list) list.push(edge.to)
+    else next.set(edge.from, [edge.to])
+  }
+  const out: SemanticEdge[] = []
+  const seen = new Set<string>()
+  const add = (edge: SemanticEdge) => {
+    const key = `${edge.from}|${edge.to}`
+    if (seen.has(key) || edge.from === edge.to) return
+    seen.add(key)
+    out.push(edge)
+  }
+  for (const edge of edges) {
+    if (edge.relation !== 'sequence' || !visible.has(edge.from)) continue
+    if (visible.has(edge.to)) {
+      add(edge)
+      continue
+    }
+    // Se atraviesa lo que no se ve hasta dar con lo siguiente que sí.
+    const stack = [...(next.get(edge.to) ?? [])]
+    const visited = new Set<string>([edge.to])
+    while (stack.length > 0) {
+      const id = stack.pop() as string
+      if (visited.has(id)) continue
+      visited.add(id)
+      if (visible.has(id)) add({ from: edge.from, to: id, relation: 'sequence' })
+      else stack.push(...(next.get(id) ?? []))
+    }
+  }
+  return out
 }
 
 export interface ChipOptions {
@@ -500,13 +550,23 @@ export function planChips(
     if (only.length > 0) chipOnly[id] = only
   }
 
+  const flowNodes = nodes.filter((node) => !docked.has(node.id))
+  const order = contractOrder(edges, new Set(flowNodes.map((node) => node.id)))
+
   return {
     docked,
-    flowNodes: nodes.filter((node) => !docked.has(node.id)),
-    flowEdges: edges.filter(
-      (edge) =>
-        !docked.has(edge.from) && !docked.has(edge.to) && iterName(iterVars, edge) === undefined,
-    ),
+    flowNodes,
+    flowEdges: [
+      ...edges.filter(
+        (edge) =>
+          edge.relation !== 'sequence' &&
+          !docked.has(edge.from) &&
+          !docked.has(edge.to) &&
+          !hidden.has(edge),
+      ),
+      ...order,
+    ],
+    order,
     trays,
     chipsOf,
     iterVars,

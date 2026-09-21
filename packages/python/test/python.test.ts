@@ -341,7 +341,9 @@ describe('un nodo enseña lo que significa, no la sintaxis que lo escribió', ()
 
   it('no lee cada nombre como argumento dos veces', () => {
     const program = parse('a = 1\nr = f(a, a)\n')
-    const into = program.edges.filter((e) => e.to === byLabel(program, 'r')?.id)
+    const into = program.edges.filter(
+      (e) => e.to === byLabel(program, 'r')?.id && e.relation !== 'sequence',
+    )
     expect(into.filter((e) => e.from === byLabel(program, 'a')?.id)).toHaveLength(1)
   })
 })

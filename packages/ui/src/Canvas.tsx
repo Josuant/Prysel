@@ -522,13 +522,20 @@ function CanvasInner({
   const revealed = useMemo(() => {
     const shown = new Set<SemanticEdge>()
     if (selectedId === null) return shown
-    for (const edge of plan.hidden) {
+    for (const edge of [...plan.hidden, ...plan.order]) {
       if (edge.from !== selectedId && edge.to !== selectedId) continue
       const from = byId.get(edge.from)
       const to = byId.get(edge.to)
       if (!from || !to || isChipKind(from) || isChipKind(to)) continue
       if (plan.docked.has(edge.from) || iterName(plan.iterVars, edge) !== undefined) continue
       shown.add(edge)
+    }
+    // Entre dos nodos consecutivos que ya se unen por un dato, el orden iría por el mismo camino: no se repite.
+    const linked = new Set(
+      [...shown].filter((edge) => edge.relation !== 'sequence').map((e) => `${e.from}|${e.to}`),
+    )
+    for (const edge of shown) {
+      if (edge.relation === 'sequence' && linked.has(`${edge.from}|${edge.to}`)) shown.delete(edge)
     }
     return shown
   }, [selectedId, plan, byId])
@@ -548,7 +555,10 @@ function CanvasInner({
   // cuerpo (sus parámetros) sería una línea redundante que cruza su cabecera.
   const visibleEdges = useMemo(
     () =>
-      edges.filter((edge) => {
+      // El orden de ejecución no se dibuja: en un bloque lineal ya lo dice la posición. Solo se ve, junto
+      // con los cables ocultos, al seleccionar un nodo.
+      [...edges.filter((edge) => edge.relation !== 'sequence'), ...plan.order].filter((edge) => {
+        if (edge.relation === 'sequence') return revealed.has(edge)
         // Un valor que llega a un nodo que ya lo nombra (una constante, la variable de un bucle, un
         // parámetro, el resultado de otra línea) no se dibuja como cable: es un chip en su casilla.
         if (plan.docked.has(edge.from) || (plan.hidden.has(edge) && !revealed.has(edge))) {
@@ -1112,13 +1122,18 @@ function CanvasInner({
     [animated],
   )
 
+  const isCompact = (id: string) => {
+    const node = byId.get(id)
+    return node !== undefined && densityOf(node) === 'compact'
+  }
   const flowEdges: PryselFlowEdge[] = visibleEdges.map((edge) => ({
     id: edgeKey(edge),
     selected: edgeId === edgeKey(edge),
     source: edge.from,
     target: edge.to,
-    sourceHandle: edge.fromPort ?? 'out',
-    targetHandle: edge.toPort ?? 'in',
+    // En compacto un nodo no tiene casillas (ni puertos por campo): todo entra y sale por el borde.
+    sourceHandle: edge.fromPort && !isCompact(edge.from) ? edge.fromPort : 'out',
+    targetHandle: edge.toPort && !isCompact(edge.to) ? edge.toPort : 'in',
     type: 'prysel' as const,
     ...(edge.label === undefined ? {} : { label: edge.label }),
     markerEnd: `url(#prysel-arrow-${channelOf(edge) === 'control' ? 'thick' : 'thin'})`,

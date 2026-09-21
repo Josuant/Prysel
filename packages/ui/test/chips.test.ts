@@ -6,6 +6,7 @@ import {
   TRAY,
   chipSize,
   chipValue,
+  contractOrder,
   dockChips,
   isChipKind,
   mentions,
@@ -453,8 +454,8 @@ describe('el resultado de una línea es un chip', () => {
     expect(plan.hidden.size).toBe(1)
     expect(plan.chipSlots['uso']?.['arg:a']).toEqual({ name: 'x', type: 'any' })
     expect(plan.chipOnly['uso']).toEqual(['arg:a'])
-    // El layout sigue necesitándolo para colocar a cada uno tras el suyo.
-    expect(plan.flowEdges).toHaveLength(1)
+    // Un dato que ya es un chip no coloca nada: solo el orden manda en el plano.
+    expect(plan.flowEdges).toHaveLength(0)
   })
 
   it('si la casilla escribe otra cosa (x + 1) sin ser el nombre, no hay pastilla pero el texto ya lo dice', () => {
@@ -546,8 +547,7 @@ describe('todos los valores son chips: cuándo un cable sobra', () => {
       density: normal,
     })
     expect(plan.hidden.size).toBe(1)
-    // Pero el layout sigue sabiendo que ys va después de xs.
-    expect(plan.flowEdges).toHaveLength(1)
+    expect(plan.flowEdges).toHaveLength(0)
   })
 
   it('una conexión de control nunca se oculta', () => {
@@ -558,5 +558,87 @@ describe('todos los valores son chips: cuándo un cable sobra', () => {
       density: normal,
     })
     expect(plan.hidden.size).toBe(0)
+  })
+})
+
+describe('el orden de ejecución coloca el plano', () => {
+  const seq = (from: string, to: string): SemanticEdge => ({ from, to, relation: 'sequence' })
+  const normal = () => 'normal' as const
+
+  it('lo que no está en el plano no rompe la cadena: se salta', () => {
+    const edges = [seq('a', 'chip'), seq('chip', 'b')]
+    expect(contractOrder(edges, new Set(['a', 'b'])).map((e) => `${e.from}→${e.to}`)).toEqual([
+      'a→b',
+    ])
+  })
+
+  it('atraviesa varios nodos ocultos seguidos', () => {
+    const edges = [seq('a', 'x'), seq('x', 'y'), seq('y', 'b')]
+    expect(contractOrder(edges, new Set(['a', 'b'])).map((e) => `${e.from}→${e.to}`)).toEqual([
+      'a→b',
+    ])
+  })
+
+  it('un nodo oculto que abre dos caminos une al anterior con ambos', () => {
+    const edges = [seq('a', 'x'), seq('x', 'b'), seq('x', 'c')]
+    const found = contractOrder(edges, new Set(['a', 'b', 'c'])).map((e) => `${e.from}→${e.to}`)
+    expect(found.sort()).toEqual(['a→b', 'a→c'])
+  })
+
+  it('no se repite y no se cierra sobre sí mismo', () => {
+    const edges = [seq('a', 'x'), seq('a', 'y'), seq('x', 'b'), seq('y', 'b'), seq('b', 'x')]
+    const found = contractOrder(edges, new Set(['a', 'b'])).map((e) => `${e.from}→${e.to}`)
+    expect(found.filter((pair) => pair === 'a→b')).toHaveLength(1)
+  })
+
+  it('un retorno que no se ve no deja el orden colgando', () => {
+    expect(contractOrder([seq('a', 'ret')], new Set(['a']))).toEqual([])
+  })
+
+  it('el plano se coloca con el orden y no con los datos que ya son chips', () => {
+    const a = node('a', { kind: 'transform.call', provides: 'a', line: 1 })
+    const b = node('b', {
+      kind: 'transform.call',
+      provides: 'b',
+      line: 2,
+      control: { kind: 'args', target: 'f', args: [{ name: 'x', value: 'a' }] },
+      inputs: ['arg:x'],
+    })
+    const plan = planChips([a, b], [edge('a', 'b', 'arg:x'), seq('a', 'b')], {
+      canAdd: false,
+      density: normal,
+    })
+    expect(plan.flowEdges.map((e) => e.relation)).toEqual(['sequence'])
+    expect(plan.order).toHaveLength(1)
+    // El cable de datos sigue sabiéndose (se muestra al seleccionar), pero no coloca nada.
+    expect(plan.hidden.size).toBe(1)
+  })
+
+  it('un cable de datos que se dibuja (compacto) sigue colocando además del orden', () => {
+    const a = node('a', { kind: 'transform.call', provides: 'a', line: 1 })
+    const b = node('b', {
+      kind: 'transform.call',
+      provides: 'b',
+      line: 2,
+      control: { kind: 'args', target: 'f', args: [{ name: 'x', value: 'a' }] },
+      inputs: ['arg:x'],
+    })
+    const plan = planChips([a, b], [edge('a', 'b', 'arg:x'), seq('a', 'b')], {
+      canAdd: false,
+      density: () => 'compact',
+    })
+    expect(plan.flowEdges.map((e) => e.relation).sort()).toEqual(['dependency', 'sequence'])
+  })
+
+  it('el orden de un chip acoplado no aparece: la cadena pasa de largo', () => {
+    const chip = value('k', 1)
+    const a = node('a', { kind: 'transform.call', provides: 'a', line: 2 })
+    const b = node('b', { kind: 'transform.call', provides: 'b', line: 3 })
+    const plan = planChips([chip, a, b], [seq('k', 'a'), seq('a', 'b')], {
+      canAdd: false,
+      density: normal,
+    })
+    expect(plan.docked.has('k')).toBe(true)
+    expect(plan.order.map((e) => `${e.from}→${e.to}`)).toEqual(['a→b'])
   })
 })

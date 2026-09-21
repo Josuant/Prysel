@@ -269,7 +269,10 @@ export function foldReturns(nodes: CanvasNode[], edges: SemanticEdge[]): FoldedV
           const control = node.control
           if (control?.kind !== 'args' || control.args.length !== 1) return false
           if (!IDENTIFIER.test(control.args[0]?.value.trim() ?? '')) return false
-          const incoming = edges.filter((edge) => edge.to === node.id)
+          // El orden no cuenta: un retorno alcanzado solo por la sentencia anterior sigue siendo simple.
+          const incoming = edges.filter(
+            (edge) => edge.to === node.id && edge.relation !== 'sequence',
+          )
           return (
             incoming.length > 0 &&
             incoming.every((edge) => edge.toPort === 'arg:valor' && channelOf(edge) === 'data')
@@ -304,6 +307,8 @@ export function foldReturns(nodes: CanvasNode[], edges: SemanticEdge[]): FoldedV
       .map((node) => patched.get(node.id) ?? node),
     edges: [
       ...edges.flatMap((edge) => {
+        // El orden se queda como está: lo que se oculta se salta al colocarlo (`contractOrder`).
+        if (edge.relation === 'sequence') return [edge]
         if (hiddenIn.has(edge.from)) return []
         const def = hiddenIn.get(edge.to)
         return [def === undefined ? edge : { ...edge, to: def, toPort: 'return', via: edge.to }]
