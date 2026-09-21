@@ -28,7 +28,16 @@ export interface SourceNode {
   contains?: string[]
   ops?: number
   control?: ControlModel
+  /** De dónde sale cada campo del editor en el texto. Aquí solo importan los nombres: son los editables. */
+  sources?: Record<string, unknown>
+  /** El texto de la sentencia (o de su cabecera): lo que se edita como código. */
+  text?: string
+  /** Dónde aparece cada nombre que define este nodo. Aquí solo importa cuáles define. */
+  names?: Record<string, unknown>
+  /** Qué campos del editor son nombres que se pueden renombrar. */
+  renames?: Record<string, string>
   calls?: string
+  note?: string
 }
 
 /**
@@ -36,16 +45,46 @@ export interface SourceNode {
  * está en el archivo, a la vista, en la línea que indica el pie. Sin editor (algo que el
  * analizador no supo representar del todo) se enseña el código, que es lo honesto.
  */
+/** Un nombre que Python admite para una variable o una función. */
+const IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u
+
 export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
+  // Los nombres que un nodo define, con su línea: las variables que están al alcance de lo que viene después.
+  const defined = nodes.filter((n) => n.names?.[n.label] !== undefined && IDENTIFIER.test(n.label))
   return nodes.map((node) => ({
     id: node.id,
     kind: node.kind,
     label: node.label,
     ...(node.control ? { control: node.control } : { code: node.code }),
+    // Un campo se puede escribir de vuelta si el analizador sabe dónde está en el texto, o si es
+    // un nombre que se puede renombrar en todos sus usos.
+    ...(node.control
+      ? {
+          editable: [
+            ...Object.keys(node.sources ?? {}),
+            ...Object.keys(node.renames ?? {}),
+            // Si se puede reescribir la lista de parámetros, se puede dar un valor por defecto a cualquiera.
+            ...(node.control.kind === 'signature' && node.sources?.['paramsList']
+              ? node.control.params.map((param) => `params.${param.name}`)
+              : []),
+          ],
+        }
+      : {}),
+    // Cualquier nodo se puede escribir como código; un título que es un nombre se puede renombrar.
+    ...(node.text === undefined ? {} : { text: node.text }),
+    line: node.line,
+    ...(node.names?.[node.label] !== undefined && IDENTIFIER.test(node.label)
+      ? { renamable: true }
+      : {}),
+    // Lo que se puede escribir en un campo: las variables definidas antes que este nodo.
+    scope: [
+      ...new Set(defined.filter((d) => d.line < node.line && d.id !== node.id).map((d) => d.label)),
+    ].slice(-40),
     // En lugar del chip de estado (no hay ejecución), se muestra la línea de origen.
     meta: `línea ${node.line}`,
     ...(node.ops === undefined ? {} : { metrics: { ops: node.ops } }),
     ...(node.contains ? { contains: node.contains } : {}),
+    ...(node.note ? { note: node.note } : {}),
     // Una llamada a una función del archivo lleva a ella.
     ...(node.calls ? { opens: node.calls, openable: true } : {}),
   }))
@@ -70,6 +109,8 @@ export interface FunctionInfo {
   used: boolean
   /** Cuántos nodos tiene dentro. */
   size: number
+  /** Lo que la función dice de sí misma: su docstring y los comentarios que la explican. */
+  doc?: string
 }
 
 export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): FunctionInfo[] {
@@ -84,6 +125,7 @@ export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): Functio
       calls: nodes.filter((other) => other.opens === node.id).length,
       used: edges.some((edge) => edge.from === node.id && !body.has(edge.to)),
       size: body.size,
+      ...(node.note ? { doc: node.note } : {}),
     }
   })
 }

@@ -72,6 +72,8 @@ export interface SemanticNode {
   contains?: string[]
   /** Operaciones que esconde. El tamaño de un nodo mide la complejidad que encapsula. */
   ops?: number
+  /** Sitio extra que pide la cabecera de un ámbito (su documentación), sobre `SCOPE_FRAME.top`. */
+  headroom?: number
 }
 
 export interface SemanticEdge {

@@ -25,3 +25,6 @@ export {
   type SourceNode,
 } from './program.ts'
 export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'
+export { AddNodeMenu, type AddNodeMenuProps } from './AddNodeMenu.tsx'
+export { CodePanel, type CodePanelProps } from './CodePanel.tsx'
+export type { NodeEdit } from './MorphNode.tsx'

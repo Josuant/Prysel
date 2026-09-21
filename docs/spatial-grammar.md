@@ -99,6 +99,48 @@ Un nodo no muestra Python: muestra lo que significa. El analizador (`semantics.t
 
 La regla de honestidad manda: **solo se produce un editor cuando dice toda la sentencia**. Un `*args`, una cadena de comparaciones o una cadena de métodos se quedan como código, porque un editor que oculta información es peor que ninguno. Con editor, el código no se repite en el nodo: está en el archivo, en la línea que indica el pie.
 
+## Comentarios: lo que el código dice de sí mismo
+
+Ningún comentario se pierde en silencio. Cada uno va donde explica:
+
+- **En una función**, su explicación va **en el nodo de la función**: el docstring, un comentario justo encima del `def`, en la línea de la firma o entre la firma y la primera sentencia. Si hay más de uno, se unen (primero los comentarios, luego el docstring). El docstring no es una sentencia del cuerpo: no genera un nodo propio. Se lee bajo la cabecera del territorio, en la lista del menú «Funciones» y bajo la ruta cuando se está dentro de la función (donde la definición ya no se dibuja).
+- **En cualquier otra sentencia**: un comentario en su misma línea es suyo; uno solo en su línea explica la sentencia que viene detrás (también el primero de una rama, dentro del `if`); y uno al final de un bloque cierra la última sentencia. El docstring del archivo explica lo que viene detrás.
+- **No son prosa** y se omiten: el shebang y la declaración de codificación.
+
+En el nodo, la nota va bajo el título, en cursiva y tenue, recortada a dos líneas en normal y cuatro en expandido (el texto entero está en el tooltip y en el archivo). Ocupa sitio propio: el alto del nodo la incluye (`noteHeight`), calculado con el ajuste de línea real por palabras, no contando caracteres. En un territorio, la cabecera crece lo que pida la documentación (`headroom`). En compacto no cabe (es una píldora): va en el tooltip.
+
+Un detalle del árbol de tree-sitter que condiciona el análisis: los comentarios entre la firma y el cuerpo de un `def` (o de un `if`, `for`, `while`) **cuelgan de la propia sentencia**, no del bloque. Por eso se recogen de los dos sitios, y por fila se distingue el de la cabecera (de la sentencia) del que precede a lo primero de dentro.
+
+## Escribir de vuelta: el lienzo edita el Python
+
+Cambiar un campo en el lienzo reescribe ese trozo del archivo y nada más.
+
+1. **El analizador anota de dónde sale cada campo** (`ProgramNode.sources`: rango en el texto y cómo se vuelve a escribir). Son desplazamientos de cadena (UTF-16), los mismos que usa el editor: un `ñ` antes del campo no los descuadra (probado). Solo lleva rango lo que se puede reescribir sin descolocar nada.
+2. **`editsFor(nodo, editor)`** (pura, sin tree-sitter) compara el editor tal como se analizó con el que dejó el usuario y devuelve las ediciones mínimas. Un flotante sigue siendo flotante (`5.0` → `7.0`); una comilla dentro de una cadena se escapa; un salto de línea en una cadena de una línea se escribe `\n`; una cadena cruda o de bytes no se ofrece (cambiaría lo que significa); una expresión vacía o de varias líneas no se escribe.
+3. **Los editores confirman al salir del campo o con Intro** (Esc descarta), no por tecla: a medio escribir casi ningún trozo de Python es válido, y reescribir a cada pulsación haría cambiar de forma al nodo bajo los dedos. Un desplegable o un interruptor confirman al instante.
+4. **La extensión valida y aplica** un `WorkspaceEdit`. El mensaje `edit` se valida en cada extremo y lleva la **versión del documento** sobre la que se calculó: si el texto cambió desde entonces (se tecleó en el editor mientras tanto), los desplazamientos ya no valen y se descarta, reenviando el estado para que el lienzo vuelva a mostrar lo que hay.
+5. **Una sola edición en vuelo.** Si se confirman dos campos seguidos antes de que llegue el texto reanalizado, la segunda espera y se recalcula contra el programa nuevo (sus desplazamientos se han movido). Mientras tanto el campo enseña lo que se escribió; si el anfitrión no contesta en 3 s, se da por perdida.
+
+**Qué se puede editar en un campo**: número, cadena, booleano, mensaje de un `print`, los dos operandos y el operador de una operación (y el operador y el lado derecho de `+=`), campo·operador·valor de una condición, el valor de cada argumento de una llamada, la secuencia de un bucle, la firma de una función (añadir, quitar y renombrar parámetros, dar o quitar un valor por defecto), los elementos de una lista, las entradas de un diccionario, el módulo de un `import` y el mensaje de un `raise`. Un campo que no se sabe reescribir se congela entero (`<fieldset disabled>`): un campo que acepta texto y no cambia el programa engaña. Un campo que recibe una conexión también es de solo lectura: su valor viene de otro nodo. Los campos de expresión ofrecen como sugerencias las variables que hay en el ámbito del nodo.
+
+Los ids de los nodos pasan a ser por **línea y columna** (`def:9:0`), no por desplazamiento: editar dentro de una línea no mueve ninguna sentencia de sitio, así que el diagrama no se re-anima entero con cada cambio.
+
+### Escribir todo el Python desde el diagrama
+
+Los campos no bastan: para _escribir_ un programa hay que poder crear, quitar y renombrar cosas. Esas operaciones son `NodeAction` (`code`, `delete`, `duplicate`, `rename`, `add`) y se traducen a ediciones en `@prysel/python/edits` (`actionEdits`), con las mismas garantías que los campos.
+
+- **Añadir** (menú «Añadir»): una plantilla (`TEMPLATES`: variable, texto, lista, diccionario, operación, llamada, `input`, `print`, `if`, `if/else`, `for`, `while`, `return`, `raise`, `import`, `def`). Va tras el nodo seleccionado, al final de la función que se está viendo o al final del archivo, con la sangría y el salto de línea del archivo (CRLF incluido). Lo creado queda seleccionado: la cola espera a que el programa reanalizado lo contenga y lo localiza por su línea (`onCreated`).
+- **Eliminar** quita la sentencia entera con sus comentarios contiguos. Si era lo único de un bloque, deja un `pass`: un bloque vacío no es Python válido.
+- **Duplicar** copia la sentencia justo debajo, con su sangría.
+- **Renombrar** (doble clic en el título) cambia la definición y **todos sus usos** en el ámbito: no toca atributos (`x.nombre`), claves de argumentos con nombre (`f(nombre=…)`) ni variables de comprensión que ocultan a la de fuera. Un nombre que no es un identificador válido (o que es una palabra reservada) se rechaza.
+- **Ver / escribir el código** (panel «Código»): cualquier nodo se puede reescribir como texto Python. Es la red de seguridad de la edición 100 % desde el diagrama: lo que aún no tenga un editor propio (un `with`, un `try`, una clase) se puede escribir aquí. Lo que no analiza como Python se rechaza antes de tocar el archivo (`replaceCode`).
+
+Todas las operaciones de estructura pasan por la misma cola que los campos: **una sola en vuelo**, y las que esperan se calculan _cuando les toca_ (guardadas como función del programa, no como ediciones ya calculadas), porque sus desplazamientos habrían caducado. Deshacer es el del editor: cada operación es un único `WorkspaceEdit`.
+
+### Por qué a veces desaparecían las conexiones
+
+Un fallo de esta fase que merece quedar escrito: al mover o expandir un nodo, sus cables se borraban. React Flow, al recibir un nodo nuevo sin `measured` (lo que pasa cuando el estado es controlado y se reconstruye el objeto), **descarta las medidas de sus puertos** (`handleBounds`), y sin ellas no hay dónde anclar el cable. La solución son dos cosas: pasar siempre el tamaño conocido como `measured` (`nodeFrame`), y avisar a React Flow (`updateNodeInternals`) cuando cambia la disposición de los puertos (tamaño, densidad, eje, contenedor, qué puertos están conectados y a qué altura).
+
 ## Puertos con nombre
 
 Éste era el problema concreto: cuando dos conexiones llegan al mismo nodo, no se sabe cuál alimenta qué.
@@ -220,7 +262,12 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 
 - Micro-interfaces semánticas: sustituir la línea de código literal de cada nodo (`print`, `input`…) por controles reales — un desplegable para un operador lógico, un campo de formulario para un literal.
 - Orden secuencial entre sentencias como conexiones de control (ver arriba).
-- **Escritura de vuelta al código**: los editores se ven pero son de solo lectura; editar un campo no reescribe el Python. Necesita el rango de origen de cada sub-expresión y un `WorkspaceEdit` en la extensión.
+- **Conectar arrastrando**: hoy un dato se conecta escribiendo la variable en el campo (con sugerencias del ámbito); falta arrastrar un cable de un puerto a otro y que eso escriba el nombre.
+- **Reordenar y mover sentencias** (arrastrar un nodo a otro sitio del flujo de control, o a otro bloque): hoy se duplica y se elimina, pero no se mueve.
+- **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.
+- **`with`, `try`, `class` y decoradores como nodos con estructura**: hoy son nodos opacos (se editan como texto en el panel «Código»).
+- **Deshacer propio**: se apoya en el del editor (una operación = un deshacer); el lienzo no tiene historial propio.
+- **Comentarios**: los que cuelgan entre las ramas de un `if`/`elif`/`else` se recogen solo si tree-sitter los cuelga de la sentencia; los de otras construcciones (`with`, `try`) no se tratan porque esas construcciones aún son nodos opacos.
 - Enrutado: separar en carriles las conexiones que comparten pasillo, y esquivar también a los retornos de bucle.
 - `timeline` y `hub-and-spoke` como topologías propias (hoy caen en `pipeline` y `fan-out`).
 - Orientación vertical a fondo: el eje ya es un parámetro, pero las estrategias están afinadas para horizontal.

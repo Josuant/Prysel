@@ -9,9 +9,11 @@ import {
   compactShape,
   complexityScale,
   controlHeight,
+  docHeadroom,
   extraHeight,
   getKind,
   nodeSize,
+  noteHeight,
   shapeFor,
   type ControlModel,
   type Density,
@@ -285,5 +287,56 @@ describe('el alto lo decide el contenido', () => {
 
   it('sin editor no hay nada que acomodar', () => {
     expect(extraHeight(undefined, 'normal')).toBe(0)
+  })
+})
+
+describe('los comentarios ocupan sitio propio', () => {
+  it('sin comentario, no añaden nada', () => {
+    expect(noteHeight(undefined, 'normal')).toBe(0)
+    expect(noteHeight('   ', 'normal')).toBe(0)
+  })
+
+  it('en compacto no caben: es una píldora', () => {
+    expect(noteHeight('un comentario', 'compact')).toBe(0)
+  })
+
+  it('crecen con sus líneas, hasta un tope', () => {
+    const one = noteHeight('corto', 'normal')
+    const two = noteHeight(
+      'una frase bastante más larga que no cabe en una sola línea de la tarjeta',
+      'normal',
+    )
+    const many = noteHeight('palabra '.repeat(200), 'normal')
+    expect(two).toBeGreaterThan(one)
+    expect(noteHeight('palabra '.repeat(400), 'normal')).toBe(many)
+  })
+
+  it('en expandido caben más líneas que en normal', () => {
+    const long = 'palabra '.repeat(200)
+    expect(noteHeight(long, 'expanded')).toBeGreaterThan(noteHeight(long, 'normal'))
+  })
+
+  it('el ajuste es por palabras, no por número de caracteres', () => {
+    // 34 caracteres por línea: «aaaa… (30)» + «bbbb… (30)» no caben juntas aunque sumen menos de 2 líneas de texto.
+    const a = 'a'.repeat(30)
+    const b = 'b'.repeat(30)
+    expect(noteHeight(`${a} ${b}`, 'normal')).toBeGreaterThan(noteHeight(a, 'normal'))
+  })
+
+  it('un párrafo por línea de comentario', () => {
+    expect(noteHeight('uno\ndos', 'normal')).toBeGreaterThan(noteHeight('uno', 'normal'))
+  })
+
+  it('la documentación de un territorio pide sitio en su cabecera, con tope', () => {
+    expect(docHeadroom(undefined)).toBe(0)
+    expect(docHeadroom('Suma dos números.')).toBeGreaterThan(0)
+    expect(docHeadroom('palabra '.repeat(500))).toBe(docHeadroom('palabra '.repeat(1000)))
+  })
+
+  it('el alto del nodo suma el comentario al del editor', () => {
+    const control: ControlModel = { kind: 'number', value: 1 }
+    expect(extraHeight(control, 'normal', [], 'una nota')).toBeGreaterThan(
+      extraHeight(control, 'normal'),
+    )
   })
 })

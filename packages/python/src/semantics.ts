@@ -1,5 +1,6 @@
 import type { ControlModel } from '@prysel/morphology'
 import type { Node as TsNode } from '@vscode/tree-sitter-wasm'
+import type { Source } from './source.ts'
 import { calleeName, field, named, readNames } from './tree.ts'
 
 /**
@@ -19,6 +20,11 @@ export interface Semantics {
   control: ControlModel
   /** A qué campo del nodo entra cada nombre que la expresión lee: es lo que ubica los cables. */
   ports: Record<string, string>
+  /**
+   * De dónde sale cada campo en el texto, por su nombre. Solo están los que se pueden reescribir
+   * sin descolocar nada; el resto de campos se ven pero no se editan.
+   */
+  sources?: Record<string, Source>
 }
 
 export interface SemanticContext {
@@ -44,6 +50,40 @@ const SINGLE_ARGUMENT: Record<string, string> = { print: 'mensaje', input: 'mens
 const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 const includes = (options: string[], current: string) =>
   options.includes(current) ? options : [...options, current]
+
+const span = (node: TsNode, as: Source['as'], extra: Partial<Source> = {}): Source => ({
+  start: node.startIndex,
+  end: node.endIndex,
+  as,
+  ...extra,
+})
+
+/**
+ * El contenido de una cadena, sin sus comillas: es lo que se reescribe al editar un mensaje.
+ * Una cadena cruda o de bytes no se puede reescribir sin cambiar lo que significa (las barras
+ * no se escapan igual), así que no se ofrece.
+ */
+function stringSpan(node: TsNode): Source | null {
+  if (node.type !== 'string') return null
+  const match = /^([a-zA-Z]{0,2})('''|"""|'|")([\s\S]*)\2$/.exec(node.text)
+  if (!match) return null
+  const prefix = match[1] ?? ''
+  const quote = match[2] ?? '"'
+  if (/[rRbB]/.test(prefix)) return null
+  return {
+    start: node.startIndex + prefix.length + quote.length,
+    end: node.endIndex - quote.length,
+    as: 'string',
+    quote,
+  }
+}
+
+/** El contenido de algo delimitado (`[…]`, `{…}`, `(…)`), sin los delimitadores: se reescribe entero. */
+const inside = (node: TsNode): Source => ({
+  start: node.startIndex + 1,
+  end: node.endIndex - 1,
+  as: 'list',
+})
 
 /** Registra en `ports` a qué campo entra cada nombre que lee `expression`. El primero manda. */
 function route(expression: TsNode | null, port: string, ports: Record<string, string>) {
@@ -79,25 +119,41 @@ function literal(expression: TsNode): Semantics | null {
     case 'integer':
     case 'float': {
       const value = Number(expression.text.replace(/_/g, ''))
-      return Number.isFinite(value) ? { control: { kind: 'number', value }, ports: {} } : null
+      return Number.isFinite(value)
+        ? {
+            control: { kind: 'number', value },
+            ports: {},
+            sources: { value: span(expression, 'number', { original: expression.text }) },
+          }
+        : null
     }
     case 'string': {
       const value = stringContent(expression)
       if (value === null) return null
+      const at = stringSpan(expression)
       return {
         control: { kind: 'text', value, multiline: value.includes('\n') || value.length > 40 },
         ports: {},
+        ...(at ? { sources: { value: at } } : {}),
       }
     }
     case 'true':
     case 'false':
-      return { control: { kind: 'boolean', value: expression.type === 'true' }, ports: {} }
+      return {
+        control: { kind: 'boolean', value: expression.type === 'true' },
+        ports: {},
+        sources: { value: span(expression, 'boolean') },
+      }
     case 'list': {
       const items = named(expression)
       if (items.some((item) => item.type === 'list_splat' || item.type.endsWith('comprehension'))) {
         return null
       }
-      return { control: { kind: 'list', items: items.map((item) => item.text) }, ports: {} }
+      return {
+        control: { kind: 'list', items: items.map((item) => item.text) },
+        ports: {},
+        sources: { items: inside(expression) },
+      }
     }
     case 'dictionary': {
       const pairs = named(expression)
@@ -108,7 +164,11 @@ function literal(expression: TsNode): Semantics | null {
         return key && value ? [[key.text, value.text]] : []
       })
       return entries.length === pairs.length
-        ? { control: { kind: 'dict', entries }, ports: {} }
+        ? {
+            control: { kind: 'dict', entries },
+            ports: {},
+            sources: { entries: inside(expression) },
+          }
         : null
     }
     default:
@@ -121,20 +181,21 @@ function operands(expression: TsNode): {
   left: TsNode
   right: TsNode
   operator: string
+  at: TsNode
   options: string[]
 } | null {
   if (expression.type === 'binary_operator') {
     const left = field(expression, 'left')
     const right = field(expression, 'right')
-    const operator = field(expression, 'operator')?.text
-    return left && right && operator ? { left, right, operator, options: ARITHMETIC } : null
+    const at = field(expression, 'operator')
+    return left && right && at ? { left, right, operator: at.text, at, options: ARITHMETIC } : null
   }
   if (expression.type === 'comparison_operator') {
     const parts = named(expression)
-    const operator = expression.childForFieldName('operators')?.text
+    const at = expression.childForFieldName('operators')
     const [left, right] = parts
-    if (parts.length !== 2 || !left || !right || !operator) return null
-    return { left, right, operator: oneLine(operator), options: COMPARISON }
+    if (parts.length !== 2 || !left || !right || !at) return null
+    return { left, right, operator: oneLine(at.text), at, options: COMPARISON }
   }
   return null
 }
@@ -142,7 +203,7 @@ function operands(expression: TsNode): {
 function operation(expression: TsNode): Semantics | null {
   const parts = operands(expression)
   if (!parts) return null
-  const { left, right, operator, options } = parts
+  const { left, right, operator, at, options } = parts
   const ports: Record<string, string> = {}
   route(left, 'left', ports)
   route(right, 'right', ports)
@@ -155,6 +216,11 @@ function operation(expression: TsNode): Semantics | null {
       operators: includes(options, operator),
     },
     ports,
+    sources: {
+      left: span(left, 'expression'),
+      operator: span(at, 'operator'),
+      right: span(right, 'expression'),
+    },
   }
 }
 
@@ -163,7 +229,7 @@ export function condition(expression: TsNode | null): Semantics | null {
   if (!expression || expression.type !== 'comparison_operator') return null
   const parts = operands(expression)
   if (!parts) return null
-  const { left, right, operator, options } = parts
+  const { left, right, operator, at, options } = parts
   const ports: Record<string, string> = {}
   route(left, 'field', ports)
   route(right, 'value', ports)
@@ -176,6 +242,11 @@ export function condition(expression: TsNode | null): Semantics | null {
       operators: includes(options, operator),
     },
     ports,
+    sources: {
+      field: span(left, 'expression'),
+      operator: span(at, 'operator'),
+      value: span(right, 'expression'),
+    },
   }
 }
 
@@ -193,9 +264,11 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
     if (message !== null) {
       const ports: Record<string, string> = {}
       route(only, 'value', ports)
+      const at = stringSpan(only)
       return {
         control: { kind: 'text', value: message, multiline: true, placeholder: 'Mensaje' },
         ports,
+        ...(at ? { sources: { value: at } } : {}),
       }
     }
   }
@@ -204,6 +277,7 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
   const single = SINGLE_ARGUMENT[callee] ?? 'valor'
   const args: { name: string; value: string }[] = []
   const ports: Record<string, string> = {}
+  const sources: Record<string, Source> = {}
   let position = 0
   for (const item of items) {
     if (item.type === 'list_splat' || item.type === 'dictionary_splat') return null
@@ -220,8 +294,9 @@ function call(expression: TsNode, context: SemanticContext): Semantics | null {
     if (!name || !value) return null
     args.push({ name, value: value.text })
     route(value, `arg:${name}`, ports)
+    sources[`args.${name}`] = span(value, 'expression')
   }
-  return { control: { kind: 'args', target: callee, args }, ports }
+  return { control: { kind: 'args', target: callee, args }, ports, sources }
 }
 
 /** Lo que enseña un nodo que calcula o guarda una expresión. `null` = mostrar el código. */
@@ -244,8 +319,9 @@ export function semanticsOf(expression: TsNode | null, context: SemanticContext)
 export function augmented(statement: TsNode): Semantics | null {
   const left = field(statement, 'left')
   const right = field(statement, 'right')
-  const operator = field(statement, 'operator')?.text
-  if (!left || !right || !operator) return null
+  const at = field(statement, 'operator')
+  const operator = at?.text
+  if (!left || !right || !at || !operator) return null
   const ports: Record<string, string> = {}
   route(left, 'left', ports)
   route(right, 'right', ports)
@@ -258,6 +334,8 @@ export function augmented(statement: TsNode): Semantics | null {
       operators: includes(AUGMENTED, operator),
     },
     ports,
+    // Reescribir el objetivo (`total` en `total += n`) cambiaría qué variable se asigna.
+    sources: { operator: span(at, 'operator'), right: span(right, 'expression') },
   }
 }
 
@@ -271,6 +349,7 @@ export function returned(value: TsNode | null): Semantics | null {
   return {
     control: { kind: 'args', target: '', args: [{ name: 'valor', value: value.text }] },
     ports,
+    sources: { 'args.valor': span(value, 'expression') },
   }
 }
 
@@ -278,6 +357,11 @@ export function returned(value: TsNode | null): Semantics | null {
 export function loop(variable: TsNode | null, iterable: TsNode | null): ControlModel | null {
   if (!variable || !iterable) return null
   return { kind: 'loop', variable: variable.text, iterable: iterable.text }
+}
+
+/** La secuencia que recorre un bucle se puede reescribir; su variable no (se usa dentro del cuerpo). */
+export function loopSources(iterable: TsNode | null): Record<string, Source> | undefined {
+  return iterable ? { iterable: span(iterable, 'expression') } : undefined
 }
 
 /** `raise ValueError("mensaje")`: un tipo de error y su mensaje. */
@@ -292,6 +376,19 @@ export function signal(expression: TsNode | null): ControlModel | null {
   return { kind: 'signal', errorType: type, types: includes(ERRORS, type), message }
 }
 
+/** De dónde salen el tipo de error y el mensaje de un `raise`. */
+export function signalSources(expression: TsNode | null): Record<string, Source> | undefined {
+  if (expression?.type !== 'call') return undefined
+  const sources: Record<string, Source> = {}
+  const callee = field(expression, 'function')
+  if (callee) sources['errorType'] = span(callee, 'expression')
+  const list = field(expression, 'arguments')
+  const message = list ? named(list)[0] : undefined
+  const at = message ? stringSpan(message) : null
+  if (at) sources['message'] = at
+  return sources
+}
+
 /** `import pandas as pd`. Sin alias no hay nada que editar: se enseña el código. */
 export function moduleOf(statement: TsNode): ControlModel | null {
   if (statement.type !== 'import_statement') return null
@@ -300,6 +397,15 @@ export function moduleOf(statement: TsNode): ControlModel | null {
   const module = field(imported, 'name')?.text
   const alias = field(imported, 'alias')?.text
   return module && alias ? { kind: 'module', module, alias } : null
+}
+
+/** De dónde sale el nombre del módulo (el alias se renombra aparte: hay que cambiar sus usos). */
+export function moduleSources(statement: TsNode): Record<string, Source> | undefined {
+  if (statement.type !== 'import_statement') return undefined
+  const imported = field(statement, 'name')
+  if (imported?.type !== 'aliased_import') return undefined
+  const module = field(imported, 'name')
+  return module ? { module: span(module, 'expression') } : undefined
 }
 
 /** Los parámetros de una función con su valor por defecto. `null` si hay `*args` o `**kwargs`. */
@@ -323,4 +429,37 @@ export function signatureOf(parameters: TsNode | null): ControlModel | null {
     }
   }
   return { kind: 'signature', params }
+}
+
+/** Los valores por defecto de una función se pueden reescribir; los nombres de sus parámetros no. */
+export function signatureSources(parameters: TsNode | null): Record<string, Source> | undefined {
+  if (!parameters) return undefined
+  const sources: Record<string, Source> = {}
+  for (const param of named(parameters)) {
+    if (param.type !== 'default_parameter' && param.type !== 'typed_default_parameter') continue
+    const name = field(param, 'name')?.text
+    const value = field(param, 'value')
+    if (name && value) sources[`params.${name}`] = span(value, 'expression')
+  }
+  // Añadir o quitar parámetros reescribe la lista entera. Solo si ningún parámetro lleva anotación
+  // de tipo: se volvería a escribir sin ella, y eso es perder información del usuario.
+  const typed = named(parameters).some(
+    (param) => param.type === 'typed_parameter' || param.type === 'typed_default_parameter',
+  )
+  if (!typed) sources['paramsList'] = inside(parameters)
+  return Object.keys(sources).length > 0 ? sources : undefined
+}
+
+/** El nombre de cada parámetro, por su camino en el editor (`params[0].name`), con el nodo del nombre. */
+export function parameterNames(parameters: TsNode | null): { path: string; node: TsNode }[] {
+  if (!parameters) return []
+  return named(parameters).flatMap((param, index) => {
+    const node =
+      param.type === 'identifier'
+        ? param
+        : param.type === 'typed_parameter'
+          ? (named(param)[0] ?? null)
+          : field(param, 'name')
+    return node ? [{ path: `params[${index}].name`, node }] : []
+  })
 }

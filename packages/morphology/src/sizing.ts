@@ -96,19 +96,47 @@ export function nodeSize(
  * decide el contenido, y el layout lo sabe **antes** de pintar.
  */
 // Medidas reales del DOM (a zoom 1): un campo, su etiqueta, la línea de destino y el hueco entre filas.
-const ROW = { input: 30, labeled: 49, note: 18, gap: 6, label: 19 }
+const ROW = { input: 30, labeled: 49, note: 18, gap: 6, label: 19, add: 24 }
+
+/**
+ * Cuántas líneas ocupa un texto de `width` caracteres de ancho: el ajuste es por palabras, como
+ * el del navegador, no por número de caracteres. Contar caracteres se queda corto en cuanto una
+ * palabra larga no cabe donde termina la línea, y una línea de menos es un campo recortado.
+ */
+function wrappedLines(text: string, width: number): number {
+  let total = 0
+  for (const paragraph of text.split('\n')) {
+    let used = 0
+    let lines = 1
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      const need = (used === 0 ? 0 : 1) + word.length
+      if (used + need <= width) {
+        used += need
+        continue
+      }
+      // No cabe: la palabra pasa a la línea siguiente, y si ni sola cabe, se parte en trozos.
+      if (used > 0) lines++
+      let rest = word.length
+      while (rest > width) {
+        lines++
+        rest -= width
+      }
+      used = rest
+    }
+    total += lines
+  }
+  return total
+}
 
 /**
  * Un mensaje de varias líneas crece con su texto, hasta un tope (después, se desplaza).
  * Se estima cuántas líneas ocupa: unos 28 caracteres por línea en normal y 34 en expandido.
  */
-const AREA = { line: 16.2, chrome: 12, minLines: 2, maxLines: 5 }
+const AREA = { line: 17.6, chrome: 12, minLines: 2, maxLines: 5 }
 const CHARS_PER_LINE = { normal: 28, expanded: 34 }
 
 function areaHeight(text: string, density: 'normal' | 'expanded'): number {
-  const wrapped = text
-    .split('\n')
-    .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / CHARS_PER_LINE[density])), 0)
+  const wrapped = wrappedLines(text, CHARS_PER_LINE[density])
   const lines = Math.min(AREA.maxLines, Math.max(AREA.minLines, wrapped))
   return Math.ceil(lines * AREA.line + AREA.chrome)
 }
@@ -148,24 +176,58 @@ export function controlHeight(
     }
     case 'condition':
       return stack([ROW.input, ROW.input, ...(full && model.hits ? [ROW.note] : [])])
-    case 'signature': {
-      const shown = full ? model.params.length : Math.min(1, model.params.length)
-      const hidden = model.params.length - shown
+    case 'signature':
+      // Cada parámetro es una fila (nombre y valor por defecto), y debajo el botón de añadir.
+      return stack([...model.params.map(() => ROW.input), ROW.add])
+    case 'dict': {
+      const shown = full ? model.entries.length : Math.min(1, model.entries.length)
+      const hidden = model.entries.length - shown
       return stack([
-        ...Array.from({ length: shown }, () => ROW.labeled),
+        ...Array.from({ length: Math.max(1, shown) }, () => ROW.input),
         ...(hidden > 0 ? [ROW.note] : []),
+        ROW.add,
       ])
     }
+    case 'signal':
+      // El tipo de error y su mensaje, cada uno en su fila.
+      return stack([ROW.input, ROW.input])
     default:
       return ROW.input
   }
 }
 
-/** Lo que hay que añadir al alto base de la densidad para que el editor quepa entero. */
+/**
+ * Un comentario ocupa sitio propio: bajo el título, a lo sumo dos líneas en normal y cuatro en
+ * expandido (el resto se lee completo al pasar el ratón). En compacto no cabe: es una píldora.
+ */
+const NOTE = {
+  line: 15,
+  gap: 4,
+  maxLines: { normal: 2, expanded: 4 },
+  charsPerLine: { normal: 34, expanded: 40, territory: 48 },
+}
+
+export function noteHeight(note: string | undefined, density: Density): number {
+  if (!note?.trim() || density === 'compact') return 0
+  const lines = Math.min(NOTE.maxLines[density], wrappedLines(note, NOTE.charsPerLine[density]))
+  return lines * NOTE.line + NOTE.gap
+}
+
+/** Lo que la cabecera de un territorio necesita para la documentación de su función (hasta tres líneas). */
+export function docHeadroom(note: string | undefined): number {
+  if (!note?.trim()) return 0
+  const lines = Math.min(3, wrappedLines(note, NOTE.charsPerLine.territory))
+  return lines * NOTE.line + 8
+}
+
+/** Lo que hay que añadir al alto base de la densidad para que el editor y el comentario quepan enteros. */
 export function extraHeight(
   model: ControlModel | undefined,
   density: Density,
   linked: readonly string[] = [],
+  note?: string,
 ): number {
-  return Math.max(0, controlHeight(model, density, linked) - ROOM[density])
+  return (
+    Math.max(0, controlHeight(model, density, linked) - ROOM[density]) + noteHeight(note, density)
+  )
 }

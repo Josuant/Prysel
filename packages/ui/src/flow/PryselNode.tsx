@@ -1,8 +1,8 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Handle, Position, useUpdateNodeInternals, type NodeProps, type Node } from '@xyflow/react'
 import { buildShape, getKind, shapeFor, type Density, type NodeState } from '@prysel/morphology'
 import type { Axis } from '@prysel/spatial'
-import { MorphNode, type MeasuredSlot } from '../MorphNode.tsx'
+import { MorphNode, type MeasuredSlot, type NodeEdit } from '../MorphNode.tsx'
 import type { ControlModel } from '../controls.tsx'
 import type { MotionPhase } from '../motion.ts'
 import type { CanvasNode } from '../Canvas.tsx'
@@ -28,6 +28,7 @@ export interface PryselNodeData extends Record<string, unknown> {
   linkedSlots: string[]
   phase: MotionPhase
   onControlChange?: (id: string, next: ControlModel) => void
+  onNodeEdit?: (id: string, edit: NodeEdit) => void
   onEnter?: (id: string) => void
 }
 
@@ -42,16 +43,25 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   const geo = buildShape(container ? spec.shape : shapeFor(spec, density), size.w, size.h)
   const horizontal = axis === 'horizontal'
 
-  // Al cambiar los campos medidos cambian los puertos: React Flow tiene que volver a mirarlos.
-  const handleSlots = useCallback(
-    (measured: MeasuredSlot[]) => {
-      setSlots(measured)
-      updateNodeInternals(id)
-    },
-    [id, updateNodeInternals],
-  )
+  const handleSlots = useCallback((measured: MeasuredSlot[]) => {
+    setSlots(measured)
+  }, [])
 
   const connected = slots.filter((slot) => linkedSlots.includes(slot.id))
+
+  // Dónde están los puertos depende de la forma del nodo, de su tamaño y de dónde ha quedado cada
+  // campo conectado. Como el nodo llega ya medido, React Flow no se entera de que eso cambió:
+  // hay que decírselo, y **después** de pintar, cuando los puertos nuevos ya existen en el DOM.
+  const portLayout = [
+    `${size.w}x${size.h}`,
+    density,
+    axis,
+    container,
+    ...connected.map((slot) => `${slot.id}@${slot.y}`),
+  ].join('|')
+  useEffect(() => {
+    updateNodeInternals(id)
+  }, [id, updateNodeInternals, portLayout])
   const targetSide = horizontal ? Position.Left : Position.Top
   const sourceSide = horizontal ? Position.Right : Position.Bottom
   /** Coloca un puerto a lo largo del borde correspondiente. */
@@ -119,8 +129,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         label={node.label}
         code={node.code}
         meta={node.meta}
+        note={node.note}
+        renamable={node.renamable ?? false}
+        {...(data.onNodeEdit ? { onAction: (edit: NodeEdit) => data.onNodeEdit?.(id, edit) } : {})}
         metrics={node.metrics}
         control={node.control}
+        {...(node.editable ? { editable: node.editable } : {})}
+        {...(node.scope ? { suggestions: node.scope } : {})}
         density={density}
         size={size}
         state={state}
@@ -141,7 +156,11 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
           ? {
               onToggleDensity: () => data.onEnter?.(id),
               // Una llamada lleva a la función que llama; una función, a plegarse o abrirse.
-              ...(node.opens ? { toggleLabel: `Ver la función de ${node.label}` } : {}),
+              ...(node.opens
+                ? { toggleLabel: `Ver la función de ${node.label}` }
+                : container
+                  ? {}
+                  : { toggleLabel: `Abrir ${node.label}` }),
             }
           : {})}
       />

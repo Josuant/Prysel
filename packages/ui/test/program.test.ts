@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SemanticEdge } from '@prysel/spatial'
 import type { CanvasNode } from '../src/Canvas.tsx'
 import { dragTerritory } from '../src/drag.ts'
+import { nodeFrame } from '../src/flow/frame.ts'
 import { foldScopes, functionsOf, programView, toCanvasNodes } from '../src/program.ts'
 
 /**
@@ -200,5 +201,41 @@ describe('mover un territorio mueve lo que envuelve', () => {
   it('respeta lo que el usuario ya había colocado a mano', () => {
     const next = dragTerritory({ a: { x: 0, y: 0 } }, shown, 'fn', { x: 110, y: 100 }, ['a'])
     expect(next['a']).toEqual({ x: 10, y: 0 })
+  })
+})
+
+describe('la documentación de una función', () => {
+  it('llega a la lista de funciones', () => {
+    const documented = NODES.map((n) => (n.id === 'suma' ? { ...n, note: 'Suma dos números.' } : n))
+    const suma = functionsOf(documented, EDGES).find((f) => f.id === 'suma')
+    expect(suma?.doc).toBe('Suma dos números.')
+  })
+
+  it('una función sin documentación no inventa una', () => {
+    expect(functionsOf(NODES, EDGES).find((f) => f.id === '_main')?.doc).toBeUndefined()
+  })
+
+  it('el comentario de un nodo pasa al lienzo', () => {
+    const [node] = toCanvasNodes([
+      { id: 'a', kind: 'value.number', label: 'a', code: 'a = 5', line: 1, note: 'el tope' },
+    ])
+    expect(node?.note).toBe('el tope')
+  })
+})
+
+describe('un nodo llega a React Flow ya medido', () => {
+  it('con el tamaño que decidió la gramática, en todas las formas en que React Flow lo lee', () => {
+    expect(nodeFrame({ w: 258, h: 156 })).toEqual({
+      width: 258,
+      height: 156,
+      initialWidth: 258,
+      initialHeight: 156,
+      measured: { width: 258, height: 156 },
+    })
+  })
+
+  it('sin `measured` React Flow descartaría sus puertos al reconstruir el nodo: es lo que se perdía al mover', () => {
+    // La regresión: mover un nodo reconstruye su objeto; sin `measured`, las conexiones desaparecían.
+    expect(nodeFrame({ w: 100, h: 40 }).measured).toBeDefined()
   })
 })

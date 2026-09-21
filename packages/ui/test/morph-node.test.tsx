@@ -220,7 +220,9 @@ describe('Control', () => {
 
   it('todo editor ofrece algún control real con el que interactuar', () => {
     for (const [key, model] of Object.entries(SAMPLE_CONTROLS)) {
-      const html = renderToStaticMarkup(<Control model={model} level="full" />)
+      const html = renderToStaticMarkup(
+        <Control model={model} level="full" onChange={() => undefined} />,
+      )
       expect(/<(input|select|button|textarea)/.test(html), `${key} no es editable`).toBe(true)
     }
   })

@@ -185,3 +185,24 @@ describe('canales de conexión', () => {
     expect(channelOf({ relation: 'transform', channel: 'control' })).toBe('control')
   })
 })
+
+describe('la cabecera de un ámbito puede pedir más sitio (su documentación)', () => {
+  const plain = layout({ nodes: [scope('f', ['x']), node('x')], edges: [] })
+  const documented = layout({
+    nodes: [{ ...scope('f', ['x']), headroom: 40 }, node('x')],
+    edges: [],
+  })
+
+  it('el ámbito crece lo que pide, y no más', () => {
+    expect(at(documented, 'f').size.h - at(plain, 'f').size.h).toBe(40)
+  })
+
+  it('el contenido empieza justo debajo de la cabecera ampliada', () => {
+    const offset = (result: ReturnType<typeof layout>) => at(result, 'x').y - at(result, 'f').y
+    expect(offset(documented) - offset(plain)).toBe(40)
+  })
+
+  it('lo de dentro sigue dentro', () => {
+    expect(inside(at(documented, 'x'), at(documented, 'f'))).toBe(true)
+  })
+})

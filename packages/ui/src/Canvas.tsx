@@ -8,11 +8,13 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import {
+  docHeadroom,
   extraHeight,
   getKind,
   nodeSize,
   type Density,
   type Metrics,
+  type NodeAction,
   type NodeKindId,
   type NodeState,
 } from '@prysel/morphology'
@@ -27,8 +29,11 @@ import { EdgeDefs } from './Edge.tsx'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
 import { dragTerritory } from './drag.ts'
+import { nodeFrame } from './flow/frame.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
+import { CodePanel } from './CodePanel.tsx'
+import type { NodeEdit } from './MorphNode.tsx'
 import '@xyflow/react/dist/base.css'
 
 /**
@@ -55,6 +60,21 @@ export interface CanvasNode {
   openable?: boolean
   /** Es una llamada a una función que el programa define: el id de esa definición. */
   opens?: string
+  /** Lo que el código dice de sí mismo: sus comentarios y, en una función, su documentación. */
+  note?: string
+  /**
+   * Qué campos del editor se pueden escribir de vuelta en el código, por su camino. Sin lista, todos
+   * (un nodo de ejemplo, sin código detrás); con lista vacía, ninguno.
+   */
+  editable?: readonly string[]
+  /** El texto tal como está en el archivo (la sentencia, o su cabecera si es compuesta): lo que se edita como código. */
+  text?: string
+  /** El título es un nombre que Python conoce: se puede renombrar (y cambia en todos sus usos). */
+  renamable?: boolean
+  /** Su línea en el archivo. */
+  line?: number
+  /** Los nombres que se pueden usar en sus campos (las variables definidas antes): son las sugerencias. */
+  scope?: readonly string[]
 }
 
 export interface CanvasProps {
@@ -63,6 +83,11 @@ export interface CanvasProps {
   density: Density
   stateOf?: (id: string) => NodeState
   onControlChange?: (id: string, next: ControlModel) => void
+  /** Lo que el usuario le hace a un nodo: reescribirlo como código, eliminarlo, duplicarlo, renombrarlo. */
+  onAction?: (action: NodeAction) => void
+  /** El nodo seleccionado, si lo lleva quien usa el lienzo (para poder enfocar lo que acaba de crear). */
+  selected?: string | null
+  onSelect?: (id: string | null) => void
   onEnter?: (id: string) => void
   /** Eje de lectura del programa. */
   axis?: Axis
@@ -124,6 +149,9 @@ function CanvasInner({
   density,
   stateOf,
   onControlChange,
+  onAction,
+  selected: selectedProp,
+  onSelect,
   onEnter,
   axis = 'horizontal',
   gapX,
@@ -148,7 +176,22 @@ function CanvasInner({
   const [takenKey, setTakenKey] = useState<string | null>(null)
   const taken = takenKey === fitKey
   const [selectedState, setSelectedState] = useState<{ key: string; id: string } | null>(null)
-  const selectedId = selectedState?.key === fitKey ? selectedState.id : null
+  // La selección la puede llevar quien usa el lienzo (para enfocar lo que acaba de crear); si no, la lleva él.
+  const selectedId =
+    selectedProp !== undefined
+      ? selectedProp
+      : selectedState?.key === fitKey
+        ? selectedState.id
+        : null
+  const select = useCallback(
+    (id: string | null) => {
+      setSelectedState(id === null ? null : { key: fitKey, id })
+      onSelect?.(id)
+    },
+    [fitKey, onSelect],
+  )
+  /** El nodo que se está editando como código, mientras el panel está abierto. */
+  const [codeFor, setCodeFor] = useState<{ key: string; id: string } | null>(null)
   /** Mientras se arrastra, el nodo sigue al puntero: interpolar su posición lo haría ir por detrás. */
   const [dragging, setDragging] = useState(false)
 
@@ -195,7 +238,9 @@ function CanvasInner({
           id: node.id,
           role: spec.role,
           // El editor manda sobre el alto: si no cabe, el campo se recorta y su puerto cae fuera.
-          size: { w: base.w, h: base.h + extraHeight(node.control, d, linked[node.id]) },
+          size: { w: base.w, h: base.h + extraHeight(node.control, d, linked[node.id], node.note) },
+          // La documentación de una función, si el nodo es un territorio, se lee en su cabecera.
+          ...(node.note && node.contains ? { headroom: docHeadroom(node.note) } : {}),
           ...(node.contains ? { contains: node.contains } : {}),
         }
       }),
@@ -262,6 +307,17 @@ function CanvasInner({
     return new Set([selectedId, ...descendantsOf(selectedId)])
   }, [selectedId, descendantsOf])
 
+  /** Lo que se le hace a un nodo desde su cabecera: abrir el editor de código, o escribirlo en el archivo. */
+  const onNodeEdit = useCallback(
+    (id: string, edit: NodeEdit) => {
+      if (edit.type === 'open-code') setCodeFor({ key: fitKey, id })
+      else if (edit.type === 'rename') onAction?.({ type: 'rename', id, to: edit.to })
+      else onAction?.({ type: edit.type, id })
+    },
+    [fitKey, onAction],
+  )
+  const codeNode = codeFor?.key === fitKey ? byId.get(codeFor.id) : undefined
+
   const flowNodes: PryselFlowNode[] = animated.flatMap((item) => {
     const node = byId.get(item.id)
     if (!node) return []
@@ -272,10 +328,8 @@ function CanvasInner({
         id: item.id,
         type: 'prysel' as const,
         position: item.position,
-        width: item.value.size.w,
-        height: item.value.size.h,
-        initialWidth: item.value.size.w,
-        initialHeight: item.value.size.h,
+        // Ya medido: sin esto, mover un nodo le borra los puertos y las conexiones (ver frame.ts).
+        ...nodeFrame(item.value.size),
         selected: item.id === selectedId,
         // El contenedor va por detrás: su territorio enmarca a los nodos que abarca.
         zIndex: container ? 0 : 1,
@@ -293,6 +347,7 @@ function CanvasInner({
           linkedSlots: linked[node.id] ?? [],
           phase: item.phase,
           ...(onControlChange ? { onControlChange } : {}),
+          ...(onAction ? { onNodeEdit } : {}),
           ...(onEnter ? { onEnter } : {}),
         },
       },
@@ -424,14 +479,14 @@ function CanvasInner({
         onNodeClick={
           interactive
             ? (_, node) => {
-                setSelectedState({ key: fitKey, id: node.id })
+                select(node.id)
               }
             : undefined
         }
         onPaneClick={
           interactive
             ? () => {
-                setSelectedState(null)
+                select(null)
               }
             : undefined
         }
@@ -440,7 +495,7 @@ function CanvasInner({
             ? (_, node) => {
                 // Arrastrar un nodo lo selecciona: React Flow mueve a la vez todo lo seleccionado,
                 // y si quedara otro nodo elegido se desplazaría también, sumándose a mi propio arrastre.
-                setSelectedState({ key: fitKey, id: node.id })
+                select(node.id)
                 setDragging(true)
               }
             : undefined
@@ -473,6 +528,22 @@ function CanvasInner({
       >
         {interactive && <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />}
       </ReactFlow>
+      {codeNode?.text !== undefined && (
+        <CodePanel
+          // Una clave por nodo: al pasar a editar otro, el panel empieza de nuevo con su texto.
+          key={codeNode.id}
+          title={codeNode.label}
+          {...(codeNode.line === undefined ? {} : { line: codeNode.line })}
+          initial={codeNode.text}
+          onApply={(text) => {
+            setCodeFor(null)
+            onAction?.({ type: 'code', id: codeNode.id, text })
+          }}
+          onCancel={() => {
+            setCodeFor(null)
+          }}
+        />
+      )}
     </div>
   )
 }

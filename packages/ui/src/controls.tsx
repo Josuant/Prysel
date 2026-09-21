@@ -9,6 +9,7 @@ import {
   Segmented,
   Select,
   NumberInput,
+  RowButton,
   Slider,
   Sparkline,
   Switch,
@@ -34,18 +35,58 @@ export interface ControlProps {
   onChange?: (next: ControlModel) => void
   /** Campos que ya reciben un valor de otro nodo: se marcan y dejan de ser editables a mano. */
   linked?: string[]
+  /**
+   * Qué campos se pueden reescribir en el código, por su camino (`left`, `args.a`…). Un campo
+   * fuera de la lista se ve pero no se toca: no tiene un sitio en el texto al que escribir.
+   * Sin lista, todos son editables (un editor de ejemplo, sin código detrás).
+   */
+  editable?: readonly string[]
+  /** Nombres que se pueden usar en los campos que son expresiones: se ofrecen al escribir. */
+  suggestions?: readonly string[]
 }
+
+/** Los editores que saben escribirse de vuelta en el código. El resto se enseña tal cual, sin tocar. */
+const WRITABLE: ReadonlySet<string> = new Set([
+  'text',
+  'number',
+  'boolean',
+  'expression',
+  'condition',
+  'args',
+  'loop',
+  'signature',
+  'list',
+  'dict',
+  'module',
+  'signal',
+])
 
 /** El id declarado en el catálogo de morfología y el modelo tienen que hablar de lo mismo. */
 export function matchesKind(control: ControlId, model: ControlModel): boolean {
   return control === model.kind
 }
 
-export function Control({ model, level, onChange, linked = [] }: ControlProps) {
+export function Control(props: ControlProps) {
+  const frozen = props.editable !== undefined && !WRITABLE.has(props.model.kind)
+  // Lo que el analizador no sabe reescribir se enseña, pero un campo que acepta texto y no cambia
+  // el programa engaña: se deshabilita entero.
+  return frozen ? (
+    <fieldset className="control-frozen" disabled>
+      <Editor {...props} />
+    </fieldset>
+  ) : (
+    <Editor {...props} />
+  )
+}
+
+function Editor({ model, level, onChange, linked = [], editable, suggestions }: ControlProps) {
   const isLinked = (slot: string) => linked.includes(slot)
   const patch = <M extends ControlModel>(next: Partial<M>) =>
     onChange?.({ ...model, ...next } as ControlModel)
   const full = level === 'full'
+  /** El manejador de un campo, o nada si ese campo no se puede escribir (y entonces solo se lee). */
+  const on = <T,>(path: string, apply: (value: T) => void): ((value: T) => void) | undefined =>
+    onChange && (editable === undefined || editable.includes(path)) ? apply : undefined
 
   switch (model.kind) {
     case 'text':
@@ -58,13 +99,13 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
               rows={full ? 4 : 2}
               // Un mensaje con {huecos} recibe valores de otros nodos, pero sigue siendo editable.
               slot={{ id: 'value', label: 'Mensaje' }}
-              onChange={(value) => patch({ value })}
+              onChange={on('value', (value: string) => patch({ value }))}
             />
           ) : (
             <TextInput
               value={model.value}
               placeholder={model.placeholder}
-              onChange={(value) => patch({ value })}
+              onChange={on('value', (value: string) => patch({ value }))}
             />
           )}
         </Field>
@@ -77,7 +118,7 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
           <NumberInput
             value={model.value}
             step={model.step ?? 'any'}
-            onChange={(value) => patch({ value })}
+            onChange={on('value', (value: number) => patch({ value }))}
           />
         )
       }
@@ -89,7 +130,7 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
               min={model.min}
               max={model.max}
               step={model.step}
-              onChange={(value) => patch({ value })}
+              onChange={on('value', (value: number) => patch({ value }))}
             />
             <span className="control-stack__readout type-value">
               {model.value.toLocaleString('es')}
@@ -111,7 +152,7 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
         <Switch
           checked={model.value}
           labels={model.labels}
-          onChange={(value) => patch({ value })}
+          onChange={on('value', (value: boolean) => patch({ value }))}
         />
       )
 
@@ -131,9 +172,11 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
         <div className="control-stack">
           <Chips
             items={model.items}
-            max={full ? 8 : 3}
-            onRemove={(i) => patch({ items: model.items.filter((_, j) => j !== i) })}
-            onAdd={full ? () => patch({ items: [...model.items, '0'] }) : undefined}
+            max={full ? 10 : 4}
+            onRemove={on('items', (i: number) =>
+              patch({ items: model.items.filter((_, j) => j !== i) }),
+            )}
+            onAdd={on('items', (item: string) => patch({ items: [...model.items, item] }))}
           />
           {full && model.itemType && (
             <span className="type-field-label muted">
@@ -144,37 +187,56 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
       )
 
     case 'dict': {
-      const entries = full ? model.entries : model.entries.slice(0, 1)
+      const change = (index: number, at: 0 | 1) =>
+        on('entries', (value: string) =>
+          patch({
+            entries: model.entries.map((entry, j): [string, string] =>
+              j === index ? (at === 0 ? [value, entry[1]] : [entry[0], value]) : entry,
+            ),
+          }),
+        )
+      const shown = model.entries
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ index }) => full || index < 1)
+      const editing = on('entries', () => undefined) !== undefined
       return (
         <div className="control-stack">
-          {entries.map(([key, value], i) => (
-            <Row key={key}>
+          {shown.map(({ entry, index }) => (
+            <Row key={index}>
               <TextInput
-                value={key}
+                value={entry[0]}
                 grow={false}
-                onChange={(k) =>
-                  patch({
-                    entries: model.entries.map((e, j): [string, string] =>
-                      j === i ? [k, e[1]] : e,
-                    ),
-                  })
-                }
+                placeholder="clave"
+                onChange={change(index, 0)}
               />
               <Icon name="chevron" size={12} className="row__arrow" />
-              <TextInput
-                value={value}
-                onChange={(v) =>
-                  patch({
-                    entries: model.entries.map((e, j): [string, string] =>
-                      j === i ? [e[0], v] : e,
-                    ),
-                  })
-                }
-              />
+              <TextInput value={entry[1]} placeholder="valor" onChange={change(index, 1)} />
+              {editing && (
+                <RowButton
+                  label={`Quitar ${entry[0]}`}
+                  icon="x"
+                  onClick={() => {
+                    patch({ entries: model.entries.filter((_, j) => j !== index) })
+                  }}
+                />
+              )}
             </Row>
           ))}
           {!full && model.entries.length > 1 && (
             <span className="type-field-label muted">+{model.entries.length - 1} claves</span>
+          )}
+          {editing && (
+            <RowButton
+              label="Añadir una clave"
+              icon="plus"
+              text="clave"
+              onClick={() => {
+                // Una clave que no esté ya: un diccionario con dos iguales pierde una.
+                let key = '"clave"'
+                for (let n = 2; model.entries.some(([k]) => k === key); n++) key = `"clave_${n}"`
+                patch({ entries: [...model.entries, [key, '"valor"']] })
+              }}
+            />
           )}
         </div>
       )
@@ -212,11 +274,12 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
                 value={arg.value}
                 slot={{ id: `arg:${arg.name}`, label: arg.name }}
                 linked={linked}
-                onChange={(value) =>
+                {...(suggestions ? { suggestions } : {})}
+                onChange={on(`args.${arg.name}`, (value: string) =>
                   patch({
                     args: model.args.map((a, j) => (j === index ? { ...a, value } : a)),
-                  })
-                }
+                  }),
+                )}
               />
             </Field>
           ))}
@@ -236,19 +299,21 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
             value={model.left}
             slot={{ id: 'left', label: 'Izquierda' }}
             linked={isLinked('left')}
-            onChange={(left) => patch({ left })}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('left', (left: string) => patch({ left }))}
           />
           <Select
             value={model.operator}
             options={model.operators}
             compact
-            onChange={(operator) => patch({ operator })}
+            onChange={on('operator', (operator: string) => patch({ operator }))}
           />
           <TextInput
             value={model.right}
             slot={{ id: 'right', label: 'Derecha' }}
             linked={isLinked('right')}
-            onChange={(right) => patch({ right })}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('right', (right: string) => patch({ right }))}
           />
         </Row>
       )
@@ -261,20 +326,22 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
             value={model.field}
             slot={{ id: 'field', label: 'Campo' }}
             linked={isLinked('field')}
-            onChange={(field) => patch({ field })}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('field', (field: string) => patch({ field }))}
           />
           <Row>
             <Select
               value={model.operator}
               options={model.operators}
               compact
-              onChange={(operator) => patch({ operator })}
+              onChange={on('operator', (operator: string) => patch({ operator }))}
             />
             <TextInput
               value={model.value}
               slot={{ id: 'value', label: 'Valor' }}
               linked={isLinked('value')}
-              onChange={(value) => patch({ value })}
+              {...(suggestions ? { suggestions } : {})}
+              onChange={on('value', (value: string) => patch({ value }))}
             />
           </Row>
           {full && model.hits && (
@@ -295,13 +362,17 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
         <div className="control-stack">
           <Row>
             <span className="type-field-label muted">para</span>
-            <TextInput value={model.variable} onChange={(variable) => patch({ variable })} />
+            <TextInput
+              value={model.variable}
+              onChange={on('variable', (variable: string) => patch({ variable }))}
+            />
             <span className="type-field-label muted">en</span>
             <TextInput
               value={model.iterable}
               slot={{ id: 'iterable', label: 'Secuencia' }}
               linked={isLinked('iterable')}
-              onChange={(iterable) => patch({ iterable })}
+              {...(suggestions ? { suggestions } : {})}
+              onChange={on('iterable', (iterable: string) => patch({ iterable }))}
             />
           </Row>
           {model.total !== undefined && (
@@ -318,16 +389,16 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
     case 'signal':
       return (
         <div className="control-stack">
-          <Select
+          <TextInput
             value={model.errorType}
-            options={model.types}
-            onChange={(errorType) => patch({ errorType })}
+            suggestions={model.types}
+            onChange={on('errorType', (errorType: string) => patch({ errorType }))}
           />
-          {full && (
-            <Field label="Mensaje">
-              <TextInput value={model.message} onChange={(message) => patch({ message })} />
-            </Field>
-          )}
+          <TextInput
+            value={model.message}
+            placeholder="Mensaje"
+            onChange={on('message', (message: string) => patch({ message }))}
+          />
         </div>
       )
 
@@ -389,30 +460,69 @@ export function Control({ model, level, onChange, linked = [] }: ControlProps) {
     case 'module':
       return (
         <Row>
-          <span className="type-value muted">{model.module}</span>
+          <TextInput
+            value={model.module}
+            grow={false}
+            onChange={on('module', (module: string) => patch({ module }))}
+          />
           <span className="type-field-label muted">como</span>
-          <TextInput value={model.alias} onChange={(alias) => patch({ alias })} />
+          <TextInput
+            value={model.alias}
+            onChange={on('alias', (alias: string) => patch({ alias }))}
+          />
         </Row>
       )
 
     case 'signature': {
-      const params = full ? model.params : model.params.slice(0, 1)
+      const structural = on('paramsList', () => undefined) !== undefined
+      const fresh = () => {
+        let name = 'parametro'
+        for (let n = 2; model.params.some((q) => q.name === name); n++) name = `parametro_${n}`
+        return name
+      }
       return (
         <div className="control-stack">
-          {params.map((p, i) => (
-            <Field key={p.name} label={p.name}>
+          {model.params.map((p, i) => (
+            <Row key={i}>
+              <TextInput
+                value={p.name}
+                grow={false}
+                placeholder="nombre"
+                onChange={on(`params[${i}].name`, (name: string) =>
+                  patch({ params: model.params.map((q, j) => (j === i ? { ...q, name } : q)) }),
+                )}
+              />
+              <span className="type-field-label muted">=</span>
               <TextInput
                 value={p.value}
+                placeholder="por defecto"
                 slot={{ id: `param:${p.name}`, label: p.name }}
                 linked={isLinked(`param:${p.name}`)}
-                onChange={(value) =>
-                  patch({ params: model.params.map((q, j) => (j === i ? { ...q, value } : q)) })
-                }
+                {...(suggestions ? { suggestions } : {})}
+                onChange={on(`params.${p.name}`, (value: string) =>
+                  patch({ params: model.params.map((q, j) => (j === i ? { ...q, value } : q)) }),
+                )}
               />
-            </Field>
+              {structural && (
+                <RowButton
+                  label={`Quitar ${p.name}`}
+                  icon="x"
+                  onClick={() => {
+                    patch({ params: model.params.filter((_, j) => j !== i) })
+                  }}
+                />
+              )}
+            </Row>
           ))}
-          {!full && model.params.length > 1 && (
-            <span className="type-field-label muted">+{model.params.length - 1} parámetros</span>
+          {structural && (
+            <RowButton
+              label="Añadir un parámetro"
+              icon="plus"
+              text="parámetro"
+              onClick={() => {
+                patch({ params: [...model.params, { name: fresh(), value: '' }] })
+              }}
+            />
           )}
         </div>
       )

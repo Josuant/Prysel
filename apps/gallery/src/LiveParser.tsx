@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Density } from '@prysel/morphology'
+import type { Density, NodeAction, TemplateId } from '@prysel/morphology'
 import { buildProgram, createPythonParser, type Program, type PythonParser } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
-import { Canvas, FunctionMenu, Segmented, toCanvasNodes, useProgramView } from '@prysel/ui'
+import { actionEdits, applyEdits, editsFor } from '@prysel/python/edits'
+import {
+  AddNodeMenu,
+  Canvas,
+  FunctionMenu,
+  Segmented,
+  toCanvasNodes,
+  useProgramView,
+  type ControlModel,
+} from '@prysel/ui'
 import runtimeWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm?url'
 import pythonWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm?url'
 
@@ -12,18 +21,22 @@ import pythonWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm?ur
  * archivo es un campo de texto en vez del editor.
  */
 
-const EXAMPLE = `numeroA = 5
-numero2 = float(input("Ingresa el segundo número: "))
+const EXAMPLE = `# Programa de ejemplo: suma dos números.
+numeroA = 5
+numero2 = float(input("Ingresa el segundo número: "))  # puede ser negativo
 
 
 def suma(a, b):
+    """Suma dos números y devuelve el resultado."""
     return a + b
 
 
 def _main():
+    # Punto de entrada: decide qué mostrar según el signo del segundo número.
     if numero2 < 0:
         print("El número ingresado es negativo. Por favor, ingresa un número positivo.")
     else:
+        # Aquí ya sabemos que el número es válido.
         suma_resultado = suma(numeroA, numero2)
         print(f"La suma de {numeroA} y {numero2} es: {suma_resultado}")
 `
@@ -40,14 +53,21 @@ export function LiveParser() {
   })
   const [error, setError] = useState<string | null>(null)
   const [ms, setMs] = useState(0)
+  const [selected, setSelected] = useState<string | null>(null)
   const parserRef = useRef<PythonParser | null>(null)
 
-  const analyse = useCallback((code: string) => {
+  const analyse = useCallback((code: string, selectLine?: number) => {
     const parser = parserRef.current
     if (!parser) return
     const started = performance.now()
     try {
-      setProgram(buildProgram(parser.parse(code)))
+      const next = buildProgram(parser.parse(code), code)
+      setProgram(next)
+      // Lo que se acaba de crear queda enfocado: se localiza por la línea en la que se escribió.
+      if (selectLine !== undefined) {
+        const created = next.nodes.find((n) => n.line === selectLine)
+        if (created) setSelected(created.id)
+      }
       setError(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -76,11 +96,53 @@ export function LiveParser() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /**
+   * Un campo cambió en el lienzo: se reescribe ese trozo del texto de la izquierda. Es el mismo
+   * camino que sigue la extensión de VS Code, con el campo de texto en lugar del editor.
+   */
+  const changeControl = (id: string, next: ControlModel) => {
+    const node = program?.nodes.find((n) => n.id === id)
+    if (!node) return
+    const edits = editsFor(node, next)
+    if (edits.length === 0) return
+    const rewritten = applyEdits(source, edits)
+    setSource(rewritten)
+    analyse(rewritten)
+  }
+
+  /**
+   * Una acción sobre un nodo (reescribirlo como código, eliminarlo, duplicarlo, renombrarlo) o
+   * algo que se añade: se traduce a ediciones de texto y se escribe en el campo de la izquierda.
+   */
+  const act = (action: NodeAction) => {
+    if (!program) return
+    const change = actionEdits(program, action)
+    if (change.edits.length === 0) return
+    const rewritten = applyEdits(source, change.edits)
+    setSource(rewritten)
+    if (action.type === 'delete' && action.id === selected) setSelected(null)
+    analyse(rewritten, change.select?.line)
+  }
+
   // Compacto pliega las funciones (vista de pájaro: qué recibe y qué devuelve cada una);
   // normal y expandido las abren como territorios que envuelven su cuerpo.
   const canvasNodes = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
   const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density)
   const nodes = view.nodes
+  const anchor = program?.nodes.find((n) => n.id === selected)
+  /** Dónde va lo que se añade: tras el nodo seleccionado, al final de la función que se ve, o del archivo. */
+  const addWhere = anchor
+    ? `Después de «${anchor.label}»`
+    : view.focus
+      ? `Al final de ${view.focus.name}`
+      : 'Al final del programa'
+  const add = (template: TemplateId) => {
+    act({
+      type: 'add',
+      template,
+      ...(anchor ? { after: anchor.id } : view.focus ? { into: view.focus.id } : {}),
+    })
+  }
 
   return (
     <section className="mt-20">
@@ -108,6 +170,7 @@ export function LiveParser() {
           {program && ` · analizado en ${ms < 0.1 ? '<0,1' : ms.toFixed(1)} ms`}
         </span>
         <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
+        <AddNodeMenu onAdd={add} where={addWhere} />
         {view.folded > 0 && (
           <span className="type-tertiary text-ink-faint">{view.folded} funciones plegadas</span>
         )}
@@ -140,6 +203,10 @@ export function LiveParser() {
             height={460}
             interactive
             onEnter={view.enter}
+            onControlChange={changeControl}
+            onAction={act}
+            selected={selected}
+            onSelect={setSelected}
             fitKey={view.viewKey}
             ariaLabel="Diagrama del programa escrito a la izquierda"
           />

@@ -98,6 +98,7 @@ export type IconId =
   | 'dot'
   | 'diamond'
   | 'copy'
+  | 'trash'
   | 'pencil'
   | 'chevron'
   | 'plus'

@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import * as vscode from 'vscode'
 import { buildProgram, createPythonParser, type PythonParser } from '@prysel/python'
+import { validEdits, type TextEdit } from '@prysel/python/edits'
 import { parseHostMessage, type Theme, type WebviewMessage } from './protocol.ts'
 
 /**
@@ -70,8 +71,9 @@ async function refresh() {
   }
   try {
     const parser = await getParser()
-    const program = buildProgram(parser.parse(doc.getText()))
-    postToAll({ type: 'update', program, file: basename(doc.fileName) })
+    const text = doc.getText()
+    const program = buildProgram(parser.parse(text), text)
+    postToAll({ type: 'update', program, file: basename(doc.fileName), version: doc.version })
   } catch {
     // El código a medio escribir no debe tumbar el lienzo.
     postToAll({ type: 'update', program: null })
@@ -109,10 +111,37 @@ function htmlFor(webview: vscode.Webview, extensionUri: vscode.Uri): string {
 </html>`
 }
 
+/**
+ * Aplica al documento las ediciones que el usuario hizo en el lienzo. Los desplazamientos se
+ * calcularon sobre una versión concreta del texto: si el documento ha cambiado desde entonces
+ * (se tecleó en el editor mientras tanto), ya no valen y se descartan — y se reenvía el estado
+ * para que el lienzo vuelva a mostrar lo que hay, en vez de quedarse con lo que el usuario creyó.
+ */
+async function applyEdits(edits: TextEdit[], version: number) {
+  const doc = currentDoc
+  if (!doc || doc.languageId !== 'python') return
+  if (doc.version !== version || !validEdits(edits, doc.getText().length)) {
+    void refresh()
+    return
+  }
+  const change = new vscode.WorkspaceEdit()
+  for (const edit of edits) {
+    const range = new vscode.Range(doc.positionAt(edit.start), doc.positionAt(edit.end))
+    change.replace(doc.uri, range, edit.text)
+  }
+  // El cambio dispara `onDidChangeTextDocument`, que reanaliza y reenvía el programa.
+  if (!(await vscode.workspace.applyEdit(change))) void refresh()
+}
+
 /** Conecta un webview recién creado: responde al «ready» con el tema y el estado actual. */
 function wireWebview(webview: vscode.Webview) {
   webview.onDidReceiveMessage((message) => {
-    if (!parseHostMessage(message)) return
+    const parsed = parseHostMessage(message)
+    if (!parsed) return
+    if (parsed.type === 'edit') {
+      void applyEdits(parsed.edits, parsed.version)
+      return
+    }
     postToAll({ type: 'theme', theme: themeKind() })
     void refresh()
   })

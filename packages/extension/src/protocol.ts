@@ -1,4 +1,4 @@
-import type { Program } from '@prysel/python'
+import type { Program, TextEdit } from '@prysel/python'
 
 /**
  * Protocolo de mensajes entre la extensión y el webview.
@@ -14,6 +14,11 @@ export interface UpdateMessage {
   program: Program | null
   /** Nombre del archivo analizado, para mostrarlo en la cabecera. */
   file?: string
+  /**
+   * La versión del documento que se analizó. Los desplazamientos del programa valen solo para
+   * ella: una edición que vuelve al anfitrión la lleva, y si el texto ha cambiado, se descarta.
+   */
+  version?: number
 }
 
 export interface ThemeMessage {
@@ -28,7 +33,31 @@ export interface ReadyMessage {
   type: 'ready'
 }
 
-export type HostMessage = ReadyMessage
+/** El usuario cambió un campo en el lienzo: estas son las ediciones de texto que lo reflejan. */
+export interface EditMessage {
+  type: 'edit'
+  version: number
+  edits: TextEdit[]
+}
+
+export type HostMessage = ReadyMessage | EditMessage
+
+/** Tope de lo que un solo cambio puede reescribir: un mensaje absurdo no se aplica. */
+const MAX_EDITS = 64
+const MAX_TEXT = 200_000
+
+function isEdit(value: unknown): value is TextEdit {
+  if (typeof value !== 'object' || value === null) return false
+  const { start, end, text } = value as Partial<TextEdit>
+  return (
+    Number.isInteger(start) &&
+    Number.isInteger(end) &&
+    typeof text === 'string' &&
+    text.length <= MAX_TEXT &&
+    (start as number) >= 0 &&
+    (end as number) >= (start as number)
+  )
+}
 
 function isProgram(value: unknown): value is Program {
   if (typeof value !== 'object' || value === null) return false
@@ -60,5 +89,11 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   if (typeof value !== 'object' || value === null) return null
   const type = (value as { type?: unknown }).type
   if (type === 'ready') return value as ReadyMessage
+  if (type === 'edit') {
+    const { version, edits } = value as { version?: unknown; edits?: unknown }
+    if (!Number.isInteger(version) || !Array.isArray(edits)) return null
+    if (edits.length === 0 || edits.length > MAX_EDITS || !edits.every(isEdit)) return null
+    return { type: 'edit', version: version as number, edits }
+  }
   return null
 }

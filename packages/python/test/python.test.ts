@@ -354,3 +354,103 @@ describe('una llamada a una función del archivo sabe a cuál llama', () => {
     expect(nodes[0]?.calls).toBeUndefined()
   })
 })
+
+describe('los comentarios no se pierden: van donde explican', () => {
+  const noteOf = (program: Program, label: string) =>
+    program.nodes.find((n) => n.label === label)?.note
+
+  it('el docstring de una función va en su nodo, no como una sentencia más', () => {
+    const program = parse('def suma(a, b):\n    """Suma dos números."""\n    return a + b\n')
+    const def = program.nodes.find((n) => n.kind === 'abstraction.collapsed')
+    expect(def?.note).toBe('Suma dos números.')
+    // El docstring no genera un nodo propio: el cuerpo es solo el return.
+    expect(def?.contains).toHaveLength(1)
+    expect(program.nodes.filter((n) => n.kind === 'value.str')).toHaveLength(0)
+  })
+
+  it('un docstring de varias líneas se limpia de comillas y de sangría', () => {
+    const program = parse(
+      'def f():\n    """Resumen.\n\n    Detalle en\n    dos líneas.\n    """\n    return 1\n',
+    )
+    expect(noteOf(program, 'f')).toBe('Resumen.\n\nDetalle en\ndos líneas.')
+  })
+
+  it('el comentario justo debajo de la firma explica la función', () => {
+    const program = parse('def f(a):\n    # Devuelve el doble.\n    return a * 2\n')
+    expect(noteOf(program, 'f')).toBe('Devuelve el doble.')
+  })
+
+  it('el comentario en la línea de la firma también', () => {
+    const program = parse('def f(a):  # el doble\n    return a * 2\n')
+    expect(noteOf(program, 'f')).toBe('el doble')
+  })
+
+  it('el comentario encima del def explica la función', () => {
+    const program = parse('# Calcula el total.\ndef total(xs):\n    return sum(xs)\n')
+    expect(noteOf(program, 'total')).toBe('Calcula el total.')
+  })
+
+  it('un comentario y un docstring conviven: primero lo uno, luego lo otro', () => {
+    const program = parse('# Nota de autor\ndef f():\n    """Hace algo."""\n    return 1\n')
+    expect(noteOf(program, 'f')).toBe('Nota de autor\n\nHace algo.')
+  })
+
+  it('un comentario en línea es de la sentencia en cuya línea está', () => {
+    const program = parse('x = 5  # el tope\ny = 6\n')
+    expect(noteOf(program, 'x')).toBe('el tope')
+    expect(noteOf(program, 'y')).toBeUndefined()
+  })
+
+  it('un comentario solo en su línea explica la sentencia que viene detrás', () => {
+    const program = parse('# el umbral\nlimite = 10\notro = 1\n')
+    expect(noteOf(program, 'limite')).toBe('el umbral')
+    expect(noteOf(program, 'otro')).toBeUndefined()
+  })
+
+  it('varias líneas de comentario seguidas se conservan juntas', () => {
+    const program = parse('# primera\n# segunda\nx = 1\n')
+    expect(noteOf(program, 'x')).toBe('primera\nsegunda')
+  })
+
+  it('un comentario al final de un bloque cierra la última sentencia', () => {
+    const program = parse('if a:\n    x = 1\n    # fin de la rama\n')
+    expect(noteOf(program, 'x')).toBe('fin de la rama')
+  })
+
+  it('dentro de una rama, un comentario explica lo de esa rama', () => {
+    const program = parse('if a:\n    # caso feliz\n    x = 1\nelse:\n    y = 2\n')
+    expect(noteOf(program, 'x')).toBe('caso feliz')
+    expect(noteOf(program, 'y')).toBeUndefined()
+  })
+
+  it('el comentario de la cabecera de un if o un bucle es del if o del bucle', () => {
+    const program = parse('for n in xs:  # recorre todo\n    pass\n')
+    expect(program.nodes.find((n) => n.kind === 'control.loop')?.note).toBe('recorre todo')
+  })
+
+  it('el docstring del archivo explica lo que viene detrás', () => {
+    const program = parse('"""Cálculos de ventas."""\nx = 1\n')
+    expect(noteOf(program, 'x')).toBe('Cálculos de ventas.')
+    expect(program.nodes).toHaveLength(1)
+  })
+
+  it('el shebang y la declaración de codificación no son prosa', () => {
+    const program = parse('#!/usr/bin/env python\n# -*- coding: utf-8 -*-\nx = 1\n')
+    expect(noteOf(program, 'x')).toBeUndefined()
+  })
+
+  it('un f-string al principio no es un docstring', () => {
+    const program = parse('def f(a):\n    f"hola {a}"\n    return a\n')
+    expect(noteOf(program, 'f')).toBeUndefined()
+  })
+
+  it('un comentario solo, sin ninguna sentencia, no rompe nada', () => {
+    expect(parse('# nada más\n').nodes).toEqual([])
+  })
+
+  it('los ids no cambian al editar dentro de una línea', () => {
+    const before = parse('a = 1\nb = 2\n')
+    const after = parse('a = 1000000  # más largo\nb = 2\n')
+    expect(after.nodes.map((n) => n.id)).toEqual(before.nodes.map((n) => n.id))
+  })
+})

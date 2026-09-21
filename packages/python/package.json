@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Python → grafo semántico. Análisis incremental con tree-sitter, tolerante a código a medio escribir.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./edits": "./src/edits.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

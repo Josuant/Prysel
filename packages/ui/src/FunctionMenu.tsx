@@ -91,6 +91,12 @@ export function FunctionMenu({ functions, focus, onOpen }: FunctionMenuProps) {
         <span className="fn-menu__count">{functions.length}</span>
       </button>
 
+      {focus?.doc && (
+        <p className="fn-menu__doc" title={focus.doc}>
+          {focus.doc}
+        </p>
+      )}
+
       {open && (
         <ul className="fn-menu__list" id={listId} role="listbox" aria-label="Funciones del archivo">
           {functions.map((fn) => (
@@ -109,6 +115,7 @@ export function FunctionMenu({ functions, focus, onOpen }: FunctionMenuProps) {
                   {fn.name}
                   <span className="fn-menu__sig">{fn.signature}</span>
                 </span>
+                {fn.doc && <span className="fn-menu__summary">{fn.doc}</span>}
                 <span className="fn-menu__meta">
                   {usage(fn)} · {fn.size} {fn.size === 1 ? 'nodo' : 'nodos'}
                 </span>

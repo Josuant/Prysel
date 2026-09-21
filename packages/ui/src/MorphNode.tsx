@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -32,6 +33,13 @@ export interface MeasuredSlot {
   y: number
 }
 
+/** Lo que el usuario le hace a un nodo desde su cabecera. El lienzo le pone el id y lo escribe en el código. */
+export type NodeEdit =
+  | { type: 'open-code' }
+  | { type: 'delete' }
+  | { type: 'duplicate' }
+  | { type: 'rename'; to: string }
+
 export interface MorphNodeProps {
   kind: NodeKindId
   /** Nombre e intención del nodo. */
@@ -40,12 +48,22 @@ export interface MorphNodeProps {
   code?: string
   /** Metadata del pie: "428 → 91 filas · sales.py:42". */
   meta?: string
+  /** Qué hacen las acciones de la cabecera (duplicar, editar como código, eliminar). Sin ella, son decorativas. */
+  onAction?: (edit: NodeEdit) => void
+  /** El título es un nombre que Python conoce (una variable, una función): doble clic lo renombra. */
+  renamable?: boolean
+  /** Lo que el código dice de sí mismo (comentarios, docstring): bajo el título, o en la cabecera de un territorio. */
+  note?: string
   density?: Density
   state?: NodeState
   /** Complejidad real (operaciones, elementos): el tamaño la refleja. */
   metrics?: Metrics
   /** El editor gráfico del cuerpo. Sin él, el nodo solo se lee. */
   control?: ControlModel
+  /** Qué campos del editor se pueden reescribir (por camino). Sin lista, todos. */
+  editable?: readonly string[]
+  /** Nombres que se ofrecen al escribir en los campos que son expresiones. */
+  suggestions?: readonly string[]
   onControlChange?: (next: ControlModel) => void
   /** `dead`: código inalcanzable. `generating`: la UI del nodo aún se está generando. */
   modifier?: 'dead' | 'generating'
@@ -82,6 +100,83 @@ export interface MorphNodeProps {
   style?: CSSProperties
 }
 
+/**
+ * El título de un nodo. Si es un nombre que Python conoce, con doble clic se edita en su sitio y
+ * al confirmar (Intro o salir) se renombra **en todos los sitios donde se usa**. Esc lo descarta.
+ */
+function Title({
+  label,
+  renamable,
+  tag,
+  onRename,
+}: {
+  label: string
+  renamable: boolean
+  tag: 'div' | 'span'
+  onRename: (to: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const Tag = tag
+  if (!editing) {
+    return (
+      <Tag
+        className="node__title type-node-title"
+        {...(renamable
+          ? {
+              title: 'Doble clic para renombrar',
+              onDoubleClick: () => {
+                setEditing(true)
+              },
+            }
+          : {})}
+      >
+        {label}
+      </Tag>
+    )
+  }
+  return (
+    <RenameBox
+      label={label}
+      onDone={(to) => {
+        setEditing(false)
+        if (to && to !== label) onRename(to)
+      }}
+    />
+  )
+}
+
+/** El cuadro de renombrar. Selecciona el nombre entero **una sola vez**, al abrirse: escribir lo sustituye. */
+function RenameBox({ label, onDone }: { label: string; onDone: (to: string | null) => void }) {
+  const [draft, setDraft] = useState(label)
+  const box = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    box.current?.focus()
+    box.current?.select()
+  }, [])
+  return (
+    <input
+      ref={box}
+      className="node__rename type-node-title nodrag"
+      aria-label={`Renombrar ${label}`}
+      value={draft}
+      onChange={(event) => {
+        setDraft(event.target.value)
+      }}
+      onBlur={() => {
+        onDone(draft.trim())
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          onDone(draft.trim())
+        } else if (event.key === 'Escape') {
+          onDone(null)
+        }
+      }}
+    />
+  )
+}
+
 /** De `def suma(a, b):` interesa lo que el título no dice: `(a, b)`. */
 function signatureOf(code: string): string {
   return code.replace(/^\s*(?:async\s+)?(?:def|class)\s+\w+/, '').replace(/:\s*$/, '')
@@ -92,10 +187,15 @@ export function MorphNode({
   label,
   code,
   meta,
+  onAction,
+  renamable = false,
+  note,
   density = 'normal',
   state = 'dormant',
   metrics,
   control,
+  editable,
+  suggestions,
   onControlChange,
   modifier,
   focused = false,
@@ -240,7 +340,7 @@ export function MorphNode({
         }}
       >
         {compact ? (
-          <div className="node__glance">
+          <div className="node__glance" title={note}>
             <Icon name={spec.icon} size={14} className="node__glance-icon" />
             <span className="node__glance-label type-node-title">{label}</span>
             {onToggleDensity ? (
@@ -260,7 +360,14 @@ export function MorphNode({
           <>
             <header className="node__head">
               <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} />
-              {container && <span className="node__title type-node-title">{label}</span>}
+              {container && (
+                <Title
+                  label={label}
+                  renamable={renamable}
+                  tag="span"
+                  onRename={(to) => onAction?.({ type: 'rename', to })}
+                />
+              )}
               {container && code && (
                 <code className="node__signature type-code">{signatureOf(code)}</code>
               )}
@@ -272,6 +379,8 @@ export function MorphNode({
                         type="button"
                         className="node__action nodrag"
                         aria-label="Duplicar nodo"
+                        title="Duplicar"
+                        onClick={() => onAction?.({ type: 'duplicate' })}
                       >
                         <Icon name="copy" size={13} />
                       </button>
@@ -279,9 +388,22 @@ export function MorphNode({
                         type="button"
                         className="node__action nodrag"
                         aria-label="Editar código"
+                        title="Editar como código"
+                        onClick={() => onAction?.({ type: 'open-code' })}
                       >
                         <Icon name="pencil" size={13} />
                       </button>
+                      {onAction && (
+                        <button
+                          type="button"
+                          className="node__action node__action--danger nodrag"
+                          aria-label="Eliminar nodo"
+                          title="Eliminar"
+                          onClick={() => onAction({ type: 'delete' })}
+                        >
+                          <Icon name="trash" size={13} />
+                        </button>
+                      )}
                     </>
                   )}
                   {onToggleDensity && (
@@ -306,9 +428,25 @@ export function MorphNode({
               )}
             </header>
 
+            {container && note && (
+              <p className="node__note node__note--doc" title={note}>
+                {note}
+              </p>
+            )}
+
             {!container && (
               <div className="node__body">
-                <div className="node__title type-node-title">{label}</div>
+                <Title
+                  label={label}
+                  renamable={renamable}
+                  tag="div"
+                  onRename={(to) => onAction?.({ type: 'rename', to })}
+                />
+                {note && (
+                  <p className="node__note" title={note}>
+                    {note}
+                  </p>
+                )}
                 {showCode && <code className="node__code type-code">{code}</code>}
                 {control && (
                   <div className="node__control">
@@ -316,6 +454,8 @@ export function MorphNode({
                       model={control}
                       level={level}
                       onChange={onControlChange}
+                      {...(editable ? { editable } : {})}
+                      {...(suggestions ? { suggestions } : {})}
                       {...(linkedSlots ? { linked: linkedSlots } : {})}
                     />
                   </div>

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Icon } from './Icon.tsx'
 
 /** Primitivas de edición. Todo lo que el usuario puede tocar dentro de una tarjeta vive aquí. */
@@ -29,6 +29,53 @@ export interface Slot {
   label: string
 }
 
+/**
+ * Un campo de texto se edita en un **borrador** y se confirma al salir de él o con Intro
+ * (Esc lo descarta). Confirmar por tecla reescribiría el código a cada pulsación, y a medio
+ * escribir casi ningún trozo de Python es válido: el nodo cambiaría de forma bajo los dedos.
+ */
+function useDraft(value: string, onCommit?: (next: string) => void) {
+  const [draft, setDraft] = useState<string | null>(null)
+  // Lo último escrito, para que perder el foco confirme lo que hay y no lo que había al pintar.
+  const latest = useRef<string | null>(null)
+  const set = (next: string | null) => {
+    latest.current = next
+    setDraft(next)
+  }
+  return {
+    shown: draft ?? value,
+    edit: (next: string) => {
+      set(next)
+    },
+    commit: () => {
+      const next = latest.current
+      set(null)
+      if (next !== null && next !== value) onCommit?.(next)
+    },
+    cancel: () => {
+      set(null)
+    },
+  }
+}
+
+/** Intro confirma y Esc descarta. En un área de texto, Intro es un salto de línea: confirma Ctrl+Intro. */
+function onKeys(
+  editor: { cancel: () => void; commit: () => void },
+  multiline: boolean,
+): (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void {
+  return (event) => {
+    if (event.key === 'Escape') {
+      editor.cancel()
+      event.currentTarget.blur()
+    } else if (event.key === 'Enter' && (!multiline || event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      // Se confirma aquí, sin esperar al evento de foco: no depende de que la ventana lo reciba.
+      editor.commit()
+      event.currentTarget.blur()
+    }
+  }
+}
+
 export function TextInput({
   value,
   onChange,
@@ -37,6 +84,7 @@ export function TextInput({
   grow = true,
   slot,
   linked = false,
+  suggestions,
 }: {
   value: string
   onChange?: (v: string) => void
@@ -45,20 +93,65 @@ export function TextInput({
   grow?: boolean
   slot?: Slot
   linked?: boolean
+  /** Nombres que se pueden usar aquí (las variables definidas antes): se ofrecen al escribir. */
+  suggestions?: readonly string[]
+}) {
+  const editor = useDraft(value, onChange)
+  const listId = useId()
+  const offered = suggestions !== undefined && suggestions.length > 0 && onChange !== undefined
+  return (
+    <>
+      <input
+        list={offered ? listId : undefined}
+        className={`input ${mono ? 'type-value' : 'type-field-label'}`}
+        data-grow={grow ? '' : undefined}
+        data-slot={slot?.id}
+        data-slot-label={slot?.label}
+        data-linked={linked ? '' : undefined}
+        title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
+        value={editor.shown}
+        placeholder={placeholder}
+        readOnly={!onChange || linked}
+        onChange={(e) => {
+          editor.edit(e.target.value)
+        }}
+        onBlur={editor.commit}
+        onKeyDown={onKeys(editor, false)}
+      />
+      {offered && (
+        <datalist id={listId}>
+          {suggestions.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      )}
+    </>
+  )
+}
+
+/** Un botón pequeño al final de una fila de un editor: quitar un elemento, añadir uno. */
+export function RowButton({
+  label,
+  icon,
+  onClick,
+  text,
+}: {
+  label: string
+  icon: 'x' | 'plus'
+  onClick: () => void
+  text?: string
 }) {
   return (
-    <input
-      className={`input ${mono ? 'type-value' : 'type-field-label'}`}
-      data-grow={grow ? '' : undefined}
-      data-slot={slot?.id}
-      data-slot-label={slot?.label}
-      data-linked={linked ? '' : undefined}
-      title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
-      value={value}
-      placeholder={placeholder}
-      readOnly={!onChange || linked}
-      onChange={(e) => onChange?.(e.target.value)}
-    />
+    <button
+      type="button"
+      className="row-button nodrag"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+    >
+      <Icon name={icon} size={11} />
+      {text && <span className="type-field-label">{text}</span>}
+    </button>
   )
 }
 
@@ -78,6 +171,7 @@ export function TextArea({
   slot?: Slot
   linked?: boolean
 }) {
+  const editor = useDraft(value, onChange)
   return (
     <textarea
       className="input input--area type-value"
@@ -86,11 +180,15 @@ export function TextArea({
       data-slot-label={slot?.label}
       data-linked={linked ? '' : undefined}
       title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
-      value={value}
+      value={editor.shown}
       placeholder={placeholder}
       rows={rows}
       readOnly={!onChange || linked}
-      onChange={(e) => onChange?.(e.target.value)}
+      onChange={(e) => {
+        editor.edit(e.target.value)
+      }}
+      onBlur={editor.commit}
+      onKeyDown={onKeys(editor, true)}
     />
   )
 }
@@ -109,6 +207,11 @@ export function NumberInput({
   slot?: Slot
   linked?: boolean
 }) {
+  // Un número a medio escribir (`-`, `1.`) no es un número: se confirma solo si lo es.
+  const editor = useDraft(String(value), (text) => {
+    const next = Number(text)
+    if (text.trim() !== '' && Number.isFinite(next)) onChange?.(next)
+  })
   return (
     <input
       className="input type-value"
@@ -118,13 +221,14 @@ export function NumberInput({
       data-slot-label={slot?.label}
       data-linked={linked ? '' : undefined}
       title={linked ? `${slot?.label ?? 'Valor'} viene de otro nodo` : undefined}
-      value={value}
+      value={editor.shown}
       step={step}
       readOnly={!onChange || linked}
       onChange={(e) => {
-        const next = e.target.valueAsNumber
-        if (!Number.isNaN(next)) onChange?.(next)
+        editor.edit(e.target.value)
       }}
+      onBlur={editor.commit}
+      onKeyDown={onKeys(editor, false)}
     />
   )
 }
@@ -145,6 +249,7 @@ export function Select({
       <select
         className="select__native type-value"
         value={value}
+        disabled={!onChange}
         onChange={(e) => onChange?.(e.target.value)}
         aria-label="Opción"
       >
@@ -202,6 +307,7 @@ export function Switch({
       type="button"
       className="switch"
       role="switch"
+      disabled={!onChange}
       aria-checked={checked}
       aria-label={checked ? labels[1] : labels[0]}
       onClick={() => onChange?.(!checked)}
@@ -248,10 +354,17 @@ export function Chips({
 }: {
   items: string[]
   onRemove?: (index: number) => void
-  onAdd?: () => void
+  /** Sin él, la lista solo se lee. Con él, se escribe un elemento nuevo y se añade con Intro o al salir. */
+  onAdd?: (item: string) => void
   max?: number
 }) {
   const shown = items.slice(0, max)
+  const [draft, setDraft] = useState('')
+  const commit = () => {
+    const item = draft.trim()
+    setDraft('')
+    if (item) onAdd?.(item)
+  }
   return (
     <div className="chips">
       {shown.map((item, i) => (
@@ -260,9 +373,11 @@ export function Chips({
           {onRemove && (
             <button
               type="button"
-              className="chips__remove"
+              className="chips__remove nodrag"
               aria-label={`Quitar ${item}`}
-              onClick={() => onRemove(i)}
+              onClick={() => {
+                onRemove(i)
+              }}
             >
               <Icon name="x" size={10} />
             </button>
@@ -273,9 +388,24 @@ export function Chips({
         <span className="chips__more type-field-label">+{items.length - shown.length}</span>
       )}
       {onAdd && (
-        <button type="button" className="chips__add" aria-label="Añadir elemento" onClick={onAdd}>
-          <Icon name="plus" size={11} />
-        </button>
+        <input
+          className="chips__new type-value"
+          placeholder="+ elemento"
+          aria-label="Añadir elemento"
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value)
+          }}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commit()
+            } else if (event.key === 'Escape') {
+              setDraft('')
+            }
+          }}
+        />
       )}
     </div>
   )

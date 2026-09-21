@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Density } from '@prysel/morphology'
 import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
-import { Canvas, FunctionMenu, toCanvasNodes, useProgramView } from '@prysel/ui'
+import { AddNodeMenu, Canvas, FunctionMenu, toCanvasNodes, useProgramView } from '@prysel/ui'
+import { actionEdits } from '@prysel/python/edits'
+import type { NodeAction, TemplateId } from '@prysel/morphology'
 import { parseWebviewMessage, type Theme } from '../../src/protocol.ts'
+import { useWriteBack } from './useWriteBack.ts'
 
 const vscode = acquireVsCodeApi()
+const post = (message: unknown) => {
+  vscode.postMessage(message)
+}
 
 const DENSITIES: Density[] = ['compact', 'normal', 'expanded']
 const DENSITY_LABELS: Record<Density, string> = {
@@ -23,6 +29,13 @@ const NO_EDGES: SemanticEdge[] = []
 export function App() {
   const [program, setProgram] = useState<Program | null>(null)
   const [file, setFile] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
+  // Lo que se acaba de crear queda enfocado: se localiza por la línea en la que se escribió.
+  const focusCreated = useCallback((created: Program, line: number) => {
+    const node = created.nodes.find((n) => n.line === line)
+    if (node) setSelected(node.id)
+  }, [])
+  const { pending, change: changeControl, submit, received } = useWriteBack(post, focusCreated)
   const [theme, setTheme] = useState<Theme>('dark')
   const [density, setDensity] = useState<Density>(() => {
     const saved = vscode.getState() as SavedState | undefined
@@ -36,6 +49,7 @@ export function App() {
       if (message.type === 'update') {
         setProgram(message.program)
         setFile(message.file ?? null)
+        received(message.program, message.version ?? null)
       } else if (message.type === 'theme') {
         setTheme(message.theme)
       }
@@ -45,7 +59,7 @@ export function App() {
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [])
+  }, [received])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -56,11 +70,37 @@ export function App() {
     vscode.setState({ density: next } satisfies SavedState)
   }
 
-  const source = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
+  const source = useMemo(() => {
+    if (!program) return []
+    return toCanvasNodes(program.nodes).map((node) =>
+      pending[node.id] ? { ...node, control: pending[node.id] } : node,
+    )
+  }, [program, pending])
+
   // El programa enseña cada función una vez (como su llamada); una función se ve aparte.
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
   const view = useProgramView(source, program?.edges ?? NO_EDGES, density)
   const unsupported = program?.unsupported ?? []
+
+  /** Lo que el usuario le hace a un nodo, o añade: se traduce a ediciones de texto y se escribe en el archivo. */
+  const act = (action: NodeAction) => {
+    if (action.type === 'delete' && action.id === selected) setSelected(null)
+    submit((current) => actionEdits(current, action))
+  }
+  const anchor = program?.nodes.find((n) => n.id === selected)
+  /** Dónde va lo que se añade: tras el nodo seleccionado, al final de la función que se ve, o del archivo. */
+  const addWhere = anchor
+    ? `Después de «${anchor.label}»`
+    : view.focus
+      ? `Al final de ${view.focus.name}`
+      : 'Al final del programa'
+  const add = (template: TemplateId) => {
+    act({
+      type: 'add',
+      template,
+      ...(anchor ? { after: anchor.id } : view.focus ? { into: view.focus.id } : {}),
+    })
+  }
   const canvasLabel = program
     ? `Diagrama de ${file ?? 'Python'}: ${program.nodes.length} nodos y ${program.edges.length} conexiones`
     : 'Lienzo vacío'
@@ -76,6 +116,7 @@ export function App() {
           {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
         </span>
         <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
+        {program && <AddNodeMenu onAdd={add} where={addWhere} />}
         <DensityControl value={density} onChange={changeDensity} />
       </header>
 
@@ -96,10 +137,14 @@ export function App() {
             edges={view.edges}
             density={density}
             onEnter={view.enter}
+            onControlChange={changeControl}
+            onAction={act}
+            selected={selected}
+            onSelect={setSelected}
             interactive
             height="fill"
             fitKey={view.viewKey}
-            showActions={false}
+            showActions
             showStatus={false}
             ariaLabel={canvasLabel}
           />
@@ -149,7 +194,7 @@ function EmptyState() {
         <p className="text-sm text-ink">Sin diagrama que mostrar</p>
         <p className="mt-1 text-xs leading-5 text-ink-faint">
           Abre un archivo <code className="type-code">.py</code> y concéntralo para ver su diagrama,
-          o ejecuta «Prysel: Abrir lienzo».
+          o ejecuta «Prysel: Abrir lienzo». En un archivo vacío, empieza con «Añadir».
         </p>
       </div>
     </div>

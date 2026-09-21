@@ -1,19 +1,27 @@
 import type { ControlModel, NodeKindId } from '@prysel/morphology'
 import type { Channel, Relation, SemanticEdge } from '@prysel/spatial'
 import type { Node as TsNode, Tree } from '@vscode/tree-sitter-wasm'
+import type { NodeRange, Source, Span } from './source.ts'
 import {
   augmented,
   condition as conditionOf,
   loop,
+  loopSources,
   moduleOf,
+  moduleSources,
+  parameterNames,
   positionalParams,
   returned,
   semanticsOf,
   signal,
+  signalSources,
   signatureOf,
+  signatureSources,
+  stringContent,
+  type Semantics,
   type SemanticContext,
 } from './semantics.ts'
-import { calleeName, field, findFirst, firstLine, readNames } from './tree.ts'
+import { calleeName, field, findFirst, firstLine, readIdentifiers, readNames } from './tree.ts'
 
 /**
  * Del árbol de tree-sitter al grafo semántico.
@@ -43,9 +51,32 @@ export interface ProgramNode {
   control?: ControlModel
   /** Si el nodo llama a una función definida en el archivo: el id de esa definición. */
   calls?: string
+  /**
+   * De dónde sale cada campo del editor en el texto, por nombre. Es lo que hace el editor
+   * escribible: solo aparecen los campos que se pueden reescribir sin descolocar nada.
+   */
+  sources?: Record<string, Source>
+  /** Dónde está la sentencia entera en el texto: es lo que permite eliminarla, duplicarla o poner algo al lado. */
+  range?: NodeRange
+  /** El texto que se edita como código: la sentencia, o su cabecera si es compuesta (`if x:`). */
+  text?: string
+  /**
+   * Cada sitio donde aparece un nombre que este nodo define, por nombre: su declaración y todos los
+   * usos que se resuelven a ella. Es lo que hace posible **renombrar sin romper nada**.
+   */
+  names?: Record<string, Span[]>
+  /** Qué campos del editor son nombres que se pueden renombrar (por camino) y cómo se llaman ahora. */
+  renames?: Record<string, string>
+  /**
+   * Lo que el código dice de sí mismo: los comentarios que lo acompañan (en línea o justo encima)
+   * y, en una función, su docstring y los comentarios que la explican. Nada se pierde en silencio.
+   */
+  note?: string
 }
 
 export interface Program {
+  /** El texto que se analizó: los desplazamientos de cada nodo valen para él. */
+  source: string
   nodes: ProgramNode[]
   edges: SemanticEdge[]
   /** Construcciones que el análisis no entiende, con su motivo. */
@@ -138,7 +169,16 @@ function kindOfExpression(expression: TsNode | null): NodeKindId {
   }
 }
 
+const COMPOUND = new Set([
+  'if_statement',
+  'for_statement',
+  'while_statement',
+  'function_definition',
+])
+
 class Builder {
+  constructor(readonly source: string) {}
+
   readonly nodes: ProgramNode[] = []
   readonly edges: SemanticEdge[] = []
   readonly unsupported: Program['unsupported'] = []
@@ -156,6 +196,74 @@ class Builder {
 
   bind(name: string, id: string) {
     this.scope.set(name, id)
+  }
+
+  /** Anota un sitio donde aparece un nombre que define este nodo (su declaración o un uso). */
+  recordName(id: string, name: string, at: TsNode) {
+    const node = this.nodes.find((n) => n.id === id)
+    if (!node) return
+    const names = (node.names ??= {})
+    const spans = (names[name] ??= [])
+    if (!spans.some((sp) => sp.start === at.startIndex)) {
+      spans.push({ start: at.startIndex, end: at.endIndex })
+    }
+  }
+
+  /** Marca un campo del editor como un nombre que se puede renombrar. */
+  rename(id: string, path: string, name: string) {
+    const node = this.nodes.find((n) => n.id === id)
+    if (node) (node.renames ??= {})[path] = name
+  }
+
+  /**
+   * Dónde está la sentencia en el texto, y qué texto se edita como código. Se coloca al recorrer
+   * el bloque porque ahí se sabe quién es su dueño y qué comentarios lleva pegados.
+   */
+  place(id: string, statement: TsNode, extra: { owner?: string; lead?: number }) {
+    const node = this.nodes.find((n) => n.id === id)
+    if (!node) return
+    const compound = COMPOUND.has(statement.type)
+    const colon = compound ? statement.children.find((c) => c?.type === ':') : undefined
+    const body = compound
+      ? field(statement, statement.type === 'if_statement' ? 'consequence' : 'body')
+      : null
+    const first = body?.namedChildren.find((c) => c && c.type !== 'comment')
+    const indent = statement.startPosition.column
+    node.range = {
+      start: statement.startIndex,
+      end: statement.endIndex,
+      indent,
+      block: 1,
+      ...(colon ? { head: colon.endIndex } : {}),
+      ...(compound
+        ? {
+            bodyEnd:
+              statement.type === 'if_statement'
+                ? statement.endIndex
+                : (body?.endIndex ?? statement.endIndex),
+            bodyIndent: first?.startPosition.column ?? indent + 4,
+          }
+        : {}),
+      ...(extra.lead === undefined ? {} : { lead: extra.lead }),
+      ...(extra.owner === undefined ? {} : { owner: extra.owner }),
+    }
+    node.text = this.source.slice(statement.startIndex, colon?.endIndex ?? statement.endIndex)
+  }
+
+  /**
+   * Añade un comentario a un nodo. Lo que precede al código va antes y separado por un párrafo
+   * (es su explicación); lo que le sigue en la misma línea va después, como una apostilla.
+   */
+  annotate(id: string, text: string, where: 'before' | 'after' = 'after') {
+    const node = this.nodes.find((n) => n.id === id)
+    const clean = text.trim()
+    if (!node || !clean) return
+    node.note =
+      node.note === undefined
+        ? clean
+        : where === 'before'
+          ? `${clean}\n\n${node.note}`
+          : `${node.note}\n${clean}`
   }
 
   /**
@@ -206,6 +314,12 @@ function linkReads(
   ports?: Record<string, string>,
 ) {
   const names = readNames(expression)
+  // Cada aparición de un nombre es un uso que hay que poder encontrar al renombrar, aunque la
+  // conexión solo se tienda una vez por nombre.
+  for (const at of readIdentifiers(expression)) {
+    const source = builder.resolve(at.text)
+    if (source) builder.recordName(source, at.text, at)
+  }
   names.forEach((name, index) => {
     const source = builder.resolve(name)
     if (!source) return
@@ -251,22 +365,152 @@ function importedNames(statement: TsNode): string[] {
   return names.length > 0 ? names : [statement.text]
 }
 
+/**
+ * Un id por línea y columna, no por posición en el texto: editar dentro de una línea no mueve
+ * ninguna sentencia de sitio, así que el diagrama no se re-anima entero con cada tecla.
+ */
 function statementId(node: TsNode, prefix: string): string {
-  return `${prefix}:${node.startIndex}`
+  return `${prefix}:${node.startPosition.row + 1}:${node.startPosition.column}`
 }
 
-export function buildProgram(tree: Tree): Program {
-  const builder = new Builder()
-  visitBlock(builder, tree.rootNode)
-  return { nodes: builder.nodes, edges: builder.edges, unsupported: builder.unsupported }
+/** El texto de un comentario, sin la almohadilla. `null` para lo que no es prosa (shebang, codificación). */
+function commentText(node: TsNode): string | null {
+  const raw = node.text
+  const row = node.startPosition.row
+  if (row === 0 && raw.startsWith('#!')) return null
+  if (row <= 1 && /^#.*coding[:=]/.test(raw)) return null
+  return raw.replace(/^#+\s?/, '').trimEnd()
 }
 
-function visitBlock(builder: Builder, block: TsNode): string[] {
+/**
+ * Los comentarios que cuelgan directamente de una sentencia compuesta, entre su firma y su
+ * cuerpo. Los de la línea de la cabecera son de la sentencia; los de después de esa línea
+ * preceden a lo primero que hay dentro (en una función, en cambio, todos son su explicación).
+ */
+function ownComments(statement: TsNode): { header: string[]; after: string[] } {
+  const header: string[] = []
+  const after: string[] = []
+  for (const child of statement.namedChildren) {
+    if (child?.type !== 'comment') continue
+    const text = commentText(child)
+    if (text === null) continue
+    if (child.startPosition.row === statement.startPosition.row) header.push(text)
+    else after.push(text)
+  }
+  return { header, after }
+}
+
+/** Un docstring sin comillas y sin la sangría que le da el código que lo rodea. */
+export function cleanDoc(raw: string): string {
+  const lines = raw.replace(/\r\n/g, '\n').split('\n')
+  const [first = '', ...rest] = lines
+  const indents = rest.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length)
+  const margin = indents.length > 0 ? Math.min(...indents) : 0
+  return [first.trim(), ...rest.map((l) => l.slice(margin).trimEnd())].join('\n').trim()
+}
+
+/** El docstring de un cuerpo: su primera sentencia, si es una cadena (no una f-string). */
+function docstringOf(body: TsNode | null): { text: string; at: number } | null {
+  const first = body?.namedChildren.find((child) => child?.type !== 'comment')
+  const inner = first?.type === 'expression_statement' ? first.namedChildren[0] : null
+  if (inner?.type !== 'string') return null
+  const start = field(inner, 'string_start')?.text ?? inner.namedChildren[0]?.text ?? ''
+  if (/[fF]/.test(start.replace(/["']+$/, ''))) return null
+  const content = stringContent(inner)
+  return content === null || !first ? null : { text: cleanDoc(content), at: first.startIndex }
+}
+
+export function buildProgram(tree: Tree, source?: string): Program {
+  // Sin el texto original, se reconstruye del árbol (rellenando lo que quede antes del primer token).
+  const text = source ?? ' '.repeat(tree.rootNode.startIndex) + tree.rootNode.text
+  const builder = new Builder(text)
+  // El docstring del archivo no es una sentencia: es la explicación de lo que viene detrás.
+  const doc = docstringOf(tree.rootNode)
+  visitBlock(builder, tree.rootNode, {
+    skip: new Set(doc ? [doc.at] : []),
+    leading: doc ? [doc.text] : [],
+  })
+  return {
+    source: text,
+    nodes: builder.nodes,
+    edges: builder.edges,
+    unsupported: builder.unsupported,
+  }
+}
+
+interface BlockOptions {
+  /** La sentencia dueña del bloque (`undefined` = el archivo). */
+  owner?: string
+  /** Sentencias que ya se han consumido de otra forma (un docstring). */
+  skip?: ReadonlySet<number>
+  /** Comentarios que ya esperan a la primera sentencia. */
+  leading?: string[]
+}
+
+/**
+ * Recorre las sentencias de un bloque y coloca cada comentario donde pertenece:
+ * en la misma línea que una sentencia, es suyo; solo en su línea, explica la que viene detrás;
+ * y si no viene ninguna, cierra la anterior. Ninguno se pierde.
+ */
+function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {}): string[] {
   const produced: string[] = []
+  const pending = [...(options.leading ?? [])]
+  /** Dónde están los comentarios de bloque que esperan a la siguiente sentencia. */
+  const comments: { start: number; row: number; endRow: number }[] = []
+  let last: { id: string; row: number } | null = null
+  /** Cuántas sentencias tiene el bloque: cuentan también las que no son nodos (un docstring, un `pass`). */
+  let statements = 0
+
   for (const statement of block.namedChildren) {
     if (!statement) continue
+    if (statement.type !== 'comment') statements++
+    if (options.skip?.has(statement.startIndex)) continue
+
+    if (statement.type === 'comment') {
+      const text = commentText(statement)
+      if (text === null) continue
+      if (last && statement.startPosition.row === last.row) builder.annotate(last.id, text)
+      else {
+        pending.push(text)
+        comments.push({
+          start: statement.startIndex,
+          row: statement.startPosition.row,
+          endRow: statement.endPosition.row,
+        })
+      }
+      continue
+    }
+
     const id = visitStatement(builder, statement)
-    if (id) produced.push(id)
+    if (!id) continue
+
+    // Los comentarios pegados justo encima (sin línea en blanco) son de esta sentencia: van con
+    // ella al eliminarla. Los separados por un hueco son de otra cosa (un título de sección).
+    let lead: number | undefined
+    let row = statement.startPosition.row
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const comment = comments[i]
+      if (!comment || comment.endRow !== row - 1) break
+      lead = comment.start
+      row = comment.row
+    }
+    comments.length = 0
+    builder.place(id, statement, {
+      ...(options.owner === undefined ? {} : { owner: options.owner }),
+      ...(lead === undefined ? {} : { lead }),
+    })
+
+    if (pending.length > 0) {
+      builder.annotate(id, pending.join('\n'), 'before')
+      pending.length = 0
+    }
+    produced.push(id)
+    last = { id, row: statement.endPosition.row }
+  }
+  if (last && pending.length > 0) builder.annotate(last.id, pending.join('\n'))
+  for (const id of produced) {
+    const node = builder.nodes.find((n) => n.id === id)
+    if (node?.range) node.range.block = statements
   }
   return produced
 }
@@ -288,9 +532,16 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         code,
         line,
         ...(control ? { control } : {}),
+        ...(control ? sourcesOf(moduleSources(statement)) : {}),
       })
       // Un import puede dejar definidos varios nombres, y todos apuntan al mismo nodo.
       for (const name of bound) builder.bind(name, id)
+      const imported = statement.type === 'import_statement' ? field(statement, 'name') : null
+      const alias = imported?.type === 'aliased_import' ? field(imported, 'alias') : null
+      if (alias) {
+        builder.recordName(id, alias.text, alias)
+        builder.rename(id, 'alias', alias.text)
+      }
       return id
     }
 
@@ -308,7 +559,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         label: describe(inner),
         code,
         line,
-        ...(sem ? { control: sem.control } : {}),
+        ...fromSemantics(sem),
         ...calling(builder, inner),
       })
       linkReads(builder, id, inner, sem?.ports)
@@ -327,12 +578,19 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         code,
         line,
         ...(control ? { control } : {}),
+        ...(control ? sourcesOf(loopSources(iterable)) : {}),
       })
       linkReads(builder, id, iterable, iterablePorts(iterable))
       if (variable) builder.bind(variable.text, id)
+      if (variable?.type === 'identifier') {
+        builder.recordName(id, variable.text, variable)
+        builder.rename(id, 'variable', variable.text)
+      }
+      const own = ownComments(statement)
+      builder.annotate(id, own.header.join('\n'))
 
       const body = field(statement, 'body')
-      const inside = body ? visitBlock(builder, body) : []
+      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
       if (inside.length > 0) {
         const first = inside[0]
         const last = inside[inside.length - 1]
@@ -352,8 +610,10 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const id = statementId(statement, 'while')
       builder.add({ id, kind: 'control.loop', label: 'mientras', code, line })
       linkReads(builder, id, field(statement, 'condition'))
+      const own = ownComments(statement)
+      builder.annotate(id, own.header.join('\n'))
       const body = field(statement, 'body')
-      const inside = body ? visitBlock(builder, body) : []
+      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
       const last = inside[inside.length - 1]
       if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
       if (last) builder.link(last, id, 'feedback')
@@ -370,18 +630,20 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         label: `¿${describe(condition)}?`,
         code,
         line,
-        ...(sem ? { control: sem.control } : {}),
+        ...fromSemantics(sem),
       })
       linkReads(builder, id, condition, sem?.ports ?? conditionPorts(condition))
+      const own = ownComments(statement)
+      builder.annotate(id, own.header.join('\n'))
 
       const body = field(statement, 'consequence')
-      const yes = body ? visitBlock(builder, body) : []
+      const yes = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
       if (yes[0]) builder.link(id, yes[0], 'branch', undefined, 'verdadero')
 
       for (const clause of statement.namedChildren) {
         if (!clause || (clause.type !== 'else_clause' && clause.type !== 'elif_clause')) continue
         const clauseBody = field(clause, 'body')
-        const no = clauseBody ? visitBlock(builder, clauseBody) : []
+        const no = clauseBody ? visitBlock(builder, clauseBody, { owner: id }) : []
         if (no[0]) builder.link(id, no[0], 'branch', undefined, 'falso')
       }
       return id
@@ -400,11 +662,20 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
           code,
           line,
           ...(signature ? { control: signature } : {}),
+          ...(signature ? sourcesOf(signatureSources(params)) : {}),
         },
         name,
       )
       builder.functions.set(name, positionalParams(params))
       builder.functionIds.set(name, id)
+      const nameNode = field(statement, 'name')
+      if (nameNode) builder.recordName(id, name, nameNode)
+      // Un valor por defecto se evalúa fuera de la función: lee de donde se define, no de dentro.
+      for (const param of params?.namedChildren ?? []) {
+        if (param?.type !== 'default_parameter' && param?.type !== 'typed_default_parameter')
+          continue
+        linkReads(builder, id, field(param, 'value'))
+      }
       const restore = builder.pushScope()
       // Los parámetros existen solo dentro: se resuelven al propio nodo de la función.
       if (params) {
@@ -413,12 +684,26 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
           const paramName = param.type === 'identifier' ? param.text : field(param, 'name')?.text
           if (paramName) builder.bind(paramName, id)
         }
+        for (const { path, node } of parameterNames(params)) {
+          builder.recordName(id, node.text, node)
+          builder.rename(id, path, node.text)
+        }
       }
       const body = field(statement, 'body')
+      // Lo que la función dice de sí misma: los comentarios entre su firma y su cuerpo y su docstring.
+      // Es su explicación, así que va en su nodo; el docstring no es una sentencia más del cuerpo.
+      const doc = docstringOf(body)
+      const own = ownComments(statement)
+      builder.annotate(
+        id,
+        [[...own.header, ...own.after].join('\n'), doc?.text ?? '']
+          .filter((part) => part.trim())
+          .join('\n\n'),
+      )
       // Todo lo que nace dentro del `def` es suyo, a cualquier profundidad: las ramas de un
       // `if` o el cuerpo de un bucle también están indentados dentro de la función.
       const before = builder.nodes.length
-      if (body) visitBlock(builder, body)
+      if (body) visitBlock(builder, body, { skip: new Set(doc ? [doc.at] : []), owner: id })
       const inside = builder.nodes.slice(before).map((n) => n.id)
       restore()
       const node = builder.nodes.find((n) => n.id === id)
@@ -439,7 +724,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         label: 'devolver',
         code,
         line,
-        ...(sem ? { control: sem.control } : {}),
+        ...fromSemantics(sem),
       })
       linkReads(builder, id, value, sem?.ports)
       return id
@@ -456,11 +741,14 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         code,
         line,
         ...(control ? { control } : {}),
+        ...(control ? sourcesOf(signalSources(raised)) : {}),
       })
       linkReads(builder, id, raised)
       return id
     }
 
+    // `pass` no dice nada del programa: un cuerpo con solo un `pass` no tiene nada que dibujar.
+    case 'pass_statement':
     case 'comment':
       return null
 
@@ -490,7 +778,7 @@ function visitAssignment(builder: Builder, assignment: TsNode, line: number, cod
     label: name,
     code,
     line,
-    ...(sem ? { control: sem.control } : {}),
+    ...fromSemantics(sem),
     ...calling(builder, right),
   })
   linkReads(
@@ -500,7 +788,18 @@ function visitAssignment(builder: Builder, assignment: TsNode, line: number, cod
     sem?.ports ?? (kind === 'control.condition' ? conditionPorts(right) : callPorts(right)),
   )
   builder.bind(name, id)
+  if (left?.type === 'identifier') builder.recordName(id, name, left)
   return id
+}
+
+const sourcesOf = (sources: Record<string, Source> | undefined) => (sources ? { sources } : {})
+
+/** El editor de un nodo y de dónde sale cada campo, si la sentencia se pudo representar. */
+function fromSemantics(
+  sem: Semantics | null | undefined,
+): Pick<ProgramNode, 'control' | 'sources'> {
+  if (!sem) return {}
+  return { control: sem.control, ...(sem.sources ? { sources: sem.sources } : {}) }
 }
 
 /** `{ calls }` si la expresión es una llamada a una función que este archivo define. */
