@@ -1,5 +1,5 @@
 import type { Program } from '@prysel/python'
-import type { Kernel, RunResult, Summary } from './kernel.ts'
+import type { Kernel, LoopSeries, RunResult, Summary } from './kernel.ts'
 import {
   freshness,
   planAll,
@@ -11,7 +11,7 @@ import {
   type Ran,
   type Statement,
 } from './plan.ts'
-import type { Assets, KernelStatus, RunView } from './runs.ts'
+import type { Assets, KernelStatus, LoopView, RunView } from './runs.ts'
 
 /**
  * Una sesión de ejecución: el motor de un documento y lo que se sabe de cada sentencia que corrió.
@@ -60,6 +60,10 @@ export class Session {
   private records = new Map<string, RunRecord>()
   private running: { id: string; hash: string } | null = null
   private seq = 0
+  /** Qué sentencia (por su texto) ejecutó cada fragmento: un bucle dentro de una función anota con el del fragmento que la definió. */
+  private fragments = new Map<string, string>()
+  /** Los valores por vuelta de cada bucle, por `texto de la sentencia|línea:columna`. */
+  private loops = new Map<string, LoopSeries>()
   private queue: Promise<void> = Promise.resolve()
   private cancelled = false
   private disposed = false
@@ -75,6 +79,10 @@ export class Session {
     this.records = reconcile(this.records, this.stmts, next)
     this.stmts = next
     this.top = topLevelOf(program)
+    // Lo que se anotó de una sentencia que ya no existe no vale.
+    const alive = new Set(next.map((stmt) => stmt.hash))
+    for (const key of this.loops.keys())
+      if (!alive.has(key.split('|')[0] ?? '')) this.loops.delete(key)
     if (this.running) {
       // Lo que se está ejecutando sigue siendo la misma sentencia aunque se haya movido de línea.
       const { hash } = this.running
@@ -109,9 +117,30 @@ export class Session {
           }
         }
       }
+      const loops = this.loopsOf(stmt.hash)
+      if (loops) view.loops = loops
       views[stmt.id] = view
     }
     return views
+  }
+
+  /** Los bucles de una sentencia con sus valores por vuelta. */
+  private loopsOf(hash: string): Record<string, LoopView> | undefined {
+    const found: Record<string, LoopView> = {}
+    for (const [key, series] of this.loops) {
+      const [owner, loop] = key.split('|')
+      if (owner !== hash || loop === undefined) continue
+      found[loop] = { n: series.n, idx: series.idx, names: series.names, done: series.done }
+    }
+    return Object.keys(found).length > 0 ? found : undefined
+  }
+
+  /** Lo que un bucle anota mientras corre: se guarda con la sentencia que lo definió y se avisa. */
+  private onLoop(series: LoopSeries) {
+    const hash = this.fragments.get(series.frag)
+    if (hash === undefined) return
+    this.loops.set(`${hash}|${series.loop}`, series)
+    this.notify({ type: 'views' })
   }
 
   /** Las imágenes de una ejecución, por su orden (`seq`). */
@@ -186,7 +215,22 @@ export class Session {
       this.status = 'busy'
       this.running = { id: stmt.id, hash: stmt.hash }
       this.notify({ type: 'views' })
-      const result = await kernel.run(stmt.code, { id: `s${++this.seq}`, watch: stmt.names })
+      const fragment = `s${++this.seq}`
+      this.fragments.set(fragment, stmt.hash)
+      // Se vuelve a ejecutar: lo que anotaron sus bucles la vez anterior ya no vale.
+      for (const key of [...this.loops.keys()]) {
+        if (key.startsWith(`${stmt.hash}|`)) this.loops.delete(key)
+      }
+      // Solo se recuerdan los últimos fragmentos: un programa largo no los acumula sin fin.
+      while (this.fragments.size > 500)
+        this.fragments.delete(this.fragments.keys().next().value ?? '')
+      const result = await kernel.run(stmt.code, {
+        id: fragment,
+        watch: stmt.names,
+        onIteration: (series) => {
+          this.onLoop(series)
+        },
+      })
       const at = this.running?.id ?? stmt.id
       this.running = null
       if (result.error?.name === 'KernelDied') {
@@ -195,6 +239,7 @@ export class Session {
         this.status = 'dead'
         this.problem = result.error.message
         this.records.clear()
+        this.loops.clear()
         this.notify({ type: 'views' })
         return
       }
@@ -247,6 +292,7 @@ export class Session {
     this.kernel?.dispose()
     this.kernel = null
     this.records.clear()
+    this.loops.clear()
     this.running = null
     this.status = 'stopped'
     this.problem = null

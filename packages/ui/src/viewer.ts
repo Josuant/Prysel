@@ -18,6 +18,11 @@ export interface ViewerContent {
   }
   /** Una imagen `data:` con su tamaño en píxeles (el visor la ajusta a su ancho). */
   image?: { src: string; w: number; h: number }
+  /**
+   * Una curva: lo que valió un nombre en cada vuelta de un bucle (`at`, la vuelta de cada punto, base 0)
+   * sobre `n` vueltas en total. Se dibuja como una línea con su mínimo y su máximo.
+   */
+  series?: { at: number[]; values: number[]; n: number }
   /** Líneas de texto: una muestra, los elementos de una lista, la representación de un valor. */
   text?: string[]
 }
@@ -33,6 +38,8 @@ export const VIEWER = {
   row: 21,
   headRow: 34,
   line: 17,
+  /** Alto de la curva de una serie. */
+  chart: 84,
 }
 
 /** El ancho de un visor: el de su imagen o su tabla, dentro de unos límites. */
@@ -42,6 +49,7 @@ export function viewerWidth(content: ViewerContent): number {
     return clamp(content.table.columns.length * 92 + 2 * VIEWER.pad, VIEWER.minW, VIEWER.tableMaxW)
   }
   if (content.image) return clamp(content.image.w + 2 * VIEWER.pad, VIEWER.minW, VIEWER.maxW)
+  if (content.series) return 320
   return 300
 }
 
@@ -52,7 +60,7 @@ export function viewerImageSize(
 ): { w: number; h: number } {
   if (!content.image) return { w: 0, h: 0 }
   const { w, h } = content.image
-  const room = width - 2 * VIEWER.pad
+  const room = width - 2 * VIEWER.pad - 2
   const scale = Math.min(1, room / Math.max(1, w), VIEWER.imageMaxH / Math.max(1, h))
   return { w: Math.round(w * scale), h: Math.round(h * scale) }
 }
@@ -61,6 +69,7 @@ export function viewerHeight(content: ViewerContent): number {
   let body = 0
   if (content.table) body += VIEWER.headRow + content.table.rows.length * VIEWER.row + 4
   if (content.image) body += viewerImageSize(content).h + 4
+  if (content.series) body += VIEWER.chart + 4
   if (content.text?.length) body += content.text.length * VIEWER.line + 4
   return VIEWER.head + Math.max(body, VIEWER.line) + VIEWER.pad
 }

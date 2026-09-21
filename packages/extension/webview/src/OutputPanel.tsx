@@ -1,5 +1,6 @@
 import type { Summary } from '../../src/kernel.ts'
-import { describeSummary, type Assets, type RunView } from '../../src/runs.ts'
+import { describeSummary, type Assets, type LoopView, type RunView } from '../../src/runs.ts'
+import { curvePoints, curvesOf, formatValue } from './loops.ts'
 
 /**
  * Lo que la última ejecución de un nodo dejó: el error, lo que imprimió, el valor de cada nombre que
@@ -22,6 +23,14 @@ export interface OutputPanelProps {
   title: string
   view: RunView
   assets: Assets | undefined
+  /** Si el nodo elegido es un bucle que dio vueltas: sus valores vuelta a vuelta y la que se mira. */
+  loop?: {
+    view: LoopView
+    position: number
+    onPosition: (position: number) => void
+    pinned: (name: string) => boolean
+    onPin: (name: string) => void
+  }
   /** ¿Tiene ya un visor en el lienzo el valor de este nombre? */
   pinned: (name: string) => boolean
   /** Fijar (o quitar) el valor de un nombre en un visor del lienzo. */
@@ -29,7 +38,15 @@ export interface OutputPanelProps {
   onClose: () => void
 }
 
-export function OutputPanel({ title, view, assets, pinned, onPin, onClose }: OutputPanelProps) {
+export function OutputPanel({
+  title,
+  view,
+  assets,
+  loop,
+  pinned,
+  onPin,
+  onClose,
+}: OutputPanelProps) {
   const values = Object.entries(view.values ?? {})
   const empty =
     values.length === 0 &&
@@ -75,6 +92,7 @@ export function OutputPanel({ title, view, assets, pinned, onPin, onClose }: Out
         </p>
       )}
       {view.error && <ErrorBlock error={view.error} />}
+      {loop && <Laps loop={loop} />}
       {view.stdout && <Stream label="Salida" text={view.stdout} />}
       {view.stderr && <Stream label="Avisos" text={view.stderr} muted />}
       {view.result && <Value name="valor" summary={view.result} />}
@@ -253,5 +271,107 @@ function Table({ table }: { table: NonNullable<Summary['table']> }) {
         </tbody>
       </table>
     </div>
+  )
+}
+
+/** Los valores de un bucle vuelta a vuelta: un deslizador para elegir la vuelta y una curva por cada número. */
+function Laps({ loop }: { loop: NonNullable<OutputPanelProps['loop']> }) {
+  const { view, position } = loop
+  const names = Object.keys(view.names)
+  const curves = new Set(curvesOf(view))
+  const lap = (view.idx[position] ?? position) + 1
+  return (
+    <div className="mb-2 rounded border border-border-card p-2">
+      <p className="mb-1 flex flex-wrap items-baseline gap-x-2">
+        <span className="font-semibold text-ink">Vueltas</span>
+        <span className="text-ink-muted">
+          {view.n}
+          {view.idx.length < view.n ? ` (muestra de ${view.idx.length})` : ''}
+          {view.done ? '' : ' · sigue corriendo'}
+        </span>
+      </p>
+      {view.idx.length > 1 && (
+        <label className="mb-1.5 flex items-center gap-2 text-ink-muted">
+          <span className="whitespace-nowrap">
+            vuelta {lap} de {view.n}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={view.idx.length - 1}
+            value={position}
+            onChange={(event) => {
+              loop.onPosition(Number(event.target.value))
+            }}
+            aria-label="Vuelta que se mira"
+            className="min-w-0 flex-1"
+          />
+        </label>
+      )}
+      <table className="type-code w-full border-collapse text-[11px]">
+        <tbody>
+          {names.map((name) => (
+            <tr key={name}>
+              <th scope="row" className="pr-2 text-left font-semibold text-ink">
+                {name}
+              </th>
+              <td className="pr-2 whitespace-nowrap text-ink-muted">
+                {formatValue(view.names[name]?.[position])}
+              </td>
+              <td className="w-24">
+                {curves.has(name) && <Spark view={view} name={name} at={position} />}
+              </td>
+              <td className="text-right">
+                {curves.has(name) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      loop.onPin(name)
+                    }}
+                    aria-pressed={loop.pinned(name)}
+                    title={
+                      loop.pinned(name)
+                        ? `Quitar la curva de ${name} del lienzo`
+                        : `Ver la curva de ${name} en un visor del lienzo`
+                    }
+                    className="rounded border border-border-card px-1.5 py-0.5 text-[10px] text-ink-muted hover:text-ink aria-pressed:border-[var(--accent)] aria-pressed:text-ink"
+                  >
+                    {loop.pinned(name) ? 'En el lienzo' : 'Curva'}
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/** Una curva pequeña de un nombre, con un punto en la vuelta que se mira. */
+function Spark({ view, name, at }: { view: LoopView; name: string; at: number }) {
+  const points = curvePoints(view, name)
+  const width = 96
+  const height = 20
+  const values = points.map((point) => point.value)
+  const min = Math.min(...values)
+  const span = Math.max(...values) - min || 1
+  const last = Math.max(1, view.n - 1)
+  const x = (lap: number) => 2 + (lap / last) * (width - 4)
+  const y = (value: number) => height - 2 - ((value - min) / span) * (height - 4)
+  const here = view.idx[at]
+  const current = points.find((point) => point.at === here)
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+      <polyline
+        points={points
+          .map((point) => `${x(point.at).toFixed(1)},${y(point.value).toFixed(1)}`)
+          .join(' ')}
+        fill="none"
+        stroke="var(--accent)"
+        strokeWidth="1.3"
+      />
+      {current && <circle cx={x(current.at)} cy={y(current.value)} r="2.4" fill="var(--ink)" />}
+    </svg>
   )
 }

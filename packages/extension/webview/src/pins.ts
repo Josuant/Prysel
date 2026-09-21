@@ -1,6 +1,7 @@
 import type { ViewerContent } from '@prysel/ui'
 import type { Summary } from '../../src/kernel.ts'
 import { describeSummary, type Assets, type RunView } from '../../src/runs.ts'
+import { curvePoints, formatValue } from './loops.ts'
 
 /**
  * Los visores fijados en el lienzo. Un visor no es código: es una ventana con el valor que una
@@ -17,6 +18,8 @@ export interface PinKey {
 }
 
 export const FIGURE = 'figura:'
+/** Una curva de un bucle: `serie:línea:columna|nombre`. */
+export const SERIES = 'serie:'
 
 export const pinNodeId = (key: PinKey): string => `pin:${key.hash}:${key.name}`
 export const isPinNode = (id: string): boolean => id.startsWith('pin:')
@@ -84,11 +87,35 @@ const cell = (value: unknown): string | number | boolean | null =>
 /** El contenido de un visor a partir de lo observado. */
 export function contentOf(key: PinKey, view: RunView, assets: Assets | undefined): ViewerContent {
   const isFigure = key.name.startsWith(FIGURE)
-  const title = isFigure ? 'figura' : key.name
+  const title = isFigure ? 'figura' : key.name.startsWith(SERIES) ? '' : key.name
   if (view.state === 'never') {
     return { title, subtitle: 'sin ejecutar', text: ['Ejecuta el nodo para ver su valor.'] }
   }
   const stale = view.state === 'stale'
+
+  if (key.name.startsWith(SERIES)) {
+    const [loop = '', name = ''] = key.name.slice(SERIES.length).split('|')
+    const found = view.loops?.[loop]
+    const points = found ? curvePoints(found, name) : []
+    if (!found || points.length < 2) {
+      return {
+        title: name,
+        stale,
+        text: ['Este bucle ya no deja esta curva: vuelve a ejecutarlo.'],
+      }
+    }
+    const values = points.map((point) => point.value)
+    return {
+      title: name,
+      subtitle: `curva · ${found.n} vueltas`,
+      stale,
+      series: { at: points.map((point) => point.at), values, n: found.n },
+      text: [
+        `última: ${formatValue(values.at(-1))}`,
+        `mín ${formatValue(Math.min(...values))} · máx ${formatValue(Math.max(...values))}`,
+      ],
+    }
+  }
 
   if (isFigure) {
     const figure = assets?.figures[Number(key.name.slice(FIGURE.length))]

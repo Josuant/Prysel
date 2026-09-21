@@ -1,7 +1,7 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { CanvasNode } from '../Canvas.tsx'
 import { Icon } from '../Icon.tsx'
-import { viewerImageSize, type ViewerContent } from '../viewer.ts'
+import { VIEWER, viewerImageSize, type ViewerContent } from '../viewer.ts'
 
 /**
  * Un visor dentro de React Flow: una ventana con el valor que un nodo dejó al ejecutarse. Solo lee y
@@ -82,6 +82,7 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
             </tbody>
           </table>
         )}
+        {content.series && <Curve series={content.series} width={size.w - 2 * VIEWER.pad - 2} />}
         {content.image && (
           <img
             src={content.image.src}
@@ -98,5 +99,34 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
         ))}
       </div>
     </div>
+  )
+}
+
+/** Una curva: una línea que une los valores de cada vuelta, con el mínimo y el máximo a los lados. */
+function Curve({ series, width }: { series: NonNullable<ViewerContent['series']>; width: number }) {
+  const height = VIEWER.chart
+  const pad = 6
+  const min = Math.min(...series.values)
+  const max = Math.max(...series.values)
+  const span = max - min || 1
+  const last = Math.max(1, series.n - 1)
+  const points = series.values
+    .map((value, i) => {
+      const x = pad + ((series.at[i] ?? i) / last) * (width - 2 * pad)
+      const y = height - pad - ((value - min) / span) * (height - 2 * pad)
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+  return (
+    <svg
+      className="viewer__curve"
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label={`Curva de ${series.values.length} puntos, de ${min} a ${max}`}
+    >
+      <polyline points={points} fill="none" />
+    </svg>
   )
 }

@@ -26,8 +26,10 @@ import {
   type RunView,
 } from '../../src/runs.ts'
 import { OutputPanel } from './OutputPanel.tsx'
+import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import {
   FIGURE,
+  SERIES,
   contentOf,
   pinNodeId,
   resolvePins,
@@ -150,13 +152,36 @@ export function App() {
   /** A qué sentencia de primer nivel pertenece cada nodo: es la unidad que se ejecuta. */
   const top = useMemo(() => (program ? topLevelOf(program) : new Map<string, string>()), [program])
 
+  /** Los bucles que ya dieron vueltas, y la vuelta que se mira en cada uno (por defecto, la última). */
+  const [scrub, setScrub] = useState<Record<string, number>>({})
+  const refs = useMemo(
+    () => (program ? loopRefs(program, top, runs) : new Map<string, LoopRef>()),
+    [program, top, runs],
+  )
+  /** Lo que valen, en la vuelta que se mira, los nombres que definen los nodos de dentro de un bucle. */
+  const inLoops = useMemo(
+    () => (program ? observedInLoops(program, refs, scrub) : new Map()),
+    [program, refs, scrub],
+  )
+
   const source = useMemo(() => {
     if (!program) return []
     return toCanvasNodes(program.nodes).map((node) => {
       const shown = pending[node.id] ? { ...node, control: pending[node.id] } : node
       // Solo la propia sentencia lleva lo observado: sus nodos de dentro no definen nombres del programa.
+      const inner = inLoops.get(node.id)
+      const laps = refs.get(node.id)
       const view = top.get(node.id) === node.id ? runs[node.id] : undefined
-      if (!view) return shown
+      if (!view) {
+        // Un nodo de dentro de un bucle: lo que valió en la vuelta que se mira; un bucle, cuántas dio.
+        return inner || laps
+          ? {
+              ...shown,
+              ...(laps ? { meta: `línea ${node.line} · ${laps.view.n} vueltas` } : {}),
+              ...(inner ? { observed: inner } : {}),
+            }
+          : shown
+      }
       const caption = runCaption(view)
       const observed = Object.fromEntries(
         Object.entries(view.values ?? {}).map(([name, summary]) => {
@@ -166,11 +191,15 @@ export function App() {
       )
       return {
         ...shown,
-        ...(caption ? { meta: `línea ${node.line} · ${caption}` } : {}),
-        ...(Object.keys(observed).length > 0 ? { observed } : {}),
+        ...(caption
+          ? { meta: `línea ${node.line} · ${caption}${laps ? ` · ${laps.view.n} vueltas` : ''}` }
+          : {}),
+        ...(Object.keys(observed).length > 0 || inner
+          ? { observed: { ...observed, ...inner } }
+          : {}),
       }
     })
-  }, [program, pending, runs, top])
+  }, [program, pending, runs, top, refs, inLoops])
 
   const viewOf = (id: string): RunView | undefined => {
     const statement = top.get(id)
@@ -188,6 +217,7 @@ export function App() {
     post({ type: 'run', version, ids })
   }
   const selectedView = selected === null ? undefined : viewOf(selected)
+  const selectedLoop = selected === null ? undefined : refs.get(selected)
   const statementNode = program?.nodes.find(
     (n) => n.id === (selected === null ? undefined : top.get(selected)),
   )
@@ -250,10 +280,32 @@ export function App() {
   const canvasEdges = useMemo(() => [...view.edges, ...viewers.links], [view.edges, viewers.links])
   /** Lo que ofrece el menú de un nodo ejecutado: ver cada uno de sus valores en un visor. */
   const viewerMenu = (id: string): NodeMenuItem[] => {
+    // Un bucle que dio vueltas: sus curvas (lo que valió cada nombre en cada vuelta).
+    const loop = refs.get(id)
+    const owner = loop ? runs[loop.statement] : undefined
+    const curves: NodeMenuItem[] =
+      loop && owner
+        ? curvesOf(loop.view)
+            .slice(0, 6)
+            .map((name) => {
+              const key: PinKey = {
+                id: loop.statement,
+                hash: owner.hash,
+                name: SERIES + loop.key + '|' + name,
+              }
+              const on = pins.some((p) => sameKey(p, key))
+              return {
+                label: on ? 'Quitar la curva de «' + name + '»' : 'Ver la curva de «' + name + '»',
+                onSelect: () => {
+                  pin(key)
+                },
+              }
+            })
+        : []
     const stmt = runs[id]
-    if (top.get(id) !== id || !stmt || stmt.state === 'never') return []
+    if (top.get(id) !== id || !stmt || stmt.state === 'never') return curves
     const names = viewableOf(stmt, stmt.seq === undefined ? undefined : assets.get(stmt.seq))
-    return names.slice(0, 6).map((name) => {
+    const values = names.slice(0, 6).map((name) => {
       const key: PinKey = { id, hash: stmt.hash, name }
       const shown = name.startsWith(FIGURE) ? 'la figura' : '«' + name + '»'
       const on = pins.some((p) => sameKey(p, key))
@@ -264,6 +316,7 @@ export function App() {
         },
       }
     })
+    return [...values, ...curves]
   }
 
   /** Lo que el usuario le hace a un nodo, o añade: se traduce a ediciones de texto y se escribe en el archivo. */
@@ -377,6 +430,32 @@ export function App() {
           onPin={(name) => {
             pin({ id: statementNode.id, hash: selectedView.hash, name })
           }}
+          {...(selectedLoop && selectedView
+            ? {
+                loop: {
+                  view: selectedLoop.view,
+                  position: positionOf(selectedLoop.view, scrub[selectedLoop.node]),
+                  onPosition: (position: number) => {
+                    setScrub((previous) => ({ ...previous, [selectedLoop.node]: position }))
+                  },
+                  pinned: (name: string) =>
+                    pins.some((p) =>
+                      sameKey(p, {
+                        id: selectedLoop.statement,
+                        hash: selectedView.hash,
+                        name: SERIES + selectedLoop.key + '|' + name,
+                      }),
+                    ),
+                  onPin: (name: string) => {
+                    pin({
+                      id: selectedLoop.statement,
+                      hash: selectedView.hash,
+                      name: SERIES + selectedLoop.key + '|' + name,
+                    })
+                  },
+                },
+              }
+            : {})}
           onClose={() => {
             setOutputOpen(false)
           }}

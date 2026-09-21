@@ -2329,3 +2329,16 @@ button.fn-menu__crumb:hover {
 .viewer__table td i {
   color: var(--ink-faint);
 }
+
+/* La curva de un visor de serie: una línea sobre el fondo, sin adornos. */
+.viewer__curve polyline {
+  stroke: var(--accent);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.viewer__curve {
+  display: block;
+  border-radius: 4px;
+  background: var(--field);
+}

@@ -26,6 +26,19 @@ export interface RunFailure {
   traceback: string
 }
 
+/**
+ * Lo que valen, vuelta a vuelta, los nombres que cambia un bucle de una sentencia. `idx` son las vueltas
+ * (base 0) que tienen valor: todas al principio y, en un bucle largo, una muestra.
+ */
+export interface LoopView {
+  /** Cuántas vueltas dio. */
+  n: number
+  idx: number[]
+  names: Record<string, (number | string | null)[]>
+  /** El bucle acabó (o se cortó). Si no, sigue corriendo. */
+  done: boolean
+}
+
 /** Lo que enseña el lienzo de una sentencia de primer nivel. */
 export interface RunView {
   state: RunState
@@ -42,6 +55,8 @@ export interface RunView {
   stderr?: string
   /** Hay imágenes o figuras: se piden por `seq`. */
   assets?: boolean
+  /** Los bucles de la sentencia (también los de dentro de sus funciones), por `línea:columna` dentro de ella. */
+  loops?: Record<string, LoopView>
   error?: RunFailure
 }
 

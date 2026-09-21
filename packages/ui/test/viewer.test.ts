@@ -40,7 +40,7 @@ describe('la imagen dentro del visor', () => {
 
   it('se reduce a lo que cabe, conservando la proporción', () => {
     const size = viewerImageSize({ title: 'f', image: { src: 'x', w: 1600, h: 800 } })
-    expect(size.w).toBe(VIEWER.maxW - 2 * VIEWER.pad)
+    expect(size.w).toBe(VIEWER.maxW - 2 * VIEWER.pad - 2)
     expect(size.h).toBe(Math.round(size.w / 2))
   })
 

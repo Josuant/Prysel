@@ -57,12 +57,31 @@ export interface RunResult {
   error?: RunError
 }
 
+/**
+ * Lo que valen, vuelta a vuelta, los nombres que cambia un bucle. `frag` es la ejecución que definió el
+ * bucle (puede no ser la que corre ahora: una función con un bucle, llamada más tarde) y `loop` dónde
+ * está, como `línea:columna` dentro de ese fragmento. Los valores son números o una descripción corta.
+ */
+export interface LoopSeries {
+  frag: string
+  loop: string
+  /** Cuántas vueltas ha dado. */
+  n: number
+  /** Qué vueltas (base 0) tienen valor: todas al principio y, en un bucle largo, una muestra. */
+  idx: number[]
+  names: Record<string, (number | string | null)[]>
+  /** El bucle acabó (o se cortó): la última vuelta ya está anotada. */
+  done: boolean
+}
+
 export interface RunOptions {
   id?: string
   /** Nombres cuyo valor se resume al terminar. */
   watch?: readonly string[]
   /** Cada trozo de salida según se produce (un bucle largo enseña su progreso). */
   onStream?: (name: 'stdout' | 'stderr', text: string) => void
+  /** Cada vez que un bucle anota sus vueltas (con aviso espaciado, no una por vuelta). */
+  onIteration?: (series: LoopSeries) => void
 }
 
 interface Event {
@@ -217,6 +236,16 @@ export class Kernel {
         options.onStream?.(name, text)
         break
       }
+      case 'iter':
+        options.onIteration?.({
+          frag: String(event['frag']),
+          loop: String(event['loop']),
+          n: Number(event['n']),
+          idx: event['idx'] as number[],
+          names: event['names'] as LoopSeries['names'],
+          done: event['done'] === true,
+        })
+        break
       case 'result':
         result.result = event['summary'] as Summary
         break

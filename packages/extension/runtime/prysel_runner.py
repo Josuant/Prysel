@@ -36,6 +36,14 @@ import traceback
 import types
 
 MAX_TEXT = 4_000
+# Valores por vuelta de un bucle: cuántos puntos se guardan como mucho, cuántas vueltas se guardan todas
+# y cada cuánto se avisa. Un bucle de un millón de vueltas no puede costar un millón de mensajes.
+MAX_POINTS = 600
+FIRST_ALL = 256
+EMIT_EVERY = 0.15
+RECORD_EVERY = 0.25
+MAX_SERIES = 200
+MAX_LOOP_NAMES = 12
 MAX_ROWS = 8
 MAX_COLUMNS = 40
 MAX_ITEMS = 12
@@ -274,14 +282,228 @@ def touched(tree):
     return visitor.names, visitor.receivers
 
 
+def _capture(value):
+    """Lo que se guarda de un valor en cada vuelta: un número si lo es y, si no, una descripción corta."""
+    try:
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, (int, float)):
+            return value if isinstance(value, int) or math.isfinite(value) else str(value)
+        if value is None:
+            return "None"
+        shape = getattr(value, "shape", None)
+        if shape is not None and not isinstance(value, type):
+            dims = [int(n) for n in shape]
+            size = 1
+            for n in dims:
+                size *= n
+            if size == 1 and hasattr(value, "item"):
+                got = value.item()
+                if isinstance(got, bool):
+                    return "True" if got else "False"
+                if isinstance(got, (int, float)):
+                    return got if isinstance(got, int) or math.isfinite(got) else str(got)
+            return f"{type(value).__name__} " + "\u00d7".join(str(n) for n in dims)
+        if isinstance(value, str):
+            return _short(repr(value), 32)
+        if isinstance(value, (list, tuple, set, frozenset, dict)):
+            return f"{type(value).__name__} #{len(value)}"
+        return type(value).__name__
+    except Exception:
+        return "?"
+
+
+_MISSING = object()
+
+
+class _Series:
+    """Lo que valen, vuelta a vuelta, los nombres que cambia un bucle."""
+
+    def __init__(self, names):
+        self.names = list(names)
+        self.count = 0
+        self.stride = 1
+        self.idx = []
+        self.vals = {name: [] for name in self.names}
+        self.recorded_at = 0.0
+        self.emitted_at = 0.0
+        self.dirty = False
+        self.done = False
+
+    def record(self, n, frame):
+        scope = frame.f_locals
+        for name in self.names:
+            value = scope.get(name, _MISSING)
+            if value is _MISSING:
+                value = frame.f_globals.get(name, _MISSING)
+            self.vals[name].append(None if value is _MISSING else _capture(value))
+        self.idx.append(n)
+        self.recorded_at = time.perf_counter()
+        self.dirty = True
+        if len(self.idx) > MAX_POINTS:
+            # Demasiados puntos: se queda uno de cada dos y desde ahora se guarda la mitad de las vueltas.
+            self.idx = self.idx[::2]
+            for name in self.names:
+                self.vals[name] = self.vals[name][::2]
+            self.stride *= 2
+
+
+class _Instrument(ast.NodeTransformer):
+    """Reescribe los bucles de un fragmento para anotar, en cada vuelta, lo que valen los nombres que cambian.
+
+    Cada bucle queda envuelto así (los números de línea no se mueven, así que los errores siguen
+    señalando la línea de siempre):
+
+        __prysel_loop__(frag, clave, nombres)
+        try:
+            for x in xs:
+                try:
+                    <cuerpo>
+                finally:
+                    __prysel_tick__(frag, clave)
+        finally:
+            __prysel_end__(frag, clave)
+
+    El `finally` de cada vuelta también corre con `break`, `continue` y una excepción: la última vuelta
+    queda anotada aunque no acabe.
+    """
+
+    LOOPS = (ast.For, ast.AsyncFor, ast.While)
+
+    def __init__(self, frag):
+        self.frag = frag
+
+    def hook(self, name, node, *extra):
+        call = ast.Call(
+            func=ast.Name(id=name, ctx=ast.Load()),
+            args=[ast.Constant(self.frag), ast.Constant(f"{node.lineno}:{node.col_offset}"), *extra],
+            keywords=[],
+        )
+        return ast.copy_location(ast.Expr(value=call), node)
+
+    def wrap(self, block):
+        out = []
+        for stmt in block:
+            if not isinstance(stmt, self.LOOPS):
+                out.append(stmt)
+                continue
+            visitor = _Touched()
+            visitor.visit(stmt)
+            names = [
+                n for n in visitor.names if n not in visitor.receivers and not n.startswith("_")
+            ][:MAX_LOOP_NAMES]
+            listing = ast.Tuple(elts=[ast.Constant(n) for n in names], ctx=ast.Load())
+            out.append(self.hook("__prysel_loop__", stmt, ast.copy_location(listing, stmt)))
+            guarded = ast.Try(
+                body=[stmt],
+                handlers=[],
+                orelse=[],
+                finalbody=[self.hook("__prysel_end__", stmt)],
+            )
+            out.append(ast.copy_location(guarded, stmt))
+        return out
+
+    def visit(self, node):
+        node = self.generic_visit(node)
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if isinstance(block, list) and block and isinstance(block[0], ast.stmt):
+                setattr(node, field, self.wrap(block))
+        if isinstance(node, self.LOOPS):
+            each = ast.Try(
+                body=node.body,
+                handlers=[],
+                orelse=[],
+                finalbody=[self.hook("__prysel_tick__", node)],
+            )
+            node.body = [ast.copy_location(each, node.body[0])]
+        return node
+
+
+def instrument(tree, frag):
+    """El árbol con los bucles anotados; si algo falla, el árbol de siempre (ejecutar es lo que importa)."""
+    if not any(isinstance(n, _Instrument.LOOPS) for n in ast.walk(tree)):
+        return tree
+    try:
+        return ast.fix_missing_locations(_Instrument(frag).visit(tree))
+    except Exception:
+        return tree
+
+
 class Runner:
     def __init__(self):
-        self.namespace = {"__name__": "__main__"}
+        self.loops = {}
+        self.current = None
+        self.namespace = self.fresh()
         self.stdout = _Stream("stdout")
         self.stderr = _Stream("stderr")
         self.main = threading.get_ident()
         self.requests = queue.Queue()
         self.running = threading.Event()
+
+    def fresh(self):
+        """Un espacio de nombres vacío, con los ganchos con los que los bucles anotan sus vueltas."""
+        return {
+            "__name__": "__main__",
+            "__prysel_loop__": self.loop_start,
+            "__prysel_tick__": self.loop_tick,
+            "__prysel_end__": self.loop_end,
+        }
+
+    # ── los bucles ─────────────────────────────────────────────────────────────
+
+    def loop_start(self, frag, key, names):
+        self.loops[(frag, key)] = _Series(names)
+        # Solo se recuerdan las últimas series: un programa largo no las acumula sin fin.
+        while len(self.loops) > MAX_SERIES:
+            self.loops.pop(next(iter(self.loops)))
+
+    def loop_tick(self, frag, key):
+        series = self.loops.get((frag, key))
+        if series is None:
+            return
+        n = series.count
+        series.count += 1
+        if (
+            n < FIRST_ALL
+            or n % series.stride == 0
+            or time.perf_counter() - series.recorded_at > RECORD_EVERY
+        ):
+            series.record(n, sys._getframe(1))
+            if time.perf_counter() - series.emitted_at > EMIT_EVERY:
+                self.emit_series(frag, key, series)
+
+    def loop_end(self, frag, key):
+        series = self.loops.get((frag, key))
+        if series is None:
+            return
+        series.done = True
+        # El último valor es el que queda al acabar el bucle: siempre se anota.
+        if series.count > 0 and (not series.idx or series.idx[-1] != series.count - 1):
+            series.record(series.count - 1, sys._getframe(1))
+        series.dirty = True
+        self.emit_series(frag, key, series)
+
+    def emit_series(self, frag, key, series):
+        series.emitted_at = time.perf_counter()
+        series.dirty = False
+        emit(
+            {
+                "ev": "iter",
+                "id": self.current,
+                "frag": frag,
+                "loop": key,
+                "n": series.count,
+                "idx": series.idx,
+                "names": series.vals,
+                "done": series.done,
+            }
+        )
+
+    def flush_loops(self):
+        for (frag, key), series in list(self.loops.items()):
+            if series.dirty:
+                self.emit_series(frag, key, series)
 
     # ── ejecución ──────────────────────────────────────────────────────────────
 
@@ -297,6 +519,7 @@ class Runner:
             more, more_receivers = touched(tail)
             names += [n for n in more if n not in names]
             receivers |= {n for n in more_receivers if n not in names[: len(names) - len(more)]}
+        tree = instrument(tree, run)
         body = compile(tree, name, "exec")
         last = compile(tail, name, "eval") if tail is not None else None
         return body, last, names, receivers
@@ -311,6 +534,7 @@ class Runner:
         ok = True
         names, receivers = [], set()
         self.running.set()
+        self.current = run
         try:
             body, last, names, receivers = self.compile(code, run)
             exec(body, self.namespace)
@@ -324,6 +548,7 @@ class Runner:
             self.report(run, error, code)
         finally:
             self.running.clear()
+            self.flush_loops()
             sys.stdout, sys.stderr = saved
             self.stdout.run = self.stderr.run = None
         asked = request.get("watch", [])
@@ -438,7 +663,8 @@ class Runner:
                 if op == "run":
                     self.run(request)
                 elif op == "reset":
-                    self.namespace = {"__name__": "__main__"}
+                    self.namespace = self.fresh()
+                    self.loops.clear()
                     emit({"ev": "reset"})
                 elif op == "vars":
                     names = {
