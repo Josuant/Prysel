@@ -29,9 +29,14 @@ exports.run = async () => {
     const commands = await vscode.commands.getCommands(true)
     check(
       'comandos',
-      ['prysel.openCanvas', 'prysel.runAll', 'prysel.interrupt', 'prysel.restart'].filter((c) =>
-        commands.includes(c),
-      ),
+      [
+        'prysel.openCanvas',
+        'prysel.runAll',
+        'prysel.trace',
+        'prysel.newLesson',
+        'prysel.interrupt',
+        'prysel.restart',
+      ].filter((c) => commands.includes(c)),
     )
 
     const file = path.join(process.env.PRYSEL_TEST_DIR, 'demo.py')
@@ -55,6 +60,19 @@ exports.run = async () => {
     await wait(() => api.state().states.length > 0)
     check('antes de ejecutar', api.state().states)
 
+    // Un guion junto al programa llega al lienzo; sin él, no hay lección.
+    check('sin guion', api.state().lesson)
+    fs.writeFileSync(
+      path.join(process.env.PRYSEL_TEST_DIR, 'demo.lesson.json'),
+      JSON.stringify({
+        version: 1,
+        title: 'Demo',
+        beats: [{ at: { text: 'a = 21' }, note: { text: 'Empieza aquí.' } }],
+      }),
+    )
+    await wait(() => api.state().lesson?.title === 'Demo')
+    check('con guion', api.state().lesson)
+
     await vscode.commands.executeCommand('prysel.runAll')
     await wait(() => api.state().kernel === 'idle' || api.state().kernel === 'dead')
     const after = api.state()
@@ -74,6 +92,12 @@ exports.run = async () => {
     await wait(() => api.state().states.every((s) => s === 'fresh'))
     check('tras volver a ejecutar', api.state().states)
     check('salida nueva', api.state().stdout)
+
+    // La traza: se graba el programa entero y llega al lienzo, con la versión del texto que se grabó.
+    await vscode.commands.executeCommand('prysel.trace')
+    await wait(() => api.state().trace?.status === 'done' || api.state().trace?.status === 'failed')
+    check('traza', api.state().trace)
+    check('traza de la versión actual', api.state().trace?.version === doc.version)
 
     await vscode.commands.executeCommand('prysel.restart')
     await wait(() => api.state().kernel === 'stopped')

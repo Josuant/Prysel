@@ -26,6 +26,9 @@ const state = vi.hoisted(() => ({
   document: null as unknown,
   closeListeners: [] as ((doc: unknown) => void)[],
   editorListeners: [] as ((editor: unknown) => void)[],
+  /** Los archivos que «hay en el disco» (por su ruta): los guiones de lección. */
+  files: new Map<string, string>(),
+  watchers: [] as (() => void)[],
   /** Cada prueba carga la extensión de nuevo: lo que publica una anterior no cuenta. */
   epoch: 0,
 }))
@@ -34,6 +37,7 @@ vi.mock('vscode', () => {
   const uri = (path: string) => ({ fsPath: path, path, toString: () => `file:///${path}` })
   return {
     Uri: {
+      file: (path: string) => uri(path),
       joinPath: (base: { path: string }, ...parts: string[]) =>
         uri([base.path, ...parts].join('/')),
     },
@@ -98,6 +102,30 @@ vi.mock('vscode', () => {
         return { dispose() {} }
       },
       applyEdit: () => Promise.resolve(true),
+      textDocuments: [],
+      fs: {
+        readFile: (target: { path: string }) => {
+          const text = state.files.get(target.path)
+          return text === undefined
+            ? Promise.reject(new Error('FileNotFound'))
+            : Promise.resolve(new TextEncoder().encode(text))
+        },
+      },
+      createFileSystemWatcher: () => ({
+        onDidChange: (listener: () => void) => {
+          state.watchers.push(listener)
+          return { dispose() {} }
+        },
+        onDidCreate: (listener: () => void) => {
+          state.watchers.push(listener)
+          return { dispose() {} }
+        },
+        onDidDelete: (listener: () => void) => {
+          state.watchers.push(listener)
+          return { dispose() {} }
+        },
+        dispose() {},
+      }),
     },
   }
 })
@@ -111,7 +139,7 @@ const fakeDocument = (version = 1) => ({
   languageId: 'python',
   fileName: `${HERE}/demo.py`,
   version,
-  uri: { fsPath: `${HERE}/demo.py`, toString: () => `file:///${HERE}/demo.py` },
+  uri: { scheme: 'file', fsPath: `${HERE}/demo.py`, toString: () => `file:///${HERE}/demo.py` },
   getText: () => SOURCE,
 })
 
@@ -139,6 +167,8 @@ describe.skipIf(!available)('la extensión con una API de VS Code simulada', () 
     state.commands.clear()
     state.editorListeners.length = 0
     state.closeListeners.length = 0
+    state.files.clear()
+    state.watchers.length = 0
     state.document = fakeDocument()
     vi.resetModules()
     const extension = await import('../src/extension.ts')
@@ -213,7 +243,7 @@ describe.skipIf(!available)('la extensión con una API de VS Code simulada', () 
             getActiveEnvironmentPath: () => ({ path: 'entorno' }),
             resolveEnvironment: (environment: { path: string }) => {
               asked.push(environment.path)
-              return Promise.resolve({ executable: { uri: { fsPath: python } } })
+              return Promise.resolve({ executable: { uri: { scheme: 'file', fsPath: python } } })
             },
           },
         }),
@@ -222,6 +252,65 @@ describe.skipIf(!available)('la extensión con una API de VS Code simulada', () 
     await wait(() => (last('runs') as (Posted & { kernel: string }) | undefined)?.kernel === 'idle')
     expect(asked).toEqual(['entorno'])
     deactivate()
+  })
+
+  describe('la lección del archivo', () => {
+    const LESSON_PATH = `${HERE}/demo.lesson.json`
+    const GOOD = JSON.stringify({
+      version: 1,
+      title: 'Demo',
+      beats: [{ at: { text: 'a = 2' }, note: { text: 'Empieza aquí.' } }],
+    })
+    type LessonPosted = Posted & { file: string; lesson: { title: string } | null; error?: string }
+
+    it('sin guion junto al programa, avisa de que no hay lección', () => {
+      const lesson = last('lesson') as LessonPosted
+      expect(lesson.file).toBe('demo.py')
+      expect(lesson.lesson).toBeNull()
+      expect(lesson.error).toBeUndefined()
+      deactivate()
+    })
+
+    it('con un `.lesson.json` al lado, manda la lección al lienzo, y la sigue cuando cambia el archivo', async () => {
+      state.files.set(LESSON_PATH, GOOD)
+      for (const changed of state.watchers) changed()
+      await wait(() => (last('lesson') as LessonPosted | undefined)?.lesson?.title === 'Demo')
+      state.files.set(LESSON_PATH, GOOD.replace('Demo', 'Otra'))
+      for (const changed of state.watchers) changed()
+      await wait(() => (last('lesson') as LessonPosted | undefined)?.lesson?.title === 'Otra')
+      state.files.delete(LESSON_PATH)
+      for (const changed of state.watchers) changed()
+      await wait(() => (last('lesson') as LessonPosted | undefined)?.lesson === null)
+      deactivate()
+    })
+
+    it('un guion roto no rompe el lienzo: llega el motivo', async () => {
+      state.files.set(LESSON_PATH, '{ "version": 1, ')
+      for (const changed of state.watchers) changed()
+      await wait(() => (last('lesson') as LessonPosted | undefined)?.error !== undefined)
+      const lesson = last('lesson') as LessonPosted
+      expect(lesson.lesson).toBeNull()
+      expect(lesson.error).toMatch(/JSON/)
+      // El diagrama sigue ahí.
+      expect(state.posted.some((m) => m.type === 'update' && m['program'] === null)).toBe(false)
+      deactivate()
+    })
+
+    it('abrir el guion en un editor no cambia el programa que se enseña', async () => {
+      const lessonDoc = {
+        languageId: 'json',
+        fileName: LESSON_PATH,
+        version: 1,
+        uri: { scheme: 'file', fsPath: LESSON_PATH, toString: () => `file:///${LESSON_PATH}` },
+        getText: () => GOOD,
+      }
+      state.document = lessonDoc
+      state.posted.length = 0
+      for (const listener of state.editorListeners) listener({ document: lessonDoc })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      expect(state.posted.some((m) => m.type === 'update')).toBe(false)
+      deactivate()
+    })
   })
 
   it('pasar el foco al propio lienzo (sin editor de texto) no vacía el diagrama', async () => {
@@ -241,7 +330,7 @@ describe.skipIf(!available)('la extensión con una API de VS Code simulada', () 
     const other = {
       ...fakeDocument(),
       fileName: `${HERE}/otro.py`,
-      uri: { fsPath: `${HERE}/otro.py`, toString: () => `file:///${HERE}/otro.py` },
+      uri: { scheme: 'file', fsPath: `${HERE}/otro.py`, toString: () => `file:///${HERE}/otro.py` },
       getText: () => 'z = 1\n',
     }
     state.document = other

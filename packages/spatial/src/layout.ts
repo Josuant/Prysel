@@ -39,12 +39,15 @@ export interface LayoutOptions {
   gapRun?: number
 }
 
+/** Lo que mide de largo una fila antes de plegar a la siguiente, si no se dice otra cosa. */
+export const DEFAULT_MAX_RUN = 1680
+
 const DEFAULTS = {
   gapX: 76,
   gapY: 32,
   padding: 28,
   axis: 'horizontal' as Axis,
-  maxRun: 1680,
+  maxRun: DEFAULT_MAX_RUN,
   gapRun: 96,
 }
 

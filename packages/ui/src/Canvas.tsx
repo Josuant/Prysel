@@ -36,6 +36,8 @@ import {
   type SemanticGraph,
 } from '@prysel/spatial'
 import { EdgeDefs } from './Edge.tsx'
+import { NoteNode, type NoteFlowNode } from './flow/NoteNode.tsx'
+import { NOTE, NOTE_GUTTER, noteSize, placeNotes, type NoteContent, type NoteSlot } from './note.ts'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
 import { dragTerritory, territoryAt } from './drag.ts'
@@ -49,6 +51,7 @@ import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
+import { runFor } from './fit.ts'
 import type { StepInfo } from './steps.ts'
 import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
@@ -131,6 +134,8 @@ export interface CanvasNode {
   laps?: LapsView
   /** Es un visor: enseña el valor que otro nodo dejó al ejecutarse. No es una sentencia del programa. */
   viewer?: ViewerContent
+  /** Es una nota: un rótulo a mano que explica lo que tiene al lado. No es una sentencia del programa. */
+  handwritten?: NoteContent
   /**
    * Lo que se observó al ejecutar, por nombre: `short` es lo que acompaña a su chip (`200×2`) y `long` lo
    * que dice al pasar el puntero (`ndarray 200×2 float64`). Nunca cambia lo que significa el código.
@@ -205,6 +210,11 @@ export interface CanvasProps {
    * que el usuario movió, seleccionó o recorrió y vuelve a encuadrar: es otro diagrama.
    */
   fitKey?: string
+  /**
+   * El nodo por el que va la reproducción de una traza: se marca con un anillo y, si se sale de la vista,
+   * la cámara lo sigue. Sin él, no hay reproducción.
+   */
+  cursor?: string | null
   /** Etiqueta accesible del lienzo, leída por lectores de pantalla. */
   ariaLabel?: string
   className?: string
@@ -214,10 +224,16 @@ export interface CanvasProps {
 const edgeKey = (edge: SemanticEdge) =>
   `${edge.from}${edge.fromPort ? `:${edge.fromPort}` : ''}-${edge.to}-${edge.toPort ?? ''}-${edge.relation}`
 
-const NODE_TYPES = { prysel: PryselNode, chip: ChipNode, tray: TrayNode, viewer: ViewerNode }
+const NODE_TYPES = {
+  prysel: PryselNode,
+  chip: ChipNode,
+  tray: TrayNode,
+  viewer: ViewerNode,
+  note: NoteNode,
+}
 
 /** Todo lo que el lienzo dibuja: nodos, chips y la cajita del programa. */
-type AnyFlowNode = PryselFlowNode | ChipFlowNode | TrayFlowNode | ViewerFlowNode
+type AnyFlowNode = PryselFlowNode | ChipFlowNode | TrayFlowNode | ViewerFlowNode | NoteFlowNode
 
 /** Funciones de uso común que se ofrecen al elegir a quién llama una llamada. */
 const COMMON_CALLS = [
@@ -258,8 +274,8 @@ export function Canvas(props: CanvasProps) {
 }
 
 function CanvasInner({
-  nodes,
-  edges,
+  nodes: allNodes,
+  edges: allEdges,
   density,
   stateOf,
   onControlChange,
@@ -284,6 +300,7 @@ function CanvasInner({
   animate = true,
   fitMode,
   fitKey = '',
+  cursor = null,
   ariaLabel,
   className,
 }: CanvasProps) {
@@ -363,15 +380,32 @@ function CanvasInner({
   }>({ key: fitKey, sizes: {} })
   const resized = resizedState.key === fitKey ? resizedState.sizes : NO_SIZES
 
-  const { setViewport } = useReactFlow()
+  const { setViewport, getViewport, setCenter } = useReactFlow()
+  /**
+   * Cuánto mide de largo una fila del diagrama según el ancho del lienzo: en un panel estrecho se pliega
+   * antes, para que el programa se lea a un zoom legible y crezca en alto (ver `fit.ts`).
+   */
+  const [run, setRun] = useState<number | undefined>(undefined)
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
   /** Dónde está cada nodo ahora mismo: lo necesita un arrastre para saber cuánto se ha movido. */
   const shownRef = useRef<Record<string, Point>>({})
+  const boxesRef = useRef<Record<string, { x: number; y: number; w: number; h: number }>>({})
 
   const densityOf = useCallback(
     (node: CanvasNode): Density => (density === 'normal' ? (node.density ?? 'normal') : density),
     [density],
+  )
+
+  // Las notas no entran en el reparto del diagrama: van en un margen aparte, y aparecer o desaparecer una
+  // nota nunca mueve nada de lo que ya estaba.
+  const nodes = useMemo(() => allNodes.filter((node) => !node.handwritten), [allNodes])
+  const noteNodes = useMemo(() => allNodes.filter((node) => node.handwritten), [allNodes])
+  const noteIds = useMemo(() => new Set(noteNodes.map((node) => node.id)), [noteNodes])
+  const edges = useMemo(() => allEdges.filter((edge) => !noteIds.has(edge.to)), [allEdges, noteIds])
+  const noteLinks = useMemo(
+    () => allEdges.filter((edge) => noteIds.has(edge.to)),
+    [allEdges, noteIds],
   )
 
   const byId = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
@@ -580,8 +614,9 @@ function CanvasInner({
       axis,
       ...(gapX === undefined ? {} : { gapX }),
       ...(gapY === undefined ? {} : { gapY }),
+      ...(run === undefined ? {} : { maxRun: run }),
     })
-  }, [plan, densityOf, axis, gapX, gapY, linked, resized])
+  }, [plan, densityOf, axis, gapX, gapY, linked, resized, run])
 
   /**
    * La procedencia a demanda: al seleccionar un nodo se dibujan sus cables ocultos (de dónde le llegan
@@ -667,12 +702,13 @@ function CanvasInner({
   // La cajita del programa va arriba del todo, y el resto del plano baja lo que ocupa.
   const moduleTray = plan.trays.get(MODULE)
   const shiftY = moduleTray ? moduleTray.h + 24 : 0
+  /** Hasta dónde llega el diagrama; a partir de ahí, el margen de las notas. */
+  const diagramW = Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0)
+  // Con notas, el margen cuenta para el encuadre: el zoom es el mismo llegue la nota que llegue.
+  const noteReserve = noteNodes.length > 0 ? NOTE_GUTTER + NOTE.width + 24 : 0
   const bounds = useMemo(
-    () => ({
-      w: Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0),
-      h: layoutBounds.h + shiftY,
-    }),
-    [layoutBounds, moduleTray, shiftY],
+    () => ({ w: diagramW + noteReserve, h: layoutBounds.h + shiftY }),
+    [diagramW, noteReserve, layoutBounds.h, shiftY],
   )
 
   const motionItems = useMemo(
@@ -690,6 +726,9 @@ function CanvasInner({
 
   useEffect(() => {
     shownRef.current = Object.fromEntries(animated.map((item) => [item.id, item.position]))
+    boxesRef.current = Object.fromEntries(
+      animated.map((item) => [item.id, { ...item.position, ...item.value.size }]),
+    )
   }, [animated])
 
   /** Lo que la selección ilumina: el nodo elegido y, si es un territorio, todo su interior. */
@@ -1147,6 +1186,7 @@ function CanvasInner({
           // Al arrastrar un nodo: la función que lo recibiría, y la que lo perdería.
           drop: reparent?.to === node.id ? 'into' : reparent?.from === node.id ? 'out' : undefined,
           addTarget: addTarget === node.id,
+          cursor: cursor === node.id,
           // La cajita de chips del territorio, y lo que llevan las casillas de este nodo.
           tray: container ? plan.trays.get(node.id) : undefined,
           chipSlots: plan.chipSlots[node.id],
@@ -1319,6 +1359,111 @@ function CanvasInner({
     },
   }))
 
+  /**
+   * Las notas: cada una en el margen a la derecha del diagrama, a la altura de lo que explica, con su flecha
+   * a mano. Las que aún no llegaron ocupan su sitio pero no se dibujan.
+   */
+  const noteFlow = (() => {
+    const nodesOut: NoteFlowNode[] = []
+    const edgesOut: PryselFlowEdge[] = []
+    if (noteNodes.length === 0) return { nodes: nodesOut, edges: edgesOut }
+    const rects = new Map<string, { x: number; y: number; w: number; h: number }>()
+    for (const flow of [...flowNodes, ...dockedNodes]) {
+      const size = (flow.data as { size?: { w: number; h: number } }).size
+      if (size) rects.set(flow.id, { ...flow.position, ...size })
+    }
+    const linkOf = new Map(noteLinks.map((link) => [link.to, link]))
+    const slots: NoteSlot[] = []
+    for (const note of noteNodes) {
+      const anchor = rects.get(linkOf.get(note.id)?.from ?? '')
+      if (anchor && note.handwritten) {
+        slots.push({ id: note.id, anchor, size: noteSize(note.handwritten) })
+      }
+    }
+    const placed = placeNotes(slots, diagramW + NOTE_GUTTER)
+    for (const note of noteNodes) {
+      const content: NoteContent | undefined = note.handwritten
+      const at = placed.get(note.id)
+      const link = linkOf.get(note.id)
+      if (!content || content.hidden || !at || !link) continue
+      const size = noteSize(content)
+      nodesOut.push({
+        id: note.id,
+        type: 'note' as const,
+        position: at,
+        ...nodeFrame(size),
+        zIndex: 4,
+        draggable: false,
+        selectable: false,
+        focusable: false,
+        data: { note: content, size },
+      })
+      edgesOut.push({
+        id: `note-${link.from}-${note.id}`,
+        source: link.from,
+        target: note.id,
+        // La flecha sale de un asa invisible a la derecha de lo que explica (un chip o un territorio no tienen otra).
+        sourceHandle: 'note-out',
+        targetHandle: 'in',
+        type: 'prysel' as const,
+        markerEnd: 'url(#prysel-arrow-thin)',
+        zIndex: 6,
+        data: {
+          relation: 'transform',
+          channel: 'data',
+          note: true,
+          obstacles,
+          parentOf,
+          axis,
+        },
+      })
+    }
+    return { nodes: nodesOut, edges: edgesOut }
+  })()
+
+  /** Dónde están las notas que se dibujan: la cámara las busca cuando toca leer la actual. */
+  const noteBoxesRef = useRef<Record<string, { x: number; y: number; w: number; h: number }>>({})
+  useEffect(() => {
+    noteBoxesRef.current = Object.fromEntries(
+      noteFlow.nodes.map((n) => [n.id, { ...n.position, ...n.data.size }]),
+    )
+  })
+  const currentNote = noteNodes.find((n) => n.handwritten?.current)?.id ?? null
+
+  // La reproducción: la cámara sigue al cursor y a la nota que se está leyendo, pero solo si se salen de lo
+  // que se ve. Si caben las dos, se centra entre ellas; si no, manda la nota (es lo que se lee).
+  useEffect(() => {
+    const frame = frameRef.current
+    const cursorBox = cursor === null ? undefined : boxesRef.current[cursor]
+    const noteBox = currentNote === null ? undefined : noteBoxesRef.current[currentNote]
+    const boxes = [cursorBox, noteBox].filter((box) => box !== undefined)
+    if (!frame || boxes.length === 0) return
+    const { x, y, zoom } = getViewport()
+    const margin = 48
+    const inside = boxes.every(
+      (box) =>
+        box.x * zoom + x >= margin &&
+        box.y * zoom + y >= margin &&
+        (box.x + box.w) * zoom + x <= frame.clientWidth - margin &&
+        (box.y + box.h) * zoom + y <= frame.clientHeight - margin,
+    )
+    if (inside) return
+    const left = Math.min(...boxes.map((box) => box.x))
+    const top = Math.min(...boxes.map((box) => box.y))
+    const right = Math.max(...boxes.map((box) => box.x + box.w))
+    const bottom = Math.max(...boxes.map((box) => box.y + box.h))
+    const fits =
+      (right - left) * zoom <= frame.clientWidth - 2 * margin &&
+      (bottom - top) * zoom <= frame.clientHeight - 2 * margin
+    // Si no caben las dos, manda lo que se ejecuta: perder el diagrama de vista es peor que leer la nota a medias.
+    const only = cursorBox ?? noteBox
+    const target =
+      fits || !only
+        ? { x: (left + right) / 2, y: (top + bottom) / 2 }
+        : { x: only.x + only.w / 2, y: only.y + only.h / 2 }
+    void setCenter(target.x, target.y, { zoom, duration: animate ? 350 : 0 })
+  }, [cursor, currentNote, getViewport, setCenter, animate])
+
   const onNodesChange = useCallback(
     (changes: NodeChange<AnyFlowNode>[]) => {
       for (const change of changes) {
@@ -1377,6 +1522,21 @@ function CanvasInner({
     }
   }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive])
 
+  // Un lienzo de trabajo (que se ajusta al ancho) pliega sus filas según el ancho que tiene.
+  const narrowing = interactive && (fitMode ?? 'width') === 'width'
+  useEffect(() => {
+    const frame = frameRef.current
+    if (!frame || !narrowing) return
+    // El observador avisa nada más empezar a mirar: no hace falta medir a mano.
+    const observer = new ResizeObserver(() => {
+      setRun(runFor(frame.clientWidth))
+    })
+    observer.observe(frame)
+    return () => {
+      observer.disconnect()
+    }
+  }, [narrowing])
+
   const onMoveStart = useCallback(
     (event: unknown) => {
       // Un movimiento sin evento es programático (el propio reencuadre): no cuenta como tomar el control.
@@ -1419,8 +1579,8 @@ function CanvasInner({
         <EdgeDefs />
       </svg>
       <ReactFlow
-        nodes={[...flowNodes, ...dockedNodes]}
-        edges={flowEdges}
+        nodes={[...flowNodes, ...dockedNodes, ...noteFlow.nodes]}
+        edges={[...flowEdges, ...noteFlow.edges]}
         nodeTypes={NODE_TYPES}
         edgeTypes={EDGE_TYPES}
         onNodesChange={interactive ? onNodesChange : undefined}

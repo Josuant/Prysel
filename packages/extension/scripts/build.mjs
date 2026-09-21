@@ -49,11 +49,20 @@ async function copyWasm() {
   }
 }
 
+/** La letra a mano de las notas (Caveat) se distribuye con su licencia: la OFL lo exige. */
+async function copyFontLicense() {
+  await cp(
+    resolve(root, '..', 'ui', 'src', 'fonts', 'OFL.txt'),
+    resolve(root, 'dist', 'webview', 'OFL-Caveat.txt'),
+  )
+}
+
 async function main() {
   await buildExtension()
   await copyRuntime()
   await copyWasm()
   await viteBuild({ configFile: resolve(root, 'webview/vite.config.mjs') })
+  await copyFontLicense()
   if (!watch) console.log('Prysel: extensión y webview compilados en dist/')
 }
 

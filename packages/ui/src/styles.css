@@ -1628,6 +1628,18 @@ button.fn-menu__crumb:hover {
   border-color: var(--state-warning);
 }
 /* Donde irá lo que se añada desde el menú. */
+/* Por donde va la reproducción: un anillo sólido que se mueve con el paso, distinto de lo que se añade. */
+.flow-node[data-cursor]::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  inset: -4px;
+  border: 2px solid var(--accent);
+  border-radius: 28px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  pointer-events: none;
+}
+
 .flow-node[data-add-target]::after {
   content: '';
   position: absolute;
@@ -2224,6 +2236,155 @@ button.fn-menu__crumb:hover {
 
 /* ── Visor: una ventana con el valor que un nodo dejó al ejecutarse ─────────────────────────────
  * No es código: solo lee. Se atenúa si el resultado quedó atrás. */
+/*
+ * Notas a mano: letra manuscrita (Caveat, licencia OFL: ver fonts/OFL.txt) con una pila de reserva del
+ * sistema. Cada clase de nota se distingue por su forma, no solo por su color (se lee en escala de grises).
+ */
+@font-face {
+  font-family: 'Caveat';
+  src: url('./fonts/Caveat.ttf') format('truetype');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+.note {
+  --note-bg: var(--chip-warning-bg);
+  --note-fg: var(--chip-warning-fg);
+  --note-line: var(--state-warning);
+  position: relative;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1.5px solid var(--note-line);
+  border-radius: 6px 14px 8px 12px / 12px 7px 13px 8px;
+  background: var(--note-bg);
+  color: var(--note-fg);
+  font-family: 'Caveat', 'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive;
+  font-size: 20px;
+  line-height: 24px;
+  box-shadow: var(--shadow-raised);
+  transition:
+    opacity 0.25s ease,
+    filter 0.25s ease;
+}
+/* Lo que cuenta la lección en el momento actual, en la barra de reproducción: letra a mano y grande. */
+.player__caption {
+  margin: 6px 0 2px;
+  font-family: 'Caveat', 'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive;
+  font-size: 21px;
+  line-height: 24px;
+  color: var(--ink);
+}
+.player__caption strong {
+  font-weight: 700;
+}
+.note__title {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 23px;
+}
+.note__text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.note__text strong {
+  font-weight: 700;
+}
+.note__code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--note-fg) 12%, transparent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+/* Nota adhesiva: una esquina doblada. */
+.note[data-style='sticky'] {
+  border-radius: 3px;
+  transform: rotate(-0.8deg);
+}
+.note[data-style='sticky']::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(135deg, transparent 50%, var(--note-line) 50%);
+  opacity: 0.55;
+}
+/* Fíjate: caja con borde doble. */
+.note[data-style='callout'] {
+  --note-bg: var(--badge-data-bg);
+  --note-fg: var(--badge-data-fg);
+  --note-line: var(--badge-data-fg);
+  border-style: double;
+  border-width: 4px;
+}
+/* Ojo: discontinua y con una marca. */
+.note[data-style='warning'] {
+  --note-bg: var(--chip-error-bg);
+  --note-fg: var(--chip-error-fg);
+  --note-line: var(--chip-error-fg);
+  border-style: dashed;
+}
+.note[data-style='warning']::before {
+  content: '¡';
+  position: absolute;
+  top: -1px;
+  right: 8px;
+  font-size: 26px;
+  font-weight: 700;
+  opacity: 0.6;
+}
+/* Definición: una barra gruesa a la izquierda. */
+.note[data-style='definition'] {
+  --note-bg: var(--chip-selected-bg);
+  --note-fg: var(--chip-selected-fg);
+  --note-line: var(--chip-selected-fg);
+  border-left-width: 7px;
+  border-radius: 3px 10px 10px 3px;
+}
+/* Analogía: contorno ondulado (bordes más redondos). */
+.note[data-style='analogy'] {
+  --note-bg: var(--badge-output-bg);
+  --note-fg: var(--badge-output-fg);
+  --note-line: var(--badge-output-fg);
+  border-radius: 22px 8px 22px 8px;
+}
+/* Al margen: sin caja, solo una raya. */
+.note[data-style='margin'] {
+  --note-bg: transparent;
+  --note-fg: var(--ink);
+  --note-line: var(--line);
+  border-width: 0 0 0 3px;
+  border-radius: 0;
+  box-shadow: none;
+}
+/* Lo que ya se contó se retira un poco; lo que se está contando se levanta. */
+.note[data-past] {
+  opacity: 0.55;
+  filter: saturate(0.6);
+}
+.note[data-current] {
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent),
+    var(--shadow-raised);
+}
+
+/* La flecha a una nota: trazo de rotulador, continuo y con punta, con el temblor del filtro. */
+.edge[data-note] .edge__line {
+  stroke: var(--ink-muted);
+  stroke-width: 2.2;
+  stroke-dasharray: none;
+  stroke-linecap: round;
+}
+.edge[data-note] .edge__head {
+  fill: var(--ink-muted);
+}
+
 .viewer {
   display: flex;
   flex-direction: column;
@@ -2491,4 +2652,16 @@ button.fn-menu__crumb:hover {
 .chain__tools button:disabled {
   opacity: 0.3;
   cursor: default;
+}
+
+/* El asa por la que sale la flecha de una nota desde un chip: existe, pero no se ve ni se puede agarrar. */
+.note-handle {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
 }

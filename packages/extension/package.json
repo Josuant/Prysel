@@ -16,7 +16,9 @@
   "activationEvents": [
     "onCommand:prysel.openCanvas",
     "onCommand:prysel.runAll",
-    "onView:prysel.canvasView"
+    "onView:prysel.canvasView",
+    "onCommand:prysel.trace",
+    "onCommand:prysel.newLesson"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -29,6 +31,16 @@
       {
         "command": "prysel.runAll",
         "title": "Ejecutar el archivo",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.trace",
+        "title": "Reproducir el programa paso a paso",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.newLesson",
+        "title": "Crear o abrir la lección de este archivo",
         "category": "Prysel"
       },
       {

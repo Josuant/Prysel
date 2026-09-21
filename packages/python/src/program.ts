@@ -51,6 +51,8 @@ export interface ProgramNode {
   code: string
   /** Línea en el archivo (base 1). */
   line: number
+  /** Última línea de la sentencia (base 1): en una compuesta, la última de su cuerpo. */
+  lineEnd?: number
   /** Nodos del cuerpo, para las construcciones que contienen otras. */
   contains?: string[]
   /** Operaciones que encapsula. */
@@ -361,6 +363,7 @@ class Builder {
       ...(extra.lead === undefined ? {} : { lead: extra.lead }),
       ...(extra.owner === undefined ? {} : { owner: extra.owner }),
     }
+    node.lineEnd = statement.endPosition.row + 1
     node.text = this.source.slice(statement.startIndex, colon?.endIndex ?? statement.endIndex)
   }
 

@@ -146,3 +146,20 @@ Es el bucle de entrenamiento como nodo propio sin un nodo nuevo: cualquier `for`
 **No probado:** la extensión de Python de verdad (`ms-python`, `environments.getActiveEnvironmentPath`): el VS Code aislado no la lleva, así que se ejerció el ajuste `prysel.python`; la resolución por `ms-python` sigue probada solo con la API simulada. Tampoco se ha publicado en el Marketplace (`vsce publish` necesita un publicador y un token) ni hay icono `.png`.
 
 **Observado, sin resolver:** en un panel estrecho (unos 370 px junto al editor) el diagrama ajustado a la vista queda muy pequeño. El «ajustar a la vista» reduce todo el programa a lo ancho; conviene un zoom mínimo o un ajuste por altura.
+
+## Paso 9: el zoom del diagrama en un panel estrecho
+
+**Qué pasaba:** la extensión abre el lienzo junto al editor, en un panel de unos 370 px. El diagrama se ajusta al ancho (se lee como un documento y se recorre hacia abajo), pero la distribución plegaba las filas a 1680 px pensando en una pantalla grande: en el panel estrecho el ajuste lo reducía a ≈ 0,2 y los nodos dejaban de leerse.
+
+**Qué hace ahora** (`ui/src/fit.ts`, `Canvas`): el largo de fila (`maxRun` de la distribución) sale del ancho que tiene el lienzo. `runFor(ancho)` pide una fila que, a un zoom legible (0,75), ocupe justo ese ancho, en saltos de 80 px (redimensionar el panel no rehace el diagrama a cada píxel), sin bajar de 720 px (cabe una tarjeta de una línea de las más anchas) y sin cambiar nada en una pantalla grande (≥ 1260 px: la fila de siempre). Lo observa un `ResizeObserver`, así que también sigue al panel cuando se redimensiona. Solo en un lienzo de trabajo (que se ajusta al ancho); las ilustraciones y la galería no cambian. El programa gana en alto lo que pierde en ancho.
+
+**Medido** con el mismo programa de 12 nodos:
+
+| Ancho del lienzo               | Antes (zoom) | Ahora (zoom) |
+| ------------------------------ | ------------ | ------------ |
+| 374 px (panel junto al editor) | 0,21         | **0,40**     |
+| 574 px                         | 0,33         | **0,64**     |
+| 849 px                         | ≈ 0,50       | **0,73**     |
+| 1474 px                        | 0,89         | 0,89 (igual) |
+
+**Límite:** en 374 px una tarjeta de una línea de las más anchas (500–800 px con varios resultados o muchos argumentos) sigue quedando a ≈ 0,4: el diagrama se lee, pero con letra pequeña; más no cabe sin recortar el contenido. Para leer de cerca, el panel se puede ensanchar o pasar a densidad expandida.

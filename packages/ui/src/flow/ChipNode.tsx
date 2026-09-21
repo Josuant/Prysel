@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { NodeProps, Node } from '@xyflow/react'
+import { Handle, Position, type NodeProps, type Node } from '@xyflow/react'
 import { getKind, valueTypeOf, type ControlModel, type IconId } from '@prysel/morphology'
 import type { CanvasNode } from '../Canvas.tsx'
 import { chipValue, type FunctionChip } from '../chips.ts'
@@ -39,6 +39,13 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
         data-selected={selected ? '' : undefined}
         title={`${data.fn.name}${data.fn.signature}: arrástrala a una llamada`}
       >
+        <Handle
+          type="source"
+          id="note-out"
+          position={Position.Right}
+          isConnectable={false}
+          className="note-handle"
+        />
         <Icon name="function" size={12} className="vchip__icon" />
         <span className="vchip__name">{data.fn.name}</span>
         <span className="vchip__sig">{data.fn.signature}</span>
@@ -57,6 +64,13 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
             : `${data.iter.name}: lo que toma el bucle en cada vuelta; arrástrala a una casilla de dentro`
         }
       >
+        <Handle
+          type="source"
+          id="note-out"
+          position={Position.Right}
+          isConnectable={false}
+          className="note-handle"
+        />
         <Icon
           name={data.iter.param ? 'function' : (data.iter.icon ?? 'loop')}
           size={12}
@@ -76,6 +90,13 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
       data-selected={selected ? '' : undefined}
       title={`${chip.label}: arrástrala a una casilla que reciba un valor`}
     >
+      <Handle
+        type="source"
+        id="note-out"
+        position={Position.Right}
+        isConnectable={false}
+        className="note-handle"
+      />
       <Icon name={getKind(chip.kind).icon} size={12} className="vchip__icon" />
       <ChipName
         label={chip.label}

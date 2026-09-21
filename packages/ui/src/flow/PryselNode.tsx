@@ -61,6 +61,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   drop?: 'into' | 'out' | undefined
   /** Aquí irá lo que se añada desde el menú. */
   addTarget?: boolean
+  /** Por aquí va la reproducción de una traza: el nodo que se está ejecutando en este paso. */
+  cursor?: boolean
   /** La cajita de chips de este contexto, si es un territorio que tiene una. */
   tray?: TrayLayout | undefined
   /** Añadir una variable al principio de este contexto. */
@@ -236,7 +238,16 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-phase={phase}
       data-selected={selected ? '' : undefined}
       data-add-target={data.addTarget ? '' : undefined}
+      data-cursor={data.cursor ? '' : undefined}
     >
+      {/* De aquí sale la flecha de una nota: existe en todo nodo (también en un territorio, que no tiene salida). */}
+      <Handle
+        type="source"
+        id="note-out"
+        position={Position.Right}
+        isConnectable={false}
+        className="note-handle"
+      />
       {container && node.laps && (
         <div
           className="laps-slot"

@@ -172,3 +172,43 @@ describe('ejecución: extensión → webview', () => {
     expect(parseWebviewMessage({ type: 'assets', seq: 7, assets: { images: {} } })).toBeNull()
   })
 })
+
+describe('traza', () => {
+  const trace = {
+    events: [{ k: 'line', l: 1, d: 0, f: 0 }],
+    truncated: false,
+    error: null,
+    output: '',
+  }
+
+  it('la petición del webview lleva la versión del texto', () => {
+    expect(parseHostMessage({ type: 'trace', version: 3 })).toEqual({ type: 'trace', version: 3 })
+    expect(parseHostMessage({ type: 'trace' })).toBeNull()
+    expect(parseHostMessage({ type: 'trace', version: 'tres' })).toBeNull()
+  })
+
+  it('la respuesta acepta una grabación en curso, una terminada y un fallo', () => {
+    const running = { type: 'trace', version: 3, status: 'running', trace: null }
+    const done = { type: 'trace', version: 3, status: 'done', trace }
+    const failed = {
+      type: 'trace',
+      version: 3,
+      status: 'failed',
+      trace: null,
+      message: 'sin Python',
+    }
+    expect(parseWebviewMessage(running)).toEqual(running)
+    expect(parseWebviewMessage(done)).toEqual(done)
+    expect(parseWebviewMessage(failed)).toEqual(failed)
+  })
+
+  it('descarta una respuesta mal formada', () => {
+    const done = { type: 'trace', version: 3, status: 'done', trace }
+    expect(parseWebviewMessage({ ...done, status: 'volando' })).toBeNull()
+    expect(parseWebviewMessage({ ...done, version: 'x' })).toBeNull()
+    expect(parseWebviewMessage({ ...done, message: 4 })).toBeNull()
+    expect(parseWebviewMessage({ ...done, trace: { ...trace, events: 'no' } })).toBeNull()
+    expect(parseWebviewMessage({ ...done, trace: { ...trace, output: 3 } })).toBeNull()
+    expect(parseWebviewMessage({ ...done, trace: { ...trace, truncated: 'sí' } })).toBeNull()
+  })
+})

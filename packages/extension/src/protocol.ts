@@ -1,5 +1,7 @@
 import type { Program, TextEdit } from '@prysel/python'
 import type { Assets, KernelStatus, RunView } from './runs.ts'
+import { parseLesson, type Lesson } from './lesson.ts'
+import type { Trace } from './trace.ts'
 
 /**
  * Protocolo de mensajes entre la extensión y el webview.
@@ -48,7 +50,33 @@ export interface AssetsMessage {
   assets: Assets
 }
 
-export type WebviewMessage = UpdateMessage | ThemeMessage | RunsMessage | AssetsMessage
+/**
+ * Extensión → webview: cómo va la grabación de la traza de un programa. `version` es la del texto que se
+ * trazó: si el documento ya cambió, la traza no corresponde a lo que hay y el lienzo la descarta.
+ */
+export interface TraceResultMessage {
+  type: 'trace'
+  version: number
+  status: 'running' | 'done' | 'failed'
+  trace: Trace | null
+  /** Por qué no se pudo grabar, si falló. */
+  message?: string
+}
+
+/**
+ * Extensión → webview: el guion de la lección del archivo que se enseña (el `.lesson.json` que hay junto
+ * al `.py`), o por qué no se pudo leer. Sin guion (`lesson: null` y sin `error`), no hay lección.
+ */
+export interface LessonMessage {
+  type: 'lesson'
+  /** El archivo al que pertenece (el mismo nombre que lleva su `update`). */
+  file: string
+  lesson: Lesson | null
+  error?: string
+}
+
+export type WebviewMessage =
+  UpdateMessage | ThemeMessage | RunsMessage | AssetsMessage | TraceResultMessage | LessonMessage
 
 /** Webview → extensión. */
 export interface ReadyMessage {
@@ -79,8 +107,25 @@ export interface RestartMessage {
   type: 'restart'
 }
 
+/** Grabar y enseñar la traza del archivo entero: qué pasa línea a línea. */
+export interface TraceMessage {
+  type: 'trace'
+  version: number
+}
+
+/** Crear (o abrir) el guion de la lección del archivo. */
+export interface NewLessonMessage {
+  type: 'newLesson'
+}
+
 export type HostMessage =
-  ReadyMessage | EditMessage | RunMessage | InterruptMessage | RestartMessage
+  | ReadyMessage
+  | EditMessage
+  | RunMessage
+  | InterruptMessage
+  | RestartMessage
+  | TraceMessage
+  | NewLessonMessage
 
 /** Tope de lo que un solo cambio puede reescribir: un mensaje absurdo no se aplica. */
 const MAX_EDITS = 64
@@ -133,6 +178,31 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (!Array.isArray(assets.figures) || typeof assets.images !== 'object') return null
     return value as AssetsMessage
   }
+  if (type === 'lesson') {
+    const { file, lesson, error } = value as { file?: unknown; lesson?: unknown; error?: unknown }
+    if (typeof file !== 'string') return null
+    if (error !== undefined && typeof error !== 'string') return null
+    if (lesson === null || lesson === undefined) {
+      return { type: 'lesson', file, lesson: null, ...(error === undefined ? {} : { error }) }
+    }
+    // El guion llega del disco: se vuelve a validar aquí, no se da por bueno lo que manda quien envía.
+    const parsed = parseLesson(lesson)
+    return parsed.ok ? { type: 'lesson', file, lesson: parsed.lesson } : null
+  }
+  if (type === 'trace') {
+    const { version, status, trace, message } = value as Partial<TraceResultMessage>
+    if (!Number.isInteger(version)) return null
+    if (status !== 'running' && status !== 'done' && status !== 'failed') return null
+    if (message !== undefined && typeof message !== 'string') return null
+    if (trace !== null && trace !== undefined) {
+      const { events, truncated, error, output } = trace as Partial<Trace>
+      if (!Array.isArray(events) || typeof truncated !== 'boolean' || typeof output !== 'string') {
+        return null
+      }
+      if (error !== null && typeof error !== 'object') return null
+    }
+    return value as TraceResultMessage
+  }
   if (type === 'theme') {
     const theme = (value as { theme?: unknown }).theme
     if (theme === 'light' || theme === 'dark') return value as ThemeMessage
@@ -162,6 +232,11 @@ export function parseHostMessage(value: unknown): HostMessage | null {
       ids.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 200)
     return valid ? { type: 'run', version: version as number, ids: ids as string[] } : null
   }
+  if (type === 'trace') {
+    const { version } = value as { version?: unknown }
+    return Number.isInteger(version) ? { type: 'trace', version: version as number } : null
+  }
+  if (type === 'newLesson') return { type: 'newLesson' }
   if (type === 'interrupt') return { type: 'interrupt' }
   if (type === 'restart') return { type: 'restart' }
   return null

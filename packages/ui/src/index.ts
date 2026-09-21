@@ -30,6 +30,16 @@ export { addPlace, checkConnection, type Link, type Verdict } from './connect.ts
 export { CodePanel, type CodePanelProps } from './CodePanel.tsx'
 export type { NodeMenuItem } from './NodeMenu.tsx'
 export { viewerSize, type ViewerContent } from './viewer.ts'
+export { FUNCTION_CHIP } from './flow/useChipDrag.ts'
+export {
+  NOTE_STYLES,
+  isNoteStyle,
+  noteSize,
+  noteSpans,
+  plainNote,
+  type NoteContent,
+  type NoteStyle,
+} from './note.ts'
 export { formatLap, pickCurves, spark, type LapsView } from './laps.ts'
 export type { StepInfo } from './steps.ts'
 export type { NodeEdit } from './MorphNode.tsx'

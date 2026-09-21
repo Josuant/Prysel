@@ -16,6 +16,8 @@ import { actionEdits } from '@prysel/python/edits'
 import type { NodeAction, TemplateId } from '@prysel/morphology'
 import { parseWebviewMessage, type Theme } from '../../src/protocol.ts'
 import { topLevelOf } from '../../src/plan.ts'
+import { indexOf, type Trace, type TraceIndex } from '../../src/trace.ts'
+import type { Lesson } from '../../src/lesson.ts'
 import {
   chipHint,
   describeSummary,
@@ -27,6 +29,10 @@ import {
 } from '../../src/runs.ts'
 import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { OutputPanel } from './OutputPanel.tsx'
+import { PlayerBar } from './Player.tsx'
+import { cursorNode, observedAt } from './player.ts'
+import { lessonNotes, momentsOf, resolveBeats } from './lessons.ts'
+import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
 import {
@@ -61,6 +67,16 @@ interface SavedState {
   pins?: Record<string, PinKey[]>
 }
 
+/** La grabación de la traza del programa: cómo va, y la traza lista para reproducir. */
+interface Recording {
+  /** La versión del texto que se grabó: si cambia, la grabación ya no vale. */
+  version: number
+  status: 'running' | 'done' | 'failed'
+  index: TraceIndex | null
+  trace: Trace | null
+  message?: string
+}
+
 const NO_EDGES: SemanticEdge[] = []
 const NO_RUNS: Record<string, RunView> = {}
 
@@ -91,6 +107,13 @@ export function App() {
   const [problem, setProblem] = useState<string | null>(null)
   const [assets, setAssets] = useState<ReadonlyMap<number, Assets>>(new Map())
   const [outputOpen, setOutputOpen] = useState(true)
+  const [recording, setRecording] = useState<Recording | null>(null)
+  /** El guion de la lección de un archivo, o por qué no se pudo leer. */
+  const [lessonState, setLessonState] = useState<{
+    file: string
+    lesson: Lesson | null
+    error?: string
+  } | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   // Lo que se acaba de crear queda enfocado: se localiza por la línea en la que se escribió.
   const focusCreated = useCallback((created: Program, line: number) => {
@@ -121,6 +144,20 @@ export function App() {
         setAssets((previous) => new Map(previous).set(message.seq, message.assets))
       } else if (message.type === 'theme') {
         setTheme(message.theme)
+      } else if (message.type === 'lesson') {
+        setLessonState({
+          file: message.file,
+          lesson: message.lesson,
+          ...(message.error ? { error: message.error } : {}),
+        })
+      } else if (message.type === 'trace') {
+        setRecording({
+          version: message.version,
+          status: message.status,
+          index: message.trace ? indexOf(message.trace) : null,
+          trace: message.trace,
+          ...(message.message ? { message: message.message } : {}),
+        })
       }
     }
     window.addEventListener('message', onMessage)
@@ -155,6 +192,25 @@ export function App() {
     [allPins, pins, file, density],
   )
 
+  // La reproducción solo vale para el texto que se grabó: si el código cambió, se sale de ella.
+  const replay = recording?.status === 'done' && recording.version === version ? recording : null
+  // El guion solo vale para el archivo al que pertenece.
+  const lesson = lessonState && lessonState.file === file ? lessonState.lesson : null
+  const lessonError = lessonState && lessonState.file === file ? (lessonState.error ?? null) : null
+  const resolved = useMemo(
+    () => (program && lesson ? resolveBeats(program, lesson, replay?.trace ?? null) : []),
+    [program, lesson, replay],
+  )
+  const moments = useMemo(() => momentsOf(resolved), [resolved])
+  // La reproducción se detiene en cada momento del guion: hay algo que leer.
+  const stops = useMemo(() => new Set(moments.map((moment) => moment.step)), [moments])
+  const player = usePlayer(replay?.index ?? null, stops)
+  /** Lo que valen los nombres del programa en el paso que se está mirando. */
+  const traced = useMemo(
+    () => (program && replay && player.state ? observedAt(program, player.state) : null),
+    [program, replay, player.state],
+  )
+
   /** A qué sentencia de primer nivel pertenece cada nodo: es la unidad que se ejecuta. */
   const top = useMemo(() => (program ? topLevelOf(program) : new Map<string, string>()), [program])
 
@@ -182,7 +238,7 @@ export function App() {
 
   const source = useMemo(() => {
     if (!program) return []
-    return toCanvasNodes(program.nodes).map((node) => {
+    const built = toCanvasNodes(program.nodes).map((node) => {
       const shown = pending[node.id] ? { ...node, control: pending[node.id] } : node
       // Solo la propia sentencia lleva lo observado: sus nodos de dentro no definen nombres del programa.
       const inner = inLoops.get(node.id)
@@ -253,7 +309,15 @@ export function App() {
         ...(steps ? { steps } : {}),
       }
     })
-  }, [program, pending, runs, top, refs, inLoops, scrub, chainsOf, pin])
+    // Reproduciendo, los chips enseñan lo que valía en ese paso, no lo de la última ejecución.
+    if (!traced) return built
+    return built.map((node) => {
+      const rest = { ...node }
+      delete rest.observed
+      const now = traced.get(node.id)
+      return now ? { ...rest, observed: now } : rest
+    })
+  }, [program, pending, runs, top, refs, inLoops, scrub, chainsOf, pin, traced])
 
   const viewOf = (id: string): RunView | undefined => {
     const statement = top.get(id)
@@ -296,6 +360,31 @@ export function App() {
     }
   }, [selected, version])
 
+  // Con la reproducción activa: ← y → dan un paso, y Espacio la pone en marcha o la pausa.
+  const { previous, next, toggle } = player
+  const replaying = replay !== null
+  useEffect(() => {
+    if (!replaying) return
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        target.closest('input, textarea, select, button, [contenteditable]')
+      ) {
+        return
+      }
+      if (event.key === 'ArrowLeft') previous()
+      else if (event.key === 'ArrowRight') next()
+      else if (event.key === ' ') toggle()
+      else return
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [replaying, previous, next, toggle])
+
   // Un fallo lleva la atención a su nodo: es lo que hay que mirar.
   const failed = useMemo(
     () => Object.entries(runs).find(([, view]) => view.state === 'error')?.[0] ?? null,
@@ -330,8 +419,36 @@ export function App() {
     }
     return { nodes, links }
   }, [pins, runs, assets, view.nodes])
-  const canvasNodes = useMemo(() => [...view.nodes, ...viewers.nodes], [view.nodes, viewers.nodes])
-  const canvasEdges = useMemo(() => [...view.edges, ...viewers.links], [view.edges, viewers.links])
+  /** El nodo por el que va la reproducción (el más cercano que se ve). */
+  const cursor = useMemo(
+    () =>
+      program && replay && player.state
+        ? cursorNode(program, player.state, new Set(view.nodes.map((node) => node.id)))
+        : null,
+    [program, replay, player.state, view.nodes],
+  )
+  /** Las notas de la lección, con su flecha: todas sobre el diagrama, o las del momento si se reproduce. */
+  const notes = useMemo(
+    () =>
+      program && lesson
+        ? lessonNotes(
+            program,
+            resolved,
+            replay ? player.step : null,
+            new Set(view.nodes.map((node) => node.id)),
+            new Set(view.functions.map((fn) => fn.id)),
+          )
+        : { nodes: [], links: [] },
+    [program, lesson, resolved, replay, player.step, view.nodes, view.functions],
+  )
+  const canvasNodes = useMemo(
+    () => [...view.nodes, ...viewers.nodes, ...notes.nodes],
+    [view.nodes, viewers.nodes, notes.nodes],
+  )
+  const canvasEdges = useMemo(
+    () => [...view.edges, ...viewers.links, ...notes.links],
+    [view.edges, viewers.links, notes.links],
+  )
   /** Lo que ofrece el menú de un nodo ejecutado: ver cada uno de sus valores en un visor. */
   const viewerMenu = (id: string): NodeMenuItem[] => {
     // Un bucle que dio vueltas: sus curvas (lo que valió cada nombre en cada vuelta).
@@ -423,10 +540,52 @@ export function App() {
             }}
           />
         )}
+        {program && (
+          <button
+            type="button"
+            className="rounded-md border border-border-card bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40"
+            disabled={version === null || recording?.status === 'running'}
+            title={
+              recording?.status === 'failed'
+                ? recording.message
+                : 'Reproduce el programa línea a línea'
+            }
+            onClick={() => {
+              if (version !== null) post({ type: 'trace', version })
+            }}
+          >
+            {recording?.status === 'running' ? 'Grabando…' : '▶ Paso a paso'}
+          </button>
+        )}
+        {program && file && (
+          <button
+            type="button"
+            className="rounded-md border border-border-card bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink"
+            title={
+              lesson
+                ? 'Abrir el guion de la lección'
+                : 'Crea el guion de la lección de este archivo (un .lesson.json junto a él)'
+            }
+            onClick={() => {
+              post({ type: 'newLesson' })
+            }}
+          >
+            {lesson ? `Lección: ${lesson.title}` : '＋ Lección'}
+          </button>
+        )}
         <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
         {program && <AddNodeMenu onAdd={add} where={addWhere} />}
         <DensityControl value={density} onChange={changeDensity} />
       </header>
+
+      {lessonError && (
+        <div
+          role="alert"
+          className="border-b border-border-card bg-surface px-3 py-1.5 text-[11px] leading-4 text-[var(--chip-error-fg)]"
+        >
+          El guion de la lección no se puede usar: {lessonError}
+        </div>
+      )}
 
       {unsupported.length > 0 && (
         <div
@@ -465,6 +624,7 @@ export function App() {
               interactive
               height="fill"
               fitKey={view.viewKey}
+              cursor={cursor}
               showActions
               showStatus={started}
               ariaLabel={canvasLabel}
@@ -474,6 +634,33 @@ export function App() {
           <EmptyState />
         )}
       </main>
+
+      {program && replay?.trace && (
+        <ErrorBoundary label="No se pudo dibujar la reproducción" resetKey={replay}>
+          <PlayerBar
+            program={program}
+            player={player}
+            truncated={replay.trace.truncated}
+            failure={replay.trace.error}
+            {...(lesson
+              ? {
+                  lesson: {
+                    title: lesson.title,
+                    moments: moments.map((moment) => ({
+                      step: moment.step,
+                      text: moment.beat.note.text,
+                      ...(moment.beat.note.title ? { title: moment.beat.note.title } : {}),
+                    })),
+                    unreached: resolved.filter((r) => r.node !== null && r.step === null).length,
+                  },
+                }
+              : {})}
+            onClose={() => {
+              setRecording(null)
+            }}
+          />
+        </ErrorBoundary>
+      )}
 
       {outputOpen && selectedView && selectedView.state !== 'never' && statementNode && (
         <ErrorBoundary label="No se pudo dibujar la salida" resetKey={selectedView}>

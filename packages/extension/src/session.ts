@@ -12,6 +12,7 @@ import {
   type Statement,
 } from './plan.ts'
 import type { Assets, KernelStatus, LoopView, RunView } from './runs.ts'
+import type { Trace } from './trace.ts'
 
 /**
  * Una sesión de ejecución: el motor de un documento y lo que se sabe de cada sentencia que corrió.
@@ -216,24 +217,58 @@ export class Session {
     return job
   }
 
+  /** El motor, arrancándolo si hace falta; `null` (y el motivo en `problem`) si no se pudo. */
+  private async ensureKernel(): Promise<Kernel | null> {
+    if (this.kernel?.alive) return this.kernel
+    this.status = 'starting'
+    this.notify({ type: 'views' })
+    try {
+      this.kernel = await this.start()
+      return this.kernel
+    } catch (error) {
+      this.kernel = null
+      this.status = 'dead'
+      this.problem = error instanceof Error ? error.message : String(error)
+      this.notify({ type: 'views' })
+      return null
+    }
+  }
+
+  /**
+   * Graba la traza de un programa entero: qué pasa línea a línea. Va en el mismo motor pero en un espacio de
+   * nombres aparte (no toca lo ejecutado), y se encola con las ejecuciones. `null` si no hay motor.
+   */
+  trace(code: string, limit = 5000): Promise<Trace | null> {
+    const job = this.queue.then(async () => {
+      if (this.disposed) return null
+      this.problem = null
+      const kernel = await this.ensureKernel()
+      if (!kernel) return null
+      this.status = 'busy'
+      this.notify({ type: 'views' })
+      try {
+        return await kernel.trace(code, limit)
+      } catch (error) {
+        this.problem = error instanceof Error ? error.message : String(error)
+        return null
+      } finally {
+        this.status = this.kernel?.alive ? 'idle' : 'dead'
+        this.notify({ type: 'views' })
+      }
+    })
+    this.queue = job.then(
+      () => undefined,
+      () => undefined,
+    )
+    return job
+  }
+
   private async execute(planned: readonly Statement[]) {
     if (this.disposed || planned.length === 0) return
     this.cancelled = false
     this.problem = null
-    if (!this.kernel || !this.kernel.alive) {
-      this.status = 'starting'
-      this.notify({ type: 'views' })
-      try {
-        this.kernel = await this.start()
-      } catch (error) {
-        this.kernel = null
-        this.status = 'dead'
-        this.problem = error instanceof Error ? error.message : String(error)
-        this.notify({ type: 'views' })
-        return
-      }
-    }
-    const kernel = this.kernel
+    const kernel = await this.ensureKernel()
+    if (!kernel) return
     for (const stmt of planned) {
       if (this.cancelled || this.disposed) break
       this.status = 'busy'

@@ -5,6 +5,7 @@ import * as vscode from 'vscode'
 import { buildProgram, createPythonParser, type PythonParser } from '@prysel/python'
 import { validEdits, type TextEdit } from '@prysel/python/edits'
 import { Kernel } from './kernel.ts'
+import { lessonFileFor, readLesson, skeletonLesson } from './lesson.ts'
 import { parseHostMessage, type Theme, type WebviewMessage } from './protocol.ts'
 import { Session } from './session.ts'
 import type { KernelStatus, RunState } from './runs.ts'
@@ -40,6 +41,13 @@ let currentDoc: vscode.TextDocument | null = null
 
 /** Cuántas veces un webview avisó de que ya cargó (`ready`): es lo que dice que su página arrancó de verdad. */
 let webviewsReady = 0
+
+/** Cómo fue la última grabación de una traza: para las pruebas y para entender qué pasó. */
+let lastTrace: { status: 'running' | 'done' | 'failed'; steps: number; version: number } | null =
+  null
+
+/** La lección que se mandó al lienzo la última vez (o por qué no se pudo leer): para las pruebas. */
+let lastLesson: { title: string; beats: number; error: string | null } | null = null
 
 /** Todos los webviews abiertos (panel y vista de la barra): reciben el mismo estado. */
 const webviews = new Set<vscode.Webview>()
@@ -163,6 +171,20 @@ function themeKind(): Theme {
 }
 
 function postToAll(message: WebviewMessage) {
+  if (message.type === 'trace') {
+    lastTrace = {
+      status: message.status,
+      steps: message.trace?.events.length ?? 0,
+      version: message.version,
+    }
+  }
+  if (message.type === 'lesson') {
+    lastLesson = message.lesson
+      ? { title: message.lesson.title, beats: message.lesson.beats.length, error: null }
+      : message.error
+        ? { title: '', beats: 0, error: message.error }
+        : null
+  }
   for (const webview of webviews) webview.postMessage(message)
 }
 
@@ -189,10 +211,61 @@ async function refresh() {
     const program = await analyse(doc)
     postToAll({ type: 'update', program, file: basename(doc.fileName), version: doc.version })
     postRuns()
+    void postLesson(doc)
   } catch {
     // El código a medio escribir no debe tumbar el lienzo.
     postToAll({ type: 'update', program: null })
   }
+}
+
+/** El guion de la lección de un archivo: el `.lesson.json` que hay junto a él (`factorial.py` → `factorial.lesson.json`). */
+const isLessonFile = (doc: vscode.TextDocument) => doc.fileName.endsWith('.lesson.json')
+const lessonUriOf = (doc: vscode.TextDocument) => vscode.Uri.file(lessonFileFor(doc.fileName))
+
+/**
+ * Lee el guion del archivo que se enseña y se lo manda al lienzo. Si el guion está abierto en un editor se
+ * lee de ahí (lo que se está escribiendo, aún sin guardar); si no, del disco. Sin guion, se manda `null`.
+ */
+async function postLesson(doc: vscode.TextDocument) {
+  const file = basename(doc.fileName)
+  if (doc.uri.scheme !== 'file') return postToAll({ type: 'lesson', file, lesson: null })
+  const uri = lessonUriOf(doc)
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString())
+  let raw: string | null = open ? open.getText() : null
+  if (raw === null) {
+    try {
+      raw = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8')
+    } catch {
+      raw = null
+    }
+  }
+  if (raw === null) return postToAll({ type: 'lesson', file, lesson: null })
+  const result = readLesson(raw)
+  postToAll(
+    result.ok
+      ? { type: 'lesson', file, lesson: result.lesson }
+      : { type: 'lesson', file, lesson: null, error: result.error },
+  )
+}
+
+/** Crea el guion de partida del archivo (si no lo tiene) y lo abre para escribirlo. */
+async function openLesson(doc: vscode.TextDocument) {
+  const uri = lessonUriOf(doc)
+  try {
+    await vscode.workspace.fs.stat(uri)
+  } catch {
+    const program = await analyse(doc)
+    const statements = program.nodes
+      .filter((node) => node.range && node.range.owner === undefined && node.text)
+      .map((node) => (node.text ?? '').split(/\r?\n/)[0]?.trim() ?? '')
+      .filter((text) => text !== '')
+    const text = skeletonLesson(basename(doc.fileName), statements)
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(text, 'utf8'))
+  }
+  await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), {
+    viewColumn: vscode.ViewColumn.Beside,
+    preserveFocus: false,
+  })
 }
 
 function htmlFor(webview: vscode.Webview, extensionUri: vscode.Uri): string {
@@ -248,6 +321,19 @@ async function applyEdits(edits: TextEdit[], version: number) {
   if (!(await vscode.workspace.applyEdit(change))) void refresh()
 }
 
+/** Graba la traza del archivo entero y se la manda al lienzo (con la versión del texto que se trazó). */
+async function traceDocument(doc: vscode.TextDocument) {
+  const version = doc.version
+  const text = doc.getText()
+  postToAll({ type: 'trace', version, status: 'running', trace: null })
+  const trace = await sessionFor(doc).trace(text)
+  if (trace) postToAll({ type: 'trace', version, status: 'done', trace })
+  else {
+    const problem = sessions.get(doc.uri.toString())?.problem ?? 'No se pudo grabar la traza.'
+    postToAll({ type: 'trace', version, status: 'failed', trace: null, message: problem })
+  }
+}
+
 /** Conecta un webview recién creado: responde al «ready» con el tema y el estado actual. */
 function wireWebview(webview: vscode.Webview) {
   webview.onDidReceiveMessage((message) => {
@@ -263,6 +349,17 @@ function wireWebview(webview: vscode.Webview) {
       // Los ids llevan la línea: si el texto cambió desde que el lienzo los vio, no valen.
       if (doc.version !== parsed.version) return void refresh()
       if (mayRun()) void sessionFor(doc).run(parsed.ids)
+      return
+    }
+    if (parsed.type === 'newLesson') {
+      void vscode.commands.executeCommand('prysel.newLesson')
+      return
+    }
+    if (parsed.type === 'trace') {
+      const doc = currentDoc
+      if (!doc || doc.languageId !== 'python') return
+      if (doc.version !== parsed.version) return void refresh()
+      if (mayRun()) void traceDocument(doc)
       return
     }
     if (parsed.type === 'interrupt' || parsed.type === 'restart') {
@@ -346,6 +443,10 @@ export interface PryselApi {
     /** El documento que se está enseñando y los que tienen una sesión (para entender qué pasa). */
     document: string | null
     sessions: string[]
+    /** La última traza que se grabó, si se grabó alguna. */
+    trace: { status: 'running' | 'done' | 'failed'; steps: number; version: number } | null
+    /** La última lección que se mandó al lienzo, si la hay. */
+    lesson: { title: string; beats: number; error: string | null } | null
   }
 }
 
@@ -376,6 +477,35 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
         return
       }
       await sessionFor(doc).run('all')
+    }),
+    vscode.commands.registerCommand('prysel.trace', async () => {
+      const doc = targetDocument()
+      if (!doc) {
+        void vscode.window.showInformationMessage(
+          'Prysel: abre un archivo de Python para trazarlo.',
+        )
+        return
+      }
+      if (!mayRun()) return
+      // La traza se enseña en el lienzo: se abre si no lo estaba.
+      await vscode.commands.executeCommand('prysel.openCanvas')
+      await traceDocument(doc)
+    }),
+    vscode.commands.registerCommand('prysel.newLesson', async () => {
+      const doc = targetDocument()
+      if (!doc || doc.uri.scheme !== 'file') {
+        void vscode.window.showInformationMessage(
+          'Prysel: abre un archivo de Python guardado para escribir su lección.',
+        )
+        return
+      }
+      try {
+        await openLesson(doc)
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Prysel: no se pudo abrir la lección. ${messageOf(error)}`,
+        )
+      }
     }),
     vscode.commands.registerCommand('prysel.interrupt', () => {
       const doc = targetDocument()
@@ -423,11 +553,31 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (!currentDoc) return
       if (event.document.uri.toString() === currentDoc.uri.toString()) void refresh()
+      // El guion se está escribiendo: el lienzo lo sigue sin esperar a guardarlo.
+      else if (
+        isLessonFile(event.document) &&
+        event.document.uri.toString() === lessonUriOf(currentDoc).toString()
+      ) {
+        void postLesson(currentDoc)
+      }
     }),
+    (() => {
+      // Crear, guardar o borrar el guion desde fuera del editor (otro programa, git, la IA).
+      const watcher = vscode.workspace.createFileSystemWatcher('**/*.lesson.json')
+      const changed = () => {
+        if (currentDoc?.languageId === 'python') void postLesson(currentDoc)
+      }
+      watcher.onDidChange(changed)
+      watcher.onDidCreate(changed)
+      watcher.onDidDelete(changed)
+      return watcher
+    })(),
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       // Sin editor de texto (el foco pasó al propio lienzo, o a otro panel) se sigue enseñando el mismo
       // documento: si no, el diagrama se vaciaría justo al pulsar sobre él.
       if (!editor) return
+      // Escribir el guion no cambia lo que se enseña: sigue el programa al que pertenece.
+      if (isLessonFile(editor.document)) return
       currentDoc = editor.document
       void refresh()
     }),
@@ -449,6 +599,8 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
         webviewsReady,
         document: currentDoc?.uri.toString() ?? null,
         sessions: [...sessions.keys()],
+        trace: lastTrace,
+        lesson: lastLesson,
       }
     },
   }

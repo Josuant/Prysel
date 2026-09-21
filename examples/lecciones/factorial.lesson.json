@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "title": "Recursión: el factorial",
+  "level": "principiante",
+  "lang": "es",
+  "source": "factorial.py",
+  "beats": [
+    {
+      "id": "idea",
+      "at": { "text": "def factorial(n):" },
+      "note": {
+        "title": "Recursión",
+        "text": "Una función que **se llama a sí misma** para resolver un problema más pequeño.",
+        "style": "definition"
+      }
+    },
+    {
+      "id": "cero",
+      "at": { "text": "total = 0" },
+      "note": {
+        "text": "Empezamos con el total en `0`: aquí iremos sumando.",
+        "style": "sticky"
+      }
+    },
+    {
+      "id": "bucle",
+      "at": { "text": "for i in range(1, 4):" },
+      "note": {
+        "title": "Fíjate",
+        "text": "El bucle probará con `i` = 1, 2 y 3. Calculamos el factorial de cada uno.",
+        "style": "callout"
+      }
+    },
+    {
+      "id": "caso-base",
+      "at": { "text": "if n <= 1:" },
+      "when": { "text": "if n <= 1:", "visit": 3 },
+      "note": {
+        "title": "Caso base",
+        "text": "Con `n` = 1 la función **deja de llamarse** y devuelve 1. Sin esto, no acabaría nunca.",
+        "style": "warning"
+      }
+    },
+    {
+      "id": "suma",
+      "at": { "text": "total = total + factorial(i)" },
+      "when": { "text": "total = total + factorial(i)", "visit": 3 },
+      "note": {
+        "text": "Es como una pila de platos: cada llamada **espera** a que acabe la siguiente.",
+        "style": "analogy"
+      }
+    },
+    {
+      "id": "fin",
+      "at": { "text": "print(total)" },
+      "note": {
+        "text": "1 + 2 + 6 = **9**: la suma de los tres factoriales.",
+        "style": "margin"
+      }
+    }
+  ]
+}

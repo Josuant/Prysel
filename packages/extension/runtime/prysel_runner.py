@@ -28,12 +28,14 @@ import json
 import math
 import os
 import queue
+import reprlib
 import socket
 import sys
 import threading
 import time
 import traceback
 import types
+import warnings
 
 MAX_TEXT = 4_000
 # Valores por vuelta de un bucle: cuántos puntos se guardan como mucho, cuántas vueltas se guardan todas
@@ -544,6 +546,176 @@ def instrument_chains(tree, frag):
         return tree
 
 
+class _TraceLimit(BaseException):
+    """Se llegó al tope de pasos de una traza: se corta la ejecución."""
+
+
+_COMPREHENSIONS = {"<listcomp>", "<setcomp>", "<dictcomp>", "<genexpr>"}
+
+# `reprlib` recorta sin construir la representación entera: una lista enorme no cuesta un paso de traza.
+_SHORT = reprlib.Repr()
+_SHORT.maxlist = _SHORT.maxtuple = _SHORT.maxset = _SHORT.maxfrozenset = 8
+_SHORT.maxdict = 6
+_SHORT.maxstring = 40
+_SHORT.maxother = 40
+_SHORT.maxlevel = 3
+
+
+def _show(value):
+    """Lo que enseña una traza de un valor: un número tal cual, y lo demás como texto corto."""
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return value if isinstance(value, int) or math.isfinite(value) else str(value)
+    try:
+        text = _SHORT.repr(value)
+    except Exception:
+        return f"<{type(value).__name__}>"
+    return text if len(text) <= 70 else text[:69] + "…"
+
+
+def _identity(value):
+    """Lo que identifica un objeto mutable (dos nombres con el mismo `id` son el mismo objeto)."""
+    if value is None or isinstance(value, (bool, int, float, str, bytes, tuple, frozenset)):
+        return None
+    return id(value)
+
+
+def _is_data(name, value):
+    """Una variable de datos: no las definiciones (funciones, clases, módulos) ni los nombres internos."""
+    if name.startswith("__"):
+        return False
+    return not (
+        callable(value) or isinstance(value, (types.ModuleType, type))
+    )
+
+
+def _comprehension_only(tree):
+    """Los nombres que solo existen como variable de una comprensión: no son variables del programa.
+
+    Desde Python 3.12 una comprensión se ejecuta en el marco de quien la contiene y su variable aparece
+    entre los locales, pero para quien lee el código no es una variable más (y desaparece al acabar).
+    """
+    stores = {}
+    targets = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            stores[node.id] = stores.get(node.id, 0) + 1
+        elif isinstance(node, ast.arg):
+            stores[node.arg] = stores.get(node.arg, 0) + 1
+        elif isinstance(node, ast.comprehension):
+            for part in ast.walk(node.target):
+                if isinstance(part, ast.Name):
+                    targets[part.id] = targets.get(part.id, 0) + 1
+    return frozenset(name for name, count in targets.items() if stores.get(name, 0) == count)
+
+
+class _Tracer:
+    """Graba, línea a línea, qué pasa al ejecutar un programa: es la verdad sobre la que se explica.
+
+    Un evento por cada llamada (`call`), línea a punto de ejecutarse (`line`), retorno (`return`) y
+    excepción (`exception`), con la línea, la profundidad de la pila, el marco y **solo lo que cambió**
+    en las variables del marco (`ch`), y lo que se imprimió desde el evento anterior (`o`).
+    """
+
+    def __init__(self, filename, limit, out, hidden=frozenset()):
+        self.filename = filename
+        self.hidden = hidden
+        self.limit = limit
+        self.out = out
+        self.events = []
+        self.stack = []
+        self.by_frame = {}
+        self.next_id = 1
+        self.printed = 0
+
+    def record(self, event):
+        text = self.out.getvalue()
+        if len(text) > self.printed:
+            event["o"] = text[self.printed :]
+            self.printed = len(text)
+        self.events.append(event)
+        if len(self.events) >= self.limit:
+            raise _TraceLimit()
+
+    def changes(self, record, frame):
+        """Las variables de datos que cambiaron (o son nuevas) desde el último evento de este marco."""
+        current = {}
+        # En Python 3.12 una comprensión comparte marco con quien la contiene y leer sus locales puede avisar.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            items = list(frame.f_locals.items())
+        for name, value in items:
+            if name not in self.hidden and _is_data(name, value):
+                current[name] = (_show(value), _identity(value))
+        changed = {}
+        ids = {}
+        for name, entry in current.items():
+            if record["last"].get(name) != entry:
+                changed[name] = entry[0]
+                if entry[1] is not None:
+                    ids[name] = entry[1]
+        record["last"] = current
+        return changed, ids
+
+    def global_trace(self, frame, event, arg):
+        code = frame.f_code
+        if code.co_filename != self.filename or code.co_name in _COMPREHENSIONS:
+            return None
+        if event != "call":
+            return None
+        module = code.co_name == "<module>"
+        record = {"id": 0 if module else self.next_id, "last": {}, "depth": len(self.stack)}
+        if not module:
+            self.next_id += 1
+        self.by_frame[id(frame)] = record
+        self.stack.append(record)
+        if not module:
+            changed, ids = self.changes(record, frame)
+            entry = {"k": "call", "l": code.co_firstlineno, "d": record["depth"], "f": record["id"], "fn": code.co_name}
+            if changed:
+                entry["ch"] = changed
+            if ids:
+                entry["ids"] = ids
+            self.record(entry)
+        return self.local_trace
+
+    def local_trace(self, frame, event, arg):
+        record = self.by_frame.get(id(frame))
+        if record is None:
+            return None
+        entry = {"l": frame.f_lineno, "d": record["depth"], "f": record["id"]}
+        if event == "line":
+            entry["k"] = "line"
+        elif event == "return":
+            # El programa acaba (`end`); una función devuelve un valor (`return`).
+            entry["k"] = "end" if record["id"] == 0 else "return"
+            if record["id"] != 0:
+                entry["v"] = _show(arg)
+        elif event == "exception":
+            entry["k"] = "exception"
+            entry["e"] = f"{arg[0].__name__}: {_short(str(arg[1]), 120)}"
+        else:
+            return self.local_trace
+        changed, ids = self.changes(record, frame)
+        # Una comprensión de una línea repite esa línea a cada vuelta sin cambiar nada visible: no es un paso.
+        if event == "line" and not changed and record.get("line") == frame.f_lineno:
+            return self.local_trace
+        record["line"] = frame.f_lineno
+        if changed:
+            entry["ch"] = changed
+        if ids:
+            entry["ids"] = ids
+        try:
+            self.record(entry)
+        finally:
+            if event == "return":
+                self.by_frame.pop(id(frame), None)
+                if self.stack and self.stack[-1] is record:
+                    self.stack.pop()
+        return self.local_trace
+
+
 class Runner:
     def __init__(self):
         self.loops = {}
@@ -621,6 +793,57 @@ class Runner:
         for (frag, key), series in list(self.loops.items()):
             if series.dirty:
                 self.emit_series(frag, key, series)
+
+    # ── la traza ───────────────────────────────────────────────────────────────
+
+    def trace(self, request):
+        """Ejecuta un programa entero, en un espacio de nombres aparte, grabando qué pasa línea a línea."""
+        run = request.get("id", "trace")
+        limit = int(request.get("limit", 5000))
+        filename = f"<prysel-trace:{run}>"
+        out = io.StringIO()
+        source = request.get("code", "")
+        try:
+            hidden = _comprehension_only(ast.parse(source))
+        except SyntaxError:
+            hidden = frozenset()
+        tracer = _Tracer(filename, limit, out, hidden)
+        namespace = {"__name__": "__main__"}
+        saved = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = out
+        truncated = False
+        error = None
+        self.running.set()
+        try:
+            code = compile(request.get("code", ""), filename, "exec")
+            sys.settrace(tracer.global_trace)
+            try:
+                exec(code, namespace)
+            finally:
+                sys.settrace(None)
+        except _TraceLimit:
+            truncated = True
+        except BaseException as caught:  # incluye KeyboardInterrupt y SystemExit
+            line = None
+            for frame in traceback.extract_tb(caught.__traceback__):
+                if frame.filename == filename:
+                    line = frame.lineno
+            if isinstance(caught, SyntaxError) and caught.filename == filename:
+                line = caught.lineno
+            error = {"name": type(caught).__name__, "message": _short(str(caught), 300), "line": line}
+        finally:
+            self.running.clear()
+            sys.stdout, sys.stderr = saved
+        emit(
+            {
+                "ev": "trace",
+                "id": run,
+                "events": tracer.events,
+                "truncated": truncated,
+                "error": error,
+                "output": out.getvalue()[-MAX_TEXT:],
+            }
+        )
 
     # ── las cadenas ────────────────────────────────────────────────────────────
 
@@ -823,6 +1046,8 @@ class Runner:
                     self.chain_now.clear()
                     self.chain_count.clear()
                     emit({"ev": "reset"})
+                elif op == "trace":
+                    self.trace(request)
                 elif op == "vars":
                     names = {
                         n: summarize(v)

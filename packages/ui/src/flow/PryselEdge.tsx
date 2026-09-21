@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useId, useMemo } from 'react'
 import { EdgeLabelRenderer, type EdgeProps, type Edge as FlowEdge } from '@xyflow/react'
 import {
   routeEdge,
@@ -35,6 +35,8 @@ export interface PryselEdgeData extends Record<string, unknown> {
   emphasis?: 'active' | 'dim'
   live?: boolean
   failed?: boolean
+  /** Va a una nota: se dibuja a mano, como una flecha de rotulador. */
+  note?: boolean
   /** Es un cable de datos que se puede soltar: se puede seleccionar y aparece su botón de desconectar. */
   removable?: boolean
   onRemove?: () => void
@@ -107,6 +109,17 @@ export function PryselEdge({
       detour: 70,
     })
   const labelAt = route?.mid ?? { x: (sourceX + targetX) / 2, y: (sourceY + targetY) / 2 }
+  const handId = `hand-${useId().replace(/:/g, '')}`
+  // El temblor del trazo es un filtro de este cable, con su región a su medida: en un trazo recto, la
+  // caja del propio trazo no tiene alto, y un filtro sobre ella lo haría desaparecer.
+  const hand = data?.note
+    ? {
+        x: Math.min(sourceX, targetX) - 80,
+        y: Math.min(sourceY, targetY) - 80,
+        width: Math.abs(targetX - sourceX) + 160,
+        height: Math.abs(targetY - sourceY) + 160,
+      }
+    : null
 
   return (
     <g
@@ -118,10 +131,34 @@ export function PryselEdge({
       data-live={data?.live ? '' : undefined}
       data-failed={data?.failed ? '' : undefined}
       data-selected={selected ? '' : undefined}
+      data-note={hand ? '' : undefined}
     >
+      {hand && (
+        <filter id={handId} filterUnits="userSpaceOnUse" {...hand}>
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.03"
+            numOctaves={2}
+            seed={7}
+            result="n"
+          />
+          <feDisplacementMap
+            in="SourceGraphic"
+            in2="n"
+            scale={4}
+            xChannelSelector="R"
+            yChannelSelector="G"
+          />
+        </filter>
+      )}
       {/* Un cable es fino: se ancha su zona de clic para poder seleccionarlo y desconectarlo. */}
       {data?.removable && <path className="edge__hit" d={path} />}
-      <path className="edge__line" d={path} markerEnd={markerEnd} />
+      <path
+        className="edge__line"
+        d={path}
+        markerEnd={markerEnd}
+        {...(hand ? { filter: `url(#${handId})` } : {})}
+      />
       {data?.removable && selected && (
         <EdgeLabelRenderer>
           <button

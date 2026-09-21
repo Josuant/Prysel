@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { createServer, type Socket } from 'node:net'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import type { Trace } from './trace.ts'
 
 /**
  * El cliente del motor de ejecución (`runtime/prysel_runner.py`): lanza un Python, le pide que ejecute
@@ -238,6 +239,7 @@ export class Kernel {
     if (event.ev === 'ready') return void this.waiting.get('ready')?.(event)
     if (event.ev === 'vars') return void this.waiting.get(`vars:${event.id}`)?.(event)
     if (event.ev === 'reset') return void this.waiting.get('reset')?.(event)
+    if (event.ev === 'trace') return void this.waiting.get(`trace:${event.id}`)?.(event)
     const run = event.id === undefined ? undefined : this.pending.get(event.id)
     if (!run) return
     const { result, options } = run
@@ -354,6 +356,32 @@ export class Kernel {
       try {
         this.send({ op: 'reset' })
       } catch (error) {
+        reject(error)
+      }
+    })
+  }
+
+  /**
+   * Ejecuta un programa entero, en un espacio de nombres aparte (no toca el de las ejecuciones), grabando
+   * qué pasa línea a línea. `limit` corta la traza (y el programa) al llegar a ese número de pasos.
+   */
+  trace(code: string, limit = 5000): Promise<Trace> {
+    const id = `t${++this.counter}`
+    return new Promise((resolve, reject) => {
+      if (this.dead) return reject(this.dead)
+      this.waiting.set(`trace:${id}`, (event) => {
+        this.waiting.delete(`trace:${id}`)
+        resolve({
+          events: event['events'] as Trace['events'],
+          truncated: event['truncated'] === true,
+          error: (event['error'] as Trace['error']) ?? null,
+          output: String(event['output'] ?? ''),
+        })
+      })
+      try {
+        this.send({ op: 'trace', id, code, limit })
+      } catch (error) {
+        this.waiting.delete(`trace:${id}`)
         reject(error)
       }
     })
