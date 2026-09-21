@@ -1,4 +1,4 @@
-import { VALUE_NAMES, accepts, type NodeAction } from '@prysel/morphology'
+import { VALUE_NAMES, accepts, isTerritoryKind, type NodeAction } from '@prysel/morphology'
 import type { CanvasNode } from './Canvas.tsx'
 
 /**
@@ -102,7 +102,7 @@ export function dropTarget(
   source: CanvasNode,
   port?: string,
 ): { after: string } | { into: string } {
-  const inside = port?.startsWith('param:') || source.kind === 'control.loop'
+  const inside = port?.startsWith('param:') || isTerritoryKind(source.kind)
   return inside ? { into: source.id } : { after: source.id }
 }
 
@@ -116,7 +116,7 @@ export function addPlace(
   focus: { id: string; name: string } | null | undefined,
 ): { where: string; place: { after: string } | { into: string } | Record<string, never> } {
   if (anchor) {
-    const territory = anchor.kind === 'abstraction.collapsed' || anchor.kind === 'control.loop'
+    const territory = anchor.kind === 'abstraction.collapsed' || isTerritoryKind(anchor.kind)
     return territory
       ? { where: `Dentro de «${anchor.label}»`, place: { into: anchor.id } }
       : { where: `Después de «${anchor.label}»`, place: { after: anchor.id } }
@@ -149,6 +149,8 @@ const JUMPS: ReadonlySet<string> = new Set([
   'control.break',
   'control.continue',
 ])
+
+const CLAUSES: ReadonlySet<string> = new Set(['control.except', 'control.clause'])
 
 /** ¿Está `child` dentro de `ancestor`, a cualquier profundidad? Moverlo ahí cerraría un ciclo. */
 function within(nodes: ReadonlyMap<string, CanvasNode>, child: string, ancestor: string): boolean {
@@ -195,6 +197,16 @@ export function checkOrder(
   if (within(nodes, source.id, target.id)) {
     return { ok: false, reason: 'No se puede meter algo dentro de sí mismo.' }
   }
+  // Una cláusula (si falla, si no falla, al final) vive dentro de su try: no se mueve ni se pone algo tras ella.
+  if (CLAUSES.has(target.kind)) {
+    return { ok: false, reason: 'Una cláusula de un try no se mueve por sí sola.' }
+  }
+  if (link.port === 'order-out' && CLAUSES.has(source.kind)) {
+    return {
+      ok: false,
+      reason: 'Detrás de una cláusula no se puede poner nada: va dentro de ella.',
+    }
+  }
   switch (link.port) {
     case 'order-out':
       if (JUMPS.has(source.kind)) {
@@ -219,7 +231,7 @@ export function checkOrder(
         },
       }
     case 'order-body':
-      if (source.kind !== 'abstraction.collapsed' && source.kind !== 'control.loop') {
+      if (source.kind !== 'abstraction.collapsed' && !isTerritoryKind(source.kind)) {
         return { ok: false, reason: 'Solo una función o un bucle tienen cuerpo.' }
       }
       return { ok: true, action: { type: 'move', id: target.id, into: source.id, start: true } }

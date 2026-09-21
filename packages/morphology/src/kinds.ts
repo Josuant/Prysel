@@ -1,4 +1,4 @@
-import type { NodeKindSpec } from './types.ts'
+import type { NodeKindSpec, ShapeId } from './types.ts'
 
 /**
  * Catálogo de tipos de nodo. Cada entrada responde tres preguntas:
@@ -233,6 +233,70 @@ export const NODE_KINDS = [
   },
   {
     ...base,
+    id: 'control.with',
+    name: 'Con',
+    python: 'with abre() as f',
+    role: 'control',
+    badge: 'control',
+    icon: 'lock',
+    shape: 'card-tab',
+    stroke: 'solid',
+    fill: 'ghost',
+    control: 'with',
+    footprint: { w: 1, h: 1.1 },
+    ports: { in: true, out: true },
+    why: 'Una pestaña como la del bucle, pero sin repetir nada: envuelve lo que ocurre mientras el recurso está abierto, y lo cierra al salir.',
+  },
+  {
+    ...base,
+    id: 'control.try',
+    name: 'Intentar',
+    python: 'try',
+    role: 'control',
+    badge: 'control',
+    icon: 'shield',
+    shape: 'card-window',
+    stroke: 'solid',
+    fill: 'glass',
+    control: 'code',
+    footprint: { w: 1, h: 1.1 },
+    ports: { in: true, out: true },
+    why: 'Envuelve lo que se intenta. Sus recuperaciones (si falla, si no falla, al final) van dentro, cada una en su propio marco.',
+  },
+  {
+    ...base,
+    id: 'control.except',
+    name: 'Si falla',
+    python: 'except ValueError as e',
+    role: 'control',
+    badge: 'control',
+    icon: 'x',
+    shape: 'card-cut',
+    stroke: 'solid',
+    fill: 'glass',
+    control: 'handler',
+    footprint: { w: 1, h: 1.1 },
+    ports: { in: true, out: true },
+    why: 'La esquina cortada de lo que interrumpe el flujo: solo se recorre cuando algo falla, y dice qué error atrapa.',
+  },
+  {
+    ...base,
+    id: 'control.clause',
+    name: 'Cláusula',
+    python: 'else · finally',
+    role: 'control',
+    badge: 'control',
+    icon: 'check',
+    shape: 'card-notch',
+    stroke: 'solid',
+    fill: 'glass',
+    control: 'code',
+    footprint: { w: 1, h: 1.1 },
+    ports: { in: true, out: true },
+    why: 'El otro extremo de un intento: lo que se hace si no falló, o pase lo que pase.',
+  },
+  {
+    ...base,
     id: 'control.break',
     name: 'Salir',
     python: 'break',
@@ -447,6 +511,32 @@ export const NODE_KINDS = [
 ] as const satisfies readonly NodeKindSpec[]
 
 export type NodeKindId = (typeof NODE_KINDS)[number]['id']
+
+/**
+ * Los tipos que envuelven lo que hay dentro: un bucle, un `with`, un `try` y cada una de sus
+ * cláusulas. Con cuerpo se dibujan como territorio, como una función, pero sin sus parámetros.
+ */
+export const TERRITORY_KINDS: ReadonlySet<string> = new Set([
+  'control.loop',
+  'control.with',
+  'control.try',
+  'control.except',
+  'control.clause',
+])
+
+/** ¿Es un tipo que se dibuja como territorio cuando tiene algo dentro? (Las funciones también, aparte.) */
+export const isTerritoryKind = (kind: string): boolean => TERRITORY_KINDS.has(kind)
+
+/** Los que llevan un editor en su cabecera (`para x en …`, `con … como …`, `si falla …`). */
+export const HEADER_EDITOR_KINDS: ReadonlySet<string> = new Set([
+  'control.loop',
+  'control.with',
+  'control.except',
+])
+
+/** La silueta de un territorio: la pestaña de carpeta, sea cual sea el tipo. */
+export const territoryShape = (kind: { id: string; shape: ShapeId }): ShapeId =>
+  isTerritoryKind(kind.id) ? 'card-tab' : kind.shape
 
 const byId = new Map<string, NodeKindSpec>(NODE_KINDS.map((k) => [k.id, k]))
 

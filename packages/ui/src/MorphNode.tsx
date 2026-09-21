@@ -14,6 +14,7 @@ import {
   getKind,
   nodeSize,
   shapeFor,
+  territoryShape,
   type Density,
   type FillMode,
   type Metrics,
@@ -289,7 +290,7 @@ export function MorphNode({
   const spec = getKind(kind)
   const { w, h } = size ?? nodeSize(spec, density, metrics)
   // Un ámbito es un territorio, no una píldora: conserva su pestaña de carpeta a cualquier densidad.
-  const geo = buildShape(container ? spec.shape : shapeFor(spec, density), w, h)
+  const geo = buildShape(container ? territoryShape(spec) : shapeFor(spec, density), w, h)
 
   const compact = density === 'compact' && !container
   // Una tarjeta esbelta: solo lo relevante. El icono dice el tipo, el nombre va en la cabecera y el
@@ -540,7 +541,7 @@ export function MorphNode({
                     />
                   )
                 )}
-                {container && code && (
+                {container && code && kind === 'abstraction.collapsed' && (
                   <code className="node__signature type-code">{signatureOf(code)}</code>
                 )}
                 {/* El estado solo se enseña cuando pasa algo: en reposo no dice nada. */}
@@ -577,18 +578,21 @@ export function MorphNode({
               )}
 
               {/* El bucle es un territorio, pero lo que recorre y con qué variable se edita en su cabecera. */}
-              {container && control?.kind === 'loop' && (
-                <div className="node__control node__control--territory">
-                  <Control
-                    model={control}
-                    level="summary"
-                    onChange={onControlChange}
-                    {...(editable ? { editable } : {})}
-                    {...(suggestions ? { suggestions } : {})}
-                    {...(linkedSlots ? { linked: linkedSlots } : {})}
-                  />
-                </div>
-              )}
+              {container &&
+                (control?.kind === 'loop' ||
+                  control?.kind === 'with' ||
+                  control?.kind === 'handler') && (
+                  <div className="node__control node__control--territory">
+                    <Control
+                      model={control}
+                      level="summary"
+                      onChange={onControlChange}
+                      {...(editable ? { editable } : {})}
+                      {...(suggestions ? { suggestions } : {})}
+                      {...(linkedSlots ? { linked: linkedSlots } : {})}
+                    />
+                  </div>
+                )}
 
               {!container && (
                 <div className="node__body">

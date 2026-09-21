@@ -14,7 +14,15 @@ export {
 } from './values.ts'
 export { buildShape, SHAPE_IDS } from './geometry.ts'
 export { ICONS, ICON_IDS } from './icons.ts'
-export { NODE_KINDS, getKind, type NodeKindId } from './kinds.ts'
+export {
+  HEADER_EDITOR_KINDS,
+  NODE_KINDS,
+  TERRITORY_KINDS,
+  getKind,
+  isTerritoryKind,
+  territoryShape,
+  type NodeKindId,
+} from './kinds.ts'
 export {
   DENSITY_BASE,
   ACTION_CALLS,

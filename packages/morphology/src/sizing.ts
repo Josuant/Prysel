@@ -213,6 +213,10 @@ export function slimWidth(base: number, model?: ControlModel): number {
   if (model?.kind === 'condition') {
     return Math.min(440, Math.max(base, 272, Math.ceil(chars(model.field, model.value) + 130)))
   }
+  if (model?.kind === 'with' || model?.kind === 'handler') {
+    const text = model.kind === 'with' ? model.context : model.type
+    return Math.min(440, Math.max(base, 236, Math.ceil(chars(text, model.name) + 140)))
+  }
   if (model?.kind === 'args') {
     const longest = Math.max(0, ...model.args.map((arg) => arg.value.length + arg.name.length))
     return Math.min(360, Math.max(base, 236, Math.ceil(longest * 7.2 + 70)))

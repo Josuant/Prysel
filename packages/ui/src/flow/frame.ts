@@ -1,4 +1,9 @@
-import { LOOP_HEADROOM, docHeadroom } from '@prysel/morphology'
+import {
+  HEADER_EDITOR_KINDS,
+  LOOP_HEADROOM,
+  docHeadroom,
+  isTerritoryKind,
+} from '@prysel/morphology'
 
 /**
  * Las dimensiones de un nodo dentro de React Flow.
@@ -23,6 +28,13 @@ export const isLoopTerritory = (node: { kind: string; contains?: readonly string
   node.kind === 'control.loop' && (node.contains?.length ?? 0) > 0
 
 /**
+ * ¿Es un bucle, un `with`, un `try` o una de sus cláusulas con algo dentro? Se dibuja como territorio,
+ * como una función: envuelve físicamente lo que abarca.
+ */
+export const isTerritory = (node: { kind: string; contains?: readonly string[] | undefined }) =>
+  isTerritoryKind(node.kind) && (node.contains?.length ?? 0) > 0
+
+/**
  * Lo que la cabecera de un territorio pide sobre el margen de serie: la documentación de una función
  * o de un bucle, y el editor del bucle (`para x en …`), que vive en su cabecera.
  */
@@ -35,7 +47,7 @@ export function territoryHeadroom(node: {
   if ((node.contains?.length ?? 0) === 0) return 0
   return (
     (node.note ? docHeadroom(node.note) : 0) +
-    (isLoopTerritory(node) && node.control ? LOOP_HEADROOM : 0)
+    (isTerritory(node) && HEADER_EDITOR_KINDS.has(node.kind) && node.control ? LOOP_HEADROOM : 0)
   )
 }
 

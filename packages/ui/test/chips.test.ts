@@ -682,3 +682,44 @@ describe('una operación entre literales es una constante', () => {
     expect([...docked.keys()].sort()).toEqual(['k', 'tau'])
   })
 })
+
+describe('with y try también tienen su cajita', () => {
+  const contexto = (kind: 'control.with' | 'control.try' | 'control.except') =>
+    node('ctx', { kind, line: 1, params: ['f'], contains: ['dentro'] })
+  const dentro = node('dentro', { line: 2, owner: 'ctx', kind: 'transform.call', inputs: ['left'] })
+
+  it('lo que abre un with es un chip de su cajita, como la variable de un bucle', () => {
+    const uso: SemanticEdge = {
+      from: 'ctx',
+      fromPort: 'param:f',
+      to: 'dentro',
+      toPort: 'left',
+      relation: 'dependency',
+    }
+    const plan = planChips([contexto('control.with'), dentro], [uso], { canAdd: false })
+    expect(plan.iterVars.get('ctx')?.map((v) => v.name)).toEqual(['f'])
+    expect(plan.chipSlots['dentro']?.['left']).toEqual({ name: 'f', type: 'any', iter: true })
+    expect(plan.flowEdges).toEqual([])
+  })
+
+  it('el nombre de un except también, y el intento y sus cláusulas tienen cajita', () => {
+    for (const kind of ['control.except', 'control.try'] as const) {
+      const plan = planChips([contexto(kind), dentro], [], { canAdd: true })
+      expect(plan.trays.has('ctx'), kind).toBe(true)
+    }
+  })
+
+  it('una constante al principio de un with se acopla a su cajita', () => {
+    const ctx = node('ctx', { kind: 'control.with', line: 1, contains: ['k', 'a'] })
+    const k = value('k', 2, { owner: 'ctx' })
+    const a = node('a', { kind: 'transform.call', line: 3, owner: 'ctx' })
+    expect(dockChips([ctx, k, a]).get('k')).toBe('ctx')
+  })
+
+  it('se pueden subir valores al principio de un try', () => {
+    const ctx = node('ctx', { kind: 'control.try', line: 1, contains: ['a', 'x'] })
+    const a = node('a', { kind: 'transform.call', line: 2, owner: 'ctx' })
+    const x = value('x', 3, { owner: 'ctx' })
+    expect(promoteTarget([ctx, a, x], x)).toBe('a')
+  })
+})

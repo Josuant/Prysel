@@ -291,3 +291,40 @@ describe('dónde se crea algo desde un puerto de orden', () => {
     expect(orderPlace('for', 'order-body')).toEqual({ into: 'for', start: true })
   })
 })
+
+describe('las cláusulas de un try en el gesto de orden', () => {
+  const all = new Map<string, CanvasNode>(
+    [
+      node('a', { kind: 'transform.call', provides: 'a' }),
+      node('try', { kind: 'control.try', contains: ['fallo', 'dentro'] }),
+      node('fallo', { kind: 'control.except', owner: 'try', contains: ['dentro'] }),
+      node('dentro', { kind: 'transform.call', owner: 'fallo' }),
+      node('con', { kind: 'control.with', contains: ['x'] }),
+      node('x', { kind: 'transform.call', owner: 'con' }),
+    ].map((n) => [n.id, n]),
+  )
+
+  it('una cláusula no se mueve por sí sola', () => {
+    const verdict = checkOrder(all, { from: 'a', port: 'order-out', to: 'fallo' })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.ok ? '' : verdict.reason).toContain('cláusula')
+  })
+
+  it('ni se pone nada «detrás» de ella', () => {
+    expect(checkOrder(all, { from: 'fallo', port: 'order-out', to: 'a' }).ok).toBe(false)
+  })
+
+  it('pero su cuerpo, el del try y el de un with sí reciben nodos al principio', () => {
+    for (const from of ['try', 'fallo', 'con']) {
+      expect(checkOrder(all, { from, port: 'order-body', to: 'a' }).ok, from).toBe(true)
+    }
+  })
+
+  it('un with y un try son territorios: lo que se crea desde ellos va dentro', () => {
+    expect(dropTarget(all.get('con') as CanvasNode)).toEqual({ into: 'con' })
+    expect(dropTarget(all.get('try') as CanvasNode)).toEqual({ into: 'try' })
+    expect(addPlace({ id: 'con', kind: 'control.with', label: 'con f' }, null).place).toEqual({
+      into: 'con',
+    })
+  })
+})

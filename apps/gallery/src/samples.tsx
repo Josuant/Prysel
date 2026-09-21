@@ -156,6 +156,28 @@ export const SAMPLES: Record<NodeKindId, Sample> = {
       total: 91,
     },
   },
+  'control.with': {
+    label: 'con archivo',
+    code: 'with open("ventas.csv") as archivo:',
+    meta: 'sales.py:12',
+    control: { kind: 'with', context: 'open("ventas.csv")', name: 'archivo' },
+  },
+  'control.try': {
+    label: 'intentar',
+    code: 'try:',
+    meta: 'sales.py:20',
+  },
+  'control.except': {
+    label: 'si falla: ValueError',
+    code: 'except ValueError as error:',
+    meta: 'sales.py:24',
+    control: { kind: 'handler', type: 'ValueError', name: 'error' },
+  },
+  'control.clause': {
+    label: 'al final',
+    code: 'finally:',
+    meta: 'sales.py:28',
+  },
   'control.raise': {
     label: 'Importe inválido',
     code: 'raise ValueError("importe negativo")',
@@ -299,6 +321,10 @@ export const GROUPS: Group[] = [
     kinds: [
       'control.condition',
       'control.loop',
+      'control.with',
+      'control.try',
+      'control.except',
+      'control.clause',
       'control.break',
       'control.continue',
       'control.raise',

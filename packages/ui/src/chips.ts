@@ -1,6 +1,7 @@
 import {
   isConstantExpression,
   isLineCard,
+  isTerritoryKind,
   type ControlModel,
   type Density,
   type ValueType,
@@ -47,6 +48,13 @@ export const isChipKind = (node: Pick<CanvasNode, 'kind' | 'provides' | 'control
 /** Una operación cuyos dos operandos son literales: no depende de nada. */
 const isConstantOperation = (node: Pick<CanvasNode, 'kind' | 'control'>): boolean =>
   node.kind === 'transform.operation' && isConstantExpression(node.control)
+
+/**
+ * Los nodos que tienen una cajita de variables: una función y todo lo que envuelve un cuerpo (un
+ * bucle, un `with`, un `try` y sus cláusulas).
+ */
+export const isContextKind = (kind: string): boolean =>
+  kind === 'abstraction.collapsed' || isTerritoryKind(kind)
 
 /** Un chip que representa una función del programa: se arrastra a una llamada. */
 export interface FunctionChip {
@@ -301,9 +309,7 @@ export function dockChips(nodes: readonly CanvasNode[]): Map<string, string> {
   const chips = nodes.filter(isChipKind)
   const isChip = new Set(chips.map((chip) => chip.id))
   const contexts = nodes.filter(
-    (node) =>
-      (node.kind === 'abstraction.collapsed' || node.kind === 'control.loop') &&
-      (node.contains?.length ?? 0) > 0,
+    (node) => isContextKind(node.kind) && (node.contains?.length ?? 0) > 0,
   )
   const hasBody = (context: CanvasNode) =>
     (context.contains ?? []).some((id) => byId.has(id) && !isChip.has(id))
@@ -472,8 +478,7 @@ export function planChips(
   const trays = new Map<string, TrayLayout>()
   for (const node of nodes) {
     const hasBody = (node.contains ?? []).some((id) => byId.has(id) && !docked.has(id))
-    const isContext = node.kind === 'abstraction.collapsed' || node.kind === 'control.loop'
-    if (!isContext || !hasBody) continue
+    if (!isContextKind(node.kind) || !hasBody) continue
     // Un bucle enseña su variable (o las de su patrón), y una función sus parámetros, primero: es lo
     // que llega, antes de lo que se prepara.
     const vars = (node.params ?? []).map((name) => ({
@@ -550,9 +555,9 @@ export function planChips(
     const owner = edge.fromPort?.startsWith('param:') ? from : undefined
     const slots = (chipSlots[edge.to] ??= {})
     slots[edge.toPort] = owner
-      ? owner.kind === 'control.loop'
-        ? { name, type: 'any', iter: true }
-        : { name, type: 'any', param: true }
+      ? owner.kind === 'abstraction.collapsed'
+        ? { name, type: 'any', param: true }
+        : { name, type: 'any', iter: true }
       : { name, type: from?.valueType ?? 'any' }
     const mine = (fromChips[edge.to] ??= {})
     mine[edge.toPort] = (mine[edge.toPort] ?? 0) + 1
@@ -605,7 +610,7 @@ export function promoteTarget(nodes: readonly CanvasNode[], node: CanvasNode): s
   const owner = node.owner
   if (owner !== undefined) {
     const context = nodes.find((candidate) => candidate.id === owner)
-    if (context?.kind !== 'abstraction.collapsed' && context?.kind !== 'control.loop') return null
+    if (!context || !isContextKind(context.kind)) return null
   }
   const first = nodes
     .filter(

@@ -65,6 +65,8 @@ const WRITABLE: ReadonlySet<string> = new Set([
   'condition',
   'args',
   'loop',
+  'with',
+  'handler',
   'signature',
   'list',
   'dict',
@@ -502,6 +504,53 @@ function Editor({
             </div>
           )}
         </div>
+      )
+
+    case 'with':
+      return (
+        <Row>
+          <span className="type-field-label muted">con</span>
+          <TextInput
+            value={model.context}
+            slot={{ id: 'context', label: 'Recurso' }}
+            linked={isLinked('context')}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('context', (context: string) => patch({ context }))}
+          />
+          {model.name !== '' && (
+            <>
+              <span className="type-field-label muted">como</span>
+              <TextInput
+                value={model.name}
+                onChange={on('name', (name: string) => patch({ name }))}
+              />
+            </>
+          )}
+        </Row>
+      )
+
+    case 'handler':
+      return (
+        <Row>
+          <span className="type-field-label muted">si falla</span>
+          <TextInput
+            value={model.type}
+            placeholder="cualquier error"
+            slot={{ id: 'type', label: 'Error' }}
+            linked={isLinked('type')}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('type', (type: string) => patch({ type }))}
+          />
+          {model.name !== '' && (
+            <>
+              <span className="type-field-label muted">como</span>
+              <TextInput
+                value={model.name}
+                onChange={on('name', (name: string) => patch({ name }))}
+              />
+            </>
+          )}
+        </Row>
       )
 
     case 'signal':

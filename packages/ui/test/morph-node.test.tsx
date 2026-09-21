@@ -28,6 +28,8 @@ export const SAMPLE_CONTROLS: Record<string, ControlModel> = {
     hits: [1, 2],
   },
   loop: { kind: 'loop', iterable: 'xs', variable: 'x', current: 1, total: 3 },
+  with: { kind: 'with', context: 'open("a")', name: 'f' },
+  handler: { kind: 'handler', type: 'ValueError', name: 'e' },
   signal: { kind: 'signal', errorType: 'ValueError', types: ['ValueError'], message: 'mal' },
   io: { kind: 'io', target: 'a.csv', mode: 'r', modes: ['r', 'w'] },
   stats: {

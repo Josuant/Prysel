@@ -51,6 +51,10 @@ export type ControlModel =
       current?: number
       total?: number
     }
+  /** `with abre() as f:`: el recurso que se abre y el nombre con el que se usa dentro (vacío si no lo lleva). */
+  | { kind: 'with'; context: string; name: string }
+  /** `except ValueError as e:`: qué error se atrapa (vacío: cualquiera) y el nombre con el que se usa dentro. */
+  | { kind: 'handler'; type: string; name: string }
   | { kind: 'signal'; errorType: string; types: string[]; message: string }
   | { kind: 'io'; target: string; mode: string; modes: string[] }
   | {

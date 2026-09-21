@@ -20,6 +20,8 @@ export const TEMPLATES = {
   ifelse: { label: 'Decisión con alternativa', group: 'Control' },
   for: { label: 'Bucle para cada', group: 'Control' },
   while: { label: 'Bucle mientras', group: 'Control' },
+  try: { label: 'Intentar / si falla', group: 'Control' },
+  with: { label: 'Con un recurso (with)', group: 'Control' },
   break: { label: 'Salir del bucle', group: 'Control' },
   continue: { label: 'Siguiente vuelta', group: 'Control' },
   return: { label: 'Devolver', group: 'Control' },

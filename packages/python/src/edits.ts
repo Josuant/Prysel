@@ -328,6 +328,10 @@ function linesOf(template: TemplateId, fill?: string): string[] {
       return ['break']
     case 'continue':
       return ['continue']
+    case 'try':
+      return ['try:', '    pass', 'except Exception as error:', '    pass']
+    case 'with':
+      return ['with open("archivo.txt") as archivo:', '    pass']
     case 'return':
       return [`return ${fill ?? 'valor'}`]
     case 'raise':
@@ -527,6 +531,9 @@ export function moveNode(
   const where = resolvePlace(program, request)
   if (!where) return { edits: [] }
   const target = nodeById(program, where.after ?? where.into ?? where.before ?? where.elseOf ?? '')
+  // Una cláusula (except, else, finally) no es una sentencia suelta: ni se mueve, ni se pone algo «detrás» de ella.
+  if (node && CLAUSE_KINDS.has(node.kind)) return { edits: [] }
+  if (target && CLAUSE_KINDS.has(target.kind) && where.into === undefined) return { edits: [] }
   if (!node || !range || !target?.range || target.id === id) return { edits: [] }
   // Ni dentro de sí misma, ni detrás de algo que ella contiene.
   if (target.range.start >= range.start && target.range.end <= range.end) return { edits: [] }
@@ -581,6 +588,9 @@ const SETUP: ReadonlySet<string> = new Set([
   'abstraction.collapsed',
 ])
 
+/** Las cláusulas de un try: viven dentro de él, con su propio cuerpo. */
+const CLAUSE_KINDS: ReadonlySet<string> = new Set(['control.except', 'control.clause'])
+
 /** El cuerpo de un camino de una decisión, con la sangría de lo que ya lleva dentro. */
 function regionOf(head: number, end: number, indent: number, bodyIndent?: number): Region {
   return { head, bodyEnd: end, end, indent, ...(bodyIndent === undefined ? {} : { bodyIndent }) }
@@ -603,7 +613,8 @@ function resolvePlace(
   const { after, into, before, start, branch } = request
   const inside = (owner: string) =>
     program.nodes
-      .filter((n) => n.range?.owner === owner)
+      // Las cláusulas de un try cuelgan de él, pero no son sentencias de su cuerpo.
+      .filter((n) => n.range?.owner === owner && !CLAUSE_KINDS.has(n.kind))
       .sort((a, b) => (a.range?.start ?? 0) - (b.range?.start ?? 0))
   if (into !== undefined && branch !== undefined) {
     const decision = nodeById(program, into)

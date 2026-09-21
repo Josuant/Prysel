@@ -14,7 +14,7 @@ import {
   type SemanticGraph,
 } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
-import { isLoopTerritory } from './flow/frame.ts'
+import { isTerritory } from './flow/frame.ts'
 
 /**
  * Del programa analizado al lienzo. Es lo que comparten la extensión y la galería: los dos
@@ -129,7 +129,7 @@ function isFunction(node: CanvasNode): boolean {
 
 /** Un ámbito plegable: una función con cuerpo o un bucle con cuerpo (no una decisión). */
 function isFoldable(node: CanvasNode): boolean {
-  return isFunction(node) || isLoopTerritory(node)
+  return isFunction(node) || isTerritory(node)
 }
 
 export interface FunctionInfo {

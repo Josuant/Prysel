@@ -12,6 +12,7 @@ import {
   getKind,
   shapeFor,
   slotTypeOf,
+  territoryShape,
   type Density,
   type NodeState,
 } from '@prysel/morphology'
@@ -117,7 +118,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   const updateNodeInternals = useUpdateNodeInternals()
 
   const spec = getKind(node.kind)
-  const geo = buildShape(container ? spec.shape : shapeFor(spec, density), size.w, size.h)
+  const geo = buildShape(container ? territoryShape(spec) : shapeFor(spec, density), size.w, size.h)
   const horizontal = axis === 'horizontal'
 
   const handleSlots = useCallback((measured: MeasuredSlot[]) => {

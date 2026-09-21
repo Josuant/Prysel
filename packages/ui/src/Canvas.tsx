@@ -39,7 +39,7 @@ import { EdgeDefs } from './Edge.tsx'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
 import { dragTerritory, territoryAt } from './drag.ts'
-import { isLoopTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
+import { isTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
@@ -534,7 +534,7 @@ function CanvasInner({
           ...(head > 0 ? { headroom: head } : {}),
           ...(tray ? { headerWidth: tray.w } : {}),
           // Un bucle con cuerpo envuelve lo que repite, igual que una función.
-          ...(isLoopTerritory(node) ? { territory: true } : {}),
+          ...(isTerritory(node) ? { territory: true } : {}),
           ...(node.contains && resized[node.id] ? { minSize: resized[node.id] } : {}),
           ...(node.contains ? { contains: node.contains } : {}),
         }
@@ -1161,7 +1161,13 @@ function CanvasInner({
             ...(chip ? { chip } : {}),
             ...(fn ? { fn } : {}),
             ...(iter
-              ? { iter: { name: iter.name, param: byId.get(iter.loop)?.kind !== 'control.loop' } }
+              ? {
+                  iter: {
+                    name: iter.name,
+                    param: byId.get(iter.loop)?.kind === 'abstraction.collapsed',
+                    icon: getKind(byId.get(iter.loop)?.kind ?? 'control.loop').icon,
+                  },
+                }
               : {}),
             ...(onControlChange ? { onControlChange: changeControl } : {}),
             ...(onAction

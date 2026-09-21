@@ -256,6 +256,19 @@ Un `for` o un `while` con cuerpo se dibuja como un **territorio**, igual que una
 
 El progreso de una ejecución (`i / N`) ya lo lleva el modelo del editor (`current` / `total`) y se dibuja en la cabecera cuando hay ejecución que mostrar.
 
+### `with` y `try`: territorios con nombre
+
+`with` y `try` ya no son código opaco. Son **territorios** (`TERRITORY_KINDS`: bucle, `with`, `try`, `except` y las cláusulas `else` / `finally`): envuelven lo que abarcan, cada uno con su cajita de variables, y comparten con el bucle el margen, el plegado y los puertos de orden. Su silueta es siempre la pestaña (`territoryShape`), sea cual sea la de su tipo.
+
+| Construcción              | Nodo                            | Qué enseña                                                                                                                                                                                                                                                                          |
+| ------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `with open(ruta) as f:`   | **Con** (`control.with`)        | Un editor `con [recurso] como [nombre]` en su cabecera. Lo que abre es un **chip** de su cajita (`param:f`), como la variable de un bucle, y su nombre se renombra en todos sus usos. Con varios recursos (`with a as x, b as y`) enseña su código y cada nombre es su propio chip. |
+| `try:`                    | **Intentar** (`control.try`)    | Un territorio con lo que se intenta. Sus cláusulas van **dentro**, cada una en su propio marco.                                                                                                                                                                                     |
+| `except ValueError as e:` | **Si falla** (`control.except`) | `si falla [error] como [nombre]` (vacío = cualquier error). El nombre es un chip de su cajita.                                                                                                                                                                                      |
+| `else:` · `finally:`      | **Cláusula** (`control.clause`) | «si no falla» / «al final», con su cuerpo dentro.                                                                                                                                                                                                                                   |
+
+Lo que se define dentro se ve después, como en Python, y las cláusulas se **leen en el orden del archivo** (intento, cada `except`, `else`, `finally`): el orden que las coloca es de lectura, no de ejecución. Una **cláusula no se mueve por sí sola** ni se pone nada «detrás» de ella (`checkOrder`, `CLAUSE_KINDS`): vive dentro de su `try`. Sí reciben nodos por el puerto de inicio de su cuerpo, y «Añadir» sobre un `try` seleccionado escribe al final del intento (antes de sus cláusulas). Plantillas nuevas: «Intentar / si falla» y «Con un recurso (with)». Eliminar el `try` se lleva todas sus cláusulas.
+
 ### El retorno es la salida de la función
 
 Un `return` no es un nodo más: es lo que la función **da**. `foldReturns` (en `program.ts`, tras plegar) lo trata así:
@@ -410,7 +423,7 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 - **Puertos de orden para el `elif` y el `else` de un bucle**: el puerto «falso» de una decisión escribe siempre en el `else` (lo crea detrás de los `elif` si falta); un `elif` concreto y la cláusula `else` de un bucle no tienen puerto, y el segundo tampoco se representa.
 - **Auto-layout jerárquico** (Dagre/ELK): el reparto lo hace la gramática espacial; Mayús+F solo le devuelve lo que el usuario movió.
 - **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.
-- **`with`, `try`, `class` y decoradores como nodos con estructura**: hoy son nodos opacos (se editan como texto en el panel «Código»).
+- **`class` y decoradores como nodos con estructura**: hoy son nodos opacos (se editan como texto en el panel «Código»). `match` también. Un `try` con `except*` no se representa, y no hay puerto de orden para cada cláusula (se mete algo por el de inicio de su cuerpo).
 - **Deshacer propio**: se apoya en el del editor (una operación = un deshacer); el lienzo no tiene historial propio.
 - **Comentarios**: los que cuelgan entre las ramas de un `if`/`elif`/`else` se recogen solo si tree-sitter los cuelga de la sentencia; los de otras construcciones (`with`, `try`) no se tratan porque esas construcciones aún son nodos opacos.
 - Enrutado: separar en carriles las conexiones que comparten pasillo, y esquivar también a los retornos de bucle.

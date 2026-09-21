@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { NodeProps, Node } from '@xyflow/react'
-import { getKind, valueTypeOf, type ControlModel } from '@prysel/morphology'
+import { getKind, valueTypeOf, type ControlModel, type IconId } from '@prysel/morphology'
 import type { CanvasNode } from '../Canvas.tsx'
 import { chipValue, type FunctionChip } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
@@ -20,7 +20,7 @@ export interface ChipNodeData extends Record<string, unknown> {
   /** O la función. */
   fn?: FunctionChip
   /** O la variable de iteración de un bucle. */
-  iter?: { name: string; param?: boolean }
+  iter?: { name: string; param?: boolean; icon?: IconId }
   size: { w: number; h: number }
   onControlChange?: (id: string, next: ControlModel) => void
   onRename?: (id: string, to: string) => void
@@ -57,7 +57,11 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
             : `${data.iter.name}: lo que toma el bucle en cada vuelta; arrástrala a una casilla de dentro`
         }
       >
-        <Icon name={data.iter.param ? 'function' : 'loop'} size={12} className="vchip__icon" />
+        <Icon
+          name={data.iter.param ? 'function' : (data.iter.icon ?? 'loop')}
+          size={12}
+          className="vchip__icon"
+        />
         <span className="vchip__name">{data.iter.name}</span>
       </div>
     )

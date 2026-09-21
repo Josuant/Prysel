@@ -103,7 +103,9 @@ export function inputsOf(
   for (const [path, source] of Object.entries(sources ?? {})) {
     if (source.as !== 'expression') continue
     if (path.startsWith('args.')) found[`arg:${path.slice(5)}`] ??= source
-    else if (['left', 'right', 'field', 'value', 'iterable'].includes(path)) found[path] ??= source
+    else if (['left', 'right', 'field', 'value', 'iterable', 'context', 'type'].includes(path)) {
+      found[path] ??= source
+    }
   }
   return Object.keys(found).length > 0 ? found : undefined
 }
@@ -406,6 +408,32 @@ export function loop(variable: TsNode | null, iterable: TsNode | null): ControlM
 /** La secuencia que recorre un bucle se puede reescribir; su variable no (se usa dentro del cuerpo). */
 export function loopSources(iterable: TsNode | null): Record<string, Source> | undefined {
   return iterable ? { iterable: span(iterable, 'expression') } : undefined
+}
+
+/**
+ * `with abre() as f:`: el recurso y el nombre con el que se usa dentro. Solo con un único elemento y un
+ * nombre sencillo: `with a as x, b as y` o `as (x, y)` enseñan su código.
+ */
+export function withOf(context: TsNode | null, alias: TsNode | null): ControlModel | null {
+  if (!context) return null
+  if (alias && alias.type !== 'identifier') return null
+  return { kind: 'with', context: context.text, name: alias?.text ?? '' }
+}
+
+/** El recurso de un `with` se puede reescribir; su nombre, por renombrado. */
+export function withSources(context: TsNode | null): Record<string, Source> | undefined {
+  return context ? { context: span(context, 'expression') } : undefined
+}
+
+/** `except ValueError as e:`: qué error se atrapa (vacío: cualquiera) y el nombre con el que se usa dentro. */
+export function handlerOf(type: TsNode | null, alias: TsNode | null): ControlModel | null {
+  if (alias && alias.type !== 'identifier') return null
+  return { kind: 'handler', type: type?.text ?? '', name: alias?.text ?? '' }
+}
+
+/** El tipo de error de un `except` se puede reescribir. */
+export function handlerSources(type: TsNode | null): Record<string, Source> | undefined {
+  return type ? { type: span(type, 'expression') } : undefined
 }
 
 /** `raise ValueError("mensaje")`: un tipo de error y su mensaje. */

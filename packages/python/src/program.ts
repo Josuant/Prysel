@@ -5,9 +5,13 @@ import type { NodeRange, Source, Span } from './source.ts'
 import {
   augmented,
   condition as conditionOf,
+  handlerOf,
+  handlerSources,
   loop,
   inputsOf,
   loopSources,
+  withOf,
+  withSources,
   moduleOf,
   moduleSources,
   parameterNames,
@@ -186,6 +190,11 @@ const COMPOUND = new Set([
   'for_statement',
   'while_statement',
   'function_definition',
+  'with_statement',
+  'try_statement',
+  'except_clause',
+  'else_clause',
+  'finally_clause',
 ])
 
 class Builder {
@@ -271,7 +280,10 @@ class Builder {
     const compound = COMPOUND.has(statement.type)
     const colon = compound ? statement.children.find((c) => c?.type === ':') : undefined
     const body = compound
-      ? field(statement, statement.type === 'if_statement' ? 'consequence' : 'body')
+      ? (field(statement, statement.type === 'if_statement' ? 'consequence' : 'body') ??
+        // Las cláusulas de un try (except, finally) llevan su bloque sin nombre de campo.
+        statement.namedChildren.find((c) => c?.type === 'block') ??
+        null)
       : null
     const first = body?.namedChildren.find((c) => c && c.type !== 'comment')
     const indent = statement.startPosition.column
@@ -599,6 +611,96 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
   return produced
 }
 
+/** Las cláusulas de un `try`, además de su cuerpo. */
+const CLAUSES = new Set(['except_clause', 'else_clause', 'finally_clause'])
+
+/** Todo lo que nace dentro de un nodo es suyo, a cualquier profundidad. */
+function contain(builder: Builder, id: string, before: number) {
+  const nested = builder.nodes.slice(before).map((n) => n.id)
+  const node = builder.nodes.find((n) => n.id === id)
+  if (node && nested.length > 0) {
+    node.contains = nested
+    node.ops = nested.length
+  }
+}
+
+/** A qué campo entra cada nombre que lee una expresión. */
+function portsOf(expression: TsNode | null, port: string): Record<string, string> {
+  const ports: Record<string, string> = {}
+  for (const name of readNames(expression)) ports[name] = port
+  return ports
+}
+
+/** El nombre que abre un `with` o atrapa un `except`: un puerto del nodo, hacia lo de dentro. */
+function bindAlias(
+  builder: Builder,
+  id: string,
+  alias: TsNode | null,
+  editable: boolean,
+  single: boolean,
+) {
+  if (!alias) return
+  if (alias.type === 'identifier') {
+    builder.bindParam(alias.text, id)
+    if (single) builder.provide(id, alias.text)
+    builder.recordName(id, alias.text, alias)
+    if (editable) builder.rename(id, 'name', alias.text)
+    return
+  }
+  for (const name of patternNames(alias)) builder.bindParam(name, id)
+}
+
+/** `except X as e:`, `else:` y `finally:` de un `try`: cada una es un territorio con su cuerpo dentro. */
+function visitClause(builder: Builder, clause: TsNode, owner: string): string {
+  const line = clause.startPosition.row + 1
+  const code = firstLine(clause.text)
+  const isExcept = clause.type === 'except_clause'
+  const id = statementId(
+    clause,
+    isExcept ? 'except' : clause.type === 'else_clause' ? 'else' : 'finally',
+  )
+  let type: TsNode | null = null
+  let alias: TsNode | null = null
+  if (isExcept) {
+    const value = clause.namedChildren.find((c) => c && c.type !== 'block' && c.type !== 'comment')
+    if (value?.type === 'as_pattern') {
+      type = value.namedChildren[0] ?? null
+      const target = field(value, 'alias')
+      alias = target?.namedChildren[0] ?? target
+    } else type = value ?? null
+  }
+  const control = isExcept ? handlerOf(type, alias) : null
+  builder.add({
+    id,
+    kind: isExcept ? 'control.except' : 'control.clause',
+    label: isExcept
+      ? `si falla${type ? `: ${type.text}` : ''}`
+      : clause.type === 'else_clause'
+        ? 'si no falla'
+        : 'al final',
+    code,
+    line,
+    ...(control ? { control } : {}),
+    ...(control ? sourcesOf(handlerSources(type)) : {}),
+    ...(control ? inputsIn(inputsOf(handlerSources(type))) : {}),
+  })
+  builder.place(id, clause, { owner })
+  const placed = builder.nodes.find((n) => n.id === id)
+  // Una cláusula no es una sentencia suelta de un bloque: quitarla no deja un `pass`.
+  if (placed?.range) placed.range.block = 99
+  if (isExcept) {
+    linkReads(builder, id, type, portsOf(type, 'type'))
+    bindAlias(builder, id, alias, control !== null, true)
+  }
+  const body =
+    field(clause, 'body') ?? clause.namedChildren.find((c) => c?.type === 'block') ?? null
+  const before = builder.nodes.length
+  const inside = body ? visitBlock(builder, body, { owner: id }) : []
+  if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
+  contain(builder, id, before)
+  return id
+}
+
 /** Las sentencias tras las que la ejecución no sigue con la siguiente del bloque. */
 const JUMPS: ReadonlySet<string> = new Set([
   'control.return',
@@ -766,6 +868,71 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       })
       const loop = builder.loops[builder.loops.length - 1]
       if (loop) builder.link(id, loop, 'transform', isBreak ? 'exit' : 'next', undefined, 'control')
+      return id
+    }
+
+    // `with`: un territorio como el bucle, pero sin repetir nada. El nombre que abre es un puerto propio.
+    case 'with_statement': {
+      const id = statementId(statement, 'with')
+      const clause = statement.namedChildren.find((c) => c?.type === 'with_clause')
+      const items = (clause?.namedChildren ?? []).filter((c) => c?.type === 'with_item')
+      const parsed = items.map((item) => {
+        const value = item ? field(item, 'value') : null
+        if (value?.type === 'as_pattern') {
+          const target = field(value, 'alias')
+          return {
+            context: value.namedChildren[0] ?? null,
+            alias: target?.namedChildren[0] ?? target,
+          }
+        }
+        return { context: value, alias: null }
+      })
+      const only = parsed.length === 1 ? parsed[0] : undefined
+      const control = only ? withOf(only.context, only.alias) : null
+      builder.add({
+        id,
+        kind: 'control.with',
+        label: `con ${only?.alias?.text ?? (only?.context ? describe(only.context) : 'varios')}`,
+        code,
+        line,
+        ...(control ? { control } : {}),
+        ...(control ? sourcesOf(withSources(only?.context ?? null)) : {}),
+        ...(control ? inputsIn(inputsOf(withSources(only?.context ?? null))) : {}),
+      })
+      // Lo que abre se lee antes de que el nombre exista.
+      for (const item of parsed)
+        linkReads(builder, id, item.context, portsOf(item.context, 'context'))
+      for (const item of parsed)
+        bindAlias(builder, id, item.alias, control !== null, parsed.length === 1)
+      const own = ownComments(statement)
+      builder.annotate(id, own.header.join('\n'))
+      const body = field(statement, 'body')
+      const before = builder.nodes.length
+      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
+      contain(builder, id, before)
+      return id
+    }
+
+    // `try`: un territorio con lo que se intenta y, dentro, cada cláusula en su propio marco.
+    case 'try_statement': {
+      const id = statementId(statement, 'try')
+      builder.add({ id, kind: 'control.try', label: 'intento', code, line })
+      const own = ownComments(statement)
+      builder.annotate(id, own.header.join('\n'))
+      const body = field(statement, 'body')
+      const before = builder.nodes.length
+      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
+      // Las cláusulas se leen en el orden del archivo: la última sentencia del intento, y cada una tras la anterior.
+      let previous = inside[inside.length - 1]
+      for (const clause of statement.namedChildren) {
+        if (!clause || !CLAUSES.has(clause.type)) continue
+        const clauseId = visitClause(builder, clause, id)
+        if (previous) builder.link(previous, clauseId, 'sequence')
+        previous = clauseId
+      }
+      contain(builder, id, before)
       return id
     }
 
