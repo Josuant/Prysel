@@ -46,6 +46,8 @@ import { CodePanel } from './CodePanel.tsx'
 import { QuickAdd } from './QuickAdd.tsx'
 import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
+import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
+import { viewerSize, type ViewerContent } from './viewer.ts'
 import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
   MODULE,
@@ -121,6 +123,8 @@ export interface CanvasNode {
   provides?: string
   /** Los nombres que deja definidos una asignación de varios valores (`a, b = f()`): cada uno, un chip. */
   results?: readonly string[]
+  /** Es un visor: enseña el valor que otro nodo dejó al ejecutarse. No es una sentencia del programa. */
+  viewer?: ViewerContent
   /**
    * Lo que se observó al ejecutar, por nombre: `short` es lo que acompaña a su chip (`200×2`) y `long` lo
    * que dice al pasar el puntero (`ndarray 200×2 float64`). Nunca cambia lo que significa el código.
@@ -157,6 +161,10 @@ export interface CanvasProps {
   onSelect?: (id: string | null) => void
   /** Ejecutar un nodo (con lo que necesita): si el lienzo tiene un motor detrás, el menú lo ofrece. */
   onRun?: (id: string) => void
+  /** Más entradas para el menú de un nodo (por ejemplo, fijar su valor en un visor). */
+  extraMenu?: (id: string) => NodeMenuItem[]
+  /** Quitar un visor del lienzo. */
+  onUnpin?: (id: string) => void
   onEnter?: (id: string) => void
   /** Eje de lectura del programa. */
   axis?: Axis
@@ -200,10 +208,10 @@ export interface CanvasProps {
 const edgeKey = (edge: SemanticEdge) =>
   `${edge.from}${edge.fromPort ? `:${edge.fromPort}` : ''}-${edge.to}-${edge.toPort ?? ''}-${edge.relation}`
 
-const NODE_TYPES = { prysel: PryselNode, chip: ChipNode, tray: TrayNode }
+const NODE_TYPES = { prysel: PryselNode, chip: ChipNode, tray: TrayNode, viewer: ViewerNode }
 
 /** Todo lo que el lienzo dibuja: nodos, chips y la cajita del programa. */
-type AnyFlowNode = PryselFlowNode | ChipFlowNode | TrayFlowNode
+type AnyFlowNode = PryselFlowNode | ChipFlowNode | TrayFlowNode | ViewerFlowNode
 
 /** Funciones de uso común que se ofrecen al elegir a quién llama una llamada. */
 const COMMON_CALLS = [
@@ -264,6 +272,8 @@ function CanvasInner({
   interactive = false,
   showActions = true,
   onRun,
+  extraMenu,
+  onUnpin,
   showStatus = true,
   animate = true,
   fitMode,
@@ -515,38 +525,40 @@ function CanvasInner({
           role: spec.role,
           // El editor manda sobre el alto: si no cabe, el campo se recorta y su puerto cae fuera.
           // Un valor suelto (que no cabe en ninguna cajita) es una píldora, no una tarjeta.
-          size: isChipKind(node)
-            ? chipSize(node)
-            : d === 'normal' && isLineCard(node.kind, node.control)
-              ? // Una operación o una llamada: una sola línea, con su nombre como chip.
-                {
-                  w: lineWidth(
-                    node.control,
-                    // Cada pastilla mide también lo que se observó de su valor (`200×2`).
-                    resultNames(node, d).map((name) => {
-                      const short = node.observed?.[name]?.short
-                      return short ? `${name} ${short}` : name
-                    }),
-                    linked[node.id],
-                    node.openable ? 26 : 0,
-                  ),
-                  h: lineHeight(node.note),
-                }
-              : d === 'normal'
-                ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+          size: node.viewer
+            ? viewerSize(node.viewer)
+            : isChipKind(node)
+              ? chipSize(node)
+              : d === 'normal' && isLineCard(node.kind, node.control)
+                ? // Una operación o una llamada: una sola línea, con su nombre como chip.
                   {
-                    w: slimWidth(base.w, node.control),
-                    h: slimHeight(
+                    w: lineWidth(
                       node.control,
+                      // Cada pastilla mide también lo que se observó de su valor (`200×2`).
+                      resultNames(node, d).map((name) => {
+                        const short = node.observed?.[name]?.short
+                        return short ? `${name} ${short}` : name
+                      }),
                       linked[node.id],
-                      node.note,
-                      node.code !== undefined,
+                      node.openable ? 26 : 0,
                     ),
+                    h: lineHeight(node.note),
                   }
-                : {
-                    w: base.w,
-                    h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
-                  },
+                : d === 'normal'
+                  ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+                    {
+                      w: slimWidth(base.w, node.control),
+                      h: slimHeight(
+                        node.control,
+                        linked[node.id],
+                        node.note,
+                        node.code !== undefined,
+                      ),
+                    }
+                  : {
+                      w: base.w,
+                      h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
+                    },
           // La documentación, el editor de un bucle y la cajita de chips viven en la cabecera de un territorio.
           ...(head > 0 ? { headroom: head } : {}),
           ...(tray ? { headerWidth: tray.w } : {}),
@@ -801,6 +813,20 @@ function CanvasInner({
   const menuItems = (id: string): NodeMenuItem[] => {
     const node = byId.get(id)
     if (!node) return []
+    // Un visor solo se quita: no es una sentencia, no hay nada que duplicar ni eliminar del archivo.
+    if (node.viewer) {
+      return onUnpin
+        ? [
+            {
+              label: 'Quitar el visor',
+              hint: 'Supr',
+              onSelect: () => {
+                onUnpin(id)
+              },
+            },
+          ]
+        : []
+    }
     const items: NodeMenuItem[] = []
     if (onRun) {
       items.push({
@@ -811,6 +837,7 @@ function CanvasInner({
         },
       })
     }
+    items.push(...(extraMenu?.(id) ?? []))
     if (node.renamable) {
       items.push({
         label: 'Renombrar',
@@ -888,6 +915,9 @@ function CanvasInner({
     if (edgeId !== null && cable) {
       event.preventDefault()
       disconnect(cable)
+    } else if (selectedId !== null && byId.get(selectedId)?.viewer) {
+      event.preventDefault()
+      onUnpin?.(selectedId)
     } else if (selectedId !== null && byId.has(selectedId) && scopes[selectedId] === undefined) {
       // Un territorio (una función, un bucle) lleva mucho dentro: eliminarlo pide el botón, no una tecla.
       event.preventDefault()
@@ -1059,9 +1089,28 @@ function CanvasInner({
     },
   })
 
+  /** Un visor: una ventana con el valor de otro nodo. Se coloca como cualquier nodo, pero no es código. */
+  const viewerNode = (
+    node: CanvasNode,
+    content: ViewerContent,
+    position: Point,
+    size: { w: number; h: number },
+  ): ViewerFlowNode => ({
+    id: node.id,
+    type: 'viewer' as const,
+    position,
+    ...nodeFrame(size),
+    selected: node.id === selectedId,
+    zIndex: 4,
+    draggable: interactive,
+    selectable: interactive,
+    data: { node, content, size, ...(onUnpin ? { onUnpin } : {}) },
+  })
+
   const flowNodes: AnyFlowNode[] = animated.flatMap((item): AnyFlowNode[] => {
     const node = byId.get(item.id)
     if (!node) return []
+    if (node.viewer) return [viewerNode(node, node.viewer, item.position, item.value.size)]
     if (isChipKind(node)) return [chipNode(node, item.position, item.value.size)]
     // Es un territorio solo si el layout le ha encontrado un interior: colapsada, una función es un nodo más.
     const container = scopes[item.id] !== undefined

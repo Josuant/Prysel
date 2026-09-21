@@ -244,7 +244,13 @@ function wireWebview(webview: vscode.Webview) {
       return
     }
     postToAll({ type: 'theme', theme: themeKind() })
-    void refresh()
+    void refresh().then(() => {
+      // Un lienzo recién abierto no tiene las imágenes de lo que ya se ejecutó: se le mandan.
+      const session = currentDoc ? sessions.get(currentDoc.uri.toString()) : undefined
+      for (const { seq, assets } of session?.allAssets() ?? []) {
+        postToAll({ type: 'assets', seq, assets })
+      }
+    })
   })
 }
 

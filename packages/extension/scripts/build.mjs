@@ -1,5 +1,6 @@
 import { build as esbuildBuild, context as esbuildContext } from 'esbuild'
 import { build as viteBuild } from 'vite'
+import { cp } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -33,8 +34,14 @@ async function buildExtension() {
   await esbuildBuild(esbuildOptions)
 }
 
+/** El motor de ejecución es un archivo de Python, no código compilado: va junto al resto, en `dist/runtime`. */
+async function copyRuntime() {
+  await cp(resolve(root, 'runtime'), resolve(root, 'dist', 'runtime'), { recursive: true })
+}
+
 async function main() {
   await buildExtension()
+  await copyRuntime()
   await viteBuild({ configFile: resolve(root, 'webview/vite.config.mjs') })
   if (!watch) console.log('Prysel: extensión y webview compilados en dist/')
 }

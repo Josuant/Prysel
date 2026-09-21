@@ -376,6 +376,10 @@
   background: var(--chip-success-bg);
   color: var(--chip-success-fg);
 }
+.chip[data-state='stale'] {
+  background: var(--chip-stale-bg);
+  color: var(--chip-stale-fg);
+}
 .chip[data-state='warning'] {
   background: var(--chip-warning-bg);
   color: var(--chip-warning-fg);
@@ -2216,4 +2220,112 @@ button.fn-menu__crumb:hover {
   opacity: 0.62;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Visor: una ventana con el valor que un nodo dejó al ejecutarse ─────────────────────────────
+ * No es código: solo lee. Se atenúa si el resultado quedó atrás. */
+.viewer {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 11px;
+  box-shadow: var(--shadow-raised);
+}
+.viewer[data-selected] {
+  border-color: var(--accent);
+}
+.viewer[data-stale] {
+  border-style: dashed;
+}
+.viewer[data-stale] .viewer__body {
+  opacity: 0.55;
+}
+.viewer__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line-faint);
+}
+.viewer__title {
+  font-family: var(--font-code, ui-monospace, monospace);
+  font-weight: 600;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer__sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer__close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--ink-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.viewer__close:hover {
+  color: var(--ink);
+}
+.viewer__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 10px;
+}
+.viewer__body img {
+  display: block;
+  border-radius: 4px;
+}
+.viewer__note {
+  margin: 0 0 4px;
+  color: var(--ink-muted);
+}
+.viewer__line {
+  margin: 0;
+  font-family: var(--font-code, ui-monospace, monospace);
+  color: var(--ink-muted);
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+.viewer__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-code, ui-monospace, monospace);
+}
+.viewer__table th {
+  padding: 2px 6px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line-faint);
+}
+.viewer__table th span {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--ink-faint);
+}
+.viewer__table td {
+  padding: 1px 6px;
+  height: 21px;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+.viewer__table td i {
+  color: var(--ink-faint);
 }

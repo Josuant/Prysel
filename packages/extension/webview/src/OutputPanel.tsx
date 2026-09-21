@@ -22,10 +22,14 @@ export interface OutputPanelProps {
   title: string
   view: RunView
   assets: Assets | undefined
+  /** ¿Tiene ya un visor en el lienzo el valor de este nombre? */
+  pinned: (name: string) => boolean
+  /** Fijar (o quitar) el valor de un nombre en un visor del lienzo. */
+  onPin: (name: string) => void
   onClose: () => void
 }
 
-export function OutputPanel({ title, view, assets, onClose }: OutputPanelProps) {
+export function OutputPanel({ title, view, assets, pinned, onPin, onClose }: OutputPanelProps) {
   const values = Object.entries(view.values ?? {})
   const empty =
     values.length === 0 &&
@@ -47,7 +51,9 @@ export function OutputPanel({ title, view, assets, onClose }: OutputPanelProps) 
               ? 'bg-[var(--chip-error-bg)] text-[var(--chip-error-fg)]'
               : view.state === 'fresh'
                 ? 'bg-[var(--chip-success-bg)] text-[var(--chip-success-fg)]'
-                : 'bg-[var(--chip-warning-bg)] text-[var(--chip-warning-fg)]'
+                : view.state === 'stale'
+                  ? 'bg-[var(--chip-stale-bg)] text-[var(--chip-stale-fg)]'
+                  : 'bg-[var(--chip-dormant-bg)] text-[var(--chip-dormant-fg)]'
           }`}
         >
           {STATE_LABEL[view.state]}
@@ -73,10 +79,21 @@ export function OutputPanel({ title, view, assets, onClose }: OutputPanelProps) 
       {view.stderr && <Stream label="Avisos" text={view.stderr} muted />}
       {view.result && <Value name="valor" summary={view.result} />}
       {values.map(([name, summary]) => (
-        <Value key={name} name={name} summary={summary} image={assets?.images[name]} />
+        <Value
+          key={name}
+          name={name}
+          summary={summary}
+          image={assets?.images[name]}
+          pin={{ on: pinned(name), toggle: () => onPin(name) }}
+        />
       ))}
       {assets?.figures.map((figure, index) => (
         <figure key={index} className="my-2">
+          <PinButton
+            label={`la figura ${index + 1}`}
+            on={pinned(`figura:${index}`)}
+            toggle={() => onPin(`figura:${index}`)}
+          />
           <img
             src={png(figure.data)}
             alt={`Figura ${index + 1} de ${title}`}
@@ -126,14 +143,30 @@ function Stream({ label, text, muted = false }: { label: string; text: string; m
   )
 }
 
+function PinButton({ label, on, toggle }: { label: string; on: boolean; toggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={on}
+      title={on ? `Quitar el visor de ${label}` : `Ver ${label} en un visor del lienzo`}
+      className="rounded border border-border-card px-1.5 py-0.5 text-[10px] text-ink-muted hover:text-ink aria-pressed:border-[var(--accent)] aria-pressed:text-ink"
+    >
+      {on ? 'En el lienzo' : 'Fijar en el lienzo'}
+    </button>
+  )
+}
+
 function Value({
   name,
   summary,
   image,
+  pin,
 }: {
   name: string
   summary: Summary
   image?: string | undefined
+  pin?: { on: boolean; toggle: () => void }
 }) {
   return (
     <div className="mb-2">
@@ -143,6 +176,7 @@ function Value({
         {summary.bytes !== undefined && (
           <span className="text-ink-faint">{formatBytes(summary.bytes)}</span>
         )}
+        {pin && <PinButton label={`«${name}»`} on={pin.on} toggle={pin.toggle} />}
       </p>
       {summary.table && <Table table={summary.table} />}
       {image && (

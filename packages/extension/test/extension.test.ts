@@ -1,0 +1,256 @@
+import { spawnSync } from 'node:child_process'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+/**
+ * El cableado de la extensión con una API de VS Code simulada: abrir el lienzo, responder al
+ * «ready», ejecutar, resolver el intérprete y negarse a ejecutar sin confianza. No es un VS Code
+ * real —no comprueba la API de verdad—, pero ejercita `extension.ts` de punta a punta con un Python real.
+ */
+
+const python = process.env['PRYSEL_PYTHON'] ?? 'python'
+const available = spawnSync(python, ['-c', 'import sys'], { stdio: 'ignore' }).status === 0
+
+interface Posted {
+  type: string
+  [key: string]: unknown
+}
+
+const state = vi.hoisted(() => ({
+  trusted: true,
+  configuredPython: '',
+  pythonExtension: undefined as unknown,
+  commands: new Map<string, () => unknown>(),
+  posted: [] as { type: string; [key: string]: unknown }[],
+  onMessage: null as null | ((message: unknown) => void),
+  warnings: [] as string[],
+  document: null as unknown,
+  closeListeners: [] as ((doc: unknown) => void)[],
+  /** Cada prueba carga la extensión de nuevo: lo que publica una anterior no cuenta. */
+  epoch: 0,
+}))
+
+vi.mock('vscode', () => {
+  const uri = (path: string) => ({ fsPath: path, path, toString: () => `file:///${path}` })
+  return {
+    Uri: {
+      joinPath: (base: { path: string }, ...parts: string[]) =>
+        uri([base.path, ...parts].join('/')),
+    },
+    ViewColumn: { Beside: 2 },
+    ColorThemeKind: { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 },
+    // Solo se construyen al aplicar ediciones del lienzo, que estas pruebas no ejercitan.
+    Range: function Range() {},
+    WorkspaceEdit: function WorkspaceEdit() {},
+    commands: {
+      registerCommand: (id: string, callback: () => unknown) => {
+        state.commands.set(id, callback)
+        return { dispose() {} }
+      },
+    },
+    extensions: { getExtension: () => state.pythonExtension },
+    window: {
+      get activeTextEditor() {
+        return state.document ? { document: state.document } : undefined
+      },
+      activeColorTheme: { kind: 2 },
+      registerWebviewViewProvider: () => ({ dispose() {} }),
+      onDidChangeActiveTextEditor: () => ({ dispose() {} }),
+      onDidChangeActiveColorTheme: () => ({ dispose() {} }),
+      showWarningMessage: (text: string) => {
+        state.warnings.push(text)
+        return Promise.resolve(undefined)
+      },
+      showErrorMessage: () => Promise.resolve(undefined),
+      createWebviewPanel: () => {
+        const mine = state.epoch
+        return {
+          webview: {
+            html: '',
+            cspSource: 'csp',
+            asWebviewUri: (u: unknown) => u,
+            onDidReceiveMessage: (callback: (message: unknown) => void) => {
+              state.onMessage = callback
+              return { dispose() {} }
+            },
+            postMessage: (message: { type: string }) => {
+              if (mine === state.epoch) state.posted.push(message)
+              return Promise.resolve(true)
+            },
+          },
+          onDidDispose: () => ({ dispose() {} }),
+          reveal() {},
+        }
+      },
+    },
+    workspace: {
+      get isTrusted() {
+        return state.trusted
+      },
+      getConfiguration: () => ({ get: () => state.configuredPython }),
+      getWorkspaceFolder: () => undefined,
+      onDidChangeTextDocument: () => ({ dispose() {} }),
+      onDidCloseTextDocument: (listener: (doc: unknown) => void) => {
+        state.closeListeners.push(listener)
+        return { dispose() {} }
+      },
+      applyEdit: () => Promise.resolve(true),
+    },
+  }
+})
+
+const SOURCE = 'a = 2\nb = a * 21\nprint(b)\n'
+
+// El motor arranca en la carpeta del archivo: tiene que existir.
+const HERE = process.cwd().split('\\').join('/')
+
+const fakeDocument = (version = 1) => ({
+  languageId: 'python',
+  fileName: `${HERE}/demo.py`,
+  version,
+  uri: { fsPath: `${HERE}/demo.py`, toString: () => `file:///${HERE}/demo.py` },
+  getText: () => SOURCE,
+})
+
+const wait = async (condition: () => boolean, ms = 15_000) => {
+  const until = Date.now() + ms
+  while (!condition()) {
+    if (Date.now() > until) throw new Error('se agotó la espera')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
+
+const last = (type: string): Posted | undefined =>
+  [...state.posted].reverse().find((message) => message.type === type)
+
+describe.skipIf(!available)('la extensión con una API de VS Code simulada', () => {
+  let deactivate: () => void
+
+  beforeEach(async () => {
+    state.epoch++
+    state.trusted = true
+    state.configuredPython = python
+    state.pythonExtension = undefined
+    state.posted.length = 0
+    state.warnings.length = 0
+    state.commands.clear()
+    state.document = fakeDocument()
+    vi.resetModules()
+    const extension = await import('../src/extension.ts')
+    deactivate = extension.deactivate
+    extension.activate({
+      subscriptions: [],
+      extensionUri: { path: '/ext', fsPath: '/ext' },
+    } as never)
+    await state.commands.get('prysel.openCanvas')?.()
+    // El webview avisa de que está listo: la extensión responde con el tema, el programa y el estado.
+    state.onMessage?.({ type: 'ready' })
+    await wait(() => last('runs') !== undefined)
+  })
+
+  it('al abrir el lienzo manda el programa y el estado de cada sentencia, sin ejecutar nada', () => {
+    const update = last('update') as Posted & { version: number; program: { nodes: unknown[] } }
+    expect(update.version).toBe(1)
+    expect(update.program.nodes.length).toBeGreaterThan(0)
+    const runs = last('runs') as Posted & {
+      views: Record<string, { state: string }>
+      kernel: string
+    }
+    expect(runs.kernel).toBe('stopped')
+    expect(Object.values(runs.views).map((v) => v.state)).toEqual(['never', 'never', 'never'])
+    deactivate()
+  })
+
+  it('ejecutar todo arranca el motor, deja las sentencias al día y avisa de cada cambio', async () => {
+    state.onMessage?.({ type: 'run', version: 1, ids: 'all' })
+    await wait(() => {
+      const runs = last('runs') as (Posted & { kernel: string }) | undefined
+      return runs?.kernel === 'idle'
+    })
+    const runs = last('runs') as Posted & {
+      views: Record<string, { state: string; stdout?: string }>
+    }
+    expect(Object.values(runs.views).map((v) => v.state)).toEqual(['fresh', 'fresh', 'fresh'])
+    expect(Object.values(runs.views).at(-1)?.stdout).toBe('42\n')
+    // Pasó por «arrancando» y «ocupado» antes de quedar libre.
+    const kernels = state.posted.filter((m) => m.type === 'runs').map((m) => m['kernel'])
+    expect(kernels).toContain('starting')
+    expect(kernels).toContain('busy')
+    deactivate()
+  })
+
+  it('una petición calculada sobre un texto que ya cambió se descarta y no ejecuta nada', async () => {
+    // En VS Code el documento es el mismo objeto y su versión sube al teclear.
+    ;(state.document as { version: number }).version = 2
+    state.onMessage?.({ type: 'run', version: 1, ids: 'all' })
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    const runs = last('runs') as Posted & { kernel: string }
+    expect(runs.kernel).toBe('stopped')
+    deactivate()
+  })
+
+  it('sin confianza en el espacio de trabajo no ejecuta, y lo dice', async () => {
+    state.trusted = false
+    state.onMessage?.({ type: 'run', version: 1, ids: 'all' })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(state.warnings.join(' ')).toMatch(/confiar/)
+    expect((last('runs') as Posted & { kernel: string }).kernel).toBe('stopped')
+    deactivate()
+  })
+
+  it('sin `prysel.python`, usa el entorno que eligió el usuario en la extensión de Python', async () => {
+    state.configuredPython = ''
+    const asked: string[] = []
+    state.pythonExtension = {
+      activate: () =>
+        Promise.resolve({
+          environments: {
+            getActiveEnvironmentPath: () => ({ path: 'entorno' }),
+            resolveEnvironment: (environment: { path: string }) => {
+              asked.push(environment.path)
+              return Promise.resolve({ executable: { uri: { fsPath: python } } })
+            },
+          },
+        }),
+    }
+    state.onMessage?.({ type: 'run', version: 1, ids: 'all' })
+    await wait(() => (last('runs') as (Posted & { kernel: string }) | undefined)?.kernel === 'idle')
+    expect(asked).toEqual(['entorno'])
+    deactivate()
+  })
+
+  it('un intérprete que no existe deja el motivo a la vista en vez de romper', async () => {
+    state.configuredPython = 'python-que-no-existe-prysel'
+    state.onMessage?.({ type: 'run', version: 1, ids: 'all' })
+    await wait(() => (last('runs') as (Posted & { kernel: string }) | undefined)?.kernel === 'dead')
+    expect((last('runs') as Posted & { problem: string | null }).problem).toBeTruthy()
+    deactivate()
+  })
+
+  it('reiniciar vuelve todo a «sin ejecutar»; cerrar el documento libera su motor', async () => {
+    state.onMessage?.({ type: 'run', version: 1, ids: 'all' })
+    await wait(() => (last('runs') as (Posted & { kernel: string }) | undefined)?.kernel === 'idle')
+    state.onMessage?.({ type: 'restart' })
+    await wait(
+      () => (last('runs') as (Posted & { kernel: string }) | undefined)?.kernel === 'stopped',
+    )
+    const runs = last('runs') as Posted & { views: Record<string, { state: string }> }
+    expect(Object.values(runs.views).every((v) => v.state === 'never')).toBe(true)
+    for (const listener of state.closeListeners) listener(state.document)
+    deactivate()
+  })
+
+  it('los mensajes mal formados se ignoran: no ejecutan nada', async () => {
+    for (const bad of [
+      { type: 'run' },
+      { type: 'run', version: 1, ids: [] },
+      'run',
+      null,
+      { type: 'rm -rf' },
+    ]) {
+      state.onMessage?.(bad)
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect((last('runs') as Posted & { kernel: string }).kernel).toBe('stopped')
+    deactivate()
+  })
+})

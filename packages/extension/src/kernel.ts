@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { createServer, type Socket } from 'node:net'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -83,8 +84,12 @@ export interface KernelOptions {
 }
 
 /** Dónde está el ejecutor: junto a la extensión, o —ya empaquetado— el que se le indique. */
-export const runnerPath = (override?: string): string =>
-  override ?? join(__dirname, '..', 'runtime', 'prysel_runner.py')
+export const runnerPath = (override?: string): string => {
+  if (override) return override
+  // Empaquetada, junto al código compilado (`dist/runtime`); en desarrollo, en la carpeta de la extensión.
+  const bundled = join(__dirname, 'runtime', 'prysel_runner.py')
+  return existsSync(bundled) ? bundled : join(__dirname, '..', 'runtime', 'prysel_runner.py')
+}
 
 export class Kernel {
   private readonly pending = new Map<string, Pending>()

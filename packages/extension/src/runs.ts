@@ -29,6 +29,8 @@ export interface RunFailure {
 /** Lo que enseña el lienzo de una sentencia de primer nivel. */
 export interface RunView {
   state: RunState
+  /** El hash del texto de la sentencia: es lo que ata un visor a ella aunque cambie de línea. */
+  hash: string
   /** El orden global de ejecución: también es la clave de sus `Assets`. */
   seq?: number
   ms?: number

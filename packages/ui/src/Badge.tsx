@@ -40,6 +40,7 @@ export const STATE_META: Record<NodeState, { icon: IconId; label: string }> = {
   dormant: { icon: 'dot', label: 'Inactivo' },
   running: { icon: 'clock', label: 'Ejecutando' },
   success: { icon: 'check', label: 'Completado' },
+  stale: { icon: 'repeat', label: 'Desactualizado' },
   warning: { icon: 'alert', label: 'Advertencia' },
   error: { icon: 'x', label: 'Error' },
   selected: { icon: 'diamond', label: 'Seleccionado' },

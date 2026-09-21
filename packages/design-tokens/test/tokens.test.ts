@@ -194,8 +194,15 @@ function over(fg: string | Rgb, bg: string | Rgb): Rgb {
 const themes = ['light', 'dark']
 const grounds = ['void', 'surface', 'surface-raised', 'field']
 const badges = ['value', 'data', 'transform', 'control', 'effect', 'output', 'neutral']
-const chips = ['dormant', 'running', 'success', 'warning', 'error', 'selected']
-const states = ['state-running', 'state-success', 'state-warning', 'state-error', 'state-selected']
+const chips = ['dormant', 'running', 'success', 'stale', 'warning', 'error', 'selected']
+const states = [
+  'state-running',
+  'state-success',
+  'state-stale',
+  'state-warning',
+  'state-error',
+  'state-selected',
+]
 
 describe.each(themes)('contraste — tema %s', (theme) => {
   const c = (name: string) => resolveColor(name, theme)

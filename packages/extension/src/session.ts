@@ -91,7 +91,7 @@ export class Session {
       const record = this.records.get(stmt.id)
       const isRunning = this.running?.id === stmt.id
       const current = state.get(stmt.id) ?? 'never'
-      const view: RunView = { state: isRunning ? 'running' : current }
+      const view: RunView = { state: isRunning ? 'running' : current, hash: stmt.hash }
       if (record && record.hash === stmt.hash) {
         view.seq = record.seq
         view.ms = record.ms
@@ -118,6 +118,13 @@ export class Session {
   assetsOf(seq: number): Assets | undefined {
     for (const record of this.records.values()) if (record.seq === seq) return record.assets
     return undefined
+  }
+
+  /** Las imágenes de todas las ejecuciones guardadas: es lo que necesita un lienzo que se abre de nuevo. */
+  allAssets(): { seq: number; assets: Assets }[] {
+    return [...this.records.values()].flatMap((record) =>
+      record.assets ? [{ seq: record.seq, assets: record.assets }] : [],
+    )
   }
 
   /** A qué sentencia de primer nivel pertenece un nodo. */

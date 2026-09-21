@@ -1,0 +1,9 @@
+# Lo que va en el .vsix: el código compilado (dist, con el motor de Python en dist/runtime) y los recursos.
+src/**
+test/**
+webview/**
+scripts/**
+runtime/**
+tsconfig.json
+**/*.map
+**/*.ts

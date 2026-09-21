@@ -9,7 +9,8 @@
 export type Density = 'compact' | 'normal' | 'expanded'
 
 /** Los seis estados del DS. El estado se lee en el chip, nunca en el relleno de la tarjeta. */
-export type NodeState = 'dormant' | 'running' | 'success' | 'warning' | 'error' | 'selected'
+export type NodeState =
+  'dormant' | 'running' | 'success' | 'stale' | 'warning' | 'error' | 'selected'
 
 /**
  * Silueta. Todas parten de una tarjeta; lo que cambia es el tratamiento de sus bordes,

@@ -51,6 +51,9 @@
   --color-chip-error-fg: var(--chip-error-fg);
   --color-chip-selected-bg: var(--chip-selected-bg);
   --color-chip-selected-fg: var(--chip-selected-fg);
+  --color-chip-stale-bg: var(--chip-stale-bg);
+  --color-chip-stale-fg: var(--chip-stale-fg);
+  --color-state-stale: var(--state-stale);
   --spacing-space-1: var(--space-1);
   --spacing-space-2: var(--space-2);
   --spacing-space-3: var(--space-3);

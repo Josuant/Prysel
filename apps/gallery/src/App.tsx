@@ -10,7 +10,15 @@ type Theme = 'light' | 'dark'
 type Lod = 'full' | 'flat'
 
 const DENSITIES: Density[] = ['compact', 'normal', 'expanded']
-const STATES: NodeState[] = ['dormant', 'running', 'success', 'warning', 'error', 'selected']
+const STATES: NodeState[] = [
+  'dormant',
+  'running',
+  'success',
+  'stale',
+  'warning',
+  'error',
+  'selected',
+]
 
 const params = new URLSearchParams(window.location.search)
 

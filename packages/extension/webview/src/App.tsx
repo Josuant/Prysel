@@ -5,6 +5,8 @@ import type { SemanticEdge } from '@prysel/spatial'
 import {
   AddNodeMenu,
   Canvas,
+  type CanvasNode,
+  type NodeMenuItem,
   FunctionMenu,
   addPlace,
   toCanvasNodes,
@@ -24,6 +26,16 @@ import {
   type RunView,
 } from '../../src/runs.ts'
 import { OutputPanel } from './OutputPanel.tsx'
+import {
+  FIGURE,
+  contentOf,
+  pinNodeId,
+  resolvePins,
+  sameKey,
+  togglePin,
+  viewableOf,
+  type PinKey,
+} from './pins.ts'
 import { useWriteBack } from './useWriteBack.ts'
 
 const vscode = acquireVsCodeApi()
@@ -40,6 +52,8 @@ const DENSITY_LABELS: Record<Density, string> = {
 
 interface SavedState {
   density?: Density
+  /** Los visores fijados, por archivo: viven en el lienzo, no en el código. */
+  pins?: Record<string, PinKey[]>
 }
 
 const NO_EDGES: SemanticEdge[] = []
@@ -50,7 +64,7 @@ const NODE_STATE: Record<RunState, NodeState> = {
   never: 'dormant',
   running: 'running',
   fresh: 'success',
-  stale: 'warning',
+  stale: 'stale',
   error: 'error',
 }
 
@@ -115,9 +129,22 @@ export function App() {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
+  const [allPins, setAllPins] = useState<Record<string, PinKey[]>>(
+    () => (vscode.getState() as SavedState | undefined)?.pins ?? {},
+  )
+  const pins = useMemo(() => allPins[file ?? ''] ?? [], [allPins, file])
+  const remember = (nextDensity: Density, nextPins: Record<string, PinKey[]>) => {
+    vscode.setState({ density: nextDensity, pins: nextPins } satisfies SavedState)
+  }
   const changeDensity = (next: Density) => {
     setDensity(next)
-    vscode.setState({ density: next } satisfies SavedState)
+    remember(next, allPins)
+  }
+  /** Fija el valor de una sentencia en un visor del lienzo, o lo quita si ya estaba. */
+  const pin = (key: PinKey) => {
+    const next = { ...allPins, [file ?? '']: togglePin(pins, key) }
+    setAllPins(next)
+    remember(density, next)
   }
 
   /** A qué sentencia de primer nivel pertenece cada nodo: es la unidad que se ejecuta. */
@@ -204,6 +231,40 @@ export function App() {
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
   const view = useProgramView(source, program?.edges ?? NO_EDGES, density)
   const unsupported = program?.unsupported ?? []
+  /** Los visores fijados: ventanas con el valor que dejó su sentencia, colgando de ella. */
+  const viewers = useMemo(() => {
+    const visible = new Set(view.nodes.map((node) => node.id))
+    const nodes: CanvasNode[] = []
+    const links: SemanticEdge[] = []
+    for (const resolved of resolvePins(pins, runs)) {
+      if (!visible.has(resolved.statement)) continue
+      const assetsOf = resolved.view.seq === undefined ? undefined : assets.get(resolved.view.seq)
+      const content = contentOf(resolved.key, resolved.view, assetsOf)
+      const id = pinNodeId(resolved.key)
+      nodes.push({ id, kind: 'output.display', label: content.title, viewer: content })
+      links.push({ from: resolved.statement, to: id, relation: 'transform' })
+    }
+    return { nodes, links }
+  }, [pins, runs, assets, view.nodes])
+  const canvasNodes = useMemo(() => [...view.nodes, ...viewers.nodes], [view.nodes, viewers.nodes])
+  const canvasEdges = useMemo(() => [...view.edges, ...viewers.links], [view.edges, viewers.links])
+  /** Lo que ofrece el menú de un nodo ejecutado: ver cada uno de sus valores en un visor. */
+  const viewerMenu = (id: string): NodeMenuItem[] => {
+    const stmt = runs[id]
+    if (top.get(id) !== id || !stmt || stmt.state === 'never') return []
+    const names = viewableOf(stmt, stmt.seq === undefined ? undefined : assets.get(stmt.seq))
+    return names.slice(0, 6).map((name) => {
+      const key: PinKey = { id, hash: stmt.hash, name }
+      const shown = name.startsWith(FIGURE) ? 'la figura' : '«' + name + '»'
+      const on = pins.some((p) => sameKey(p, key))
+      return {
+        label: on ? 'Quitar el visor de ' + shown : 'Ver ' + shown + ' en un visor',
+        onSelect: () => {
+          pin(key)
+        },
+      }
+    })
+  }
 
   /** Lo que el usuario le hace a un nodo, o añade: se traduce a ediciones de texto y se escribe en el archivo. */
   const act = (action: NodeAction) => {
@@ -273,8 +334,8 @@ export function App() {
       <main className="min-h-0 flex-1 p-3">
         {program && program.nodes.length > 0 ? (
           <Canvas
-            nodes={view.nodes}
-            edges={view.edges}
+            nodes={canvasNodes}
+            edges={canvasEdges}
             density={density}
             onEnter={view.enter}
             onControlChange={changeControl}
@@ -283,6 +344,11 @@ export function App() {
               run([id])
             }}
             stateOf={stateOf}
+            extraMenu={viewerMenu}
+            onUnpin={(id) => {
+              const key = pins.find((p) => pinNodeId(p) === id)
+              if (key) pin(key)
+            }}
             addTarget={'into' in place ? place.into : null}
             palette={palette}
             addToModule={view.focus === null}
@@ -305,6 +371,12 @@ export function App() {
           title={statementNode.label}
           view={selectedView}
           assets={selectedView.seq === undefined ? undefined : assets.get(selectedView.seq)}
+          pinned={(name) =>
+            pins.some((p) => sameKey(p, { id: statementNode.id, hash: selectedView.hash, name }))
+          }
+          onPin={(name) => {
+            pin({ id: statementNode.id, hash: selectedView.hash, name })
+          }}
           onClose={() => {
             setOutputOpen(false)
           }}
