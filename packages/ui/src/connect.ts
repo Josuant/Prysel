@@ -163,6 +163,23 @@ function within(nodes: ReadonlyMap<string, CanvasNode>, child: string, ancestor:
   return false
 }
 
+/** Dónde se crea un nodo nuevo desde un puerto de orden (los mismos sitios en que se coloca uno existente). */
+export function orderPlace(
+  from: string,
+  port: OrderPort,
+): { after: string } | { into: string; branch: 'yes' | 'no' } | { into: string; start: true } {
+  switch (port) {
+    case 'order-out':
+      return { after: from }
+    case 'order-yes':
+      return { into: from, branch: 'yes' }
+    case 'order-no':
+      return { into: from, branch: 'no' }
+    case 'order-body':
+      return { into: from, start: true }
+  }
+}
+
 export type OrderVerdict = { ok: true; action: NodeAction } | { ok: false; reason: string }
 
 /** ¿Se puede soltar el cable de orden de `from` (por su puerto) sobre `to`? Y, si sí, la acción que lo escribe. */

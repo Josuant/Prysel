@@ -166,3 +166,56 @@ describe('a un camino de una decisión', () => {
     ).toBe(source)
   })
 })
+
+describe('crear desde un puerto de orden', () => {
+  it('un break al principio del camino verdadero de una decisión', () => {
+    const text = act('for i in r:\n    if i:\n        pass\n    a = f()\n', (p) => ({
+      type: 'add',
+      template: 'break',
+      into: at(p, 2).id,
+      branch: 'yes',
+    }))
+    expect(text).toBe('for i in r:\n    if i:\n        break\n    a = f()\n')
+  })
+
+  it('un continue en el else, que se crea', () => {
+    const text = act('for i in r:\n    if i:\n        a = f()\n', (p) => ({
+      type: 'add',
+      template: 'continue',
+      into: at(p, 2).id,
+      branch: 'no',
+    }))
+    expect(text).toBe('for i in r:\n    if i:\n        a = f()\n    else:\n        continue\n')
+  })
+
+  it('al principio de lo que actúa en un bucle, tras sus inicializaciones', () => {
+    const text = act('for i in r:\n    n = 0\n    a = f(i)\n', (p) => ({
+      type: 'add',
+      template: 'print',
+      into: at(p, 1).id,
+      start: true,
+    }))
+    expect(text).toBe('for i in r:\n    n = 0\n    print("Hola")\n    a = f(i)\n')
+  })
+
+  it('detrás de un nodo, como siempre', () => {
+    const text = act('a = f()\nb = g()\n', (p) => ({
+      type: 'add',
+      template: 'break',
+      after: at(p, 1).id,
+    }))
+    expect(text).toBe('a = f()\nbreak\nb = g()\n')
+  })
+
+  it('un sitio que no existe no escribe nada', () => {
+    const source = 'a = f()\n'
+    expect(
+      act(source, (p) => ({
+        type: 'add',
+        template: 'print',
+        into: at(p, 1).id,
+        branch: 'yes',
+      })),
+    ).toBe(source)
+  })
+})

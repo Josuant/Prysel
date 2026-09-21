@@ -323,6 +323,10 @@ function linesOf(template: TemplateId, fill?: string): string[] {
       return [`for elemento in ${fill ?? 'range(10)'}:`, '    pass']
     case 'while':
       return [`while ${fill ?? 'valor'} > 0:`, '    pass']
+    case 'break':
+      return ['break']
+    case 'continue':
+      return ['continue']
     case 'return':
       return [`return ${fill ?? 'valor'}`]
     case 'raise':
@@ -345,7 +349,7 @@ const SPACED: ReadonlySet<TemplateId> = new Set(['function'])
 export function addTemplate(
   program: Program,
   template: TemplateId,
-  where: { after?: string; into?: string; before?: string; fill?: string } = {},
+  where: Place & { fill?: string } = {},
 ): Change {
   return insertLines(
     program,
@@ -795,6 +799,22 @@ export function actionEdits(program: Program, action: NodeAction): Change {
     case 'add': {
       const source = action.connect ? nodeById(program, action.connect.from) : undefined
       const fill = source && action.connect ? outputName(source, action.connect.port) : undefined
+      // Al principio de un cuerpo o de un camino de una decisión (donde llevan los puertos de orden).
+      const placed =
+        action.branch !== undefined || action.start
+          ? resolvePlace(program, {
+              ...(action.into === undefined ? {} : { into: action.into }),
+              ...(action.start ? { start: true } : {}),
+              ...(action.branch === undefined ? {} : { branch: action.branch }),
+            })
+          : undefined
+      if (placed === null) return { edits: [] }
+      if (placed) {
+        return addTemplate(program, action.template, {
+          ...placed,
+          ...(fill === undefined || !isIdentifier(fill) ? {} : { fill }),
+        })
+      }
       const first = action.at === 'start' ? firstStatement(program, action.into) : undefined
       return addTemplate(program, action.template, {
         ...(action.after === undefined ? {} : { after: action.after }),

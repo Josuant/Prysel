@@ -168,6 +168,10 @@ La regla es una sola: **un valor es un chip; un cable dice qué va antes que qu�
 
 Cuándo un cable de datos **no se dibuja** (`planChips`, pura y probada): cuando el nodo de destino **ya nombra** el valor —en su casilla (`x`, o `x + 1`), o en su texto si no tiene casillas (`[x * 2 for x in xs]`)—. Los cables de control, el retorno sin nombre y los de la densidad **compacta** (donde no hay casillas que enseñen nada) se conservan. El layout **sí** sigue usando esas dependencias para colocar a cada nodo tras aquel del que depende: ocultar el cable no desordena el diagrama (`flowEdges` frente a `hidden`).
 
+**Un chip soltado en el vacío crea algo con él.** Si se lleva un chip lejos de su sitio y se suelta sobre nada (ni una casilla ni una tarjeta), aparece el menú de crear un nodo **que ya lo usa** (`QuickAdd`: a un número una operación o un `print`, a una colección un bucle que la recorra…), justo detrás de donde nace ese valor, o dentro de la función o el bucle si es un parámetro o una variable de bucle (`dropTarget`). Es lo que antes daba soltar un cable en el vacío.
+
+**Los valores sueltos a mitad de flujo también se llevan** a una casilla, como cualquier chip: `x = 5` tras una llamada es una píldora colocada en el plano por el orden, pero se arrastra a una casilla y vuelve a su sitio.
+
 **La procedencia, a demanda.** Al seleccionar un nodo se dibujan sus cables ocultos (de dónde le llegan los valores y a quién los da: `revealed`), y al seleccionar un chip de una cajita se marcan las casillas donde se usa. Así el diagrama en reposo es limpio y la relación exacta está a un clic.
 
 Lo que hace a algo un chip (`dockChips`, pura y probada):
@@ -212,6 +216,8 @@ El orden no se ve en reposo, pero se **edita**: cada nodo tiene **puertos de ord
 | `order-out` (abajo)                                               | **Justo detrás** del nodo, en su bloque (`after`). Sirve para reordenar y para pasar una sentencia a otro bloque, con su sangría.                     |
 | `order-yes` / `order-no` (abajo de una decisión, en verde y rojo) | Al **principio del camino verdadero** / **del `else`** (`into` + `branch`). Un camino que era un `pass` lo sustituye, y si no hay `else` se **crea**. |
 | `order-body` (borde izquierdo de una función o un bucle)          | Al **principio de lo que actúa** en su cuerpo (`into` + `start`): tras las inicializaciones, para no deshacer sus chips.                              |
+
+**Crear en vez de mover.** Si el cable de orden se suelta **en el vacío**, se ofrece crear ahí una sentencia nueva (`Crear aquí…`: imprimir, llamar, operar, variable, pedir dato, decisiones, bucles, **`break`**, **`continue`**, `return`, `raise`), en el sitio que dice el puerto (`orderPlace`): detrás del nodo, al principio de un camino de la decisión (con su `else` creado si falta) o al principio de lo que actúa en un cuerpo. Así se escribe un `if x: break` o un `else: continue` sin salir del diagrama; los mismos `break` y `continue` están en el menú «Añadir».
 
 Lo que se rechaza, con su motivo en el aviso: detrás de un `return`, `raise`, `break` o `continue` (no se ejecutaría), un nodo respecto a sí mismo, y meter un nodo dentro de lo que él mismo contiene, a cualquier profundidad.
 
@@ -396,17 +402,13 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 ## Lo que falta
 
 - Micro-interfaces semánticas: sustituir la línea de código literal de cada nodo (`print`, `input`…) por controles reales — un desplegable para un operador lógico, un campo de formulario para un literal.
-- Orden secuencial entre sentencias como conexiones de control (ver arriba).
-- **Puertos de ejecución** (la flecha ▸ de entrada y salida que ordena las sentencias): hoy el orden es el del archivo y no se dibuja ni se cablea; conectarlos reordenaría el código y es la decisión abierta del orden secuencial.
-- **Conectar un cable existente a otro campo** (arrastrar el extremo de un cable ya tendido) y **cables desde un puerto de entrada** hacia una salida nueva: hoy se conecta desde salidas.
+- **Un valor de una operación con solo literales como chip** (`resta = 10 - 2` → `resta` con su valor): hoy la operación sigue siendo una tarjeta con su nombre como pastilla.
 - **Un nodo sin nombre como origen** (`print(x)` no define nada; `float(input())` sin asignar): para usarlos habría que introducir una variable.
 - **Meter una función dentro de otra** arrastrándola (hoy solo se reubican nodos).
 - **La cláusula `else` de un bucle** no se representa.
 - **Funciones definidas dentro de otra** como chips de su contexto: hoy las funciones solo se ofrecen en la cajita del programa.
-- **Arrastrar un chip a un cable ya tendido** (soltarlo sobre la casilla que el cable alimenta ya lo sustituye), y **dejar que un chip nazca de una operación con solo literales**: hoy el chip se crea con «＋ variable» o subiendo un valor con el menú.
-- **Puertos de orden para `break` y `continue`**: `termina` y `siguiente` solo reciben los cables que ya están en el código; no se puede arrastrar un `break` nuevo hasta ellos, ni crear uno desde el puerto de inicio de un bucle. Tampoco hay puerto para los caminos `elif` ni para el `else` de un bucle.
+- **Puertos de orden para el `elif` y el `else` de un bucle**: el puerto «falso» de una decisión escribe siempre en el `else` (lo crea detrás de los `elif` si falta); un `elif` concreto y la cláusula `else` de un bucle no tienen puerto, y el segundo tampoco se representa.
 - **Auto-layout jerárquico** (Dagre/ELK): el reparto lo hace la gramática espacial; Mayús+F solo le devuelve lo que el usuario movió.
-- **Reordenar y mover sentencias** (arrastrar un nodo a otro sitio del flujo de control, o a otro bloque): hoy se duplica y se elimina, pero no se mueve.
 - **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.
 - **`with`, `try`, `class` y decoradores como nodos con estructura**: hoy son nodos opacos (se editan como texto en el panel «Código»).
 - **Deshacer propio**: se apoya en el del editor (una operación = un deshacer); el lienzo no tiene historial propio.

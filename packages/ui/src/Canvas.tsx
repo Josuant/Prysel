@@ -46,7 +46,7 @@ import { CodePanel } from './CodePanel.tsx'
 import { QuickAdd } from './QuickAdd.tsx'
 import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
-import { FUNCTION_CHIP, useChipDrag } from './flow/useChipDrag.ts'
+import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
   MODULE,
   TRAY,
@@ -66,6 +66,7 @@ import {
   checkConnection,
   checkOrder,
   isOrderHandle,
+  orderPlace,
   type OrderPort,
   connectAction,
   convertNotice,
@@ -290,6 +291,13 @@ function CanvasInner({
   const [codeFor, setCodeFor] = useState<{ key: string; id: string } | null>(null)
   /** De dónde sale el cable que se está arrastrando ahora mismo. */
   const [connecting, setConnecting] = useState<{ from: string; port?: string } | null>(null)
+  /** Se soltó un cable de orden en el vacío: aquí se ofrece crear una sentencia nueva. */
+  const [orderAdd, setOrderAdd] = useState<{
+    from: string
+    port: OrderPort
+    x: number
+    y: number
+  } | null>(null)
   /** Se arrastra un cable de orden desde este nodo y este puerto. */
   const [ordering, setOrdering] = useState<{ from: string; port: OrderPort } | null>(null)
   /** El menú de «crear un nodo ya conectado», abierto donde se soltó el cable en el vacío. */
@@ -371,9 +379,17 @@ function CanvasInner({
 
   /** ¿Es un chip acoplado a una cajita (o el de una función)? Esos no se colocan: se llevan a una casilla. */
   const isDockedChip = useCallback(
-    (id: string) =>
-      plan.docked.has(id) || id.startsWith(FUNCTION_CHIP) || parseIterChip(id) !== null,
-    [plan],
+    (id: string) => {
+      const node = byId.get(id)
+      return (
+        plan.docked.has(id) ||
+        id.startsWith(FUNCTION_CHIP) ||
+        parseIterChip(id) !== null ||
+        // Un valor asignado a mitad de flujo también es un chip: se lleva a una casilla, no se coloca.
+        (node !== undefined && isChipKind(node))
+      )
+    },
+    [plan, byId],
   )
 
   const chipDrag = useChipDrag({
@@ -382,6 +398,18 @@ function CanvasInner({
       onAction?.(connectAction(link))
     },
     onRefuse: setNotice,
+    onEmpty: (chipId, point) => {
+      // Soltar un chip en el vacío ofrece crear un nodo que lo use, como antes lo hacía soltar un cable.
+      const source = chipSource(chipId)
+      const frame = frameRef.current?.getBoundingClientRect()
+      if (!frame || !byId.has(source.from)) return
+      setQuick({
+        from: source.from,
+        ...(source.port ? { port: source.port } : {}),
+        x: point.clientX - frame.left,
+        y: point.clientY - frame.top,
+      })
+    },
   })
 
   /**
@@ -708,6 +736,14 @@ function CanvasInner({
       if (dragged) {
         // Soltado sobre un nodo pero no sobre su puerto: vale igual, es ese nodo el que se coloca.
         if (!state.isValid && state.toNode) orderTo(dragged.from, dragged.port, state.toNode.id)
+        else if (!state.isValid) {
+          // En el vacío: se ofrece crear ahí una sentencia nueva.
+          const frame = frameRef.current?.getBoundingClientRect()
+          const point = 'changedTouches' in event ? event.changedTouches[0] : event
+          if (frame && point) {
+            setOrderAdd({ ...dragged, x: point.clientX - frame.left, y: point.clientY - frame.top })
+          }
+        }
         return
       }
       const from = state.fromHandle
@@ -979,7 +1015,7 @@ function CanvasInner({
   ): ChipFlowNode => ({
     id: node.id,
     type: 'chip' as const,
-    position,
+    position: chipDrag.carried?.id === node.id ? chipDrag.carried.position : position,
     ...nodeFrame(size),
     selected: node.id === selectedId,
     zIndex: 5,
@@ -1462,6 +1498,20 @@ function CanvasInner({
         <p className="canvas__notice" role="status">
           {notice}
         </p>
+      )}
+      {orderAdd && byId.get(orderAdd.from) && (
+        <QuickAdd
+          x={orderAdd.x}
+          y={orderAdd.y}
+          title="Crear aquí…"
+          onPick={(template) => {
+            onAction?.({ type: 'add', template, ...orderPlace(orderAdd.from, orderAdd.port) })
+            setOrderAdd(null)
+          }}
+          onClose={() => {
+            setOrderAdd(null)
+          }}
+        />
       )}
       {quick && byId.get(quick.from) && (
         <QuickAdd

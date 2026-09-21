@@ -20,6 +20,8 @@ export const TEMPLATES = {
   ifelse: { label: 'Decisión con alternativa', group: 'Control' },
   for: { label: 'Bucle para cada', group: 'Control' },
   while: { label: 'Bucle mientras', group: 'Control' },
+  break: { label: 'Salir del bucle', group: 'Control' },
+  continue: { label: 'Siguiente vuelta', group: 'Control' },
   return: { label: 'Devolver', group: 'Control' },
   raise: { label: 'Lanzar un error', group: 'Control' },
   import: { label: 'Importar un módulo', group: 'Estructura' },
@@ -50,6 +52,10 @@ export type NodeAction =
       into?: string
       /** Al principio del contexto (del cuerpo de `into`, o del archivo) en vez de al final: donde se inicializa. */
       at?: 'start'
+      /** Con `into`: al principio de lo que actúa en su cuerpo (tras sus inicializaciones). */
+      start?: true
+      /** Con `into` una decisión: al principio de uno de sus dos caminos (se crea el `else` si falta). */
+      branch?: 'yes' | 'no'
       connect?: { from: string; port?: string }
     }
   /**

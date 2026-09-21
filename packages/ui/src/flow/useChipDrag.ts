@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { CanvasNode } from '../Canvas.tsx'
 import { parseIterChip } from '../chips.ts'
 import { checkConnection, convertNotice, type Link } from '../connect.ts'
@@ -38,6 +38,18 @@ export function chipSource(chipId: string): { from: string; port?: string } {
   return { from: chipId.startsWith(FUNCTION_CHIP) ? chipId.slice(FUNCTION_CHIP.length) : chipId }
 }
 
+/** ¿Hay una tarjeta (no un territorio, que es un marco) bajo este punto? Ahí soltar un chip no crea nada. */
+function overCard(x: number, y: number): boolean {
+  return document
+    .elementsFromPoint(x, y)
+    .some(
+      (element) =>
+        element instanceof HTMLElement &&
+        element.matches('.node:not([data-container])') &&
+        !element.closest('.react-flow__node-chip'),
+    )
+}
+
 /** La casilla que hay bajo un punto de la pantalla, y el nodo al que pertenece. */
 export function slotAt(x: number, y: number): { nodeId: string; slot: string } | null {
   for (const element of document.elementsFromPoint(x, y)) {
@@ -59,11 +71,19 @@ export function useChipDrag({
   lookup,
   onLink,
   onRefuse,
+  onEmpty,
 }: {
   lookup: ReadonlyMap<string, CanvasNode>
   onLink: (link: Link) => void
   onRefuse: (reason: string) => void
+  /** Se soltó lejos de donde empezó y sobre nada: dónde (en pantalla), para ofrecer crear algo ahí. */
+  onEmpty?: (chipId: string, point: { clientX: number; clientY: number }) => void
 }) {
+  /** Dónde empezó el arrastre y dónde está ahora el puntero. */
+  const path = useRef<{
+    from: { clientX: number; clientY: number }
+    to: { clientX: number; clientY: number }
+  } | null>(null)
   /** Dónde va el chip que se lleva ahora mismo (sigue al puntero; al soltar, vuelve a su sitio). */
   const [carried, setCarried] = useState<{ id: string; position: { x: number; y: number } } | null>(
     null,
@@ -76,6 +96,8 @@ export function useChipDrag({
 
   const over = useCallback(
     (chipId: string, point: { clientX: number; clientY: number }) => {
+      const here = { clientX: point.clientX, clientY: point.clientY }
+      path.current = { from: path.current?.from ?? here, to: here }
       const hit = slotAt(point.clientX, point.clientY)
       if (!hit) {
         setHover((previous) => (previous === null ? previous : null))
@@ -107,9 +129,24 @@ export function useChipDrag({
   const drop = useCallback(
     (chipId: string) => {
       const target = hover
+      const travelled = path.current
+      path.current = null
       setCarried(null)
       setHover(null)
-      if (!target) return
+      if (!target) {
+        // Lejos de su cajita y sobre nada: no es un descuido, es querer crear algo con ese valor.
+        if (
+          travelled &&
+          Math.hypot(
+            travelled.to.clientX - travelled.from.clientX,
+            travelled.to.clientY - travelled.from.clientY,
+          ) > 60 &&
+          !overCard(travelled.to.clientX, travelled.to.clientY)
+        ) {
+          onEmpty?.(chipId, travelled.to)
+        }
+        return
+      }
       if (target.ok) {
         onLink({
           ...chipSource(chipId),
@@ -121,7 +158,7 @@ export function useChipDrag({
         if (target.convert && target.name) onRefuse(convertNotice(target.name))
       } else if (target.reason) onRefuse(target.reason)
     },
-    [hover, onLink, onRefuse],
+    [hover, onLink, onRefuse, onEmpty],
   )
 
   return { carried, hover, carry, over, drop }

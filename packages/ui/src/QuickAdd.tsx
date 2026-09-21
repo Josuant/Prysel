@@ -17,19 +17,38 @@ const SUGGESTED: Record<ValueType, TemplateId[]> = {
   any: ['print', 'operation', 'call', 'if', 'for', 'return', 'variable', 'while', 'ifelse', 'list'],
 }
 
+/** Lo que se ofrece al soltar un cable de orden en el vacío: cualquier sentencia, sin valor que conectar. */
+export const STATEMENTS: readonly TemplateId[] = [
+  'print',
+  'call',
+  'operation',
+  'variable',
+  'input',
+  'if',
+  'ifelse',
+  'for',
+  'while',
+  'break',
+  'continue',
+  'return',
+  'raise',
+]
+
 export interface QuickAddProps {
   /** Dónde se soltó el cable, en el sistema del lienzo. */
   x: number
   y: number
   /** Qué clase de valor sale del origen. */
-  type: ValueType
+  type?: ValueType
   /** El nombre que sale: «lo que se conecta». */
-  name: string
+  name?: string
+  /** Un cable de orden no lleva valor: se ofrecen sentencias y este es el título. */
+  title?: string
   onPick: (template: TemplateId) => void
   onClose: () => void
 }
 
-export function QuickAdd({ x, y, type, name, onPick, onClose }: QuickAddProps) {
+export function QuickAdd({ x, y, type = 'any', name = '', title, onPick, onClose }: QuickAddProps) {
   const root = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -53,13 +72,13 @@ export function QuickAdd({ x, y, type, name, onPick, onClose }: QuickAddProps) {
       ref={root}
       className="quick-add"
       role="menu"
-      aria-label={`Nuevo nodo conectado a ${name}`}
+      aria-label={title ?? `Nuevo nodo conectado a ${name}`}
       style={{ left: x, top: y }}
     >
       <p className="quick-add__title type-field-label">
-        Conectar «{name}» ({VALUE_NAMES[type]}) a…
+        {title ?? `Conectar «${name}» (${VALUE_NAMES[type]}) a…`}
       </p>
-      {SUGGESTED[type].map((id) => (
+      {(title === undefined ? SUGGESTED[type] : STATEMENTS).map((id) => (
         <button
           key={id}
           type="button"

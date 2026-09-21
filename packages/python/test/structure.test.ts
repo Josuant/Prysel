@@ -381,6 +381,8 @@ describe('añadir un nodo', () => {
       'ifelse',
       'for',
       'while',
+      'break',
+      'continue',
       'return',
       'raise',
       'import',

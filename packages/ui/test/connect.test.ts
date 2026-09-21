@@ -7,6 +7,7 @@ import {
   checkConnection,
   checkOrder,
   isOrderHandle,
+  orderPlace,
   connectAction,
   dropTarget,
   outputName,
@@ -279,5 +280,14 @@ describe('el cable de orden mueve una sentencia', () => {
     expect(isOrderHandle('out')).toBe(false)
     expect(isOrderHandle('param:x')).toBe(false)
     expect(isOrderHandle(null)).toBe(false)
+  })
+})
+
+describe('dónde se crea algo desde un puerto de orden', () => {
+  it('los mismos sitios en que se coloca un nodo existente', () => {
+    expect(orderPlace('a', 'order-out')).toEqual({ after: 'a' })
+    expect(orderPlace('if', 'order-yes')).toEqual({ into: 'if', branch: 'yes' })
+    expect(orderPlace('if', 'order-no')).toEqual({ into: 'if', branch: 'no' })
+    expect(orderPlace('for', 'order-body')).toEqual({ into: 'for', start: true })
   })
 })
