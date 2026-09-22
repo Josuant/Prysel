@@ -11,6 +11,7 @@ import {
   addPlace,
   toCanvasNodes,
   useProgramView,
+  usePrefersReducedMotion,
 } from '@prysel/ui'
 import { actionEdits } from '@prysel/python/edits'
 import type { NodeAction, TemplateId } from '@prysel/morphology'
@@ -107,6 +108,10 @@ const KERNEL_LABEL: Record<KernelStatus, string> = {
 }
 
 export function App() {
+  // «Reducir movimiento» del sistema (o de VS Code, que lo refleja dentro del webview): la cámara del
+  // reproductor salta directa en vez de deslizarse. El desplazamiento de los nodos ya se apaga solo
+  // (`useMotion`, en `@prysel/ui`); esto es lo mismo para la cámara, que no pasa por ahí.
+  const reducedMotion = usePrefersReducedMotion()
   const [program, setProgram] = useState<Program | null>(null)
   const [file, setFile] = useState<string | null>(null)
   /** La versión del texto que se está enseñando: los resultados solo valen para ella. */
@@ -723,6 +728,7 @@ export function App() {
                 showActions
                 showStatus={started}
                 ariaLabel={canvasLabel}
+                animate={!reducedMotion}
               />
             </ErrorBoundary>
           ) : (

@@ -619,6 +619,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
                 type: node.valueType ?? 'any',
                 ...(node.observed?.[name]?.short ? { hint: node.observed[name].short } : {}),
                 ...(node.observed?.[name] ? { title: node.observed[name].long } : {}),
+                // Reproduciendo una lección: este paso lo acaba de escribir, y el chip lo anuncia.
+                ...(node.observed?.[name]?.changed ? { changed: true } : {}),
               })),
               ...(data.onGrabResult
                 ? {

@@ -57,6 +57,24 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
+ * La preferencia del sistema (o de VS Code, que la refleja dentro del webview), en vivo: si cambia
+ * mientras la extensión está abierta, se entera sin recargar. `useMotion` ya la respeta ella sola para
+ * el desplazamiento de los nodos; esto es para quien anima algo aparte (la cámara del reproductor de
+ * lecciones, que no pasa por `useMotion`) y también quiere apagarlo en cuanto toque.
+ */
+export function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(prefersReducedMotion)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const onChange = () => setReduced(query.matches)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+  return reduced
+}
+
+/**
  * Interpola las posiciones hacia su destino y retiene un instante a los que desaparecen.
  * `items` es la verdad: lo que el layout acaba de calcular.
  */

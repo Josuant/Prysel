@@ -138,9 +138,10 @@ export interface CanvasNode {
   handwritten?: NoteContent
   /**
    * Lo que se observó al ejecutar, por nombre: `short` es lo que acompaña a su chip (`200×2`) y `long` lo
-   * que dice al pasar el puntero (`ndarray 200×2 float64`). Nunca cambia lo que significa el código.
+   * que dice al pasar el puntero (`ndarray 200×2 float64`). `changed`: reproduciendo una lección, este paso
+   * concreto acaba de escribirlo — el chip lo anuncia con un pulso. Nunca cambia lo que significa el código.
    */
-  observed?: Readonly<Record<string, { short?: string; long: string }>>
+  observed?: Readonly<Record<string, { short?: string; long: string; changed?: boolean }>>
   /** En una función, sus parámetros: cada uno es un puerto de salida hacia lo que hay dentro. */
   params?: readonly string[]
   /** Los campos que aceptan un cable (por su puerto). */

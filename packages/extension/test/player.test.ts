@@ -121,6 +121,8 @@ describe.skipIf(!available)('con la traza real de un programa', () => {
     const after = steps.find((state) => state.event?.l === 5)
     expect(before && observedAt(program, before).get(id)).toBeUndefined()
     expect(after && observedAt(program, after).get(id)?.['total']?.short).toBe('0')
+    // Este paso lo acaba de escribir: el chip lo anuncia con un pulso («el valor vuela hasta su chip»).
+    expect(after && observedAt(program, after).get(id)?.['total']?.changed).toBe(true)
 
     // El cursor está en el nodo de la línea del paso.
     expect(before && cursorNode(program, before, visible)).toBe(id)
@@ -129,6 +131,8 @@ describe.skipIf(!available)('con la traza real de un programa', () => {
     const last = stateAt(index, index.trace.events.length - 1)
     const inLoop = program.nodes.find((node) => node.line === 6)
     expect(observedAt(program, last).get(inLoop?.id ?? '')?.['total']?.short).toBe('6')
+    // El último paso imprime; no vuelve a escribir `total`, así que ya no está «recién llegado».
+    expect(observedAt(program, last).get(inLoop?.id ?? '')?.['total']?.changed).toBe(false)
   }, 30_000)
 
   it('dentro de una función, el cursor sube a la función si esta está plegada', async () => {

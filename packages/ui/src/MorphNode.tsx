@@ -108,7 +108,14 @@ export interface MorphNodeProps {
    * Lo que asigna la línea (`A = funcion()`, o `a, b = f()`): cada nombre es un chip que se arrastra a
    * una casilla.
    */
-  results?: readonly { name: string; type: ValueType; hint?: string; title?: string }[]
+  results?: readonly {
+    name: string
+    type: ValueType
+    hint?: string
+    title?: string
+    /** Reproduciendo una lección: este paso concreto lo acaba de escribir (un pulso, no solo aparecer). */
+    changed?: boolean
+  }[]
   /** Lo que se observó de cada paso de una cadena, para el editor de pasos. */
   steps?: readonly StepInfo[]
   /** El usuario agarra el chip de un resultado: el lienzo lleva el arrastre. */
@@ -224,6 +231,7 @@ function ResultChip({
   type,
   hint,
   title,
+  changed,
   renamable,
   signal,
   onRename,
@@ -235,6 +243,8 @@ function ResultChip({
   hint?: string
   /** Lo que dice al pasar el puntero, si se observó algo. */
   title?: string
+  /** Reproduciendo una lección: este paso concreto lo acaba de escribir (un pulso, no solo aparecer). */
+  changed?: boolean
   renamable: boolean
   signal: number
   onRename: (to: string) => void
@@ -244,6 +254,7 @@ function ResultChip({
     <span
       className="vchip vchip--result nodrag"
       data-type={type}
+      {...(changed ? { 'data-changed': '' } : {})}
       title={
         title
           ? `${name}: ${title} — arrástrala a una casilla que reciba un valor`
@@ -335,6 +346,7 @@ export function MorphNode({
       type={result.type}
       {...(result.hint ? { hint: result.hint } : {})}
       {...(result.title ? { title: result.title } : {})}
+      {...(result.changed ? { changed: true } : {})}
       renamable={renamable || (several && onAction !== undefined)}
       signal={renameSignal}
       onRename={(to) =>

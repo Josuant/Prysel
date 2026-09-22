@@ -133,12 +133,18 @@ export function cursorNode(
   return null
 }
 
-/** Lo que vale, en un paso, cada nombre que define un nodo del programa (lo que enseñan sus chips). */
+/**
+ * Lo que vale, en un paso, cada nombre que define un nodo del programa (lo que enseñan sus chips).
+ * `changed` es lo que este paso concreto acaba de escribir (`state.event.ch`): el chip lo anuncia con un
+ * pulso al llegar, en vez de aparecer sin más — la versión de «el valor vuela hasta su chip» que encaja
+ * con que casi ningún valor lleva ya un cable propio (la mayoría son chips, no cables: rondas 9–17).
+ */
 export function observedAt(
   program: Program,
   state: TraceState,
-): Map<string, Record<string, { short: string; long: string }>> {
-  const found = new Map<string, Record<string, { short: string; long: string }>>()
+): Map<string, Record<string, { short: string; long: string; changed: boolean }>> {
+  const changes = state.event?.ch ?? {}
+  const found = new Map<string, Record<string, { short: string; long: string; changed: boolean }>>()
   for (const node of program.nodes) {
     const names = node.results ?? (node.provides ? [node.provides] : [])
     if (names.length === 0) continue
@@ -146,7 +152,7 @@ export function observedAt(
     // La llamada más reciente de esa función: en una recursión, la que se está ejecutando.
     const frame = state.frames.findLast((candidate) => candidate.fn === fn)
     if (!frame) continue
-    const values: Record<string, { short: string; long: string }> = {}
+    const values: Record<string, { short: string; long: string; changed: boolean }> = {}
     for (const name of names) {
       if (!(name in frame.locals)) continue
       const text = formatShown(frame.locals[name] as Shown)
@@ -154,6 +160,7 @@ export function observedAt(
       values[name] = {
         short: text.length > 22 ? `${text.slice(0, 21)}…` : text,
         long: `${name} = ${text}`,
+        changed: name in changes,
       }
     }
     if (Object.keys(values).length > 0) found.set(node.id, values)

@@ -401,3 +401,36 @@ Comprobado: las 1385 pruebas (`pnpm verify`) y la prueba real dentro de un VS Co
 pasan; capturas del lienzo confirmaron a mano que la ruta de reproducción sigue sola de `entrenar` a `volar`
 a `decidir`, y que la tarjeta «Trayectoria» dibuja las dos barras del hueco y el punto del pájaro con la
 geometría esperada.
+
+### Fase E: animación avanzada (primera entrada: movimiento y accesibilidad)
+
+De la sección 3.4, lo que se podía dejar cerrado sin depender de «exportar a HTML autónomo» (un proyecto en
+sí mismo, aparte). Streaming de la Fase D, voz sincronizada, construcción progresiva y exportar siguen
+pendientes.
+
+- **Reducir movimiento, en la cámara del reproductor** (el hueco real: `useMotion` ya apagaba el
+  desplazamiento de los NODOS con la preferencia del sistema, pero la cámara —`setCenter` al seguir el
+  cursor y la nota, el encuadre al abrir una función— tenía su propio interruptor `animate`, que nadie
+  conectaba a nada). `packages/ui/src/motion.ts` gana `usePrefersReducedMotion()` (reactivo: si la
+  preferencia cambia mientras la extensión está abierta, se entera sin recargar); el webview
+  (`App.tsx`) lo pasa como `animate={!reducedMotion}` al lienzo.
+- **La «ficha que viaja por el cable de orden» y «los valores que vuelan», adaptadas a como quedó el
+  diseño** (rondas 9–17, muy posteriores a como se escribió originalmente esta sección): con «cable = solo
+  donde sea estrictamente necesario», casi ningún paso consecutivo tiene ya un cable de orden dibujado
+  entre sí y el anterior (rondas 13–14) — viajar por un cable que no existe no tiene sentido. En su lugar:
+  - El **anillo del cursor** llega con un pulso (`prysel-cursor-arrive`, 380 ms) en vez de aparecer sin
+    más: se nota la llegada sin fingir un cable.
+  - El **chip que acaba de recibir un valor** (una pastilla de resultado, `A = f(...)`) se anuncia con un
+    pulso propio (`vchip-arrive`, 480 ms) el paso exacto en que la traza lo escribió — es «el valor vuela
+    hasta su chip», pero como un chip no tiene «origen» físico desde que casi todo es chip y no cable, el
+    vuelo se cuenta como llegada, no como trayecto. `observedAt()` (`webview/src/player.ts`) ahora dice
+    también `changed: boolean` por nombre (comparando con `state.event.ch`, lo que la traza dice que
+    cambió justo en ese paso), y ese booleano llega hasta `ResultChip` (`MorphNode.tsx`) como
+    `data-changed`.
+  - Ambas animaciones se apagan solas bajo `prefers-reduced-motion: reduce` (mismo patrón que ya usaba el
+    resto del lienzo).
+
+Pendiente de la fase: construcción progresiva (los nodos aparecen a medida que se explican, no todos de
+golpe), voz sincronizada, y exportar la lección a un HTML autónomo (el criterio de «hecho» de toda la fase
+en la hoja de ruta: «una lección se comparte como un solo archivo y se ve sin Python») — este último es un
+proyecto en sí, aparte de las animaciones de esta entrada.

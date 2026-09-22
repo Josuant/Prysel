@@ -12,7 +12,13 @@ export {
   type ControlProps,
 } from './controls.tsx'
 export * from './fields.tsx'
-export { useMotion, type Animated, type MotionOptions, type MotionPhase } from './motion.ts'
+export {
+  useMotion,
+  usePrefersReducedMotion,
+  type Animated,
+  type MotionOptions,
+  type MotionPhase,
+} from './motion.ts'
 export {
   foldScopes,
   functionsOf,

@@ -1628,7 +1628,10 @@ button.fn-menu__crumb:hover {
   border-color: var(--state-warning);
 }
 /* Donde irá lo que se añada desde el menú. */
-/* Por donde va la reproducción: un anillo sólido que se mueve con el paso, distinto de lo que se añade. */
+/* Por donde va la reproducción: un anillo sólido que se mueve con el paso, distinto de lo que se añade.
+   La «ficha» que viaja hasta el siguiente nodo (§3.4): como casi ningún paso tiene un cable de orden
+   dibujado entre sí y el anterior (rondas 9-17: cable solo donde hace falta), en vez de deslizarse por uno
+   que no existe, el anillo llega con un pulso que crece y se asienta — se nota el salto sin fingir un cable. */
 .flow-node[data-cursor]::after {
   content: '';
   position: absolute;
@@ -1638,6 +1641,17 @@ button.fn-menu__crumb:hover {
   border-radius: 28px;
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
   pointer-events: none;
+  animation: prysel-cursor-arrive 380ms ease-out;
+}
+@keyframes prysel-cursor-arrive {
+  from {
+    opacity: 0;
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  to {
+    opacity: 1;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
 }
 
 .flow-node[data-add-target]::after {
@@ -1722,7 +1736,9 @@ button.fn-menu__crumb:hover {
   transform: translate(-50%, -50%);
 }
 @media (prefers-reduced-motion: reduce) {
-  .loop-rail__line {
+  .loop-rail__line,
+  .flow-node[data-cursor]::after,
+  .vchip--result[data-changed] {
     animation: none;
   }
 }
@@ -2098,6 +2114,20 @@ button.fn-menu__crumb:hover {
   font-weight: 600;
   cursor: grab;
   touch-action: none;
+}
+/* Reproduciendo una lección: este paso acaba de escribir el valor. Es «el valor vuela hasta su chip» —
+   la versión que encaja con que casi ningún valor lleva ya un cable propio (la mayoría son chips). */
+.vchip--result[data-changed] {
+  animation: vchip-arrive 480ms ease-out;
+}
+@keyframes vchip-arrive {
+  from {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent);
+    background: color-mix(in srgb, var(--accent) 30%, var(--surface-raised));
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+  }
 }
 .vchip--ghost {
   position: absolute;
