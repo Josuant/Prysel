@@ -616,6 +616,15 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
         )
       }
     }),
+    vscode.commands.registerCommand('prysel.showAiProvider', async () => {
+      const provider = await pickProvider(context)
+      void vscode.window.showInformationMessage(
+        provider
+          ? `Prysel: se usaría «${provider.id}» para generar una lección.`
+          : 'Prysel: ningún proveedor disponible. Instala una extensión de chat (Copilot u otra) o ' +
+              'configura una clave con «Prysel: Configurar la clave de Anthropic».',
+      )
+    }),
     vscode.commands.registerCommand('prysel.explainFile', async () => {
       const doc = targetDocument()
       if (!doc || doc.uri.scheme !== 'file') {

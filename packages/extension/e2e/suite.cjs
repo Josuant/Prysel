@@ -34,6 +34,7 @@ exports.run = async () => {
         'prysel.runAll',
         'prysel.trace',
         'prysel.newLesson',
+        'prysel.showAiProvider',
         'prysel.explainFile',
         'prysel.setAnthropicKey',
         'prysel.clearAnthropicKey',
@@ -104,6 +105,7 @@ exports.run = async () => {
 
     // Sin ningún proveedor de IA instalado ni clave configurada, "explicar" avisa en vez de fallar.
     await vscode.commands.executeCommand('prysel.clearAnthropicKey')
+    await vscode.commands.executeCommand('prysel.showAiProvider')
     await vscode.commands.executeCommand('prysel.explainFile')
     check('explicar sin proveedor no revienta', true)
 

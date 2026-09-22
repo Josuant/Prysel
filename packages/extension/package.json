@@ -21,7 +21,8 @@
     "onCommand:prysel.newLesson",
     "onCommand:prysel.explainFile",
     "onCommand:prysel.setAnthropicKey",
-    "onCommand:prysel.clearAnthropicKey"
+    "onCommand:prysel.clearAnthropicKey",
+    "onCommand:prysel.showAiProvider"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -44,6 +45,11 @@
       {
         "command": "prysel.newLesson",
         "title": "Crear o abrir la lección de este archivo",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.showAiProvider",
+        "title": "Qué proveedor de IA se usaría",
         "category": "Prysel"
       },
       {
