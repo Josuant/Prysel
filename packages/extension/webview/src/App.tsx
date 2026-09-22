@@ -231,6 +231,18 @@ export function App() {
       return { ...previous, [file ?? '']: INSIGHTS.filter((x) => now.includes(x)) }
     })
   }
+  // Un guion que pide nodos para entender arranca la reproducción solo: si no, habría que darle antes al
+  // botón «Paso a paso» para llegar a verlos (las tarjetas necesitan un paso concreto de la traza).
+  const autoTraced = useRef<string | null>(null)
+  useEffect(() => {
+    if (version === null || !lesson?.show || lesson.show.length === 0) return
+    const key = `${file ?? ''}@${version}`
+    if (autoTraced.current === key) return
+    // Ya hay algo grabado (o en marcha) para esta versión: no hace falta pedirlo otra vez.
+    if (recording && recording.version === version) return
+    autoTraced.current = key
+    post({ type: 'trace', version })
+  }, [lesson, version, file, recording])
   useEffect(() => {
     vscode.setState({ ...saved(), insights: insightChoice } satisfies SavedState)
   }, [insightChoice])

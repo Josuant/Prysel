@@ -117,6 +117,22 @@ export function buildSystemPrompt(): string {
     '6. Entre 3 y 8 momentos: ni una sola nota para todo el programa, ni una por cada línea.',
     '7. "show" son los nodos que ayudan a entender ESTE programa (por ejemplo "stack" y "tree" si hay',
     '   recursión, "collection" si se ordena o recorre una lista, "memory" si hay alias). Como mucho 3.',
+    '8. "style", "expect" y cada entrada de "show" son códigos fijos, siempre en inglés y tal cual están',
+    '   escritos arriba (minúsculas, sin acentos): NUNCA los traduzcas al idioma de las notas, aunque',
+    `   "text", "title" y "note" sí vayan en ese idioma. Por ejemplo "value" y "output", nunca "valor" o`,
+    '   "salida".',
+    '',
+    'Un ejemplo de un momento bien formado (con el estilo, "expect" y "show" tal cual, en inglés):',
+    '{',
+    '  "version": 1,',
+    '  "title": "Un ejemplo",',
+    '  "show": ["stack"],',
+    '  "beats": [',
+    '    { "id": "b1", "at": { "text": "total = 0" },',
+    '      "note": { "style": "sticky", "text": "Se empieza en `0`." },',
+    '      "ask": { "text": "¿Cuánto vale total?", "expect": "value", "name": "total" } }',
+    '  ]',
+    '}',
   ].join('\n')
 }
 

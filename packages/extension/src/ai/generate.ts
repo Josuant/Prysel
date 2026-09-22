@@ -7,6 +7,7 @@ import {
   buildUserPrompt,
   type GenerateOptions,
 } from './prompt.ts'
+import { normalizeAiJson } from './normalize.ts'
 import type { AiProvider } from './provider.ts'
 import { validateGenerated } from './validate.ts'
 
@@ -76,7 +77,7 @@ export async function generateLesson(
       prompt = buildRepairPrompt(prompt, raw, lastError)
       continue
     }
-    const validated = validateGenerated(program, trace, extracted.value)
+    const validated = validateGenerated(program, trace, normalizeAiJson(extracted.value))
     if (validated.ok) return { ok: true, lesson: validated.lesson, attempts: attempt }
     lastError = validated.error
     prompt = buildRepairPrompt(prompt, raw, lastError)

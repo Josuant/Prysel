@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser } from '@prysel/python'
 import { anthropicProvider, DEFAULT_ANTHROPIC_MODEL } from '../src/ai/anthropic.ts'
 import { generateLesson, MAX_ATTEMPTS } from '../src/ai/generate.ts'
+import { normalizeAiJson } from '../src/ai/normalize.ts'
 import {
   buildRepairPrompt,
   buildSystemPrompt,
@@ -119,6 +120,72 @@ describe('los textos que se le piden al modelo', () => {
   })
 })
 
+describe('normalizar lo que un modelo pequeño traduce por error', () => {
+  it('«valor»/«salida» pasan a «value»/«output», sin tocar lo demás', () => {
+    const lesson = {
+      version: 1,
+      title: 'x',
+      beats: [
+        {
+          at: { text: 'total = 0' },
+          note: { text: 'Explica esto.', style: 'aviso' },
+          ask: { text: '¿Cuánto vale total?', expect: 'valor', name: 'total' },
+        },
+        {
+          at: { text: 'print(total)' },
+          note: { text: 'Otra nota.', style: 'sticky' },
+          ask: { text: '¿Qué imprime?', expect: 'salida' },
+        },
+      ],
+    }
+    const normalized = normalizeAiJson(lesson) as typeof lesson
+    expect(normalized.beats[0]?.ask.expect).toBe('value')
+    expect(normalized.beats[0]?.note.style).toBe('warning')
+    expect(normalized.beats[1]?.ask.expect).toBe('output')
+    // Lo que no es un código fijo (el texto de la nota, el nombre) no se toca.
+    expect(normalized.beats[0]?.note.text).toBe('Explica esto.')
+    expect(normalized.beats[0]?.ask.name).toBe('total')
+  })
+
+  it('lo mismo con los acentos, las mayúsculas y las clases de nota y los nodos de «show»', () => {
+    const lesson = {
+      version: 1,
+      title: 'x',
+      show: ['PILA', 'Árbol', 'coleccion'],
+      beats: [{ at: { text: 'x' }, note: { text: 'a', style: 'Definición' } }],
+    }
+    const normalized = normalizeAiJson(lesson) as {
+      show: string[]
+      beats: { note: { style: string } }[]
+    }
+    expect(normalized.show).toEqual(['stack', 'tree', 'collection'])
+    expect(normalized.beats[0]?.note.style).toBe('definition')
+  })
+
+  it('ya correcto, o algo que no reconoce, se deja tal cual (lo valida `parseLesson` después)', () => {
+    const lesson = {
+      version: 1,
+      title: 'x',
+      beats: [
+        {
+          at: { text: 'x' },
+          note: { text: 'a', style: 'sticky' },
+          ask: { text: '?', expect: 'value' },
+        },
+      ],
+    }
+    expect(normalizeAiJson(lesson)).toEqual(lesson)
+    const unknown = { beats: [{ note: { style: 'brillante' } }] }
+    expect(normalizeAiJson(unknown)).toEqual(unknown)
+  })
+
+  it('no revienta con algo que no es un guion', () => {
+    expect(normalizeAiJson(null)).toBeNull()
+    expect(normalizeAiJson('texto')).toBe('texto')
+    expect(normalizeAiJson({ beats: 'no es una lista' })).toEqual({ beats: 'no es una lista' })
+  })
+})
+
 describe.skipIf(!available)('validar lo que genera el modelo, contra una traza real', () => {
   let kernel: Kernel
   beforeAll(async () => {
@@ -226,6 +293,25 @@ describe.skipIf(!available)('generar con reparación, sobre una traza real', () 
     expect(result.ok).toBe(true)
     expect(result.attempts).toBe(1)
     expect(provider.calls).toBe(1)
+  })
+
+  it('un «expect» traducido («valor» en vez de «value») se corrige solo, sin gastar una reparación', async () => {
+    const trace = await kernel.trace(SOURCE)
+    const translated = JSON.stringify({
+      version: 1,
+      title: 'El factorial',
+      beats: [
+        {
+          at: { text: 'total = 0' },
+          note: { text: 'Empieza en cero.' },
+          ask: { text: '¿Cuánto vale total?', expect: 'valor', name: 'total' },
+        },
+      ],
+    })
+    const provider = fakeProvider([translated])
+    const result = await generateLesson(parse(SOURCE), trace, provider, options)
+    expect(result.ok).toBe(true)
+    expect(result.attempts).toBe(1)
   })
 
   it('un JSON envuelto en una valla de código también se acepta', async () => {

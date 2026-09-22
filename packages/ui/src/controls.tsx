@@ -131,12 +131,16 @@ function Editor({
               rows={full ? 4 : 2}
               // Un mensaje con {huecos} recibe valores de otros nodos, pero sigue siendo editable.
               slot={{ id: 'value', label: 'Mensaje' }}
+              linked={isLinked('value')}
               onChange={on('value', (value: string) => patch({ value }))}
             />
           ) : (
             <TextInput
               value={model.value}
               placeholder={model.placeholder}
+              // La misma casilla que la de arriba: un mensaje corto también recibe un cable.
+              slot={{ id: 'value', label: 'Mensaje' }}
+              linked={isLinked('value')}
               onChange={on('value', (value: string) => patch({ value }))}
             />
           )}
