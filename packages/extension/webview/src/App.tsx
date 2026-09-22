@@ -32,7 +32,7 @@ import { OutputPanel } from './OutputPanel.tsx'
 import { PlayerBar } from './Player.tsx'
 import { InsightDock, InsightToggles, type Answer } from './InsightCards.tsx'
 import { INSIGHTS, type InsightId } from './insights.ts'
-import { cursorNode, observedAt } from './player.ts'
+import { cursorNode, enclosingFunctionNode, nodeAtLine, observedAt } from './player.ts'
 import { currentMoment, lessonNotes, momentsOf, resolveBeats } from './lessons.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
@@ -467,6 +467,29 @@ export function App() {
   // El programa enseña cada función una vez (como su llamada); una función se ve aparte.
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
   const view = useProgramView(source, program?.edges ?? NO_EDGES, density)
+  // Durante la reproducción, si el paso ocurre dentro de una función o un método que no se está viendo, el
+  // lienzo entra en él solo: si no, solo se vería la llamada que lo abrió, nunca la línea que se ejecuta.
+  // Al salir de la reproducción, se vuelve a lo que se estaba viendo antes de que empezara a seguir sola.
+  const priorFocus = useRef<string | null>(null)
+  const wasFollowing = useRef(false)
+  const focusId = view.focus?.id ?? null
+  const openView = view.open
+  useEffect(() => {
+    if (!program || !replay || !player.state?.event) {
+      if (wasFollowing.current) {
+        wasFollowing.current = false
+        openView(priorFocus.current)
+      }
+      return
+    }
+    if (!wasFollowing.current) {
+      wasFollowing.current = true
+      priorFocus.current = focusId
+    }
+    const node = nodeAtLine(program, player.state.event.l)
+    const wanted = node ? (enclosingFunctionNode(program, node)?.id ?? null) : null
+    if (wanted !== focusId) openView(wanted)
+  }, [program, replay, player.state, focusId, openView])
   const unsupported = program?.unsupported ?? []
   /** Los visores fijados: ventanas con el valor que dejó su sentencia, colgando de ella. */
   const viewers = useMemo(() => {

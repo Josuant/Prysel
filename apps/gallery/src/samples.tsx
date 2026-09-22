@@ -167,6 +167,11 @@ export const SAMPLES: Record<NodeKindId, Sample> = {
     code: 'try:',
     meta: 'sales.py:20',
   },
+  'control.entrypoint': {
+    label: 'programa principal',
+    code: 'if __name__ == "__main__":',
+    meta: 'sales.py:30',
+  },
   'control.except': {
     label: 'si falla: ValueError',
     code: 'except ValueError as error:',
@@ -329,6 +334,7 @@ export const GROUPS: Group[] = [
       'control.loop',
       'control.with',
       'control.try',
+      'control.entrypoint',
       'control.except',
       'control.clause',
       'control.break',

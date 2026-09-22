@@ -55,6 +55,8 @@ export const ICONS: Record<IconId, string> = {
   plus: 'M12 5.5v13M5.5 12h13',
   calendar:
     'M4.5 7.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2zM8.5 3.5v4M15.5 3.5v4M4.5 11h15',
+  // Una bandera de salida: por aquí empieza a correr el archivo.
+  flag: 'M6 20.5v-17M6 4.5h12l-3 3.7 3 3.8H6',
 }
 
 export const ICON_IDS = Object.keys(ICONS) as IconId[]

@@ -107,6 +107,7 @@ export type IconId =
   | 'exit'
   | 'skip'
   | 'lock'
+  | 'flag'
 
 /**
  * El editor gráfico que el nodo muestra en su cuerpo. Es lo que hace que un nodo sea

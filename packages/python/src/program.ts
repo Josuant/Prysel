@@ -32,7 +32,15 @@ import {
   type Semantics,
   type SemanticContext,
 } from './semantics.ts'
-import { calleeName, field, findFirst, firstLine, readIdentifiers, readNames } from './tree.ts'
+import {
+  calleeName,
+  field,
+  findFirst,
+  firstLine,
+  named,
+  readIdentifiers,
+  readNames,
+} from './tree.ts'
 
 /**
  * Del árbol de tree-sitter al grafo semántico.
@@ -678,6 +686,42 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
 /** Las cláusulas de un `try`, además de su cuerpo. */
 const CLAUSES = new Set(['except_clause', 'else_clause', 'finally_clause'])
 
+/** ¿Es la condición del idioma `__name__ == "__main__"` (en cualquier orden de los dos lados)? */
+function isMainGuard(condition: TsNode | null): boolean {
+  if (!condition || condition.type !== 'comparison_operator') return false
+  const parts = named(condition)
+  const operator = condition.childForFieldName('operators')
+  if (parts.length !== 2 || operator?.text !== '==') return false
+  const [a, b] = parts
+  const isName = (node: TsNode | undefined) =>
+    node?.type === 'identifier' && node.text === '__name__'
+  const isMain = (node: TsNode | undefined) =>
+    node !== undefined && stringContent(node) === '__main__'
+  return (isName(a) && isMain(b)) || (isName(b) && isMain(a))
+}
+
+/**
+ * El cuerpo de `if __name__ == "__main__":` como un único camino, sin bifurcación: como un `with`, pero
+ * sin nada que abrir. Es lo que se ejecuta al lanzar el archivo, y así se lee.
+ */
+function entryPoint(
+  builder: Builder,
+  statement: TsNode,
+  id: string,
+  code: string,
+  line: number,
+): string {
+  builder.add({ id, kind: 'control.entrypoint', label: 'Programa principal', code, line })
+  const own = ownComments(statement)
+  builder.annotate(id, own.header.join('\n'))
+  const body = field(statement, 'consequence')
+  const before = builder.nodes.length
+  const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+  if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
+  contain(builder, id, before)
+  return id
+}
+
 /** Todo lo que nace dentro de un nodo es suyo, a cualquier profundidad. */
 function contain(builder: Builder, id: string, before: number) {
   const nested = builder.nodes.slice(before).map((n) => n.id)
@@ -1072,6 +1116,14 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
     case 'if_statement': {
       const id = statementId(statement, 'if')
       const condition = field(statement, 'condition')
+      // `if __name__ == "__main__":` sin más cláusulas: el idioma de entrada de un script. Prysel traza
+      // el archivo como `__main__`, así que esta condición vale siempre — se dibuja como un único
+      // camino (como un `with`), no como una decisión con una salida que en la práctica nunca se toma.
+      const hasClause = statement.namedChildren.some(
+        (clause) => clause?.type === 'else_clause' || clause?.type === 'elif_clause',
+      )
+      if (!hasClause && isMainGuard(condition))
+        return entryPoint(builder, statement, id, code, line)
       const sem = conditionOf(condition)
       builder.add({
         id,

@@ -45,11 +45,20 @@ const ownerOf = (node: ProgramNode): string | undefined => node.range?.owner
 
 /** El nombre de la función en la que está un nodo (`null`: está en el programa, no en una función). */
 export function enclosingFunction(program: Program, node: ProgramNode): string | null {
+  return enclosingFunctionNode(program, node)?.label ?? null
+}
+
+/**
+ * La función (o el método) que envuelve a un nodo: el sitio al que hay que «entrar» para ver su línea de
+ * verdad, en vez de solo la llamada que la abrió. `null` si el nodo ya está en el programa (o en una clase,
+ * sin estar dentro de ninguno de sus métodos).
+ */
+export function enclosingFunctionNode(program: Program, node: ProgramNode): ProgramNode | null {
   const byId = new Map(program.nodes.map((n) => [n.id, n]))
   for (let up = ownerOf(node); up !== undefined; up = ownerOf(byId.get(up) ?? node)) {
     const owner = byId.get(up)
     if (!owner) return null
-    if (owner.kind === 'abstraction.collapsed') return owner.label
+    if (owner.kind === 'abstraction.collapsed') return owner
     if (owner === node) return null
   }
   return null
