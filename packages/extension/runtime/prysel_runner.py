@@ -634,6 +634,86 @@ def _comprehension_only(tree):
     return frozenset(name for name, count in targets.items() if stores.get(name, 0) == count)
 
 
+# ── modo seguro (código que nadie del usuario escribió: el que genera una IA para «Explicar un tema») ──
+
+# Deliberadamente corta: lo justo para explicar algoritmos y estructuras de datos sin acceso al sistema.
+# Créditos: docs/lecciones.md §5. Ampliar solo con módulos que no puedan tocar nada fuera del proceso.
+SAFE_MODULES = frozenset(
+    {
+        "math",
+        "random",
+        "itertools",
+        "functools",
+        "collections",
+        "dataclasses",
+        "typing",
+        "string",
+        "statistics",
+        "fractions",
+        "decimal",
+        "enum",
+        "re",
+        "heapq",
+        "bisect",
+        "copy",
+        "operator",
+        "textwrap",
+    }
+)
+# Nombres que abren una puerta fuera del sandbox (archivos, otro código, otros módulos) aunque el módulo
+# que los trae ya esté en SAFE_MODULES o sea un builtin.
+SAFE_FORBIDDEN_NAMES = frozenset(
+    {"open", "exec", "eval", "compile", "__import__", "input", "breakpoint", "globals", "locals", "vars"}
+)
+# Atributos con los que, encadenados, se llega a clases y módulos que no se importaron (el escape clásico
+# de un sandbox de Python: `().__class__.__bases__[0].__subclasses__()…`).
+SAFE_FORBIDDEN_ATTRS = frozenset(
+    {
+        "__globals__",
+        "__builtins__",
+        "__subclasses__",
+        "__bases__",
+        "__mro__",
+        "__code__",
+        "__closure__",
+        "__loader__",
+        "__getattribute__",
+        "__reduce__",
+        "__reduce_ex__",
+    }
+)
+
+
+class _UnsafeCode(Exception):
+    """El código no cumple el modo seguro: qué lo rompe y en qué línea, para pedirle a la IA que lo corrija."""
+
+    def __init__(self, message, line):
+        super().__init__(message)
+        self.line = line
+
+
+def _check_safe(tree):
+    """Recorre el árbol antes de ejecutar nada: un módulo o un nombre fuera de la lista corta el paso."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                top = alias.name.split(".")[0]
+                if top not in SAFE_MODULES:
+                    raise _UnsafeCode(
+                        f'el módulo «{alias.name}» no está permitido en modo seguro', node.lineno
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            top = (node.module or "").split(".")[0]
+            if node.level > 0 or top not in SAFE_MODULES:
+                raise _UnsafeCode(
+                    f'el módulo «{node.module or "."}» no está permitido en modo seguro', node.lineno
+                )
+        elif isinstance(node, ast.Name) and node.id in SAFE_FORBIDDEN_NAMES:
+            raise _UnsafeCode(f'«{node.id}» no está permitido en modo seguro', node.lineno)
+        elif isinstance(node, ast.Attribute) and node.attr in SAFE_FORBIDDEN_ATTRS:
+            raise _UnsafeCode(f'acceder a «{node.attr}» no está permitido en modo seguro', node.lineno)
+
+
 class _Tracer:
     """Graba, línea a línea, qué pasa al ejecutar un programa: es la verdad sobre la que se explica.
 
@@ -821,43 +901,57 @@ class Runner:
     # ── la traza ───────────────────────────────────────────────────────────────
 
     def trace(self, request):
-        """Ejecuta un programa entero, en un espacio de nombres aparte, grabando qué pasa línea a línea."""
+        """Ejecuta un programa entero, en un espacio de nombres aparte, grabando qué pasa línea a línea.
+
+        `safe`: código que nadie del usuario escribió (lo generó una IA para «Explicar un tema»). Antes de
+        ejecutar nada se recorre el árbol (`_check_safe`); si toca un módulo o un nombre fuera de la lista
+        corta, ni se compila: se devuelve el mismo evento de error que un fallo normal, con el motivo exacto
+        para poder pedirle a la IA que lo corrija.
+        """
         run = request.get("id", "trace")
         limit = int(request.get("limit", 5000))
+        safe = bool(request.get("safe", False))
         filename = f"<prysel-trace:{run}>"
         out = io.StringIO()
         source = request.get("code", "")
+        error = None
         try:
-            hidden = _comprehension_only(ast.parse(source))
+            tree = ast.parse(source)
+            hidden = _comprehension_only(tree)
+            if safe:
+                _check_safe(tree)
         except SyntaxError:
             hidden = frozenset()
+        except _UnsafeCode as unsafe:
+            hidden = frozenset()
+            error = {"name": "UnsafeCode", "message": str(unsafe), "line": unsafe.line}
         tracer = _Tracer(filename, limit, out, hidden)
         namespace = {"__name__": "__main__"}
-        saved = sys.stdout, sys.stderr
-        sys.stdout = sys.stderr = out
         truncated = False
-        error = None
-        self.running.set()
-        try:
-            code = compile(request.get("code", ""), filename, "exec")
-            sys.settrace(tracer.global_trace)
+        if error is None:
+            saved = sys.stdout, sys.stderr
+            sys.stdout = sys.stderr = out
+            self.running.set()
             try:
-                exec(code, namespace)
+                code = compile(source, filename, "exec")
+                sys.settrace(tracer.global_trace)
+                try:
+                    exec(code, namespace)
+                finally:
+                    sys.settrace(None)
+            except _TraceLimit:
+                truncated = True
+            except BaseException as caught:  # incluye KeyboardInterrupt y SystemExit
+                line = None
+                for frame in traceback.extract_tb(caught.__traceback__):
+                    if frame.filename == filename:
+                        line = frame.lineno
+                if isinstance(caught, SyntaxError) and caught.filename == filename:
+                    line = caught.lineno
+                error = {"name": type(caught).__name__, "message": _short(str(caught), 300), "line": line}
             finally:
-                sys.settrace(None)
-        except _TraceLimit:
-            truncated = True
-        except BaseException as caught:  # incluye KeyboardInterrupt y SystemExit
-            line = None
-            for frame in traceback.extract_tb(caught.__traceback__):
-                if frame.filename == filename:
-                    line = frame.lineno
-            if isinstance(caught, SyntaxError) and caught.filename == filename:
-                line = caught.lineno
-            error = {"name": type(caught).__name__, "message": _short(str(caught), 300), "line": line}
-        finally:
-            self.running.clear()
-            sys.stdout, sys.stderr = saved
+                self.running.clear()
+                sys.stdout, sys.stderr = saved
         emit(
             {
                 "ev": "trace",

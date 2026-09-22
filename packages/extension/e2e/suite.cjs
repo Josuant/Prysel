@@ -36,6 +36,7 @@ exports.run = async () => {
         'prysel.newLesson',
         'prysel.showAiProvider',
         'prysel.explainFile',
+        'prysel.explainTopic',
         'prysel.setAnthropicKey',
         'prysel.clearAnthropicKey',
         'prysel.interrupt',

@@ -5,11 +5,18 @@ import * as vscode from 'vscode'
 import { buildProgram, createPythonParser, type PythonParser } from '@prysel/python'
 import { validEdits, type TextEdit } from '@prysel/python/edits'
 import { anthropicProvider, DEFAULT_ANTHROPIC_MODEL } from './ai/anthropic.ts'
+import { cacheKeyOf, type CachedTopic } from './ai/cache.ts'
 import { generateLesson } from './ai/generate.ts'
 import type { AiProvider } from './ai/provider.ts'
+import {
+  generateTopic,
+  TOPIC_TRACE_LIMIT,
+  type TopicOptions,
+  type TopicRuntime,
+} from './ai/topic.ts'
 import { vscodeLmProvider } from './ai/vscodeLm.ts'
 import { Kernel } from './kernel.ts'
-import { lessonFileFor, readLesson, skeletonLesson } from './lesson.ts'
+import { lessonFileFor, parseLesson, readLesson, skeletonLesson, type Lesson } from './lesson.ts'
 import { parseHostMessage, type Theme, type WebviewMessage } from './protocol.ts'
 import { Session } from './session.ts'
 import type { KernelStatus, RunState } from './runs.ts'
@@ -61,16 +68,18 @@ const sessions = new Map<string, Session>()
 
 /**
  * El intérprete con el que se ejecuta: el de la configuración `prysel.python`, si se puso; si no, el
- * entorno que el usuario eligió para el archivo en la extensión de Python; y, en su defecto, `python`.
+ * entorno que el usuario eligió para ese archivo en la extensión de Python; y, en su defecto, `python`.
+ * Toma un `Uri` (no un documento) porque «Explicar un tema» necesita resolverlo antes de que el archivo
+ * exista.
  */
-async function pythonFor(doc: vscode.TextDocument): Promise<string> {
+async function pythonFor(uri: vscode.Uri): Promise<string> {
   const configured = vscode.workspace.getConfiguration('prysel').get<string>('python')
   if (configured) return configured
   try {
     const extension = vscode.extensions.getExtension('ms-python.python')
     const api = extension ? ((await extension.activate()) as PythonApi | undefined) : undefined
     const environments = api?.environments
-    const path = environments?.getActiveEnvironmentPath?.(doc.uri)
+    const path = environments?.getActiveEnvironmentPath?.(uri)
     const resolved = path ? await environments?.resolveEnvironment?.(path) : undefined
     const executable = resolved?.executable?.uri?.fsPath ?? path?.path
     if (executable) return executable
@@ -97,7 +106,7 @@ function sessionFor(doc: vscode.TextDocument): Session {
     session = new Session(
       async () =>
         Kernel.start({
-          python: await pythonFor(doc),
+          python: await pythonFor(doc.uri),
           cwd: vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath ?? dirname(doc.uri.fsPath),
         }),
       (change) => {
@@ -324,6 +333,200 @@ async function explainFile(context: vscode.ExtensionContext, doc: vscode.TextDoc
         `Prysel: lección generada (${result.attempts} intento${result.attempts === 1 ? '' : 's'}).`,
       )
     },
+  )
+}
+
+/** Un nombre de archivo sencillo a partir del tema: minúsculas, guiones bajos, sin acentos ni símbolos. */
+function slugify(topic: string): string {
+  const plain = topic
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return plain || 'tema'
+}
+
+/** Dónde se guarda lo ya generado para un (tema, nivel, idioma, proveedor): no volver a llamar al modelo. */
+const AI_CACHE_DIR = 'ai-cache'
+
+/**
+ * Pide el código y la lección al modelo (dentro de una barra de progreso), en modo seguro: `runtime.trace`
+ * usa un motor propio, aparte de cualquier sesión de documento, porque el archivo aún no existe. Si vale,
+ * lo deja en la caché (una comodidad: si no se pudo escribir, la lección generada se entrega igual).
+ */
+async function runGenerateTopic(
+  provider: AiProvider,
+  options: TopicOptions,
+  pyUri: vscode.Uri,
+  cacheUri: vscode.Uri,
+): Promise<{ title: string; code: string; lesson: Lesson } | null> {
+  return vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Prysel: generando con ${provider.id}…`,
+    },
+    async () => {
+      let kernel: Kernel | null = null
+      try {
+        const parser = await getParser()
+        kernel = await Kernel.start({
+          python: await pythonFor(pyUri),
+          cwd: vscode.workspace.getWorkspaceFolder(pyUri)?.uri.fsPath ?? dirname(pyUri.fsPath),
+        })
+        const runningKernel = kernel
+        const runtime: TopicRuntime = {
+          parse: (code) => buildProgram(parser.parse(code), code),
+          trace: (code) => runningKernel.trace(code, TOPIC_TRACE_LIMIT, true),
+        }
+        const result = await generateTopic(provider, runtime, options)
+        if (!result.ok || !result.lesson || !result.code || !result.title) {
+          void vscode.window.showErrorMessage(
+            `Prysel: no se pudo generar el tema tras ${result.attempts} intento(s). ${result.error ?? ''}`,
+          )
+          return null
+        }
+        const cached: CachedTopic = {
+          title: result.title,
+          code: result.code,
+          lesson: result.lesson,
+          cachedAt: new Date().toISOString(),
+        }
+        try {
+          await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(cacheUri, '..'))
+          await vscode.workspace.fs.writeFile(cacheUri, Buffer.from(JSON.stringify(cached), 'utf8'))
+        } catch {
+          // Sin la caché, la próxima vez vuelve a costar; no es motivo para no entregar esta.
+        }
+        return { title: result.title, code: result.code, lesson: result.lesson }
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Prysel: no se pudo generar el tema. ${messageOf(error)}`,
+        )
+        return null
+      } finally {
+        kernel?.dispose()
+      }
+    },
+  )
+}
+
+/**
+ * «Explicar un tema»: la segunda entrada de la Fase D, la que no parte de un archivo que ya existe. Pide
+ * un tema y, si hace falta, un nivel y el nombre del archivo a crear; la IA escribe un programa pequeño
+ * en modo seguro (no es código del usuario) y su lección, sobre la traza real de ejecutarlo. Repetir el
+ * mismo tema (con el mismo nivel, idioma y proveedor) no vuelve a llamar al modelo: sale de la caché.
+ */
+async function explainTopic(context: vscode.ExtensionContext) {
+  const folder = vscode.workspace.workspaceFolders?.[0]
+  if (!folder) {
+    void vscode.window.showInformationMessage(
+      'Prysel: abre una carpeta para generar ahí un tema nuevo.',
+    )
+    return
+  }
+  const topic = await vscode.window.showInputBox({
+    prompt: 'Qué tema quieres que explique (p. ej. «recursión», «ordenar con burbuja»)',
+    ignoreFocusOut: true,
+    validateInput: (value) => (value.trim() === '' ? 'Escribe un tema.' : null),
+  })
+  if (!topic) return
+  const level = await vscode.window.showInputBox({
+    prompt: 'Para quién es (opcional): «para quien empieza», «para quien ya sabe funciones»…',
+    ignoreFocusOut: true,
+  })
+  const fileName = await vscode.window.showInputBox({
+    prompt: 'Nombre del archivo a crear, en la raíz del proyecto',
+    value: `${slugify(topic)}.py`,
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      /^[\w.-]+\.py$/.test(value.trim()) ? null : 'Un nombre de archivo simple, acabado en «.py».',
+  })
+  if (!fileName) return
+  const provider = await pickProvider(context)
+  if (!provider) {
+    void vscode.window.showInformationMessage(
+      'Prysel: no hay ningún proveedor de IA disponible. Instala una extensión de chat (como Copilot) ' +
+        'o configura una clave con «Prysel: Configurar la clave de Anthropic».',
+    )
+    return
+  }
+
+  const pyUri = vscode.Uri.joinPath(folder.uri, fileName.trim())
+  const lessonUri = vscode.Uri.file(lessonFileFor(pyUri.fsPath))
+  try {
+    await vscode.workspace.fs.stat(pyUri)
+    const overwrite = await vscode.window.showWarningMessage(
+      `Prysel: «${fileName.trim()}» ya existe. ¿Sobrescribirlo con uno nuevo sobre este tema?`,
+      { modal: true },
+      'Sobrescribir',
+    )
+    if (overwrite !== 'Sobrescribir') return
+  } catch {
+    // No existe: se crea sin preguntar.
+  }
+
+  const options: TopicOptions = {
+    topic,
+    level: level || undefined,
+    lang: 'es',
+    source: fileName.trim(),
+  }
+  const cacheUri = vscode.Uri.joinPath(
+    context.globalStorageUri,
+    AI_CACHE_DIR,
+    `${cacheKeyOf({ topic, level: options.level, lang: options.lang, providerId: provider.id })}.json`,
+  )
+  let cached: (CachedTopic & { lesson: Lesson }) | null = null
+  try {
+    const raw = JSON.parse(
+      Buffer.from(await vscode.workspace.fs.readFile(cacheUri)).toString('utf8'),
+    ) as CachedTopic
+    // Una caché de una versión anterior del esquema no se usa a ciegas: si ya no valida, se regenera.
+    const parsed = parseLesson(raw.lesson)
+    cached =
+      parsed.ok && typeof raw.title === 'string' && typeof raw.code === 'string'
+        ? { ...raw, lesson: parsed.lesson }
+        : null
+  } catch {
+    cached = null
+  }
+
+  let generated: { title: string; code: string; lesson: Lesson } | null = null
+  if (cached) {
+    const choice = await vscode.window.showInformationMessage(
+      `Prysel: ya se generó una lección sobre «${topic}» (guardada el ${new Date(cached.cachedAt).toLocaleString()}). ¿La reutilizo o genero una nueva?`,
+      { modal: true },
+      'Usar la guardada',
+      'Generar de nuevo',
+    )
+    if (!choice) return
+    generated =
+      choice === 'Usar la guardada'
+        ? { title: cached.title, code: cached.code, lesson: cached.lesson }
+        : await runGenerateTopic(provider, options, pyUri, cacheUri)
+  } else {
+    const proceed = await vscode.window.showWarningMessage(
+      `Prysel enviará el tema «${topic}»${level ? ` (nivel: ${level})` : ''} a ${provider.id} para ` +
+        'generar un programa y su lección. ¿Continuar?',
+      { modal: true },
+      'Continuar',
+    )
+    if (proceed !== 'Continuar') return
+    generated = await runGenerateTopic(provider, options, pyUri, cacheUri)
+  }
+  if (!generated) return
+
+  await vscode.workspace.fs.writeFile(pyUri, Buffer.from(generated.code, 'utf8'))
+  await vscode.workspace.fs.writeFile(
+    lessonUri,
+    Buffer.from(JSON.stringify(generated.lesson, null, 2) + '\n', 'utf8'),
+  )
+  const doc = await vscode.workspace.openTextDocument(pyUri)
+  await vscode.window.showTextDocument(doc)
+  await postLesson(doc)
+  void vscode.window.showInformationMessage(
+    `Prysel: «${generated.title}» generado (${fileName.trim()}).`,
   )
 }
 
@@ -639,6 +842,15 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
       } catch (error) {
         void vscode.window.showErrorMessage(
           `Prysel: no se pudo generar la lección. ${messageOf(error)}`,
+        )
+      }
+    }),
+    vscode.commands.registerCommand('prysel.explainTopic', async () => {
+      try {
+        await explainTopic(context)
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Prysel: no se pudo generar el tema. ${messageOf(error)}`,
         )
       }
     }),

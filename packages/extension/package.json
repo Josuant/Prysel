@@ -20,6 +20,7 @@
     "onCommand:prysel.trace",
     "onCommand:prysel.newLesson",
     "onCommand:prysel.explainFile",
+    "onCommand:prysel.explainTopic",
     "onCommand:prysel.setAnthropicKey",
     "onCommand:prysel.clearAnthropicKey",
     "onCommand:prysel.showAiProvider"
@@ -55,6 +56,11 @@
       {
         "command": "prysel.explainFile",
         "title": "Explicar este archivo con IA (genera su lección)",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.explainTopic",
+        "title": "Explicar un tema con IA (genera un programa nuevo y su lección)",
         "category": "Prysel"
       },
       {

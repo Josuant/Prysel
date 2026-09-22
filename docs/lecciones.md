@@ -292,6 +292,54 @@ sección 5: allowlist de módulos, sin ejecutar nada que no se haya visto), stre
 respuesta entera antes de validar, no se dibuja «en directo»), y caché por (tema, nivel, idioma, modelo) —
 hoy la única «caché» es que no se regenera un guion existente sin confirmar.
 
+### Revisión: «Explicar un tema», con modo seguro y caché
+
+Cierra la Fase D con la segunda entrada de la sección 3.1: no parte de un archivo que ya existe, así que el
+código lo escribe la IA — y ese código nadie del usuario lo revisó antes de que se ejecute.
+
+- **Modo seguro** (`packages/extension/runtime/prysel_runner.py`, `SAFE_MODULES`/`_check_safe`): antes de
+  compilar una sola línea, se recorre el árbol (`ast`) del programa. Un `import` de un módulo fuera de una
+  lista corta (`math`, `random`, `itertools`, `functools`, `collections`, `dataclasses`, `typing`, `string`,
+  `statistics`, `fractions`, `decimal`, `enum`, `re`, `heapq`, `bisect`, `copy`, `operator`, `textwrap`), un
+  nombre como `open`/`exec`/`eval`/`compile`/`__import__`/`input`/`globals`/`locals`/`vars`, o un atributo
+  del escape clásico de un sandbox de Python (`__subclasses__`, `__globals__`, `__bases__`, `__mro__`,
+  `__code__`…) cortan el paso: ni se compila, y el motivo llega como el mismo `error` de una traza normal
+  (`error.name === 'UnsafeCode'`), con su línea. El tope de pasos que ya existía (`limit`) sigue cortando un
+  bucle sin fin igual que siempre: no hizo falta ningún tope de tiempo aparte. `Kernel.trace`/`Session.trace`
+  ganan un tercer parámetro, `safe` (`false` por defecto: el código del propio usuario, en «Explicar este
+  archivo» o al pulsar «▶ Paso a paso», sigue sin esta restricción — ya lo cubre la confianza del espacio de
+  trabajo).
+- **El código, antes que el guion** (`src/ai/topic.ts`, `generateTopic`): un prompt aparte
+  (`buildCodeSystemPrompt`/`buildCodeUserPrompt`) le pide al modelo un JSON `{ title, code }`: un programa de
+  como mucho 40 líneas, determinista (semilla fija si usa `random`), sin `input()`, que termine solo. Antes
+  de gastar una ejecución se comprueban esas mismas cosas del lado de la extensión (líneas, `input()`); el
+  resto —el módulo prohibido, el `NameError`, el `ZeroDivisionError`— solo se sabe al trazarlo EN MODO
+  SEGURO, y ese es el motivo exacto que se le devuelve al modelo para reparar (máximo 3 intentos, igual que
+  la narración). Con una traza real y sin error, se reutiliza `generateLesson` tal cual (con su propia
+  reparación, aparte): el código no se vuelve a tocar si lo que falla es solo el guion.
+- **Comando `prysel.explainTopic`**: pide el tema, opcionalmente el nivel, y el nombre del archivo a crear
+  (en la raíz del proyecto abierto); avisa antes de mandar el tema al proveedor (nunca código del usuario,
+  porque aquí no lo hay todavía) y antes de sobrescribir un archivo existente. Al terminar dejan un `.py` y
+  su `.lesson.json` nuevos, como si el usuario los hubiera escrito él mismo, y abre el primero.
+- **Caché por (tema, nivel, idioma, proveedor)** (`src/ai/cache.ts`, `cacheKeyOf`): una clave estable
+  (espacios y mayúsculas de más no cuentan) sobre un `sha256`, guardada en el almacén global de la extensión
+  (`context.globalStorageUri/ai-cache/<clave>.json`). Repetir el mismo tema pregunta si se reutiliza lo
+  guardado o se genera de nuevo, sin volver a llamar al modelo si se elige lo primero. Una caché de un
+  esquema de lección más viejo que ya no valida (`parseLesson`) se descarta sola, como si no existiera.
+
+```
+tema + nivel
+  → prompt de código (≤ 40 líneas, determinista, módulos permitidos)
+  → modelo → JSON { title, code }
+  → se analiza y se traza EN MODO SEGURO   ← si falla (código roto o prohibido), reparar (máx. 3)
+  → con la traza real, generateLesson narra el guion (su propia reparación, aparte)
+  → .py + .lesson.json, y a la caché
+```
+
+Pendiente de la fase: streaming («en directo», construir el diagrama momento a momento según llega, en vez
+de esperar toda la respuesta antes de dibujar nada). No es necesario para que una lección generada valga o
+no (el criterio de la hoja de ruta), así que se deja para cuando toque la Fase E (animación avanzada).
+
 ### Revisión: correcciones y el ejemplo que pone todo a prueba
 
 Tres arreglos y un ejemplo final para comprobar que las cuatro fases encajan entre sí.
@@ -332,7 +380,7 @@ de las cinco de la Fase C:
   revela punto a punto según el paso actual, nunca de golpe. Sirve para cualquier programa con un bucle de
   optimización o entrenamiento, no solo para este ejemplo.
 - **Trayectoria** (`show: "trail"`, campo de guion `trail: {value, min, max, obstacle?: {name, gap,
-  width}}`): una escena SVG con un punto (la variable seguida, escalada entre `min` y `max`) y, si el guion
+width}}`): una escena SVG con un punto (la variable seguida, escalada entre `min` y `max`) y, si el guion
   declara un `obstacle`, dos barras que marcan un hueco a esquivar más una chispa (sparkline) de los últimos
   valores. Sigue el fotograma más reciente que tenga la variable seguida, así que funciona aunque esa
   variable solo exista dentro de una función que no es la que se ejecuta en este preciso paso.

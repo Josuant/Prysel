@@ -267,6 +267,73 @@ describe.skipIf(!available)('grabar la traza con el motor', () => {
   })
 })
 
+describe.skipIf(!available)('modo seguro: código que nadie del usuario escribió', () => {
+  let kernel: Kernel
+  beforeAll(async () => {
+    kernel = await Kernel.start({ python })
+  }, 30_000)
+  afterAll(() => {
+    kernel.dispose()
+  })
+
+  it('sin `safe`, todo corre igual que siempre', async () => {
+    const result = await kernel.trace('import os\nprint(os.name)\n')
+    expect(result.error).toBeNull()
+  })
+
+  it('un módulo fuera de la lista corta ni se compila: llega como error, sin ejecutar nada', async () => {
+    const result = await kernel.trace('import os\nprint(os.name)\n', 5000, true)
+    expect(result.events).toEqual([])
+    expect(result.output).toBe('')
+    expect(result.error).toMatchObject({ name: 'UnsafeCode' })
+    expect(result.error?.message).toMatch(/«os».*no está permitido en modo seguro/)
+  })
+
+  it('`open`, `eval` y compañía se rechazan aunque no haga falta importar nada', async () => {
+    const abre = await kernel.trace('f = open("x.txt")\n', 5000, true)
+    expect(abre.error?.name).toBe('UnsafeCode')
+    const evalua = await kernel.trace('eval("1 + 1")\n', 5000, true)
+    expect(evalua.error?.name).toBe('UnsafeCode')
+  })
+
+  it('la vía clásica de escape (subclasses de object) también se corta', async () => {
+    const result = await kernel.trace(
+      'fuga = ().__class__.__bases__[0].__subclasses__()\n',
+      5000,
+      true,
+    )
+    expect(result.error).toMatchObject({ name: 'UnsafeCode' })
+    expect(result.error?.message).toContain('__subclasses__')
+  })
+
+  it('los módulos de la lista corta, y una clase con `__init__`, corren normal', async () => {
+    const result = await kernel.trace(
+      [
+        'import math, random',
+        'random.seed(1)',
+        'class Punto:',
+        '    def __init__(self, x, y):',
+        '        self.x = x',
+        '        self.y = y',
+        'p = Punto(1, 2)',
+        'print(math.hypot(p.x, p.y))',
+        'if __name__ == "__main__":',
+        '    print(random.random())',
+      ].join('\n'),
+      5000,
+      true,
+    )
+    expect(result.error).toBeNull()
+    expect(result.truncated).toBe(false)
+  })
+
+  it('el tope de pasos sigue cortando un bucle sin fin, aunque sea seguro', async () => {
+    const result = await kernel.trace('n = 0\nwhile True:\n    n += 1\n', 200, true)
+    expect(result.truncated).toBe(true)
+    expect(result.events.length).toBe(200)
+  })
+})
+
 describe.skipIf(!available)('las listas cortas se graban enteras', () => {
   let kernel: Kernel
   beforeAll(async () => {

@@ -366,8 +366,12 @@ export class Kernel {
    * qué pasa línea a línea. `limit` corta la traza (y el programa) al llegar a ese número de pasos: de
    * sobra para una clase o una función normal, y con sitio para una simulación pequeña (una población que
    * entrena unas pocas generaciones) sin que se corte a medias.
+   *
+   * `safe`: para código que nadie del usuario escribió (lo generó una IA para «Explicar un tema»). El
+   * motor recorre el árbol antes de ejecutar nada; un módulo o un nombre fuera de la lista corta ni se
+   * compila, y llega como un error de traza más (`error.name === 'UnsafeCode'`).
    */
-  trace(code: string, limit = 20_000): Promise<Trace> {
+  trace(code: string, limit = 20_000, safe = false): Promise<Trace> {
     const id = `t${++this.counter}`
     return new Promise((resolve, reject) => {
       if (this.dead) return reject(this.dead)
@@ -381,7 +385,7 @@ export class Kernel {
         })
       })
       try {
-        this.send({ op: 'trace', id, code, limit })
+        this.send({ op: 'trace', id, code, limit, safe })
       } catch (error) {
         this.waiting.delete(`trace:${id}`)
         reject(error)

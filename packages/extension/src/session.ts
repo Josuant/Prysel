@@ -238,7 +238,7 @@ export class Session {
    * Graba la traza de un programa entero: qué pasa línea a línea. Va en el mismo motor pero en un espacio de
    * nombres aparte (no toca lo ejecutado), y se encola con las ejecuciones. `null` si no hay motor.
    */
-  trace(code: string, limit = 20_000): Promise<Trace | null> {
+  trace(code: string, limit = 20_000, safe = false): Promise<Trace | null> {
     const job = this.queue.then(async () => {
       if (this.disposed) return null
       this.problem = null
@@ -247,7 +247,7 @@ export class Session {
       this.status = 'busy'
       this.notify({ type: 'views' })
       try {
-        return await kernel.trace(code, limit)
+        return await kernel.trace(code, limit, safe)
       } catch (error) {
         this.problem = error instanceof Error ? error.message : String(error)
         return null

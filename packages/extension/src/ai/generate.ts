@@ -7,6 +7,7 @@ import {
   buildUserPrompt,
   type GenerateOptions,
 } from './prompt.ts'
+import { extractJson } from './json.ts'
 import { normalizeAiJson } from './normalize.ts'
 import type { AiProvider } from './provider.ts'
 import { validateGenerated } from './validate.ts'
@@ -28,23 +29,6 @@ export interface GenerateResult {
   attempts: number
   /** Lo último que devolvió el modelo, para depurar un fallo que no se pudo corregir. */
   raw?: string
-}
-
-type Extracted = { ok: true; value: unknown } | { ok: false; error: string }
-
-/** Un modelo a veces envuelve el JSON en una valla de código: se quita antes de parsear. */
-function extractJson(text: string): Extracted {
-  const trimmed = text.trim()
-  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed)
-  const body = fenced?.[1] ?? trimmed
-  try {
-    return { ok: true, value: JSON.parse(body) }
-  } catch (error) {
-    return {
-      ok: false,
-      error: `La respuesta no es JSON válido: ${error instanceof Error ? error.message : String(error)}`,
-    }
-  }
 }
 
 export async function generateLesson(
