@@ -242,3 +242,52 @@ true)`, un chip por fila) y mezcla variables y funciones por su línea.
 
 Comprobado con las tres lecciones de ejemplo en un VS Code real: la burbuja, el factorial (con su función y
 sus variables en columna) y sin romper ninguna densidad (compacto/normal/expandido).
+
+### Fase D: generación con IA (primera entrada: «Explicar este archivo»)
+
+Hecho (probado con proveedores de mentira y con la traza real del factorial; sin llamar a ningún modelo de
+verdad desde las pruebas, que no llevan clave ni Copilot instalado):
+
+- **Interfaz de proveedor** (`src/ai/provider.ts`): `AiProvider = { id, generate({system, prompt, maxTokens}) }`.
+  Nada más del sistema sabe si detrás hay `vscode.lm` o Anthropic.
+  - `src/ai/vscodeLm.ts`: `vscode.lm.selectChatModels({})`, usa lo que el usuario ya tenga (Copilot u otro),
+    sin pedir clave; `null` si no hay ninguno.
+  - `src/ai/anthropic.ts`: la API de Mensajes de Anthropic por HTTP, con `fetchImpl` inyectable (así se
+    prueba sin red). La clave vive en `SecretStorage` (comandos `Prysel: Configurar la clave de Anthropic`
+    y `…: Borrar la clave de Anthropic`); el modelo es configurable (`prysel.anthropicModel`) porque el
+    nombre exacto cambia con el tiempo.
+  - Ajuste `prysel.aiProvider` (`auto` | `vscode` | `anthropic`); `auto` prueba `vscode.lm` primero (no
+    hace falta clave) y si no hay, Anthropic si hay clave guardada.
+- **«Explicar este archivo»** (comando `prysel.explainFile`): traza el archivo (la Fase A ya sabe hacerlo),
+  le pide al modelo un guion anclado a esa traza real y, si pasa la validación, lo escribe como
+  `<archivo>.lesson.json` junto al `.py` y lo manda al lienzo. Antes de mandar nada fuera, avisa qué se
+  envía (el código y la traza) y a qué proveedor, y pide confirmación explícita; si ya existe un guion,
+  confirma antes de sobrescribirlo.
+- **La verdad es la traza, no lo que el modelo suponga** (`src/ai/prompt.ts`): el pedido lleva la lista de
+  sentencias del programa (lo único válido como `at.text`/`when.text`) y un resumen legible de la traza real
+  (qué cambia en cada paso, qué se llama, qué se devuelve, qué se imprime), con tope (400 pasos) y aviso de
+  corte. El mensaje de sistema exige responder solo JSON, con el formato exacto del guion, las clases de
+  nota que existen y los nodos para entender disponibles.
+- **No se acepta nada que no se compruebe** (`src/ai/validate.ts`, reutilizando `resolveBeats` y
+  `expectedFor` de las fases B y C): el formato (`parseLesson`), que cada ancla sea de verdad una sentencia
+  del programa, que se ejecute las veces que pide `visit`, y que una pregunta (`ask`) se pueda responder con
+  la traza (el nombre existe justo ahí). Un guion que no cumple algo no se guarda nunca.
+- **Reparación** (`src/ai/generate.ts`): si no vale, se le dice el motivo exacto (letra por letra: «el ancla
+  «X» no es ninguna sentencia», «no se ejecuta 99 veces», «la pregunta pide un nombre que no existe ahí») y
+  se le pide corregir solo eso, hasta dos veces (tres intentos en total). Si a la tercera sigue sin valer,
+  se avisa del motivo del último intento en vez de guardar algo a medias.
+- `anchorNode` se movió a `src/anchor.ts` (antes solo en el webview) para que la generación compruebe las
+  anclas con la misma regla exacta con la que el lienzo las dibuja.
+
+```
+programa + traza real
+  → prompt (sentencias + resumen de la traza)
+  → modelo → JSON
+  → validar (formato, anclas, visitas, preguntas)  → si falla, reparar (máx. 2 veces)
+  → .lesson.json
+```
+
+Pendiente de la fase: «Explicar un tema» (generar el código además del guion, con el modo seguro de la
+sección 5: allowlist de módulos, sin ejecutar nada que no se haya visto), streaming (hoy se espera la
+respuesta entera antes de validar, no se dibuja «en directo»), y caché por (tema, nivel, idioma, modelo) —
+hoy la única «caché» es que no se regenera un guion existente sin confirmar.

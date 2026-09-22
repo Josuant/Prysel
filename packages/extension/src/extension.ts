@@ -4,6 +4,10 @@ import { basename, dirname, join } from 'node:path'
 import * as vscode from 'vscode'
 import { buildProgram, createPythonParser, type PythonParser } from '@prysel/python'
 import { validEdits, type TextEdit } from '@prysel/python/edits'
+import { anthropicProvider, DEFAULT_ANTHROPIC_MODEL } from './ai/anthropic.ts'
+import { generateLesson } from './ai/generate.ts'
+import type { AiProvider } from './ai/provider.ts'
+import { vscodeLmProvider } from './ai/vscodeLm.ts'
 import { Kernel } from './kernel.ts'
 import { lessonFileFor, readLesson, skeletonLesson } from './lesson.ts'
 import { parseHostMessage, type Theme, type WebviewMessage } from './protocol.ts'
@@ -216,6 +220,111 @@ async function refresh() {
     // El código a medio escribir no debe tumbar el lienzo.
     postToAll({ type: 'update', program: null })
   }
+}
+
+/** Dónde vive, en el llavero del sistema, la clave de la API de Anthropic. */
+const ANTHROPIC_SECRET = 'prysel.anthropicApiKey'
+
+/**
+ * El proveedor de IA con el que generar una lección: el que se pida en el ajuste `prysel.aiProvider`, o
+ * («auto», por defecto) el de `vscode.lm` si hay uno instalado y, si no, el de Anthropic si hay clave.
+ * `null` si no hay ninguno disponible.
+ */
+async function pickProvider(context: vscode.ExtensionContext): Promise<AiProvider | null> {
+  const preference = vscode.workspace.getConfiguration('prysel').get<string>('aiProvider') ?? 'auto'
+  const tryVscode = async () => {
+    try {
+      return await vscodeLmProvider()
+    } catch {
+      return null
+    }
+  }
+  const tryAnthropic = async () => {
+    const key = await context.secrets.get(ANTHROPIC_SECRET)
+    if (!key) return null
+    const model = vscode.workspace.getConfiguration('prysel').get<string>('anthropicModel')
+    return anthropicProvider({ apiKey: key, model: model || DEFAULT_ANTHROPIC_MODEL })
+  }
+  if (preference === 'vscode') return tryVscode()
+  if (preference === 'anthropic') return tryAnthropic()
+  return (await tryVscode()) ?? (await tryAnthropic())
+}
+
+/**
+ * Genera el guion de la lección de un archivo con IA: se traza el programa (la verdad sobre la que se
+ * narra) y se le pide al modelo que lo explique anclado a esa traza, validando y reparando lo que haga
+ * falta. El código y la traza salen de la máquina del usuario: se avisa antes de mandarlos.
+ */
+async function explainFile(context: vscode.ExtensionContext, doc: vscode.TextDocument) {
+  const provider = await pickProvider(context)
+  if (!provider) {
+    void vscode.window.showInformationMessage(
+      'Prysel: no hay ningún proveedor de IA disponible. Instala una extensión de chat (como Copilot) ' +
+        'o configura una clave con «Prysel: Configurar la clave de Anthropic».',
+    )
+    return
+  }
+  const lessonUri = lessonUriOf(doc)
+  try {
+    await vscode.workspace.fs.stat(lessonUri)
+    const overwrite = await vscode.window.showWarningMessage(
+      `Prysel: «${basename(lessonUri.fsPath)}» ya existe. ¿Generarla de nuevo y sobrescribirla?`,
+      { modal: true },
+      'Generar de nuevo',
+    )
+    if (overwrite !== 'Generar de nuevo') return
+  } catch {
+    // No existe: se crea sin preguntar.
+  }
+  const proceed = await vscode.window.showWarningMessage(
+    `Prysel enviará el código de «${basename(doc.fileName)}» y la traza de ejecutarlo a ${provider.id} ` +
+      'para generar la lección. ¿Continuar?',
+    { modal: true },
+    'Continuar',
+  )
+  if (proceed !== 'Continuar') return
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Prysel: generando con ${provider.id}…`,
+    },
+    async () => {
+      let program
+      try {
+        program = await analyse(doc)
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Prysel: no se pudo analizar el archivo. ${messageOf(error)}`,
+        )
+        return
+      }
+      const trace = await sessionFor(doc).trace(doc.getText())
+      if (!trace) {
+        const problem = sessions.get(doc.uri.toString())?.problem ?? 'motivo desconocido'
+        void vscode.window.showErrorMessage(`Prysel: no se pudo grabar la traza (${problem}).`)
+        return
+      }
+      const result = await generateLesson(program, trace, provider, {
+        source: basename(doc.fileName),
+        lang: 'es',
+      })
+      if (!result.ok || !result.lesson) {
+        void vscode.window.showErrorMessage(
+          `Prysel: la lección no pasó la validación tras ${result.attempts} intento(s). ${result.error ?? ''}`,
+        )
+        return
+      }
+      await vscode.workspace.fs.writeFile(
+        lessonUri,
+        Buffer.from(JSON.stringify(result.lesson, null, 2) + '\n', 'utf8'),
+      )
+      await postLesson(doc)
+      void vscode.window.showInformationMessage(
+        `Prysel: lección generada (${result.attempts} intento${result.attempts === 1 ? '' : 's'}).`,
+      )
+    },
+  )
 }
 
 /** El guion de la lección de un archivo: el `.lesson.json` que hay junto a él (`factorial.py` → `factorial.lesson.json`). */
@@ -506,6 +615,37 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
           `Prysel: no se pudo abrir la lección. ${messageOf(error)}`,
         )
       }
+    }),
+    vscode.commands.registerCommand('prysel.explainFile', async () => {
+      const doc = targetDocument()
+      if (!doc || doc.uri.scheme !== 'file') {
+        void vscode.window.showInformationMessage(
+          'Prysel: abre un archivo de Python guardado para explicarlo con IA.',
+        )
+        return
+      }
+      if (!mayRun()) return
+      try {
+        await explainFile(context, doc)
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Prysel: no se pudo generar la lección. ${messageOf(error)}`,
+        )
+      }
+    }),
+    vscode.commands.registerCommand('prysel.setAnthropicKey', async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: 'Clave de la API de Anthropic (console.anthropic.com)',
+        password: true,
+        ignoreFocusOut: true,
+      })
+      if (!key) return
+      await context.secrets.store(ANTHROPIC_SECRET, key)
+      void vscode.window.showInformationMessage('Prysel: clave de Anthropic guardada.')
+    }),
+    vscode.commands.registerCommand('prysel.clearAnthropicKey', async () => {
+      await context.secrets.delete(ANTHROPIC_SECRET)
+      void vscode.window.showInformationMessage('Prysel: clave de Anthropic borrada.')
     }),
     vscode.commands.registerCommand('prysel.interrupt', () => {
       const doc = targetDocument()

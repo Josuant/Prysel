@@ -1,7 +1,8 @@
-import type { Program, ProgramNode } from '@prysel/python'
+import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
 import { FUNCTION_CHIP, type CanvasNode } from '@prysel/ui'
-import type { Anchor, Beat, Lesson } from '../../src/lesson.ts'
+import { anchorNode } from '../../src/anchor.ts'
+import type { Beat, Lesson } from '../../src/lesson.ts'
 import type { Trace } from '../../src/trace.ts'
 import { nearestVisible, nodeAtLine, visibleCaller } from './player.ts'
 
@@ -10,22 +11,8 @@ import { nearestVisible, nodeAtLine, visibleCaller } from './player.ts'
  * cuenta, y qué notas se ven en cada momento. Puro: recibe el programa, el guion y la traza.
  */
 
-const squash = (text: string) => text.replace(/\s+/g, ' ').trim()
-/** Lo que identifica a una sentencia por su texto: su primera línea, sin sangría ni espacios de más. */
-const keyOf = (node: ProgramNode) => squash((node.text ?? node.code).split(/\r?\n/)[0] ?? '')
-
-/**
- * El nodo que nombra un ancla: el `nth`-ésimo (por defecto el primero) cuya primera línea es ese texto; si
- * ninguno lo es igual, el que empieza por él (para no romper un ancla por un espacio o un `:` de más).
- */
-export function anchorNode(program: Program, anchor: Anchor): ProgramNode | null {
-  const wanted = squash(anchor.text)
-  if (wanted === '') return null
-  const exact = program.nodes.filter((node) => keyOf(node) === wanted)
-  const found =
-    exact.length > 0 ? exact : program.nodes.filter((node) => keyOf(node).startsWith(wanted))
-  return found[(anchor.nth ?? 1) - 1] ?? null
-}
+// El ancla (por el texto de una sentencia) es la misma que usa la generación con IA para comprobar el guion.
+export { anchorNode } from '../../src/anchor.ts'
 
 export interface ResolvedBeat {
   beat: Beat

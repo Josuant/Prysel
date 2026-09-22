@@ -34,6 +34,9 @@ exports.run = async () => {
         'prysel.runAll',
         'prysel.trace',
         'prysel.newLesson',
+        'prysel.explainFile',
+        'prysel.setAnthropicKey',
+        'prysel.clearAnthropicKey',
         'prysel.interrupt',
         'prysel.restart',
       ].filter((c) => commands.includes(c)),
@@ -98,6 +101,11 @@ exports.run = async () => {
     await wait(() => api.state().trace?.status === 'done' || api.state().trace?.status === 'failed')
     check('traza', api.state().trace)
     check('traza de la versión actual', api.state().trace?.version === doc.version)
+
+    // Sin ningún proveedor de IA instalado ni clave configurada, "explicar" avisa en vez de fallar.
+    await vscode.commands.executeCommand('prysel.clearAnthropicKey')
+    await vscode.commands.executeCommand('prysel.explainFile')
+    check('explicar sin proveedor no revienta', true)
 
     await vscode.commands.executeCommand('prysel.restart')
     await wait(() => api.state().kernel === 'stopped')

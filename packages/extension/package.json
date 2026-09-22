@@ -18,7 +18,10 @@
     "onCommand:prysel.runAll",
     "onView:prysel.canvasView",
     "onCommand:prysel.trace",
-    "onCommand:prysel.newLesson"
+    "onCommand:prysel.newLesson",
+    "onCommand:prysel.explainFile",
+    "onCommand:prysel.setAnthropicKey",
+    "onCommand:prysel.clearAnthropicKey"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -44,6 +47,11 @@
         "category": "Prysel"
       },
       {
+        "command": "prysel.explainFile",
+        "title": "Explicar este archivo con IA (genera su lección)",
+        "category": "Prysel"
+      },
+      {
         "command": "prysel.interrupt",
         "title": "Interrumpir la ejecución",
         "category": "Prysel"
@@ -51,6 +59,16 @@
       {
         "command": "prysel.restart",
         "title": "Reiniciar el motor",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.setAnthropicKey",
+        "title": "Configurar la clave de Anthropic",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.clearAnthropicKey",
+        "title": "Borrar la clave de Anthropic",
         "category": "Prysel"
       }
     ],
@@ -80,6 +98,26 @@
           "default": "",
           "scope": "machine-overridable",
           "markdownDescription": "Intérprete de Python con el que se ejecuta el código desde el lienzo. Vacío: el entorno elegido en la extensión de Python (o `python` del PATH)."
+        },
+        "prysel.aiProvider": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "vscode",
+            "anthropic"
+          ],
+          "enumDescriptions": [
+            "El de vscode.lm si hay uno instalado (p. ej. Copilot); si no, el de Anthropic si hay clave.",
+            "Solo el modelo de chat que ya tengas instalado en VS Code (sin clave).",
+            "Solo la API de Anthropic, con la clave guardada con «Prysel: Configurar la clave de Anthropic»."
+          ],
+          "default": "auto",
+          "markdownDescription": "Con qué IA se genera la lección de «Explicar este archivo»."
+        },
+        "prysel.anthropicModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Modelo de la API de Anthropic a usar. Vacío: el que trae la extensión por defecto (cámbialo si tu cuenta no tiene acceso a ese)."
         }
       }
     }
