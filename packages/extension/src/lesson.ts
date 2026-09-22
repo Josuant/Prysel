@@ -28,8 +28,34 @@ export interface Anchor {
 }
 
 /** Los nodos para entender que sabe dibujar el lienzo. Deben coincidir con `INSIGHTS` del webview. */
-export const INSIGHT_IDS = ['variables', 'stack', 'tree', 'memory', 'collection'] as const
+export const INSIGHT_IDS = [
+  'variables',
+  'stack',
+  'tree',
+  'memory',
+  'collection',
+  'evolution',
+  'trail',
+] as const
 export type InsightIdentifier = (typeof INSIGHT_IDS)[number]
+
+/** Una serie de la tarjeta «Evolución»: el nombre de una variable numérica y cómo se llama en la leyenda. */
+export interface TrackedSeries {
+  label: string
+  name: string
+}
+
+/**
+ * Lo que dibuja la tarjeta «Trayectoria»: el camino de un valor numérico a lo largo del tiempo (una altura,
+ * una posición…) dentro de unos límites conocidos, y de un obstáculo opcional con el que se compara (su
+ * posición y el centro del hueco por el que se pasa).
+ */
+export interface Trail {
+  value: string
+  min: number
+  max: number
+  obstacle?: { name: string; gap: string; width: number }
+}
 
 /**
  * Una pregunta antes de ver lo que pasa: «¿qué valdrá `total` tras esta línea?» (`value`, con el nombre) o
@@ -64,6 +90,10 @@ export interface Lesson {
   source?: string
   /** Qué nodos para entender se enseñan al abrir la lección (el alumno puede cambiarlos). */
   show?: InsightIdentifier[]
+  /** Las series que sigue la tarjeta «Evolución», si se pide en `show`. */
+  track?: TrackedSeries[]
+  /** Lo que dibuja la tarjeta «Trayectoria», si se pide en `show`. */
+  trail?: Trail
   beats: Beat[]
 }
 
@@ -123,6 +153,47 @@ export function parseLesson(value: unknown): LessonResult {
       return fail(`«show» es una lista de: ${INSIGHT_IDS.join(', ')}.`)
     }
     show = [...new Set(listed as InsightIdentifier[])]
+  }
+  let track: TrackedSeries[] | undefined
+  if (value['track'] !== undefined) {
+    const listed = value['track']
+    if (!Array.isArray(listed) || listed.length === 0 || listed.length > 6) {
+      return fail('«track» es una lista de 1 a 6 series: { label, name }.')
+    }
+    const parsed: TrackedSeries[] = []
+    for (const entry of listed) {
+      if (!isRecord(entry)) return fail('«track»: cada serie es un objeto { label, name }.')
+      const label = text(entry['label'], LESSON_LIMITS.meta)
+      const name = text(entry['name'], LESSON_LIMITS.meta)
+      if (!label || !name) return fail('«track»: «label» y «name» son obligatorios.')
+      parsed.push({ label, name })
+    }
+    track = parsed
+  }
+  let trail: Trail | undefined
+  if (value['trail'] !== undefined) {
+    const spec = value['trail']
+    if (!isRecord(spec)) return fail('«trail» debe ser un objeto.')
+    const trailValue = text(spec['value'], LESSON_LIMITS.meta)
+    const min = spec['min']
+    const max = spec['max']
+    if (!trailValue) return fail('«trail.value» es obligatorio.')
+    if (typeof min !== 'number' || typeof max !== 'number' || min >= max) {
+      return fail('«trail.min»/«trail.max» son números, con min < max.')
+    }
+    let obstacle: Trail['obstacle']
+    if (spec['obstacle'] !== undefined) {
+      const raw = spec['obstacle']
+      if (!isRecord(raw)) return fail('«trail.obstacle» debe ser un objeto.')
+      const name = text(raw['name'], LESSON_LIMITS.meta)
+      const gap = text(raw['gap'], LESSON_LIMITS.meta)
+      const width = raw['width']
+      if (!name || !gap || typeof width !== 'number' || width <= 0) {
+        return fail('«trail.obstacle» necesita «name», «gap» y «width» (número positivo).')
+      }
+      obstacle = { name, gap, width }
+    }
+    trail = { value: trailValue, min, max, ...(obstacle ? { obstacle } : {}) }
   }
   const raw = value['beats']
   if (!Array.isArray(raw)) return fail('«beats» debe ser una lista.')
@@ -203,6 +274,8 @@ export function parseLesson(value: unknown): LessonResult {
       ...(lang ? { lang } : {}),
       ...(source ? { source } : {}),
       ...(show ? { show } : {}),
+      ...(track ? { track } : {}),
+      ...(trail ? { trail } : {}),
       beats,
     },
   }

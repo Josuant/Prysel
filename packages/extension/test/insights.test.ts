@@ -4,19 +4,22 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser } from '@prysel/python'
 import { Kernel } from '../src/kernel.ts'
-import { parseLesson } from '../src/lesson.ts'
-import { indexOf, stateAt, type Trace, type TraceIndex } from '../src/trace.ts'
+import { parseLesson, type Trail } from '../src/lesson.ts'
+import { indexOf, stateAt, type Trace, type TraceEvent, type TraceIndex } from '../src/trace.ts'
 import {
   clip,
   collectionModels,
+  evolutionModel,
   indexNames,
   maxDepth,
   memoryModel,
   stackModel,
+  trailModel,
   treeModel,
   treeStatus,
   variablesModel,
 } from '../webview/src/insights.ts'
+import { apply, initialState } from '../src/trace.ts'
 import { expectedFor, judge } from '../webview/src/predict.ts'
 
 /**
@@ -369,10 +372,140 @@ describe('el guion pide nodos y preguntas', () => {
     expect(ask({ text: 'a', expect: 'otra' }).ok).toBe(false)
     expect(ask('hola').ok).toBe(false)
   })
+
+  it('«track» es una lista de series con nombre y etiqueta', () => {
+    const ok = parseLesson(base({ track: [{ label: 'Media', name: 'aptitud_media' }] }))
+    expect(ok.ok && ok.lesson.track).toEqual([{ label: 'Media', name: 'aptitud_media' }])
+    expect(parseLesson(base({ track: [] })).ok).toBe(false)
+    expect(parseLesson(base({ track: [{ label: 'Media' }] })).ok).toBe(false)
+    expect(parseLesson(base({ track: [{ name: 'x' }] })).ok).toBe(false)
+    expect(parseLesson(base({ track: 'media' })).ok).toBe(false)
+  })
+
+  it('«trail» necesita un valor y un rango, y el obstáculo (si lo hay) sus tres campos', () => {
+    const ok = parseLesson(base({ trail: { value: 'altura', min: 0, max: 30 } }))
+    expect(ok.ok && ok.lesson.trail).toEqual({ value: 'altura', min: 0, max: 30 })
+    const withObstacle = parseLesson(
+      base({
+        trail: {
+          value: 'altura',
+          min: 0,
+          max: 30,
+          obstacle: { name: 'tuberia_x', gap: 'hueco_y', width: 12 },
+        },
+      }),
+    )
+    expect(withObstacle.ok && withObstacle.lesson.trail?.obstacle).toEqual({
+      name: 'tuberia_x',
+      gap: 'hueco_y',
+      width: 12,
+    })
+    expect(parseLesson(base({ trail: { value: 'altura', min: 0, max: 0 } })).ok).toBe(false)
+    expect(parseLesson(base({ trail: { min: 0, max: 30 } })).ok).toBe(false)
+    expect(
+      parseLesson(base({ trail: { value: 'altura', min: 0, max: 30, obstacle: {} } })).ok,
+    ).toBe(false)
+    expect(parseLesson(base({ trail: 'altura' })).ok).toBe(false)
+  })
+})
+
+describe('evolutionModel: cómo cambia una variable, generación a generación', () => {
+  const trace: Trace = {
+    events: [
+      { k: 'line', l: 1, d: 0, f: 0, ch: { aptitud_media: 4.5 } },
+      { k: 'line', l: 2, d: 0, f: 0, ch: { x: 1 } },
+      { k: 'line', l: 1, d: 0, f: 0, ch: { aptitud_media: 12, mejor_aptitud: 26 } },
+      { k: 'line', l: 1, d: 0, f: 0, ch: { aptitud_media: 30.5 } },
+    ],
+    truncated: false,
+    error: null,
+    output: '',
+  }
+  const tracked = [
+    { label: 'Media', name: 'aptitud_media' },
+    { label: 'Mejor', name: 'mejor_aptitud' },
+  ]
+
+  it('recoge cada valor por el que pasó la variable, hasta el paso que se mira', () => {
+    const model = evolutionModel(trace, 3, tracked)
+    expect(model.series[0]).toEqual({ label: 'Media', points: [4.5, 12, 30.5] })
+    expect(model.series[1]).toEqual({ label: 'Mejor', points: [26] })
+  })
+
+  it('a mitad de la reproducción, solo lo que ya pasó', () => {
+    const model = evolutionModel(trace, 1, tracked)
+    expect(model.series[0]?.points).toEqual([4.5])
+    expect(model.series[1]?.points).toEqual([])
+  })
+
+  it('antes de empezar, no hay nada, y el rango por defecto es 0..1', () => {
+    const model = evolutionModel(trace, -1, tracked)
+    expect(model).toEqual({
+      series: [
+        { label: 'Media', points: [] },
+        { label: 'Mejor', points: [] },
+      ],
+      min: 0,
+      max: 1,
+    })
+  })
+
+  it('el rango cubre todos los valores vistos', () => {
+    const model = evolutionModel(trace, 3, tracked)
+    expect(model.min).toBeLessThanOrEqual(0)
+    expect(model.max).toBeGreaterThanOrEqual(30.5)
+  })
+})
+
+describe('trailModel: el vuelo, tal como lo cuenta la traza', () => {
+  const events: TraceEvent[] = [
+    { k: 'call', l: 10, d: 1, f: 1, fn: 'volar' },
+    { k: 'line', l: 11, d: 1, f: 1, ch: { tuberia_x: 15, hueco_y: 12 } },
+    { k: 'line', l: 12, d: 1, f: 1, ch: { altura: 14, tuberia_x: 13 } },
+    { k: 'line', l: 12, d: 1, f: 1, ch: { altura: 12, tuberia_x: 11 } },
+    { k: 'return', l: 20, d: 1, f: 1, v: 48 },
+  ]
+  const trace: Trace = { events, truncated: false, error: null, output: '' }
+  const spec: Trail = {
+    value: 'altura',
+    min: 0,
+    max: 30,
+    obstacle: { name: 'tuberia_x', gap: 'hueco_y', width: 12 },
+  }
+  const stateAtStep = (step: number) => {
+    let state = initialState()
+    for (let i = 0; i <= step; i++) {
+      const event = events[i]
+      if (event) state = apply(state, event)
+    }
+    return state
+  }
+
+  it('sigue a la llamada más reciente que tiene esa variable', () => {
+    const model = trailModel(trace, stateAtStep(2), spec)
+    expect(model.points).toEqual([{ step: 2, value: 14, obstacle: 13, gap: 12 }])
+  })
+
+  it('acumula los puntos del vuelo hasta el paso que se mira', () => {
+    const model = trailModel(trace, stateAtStep(3), spec)
+    expect(model.points.map((p) => p.value)).toEqual([14, 12])
+    expect(model.points.at(-1)).toEqual({ step: 3, value: 12, obstacle: 11, gap: 12 })
+  })
+
+  it('sin esa variable en ningún marco todavía, no hay nada que dibujar', () => {
+    expect(trailModel(trace, stateAtStep(0), spec).points).toEqual([])
+    expect(trailModel(trace, stateAtStep(1), spec).points).toEqual([])
+  })
+
+  it('sin obstáculo en el guion, solo se sigue el valor', () => {
+    const model = trailModel(trace, stateAtStep(2), { value: 'altura', min: 0, max: 30 })
+    expect(model.points).toEqual([{ step: 2, value: 14, obstacle: null, gap: null }])
+    expect(model.obstacleWidth).toBeNull()
+  })
 })
 
 describe('los nodos que conoce el guion son los del lienzo', () => {
-  it('las mismas cinco', async () => {
+  it('las mismas siete', async () => {
     const { INSIGHTS } = await import('../webview/src/insights.ts')
     const { INSIGHT_IDS } = await import('../src/lesson.ts')
     expect([...INSIGHTS]).toEqual([...INSIGHT_IDS])

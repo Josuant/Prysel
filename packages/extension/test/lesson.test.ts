@@ -334,7 +334,7 @@ describe('las lecciones de ejemplo', () => {
     return { source, lesson: result.lesson }
   }
 
-  it.each(['factorial', 'burbuja', 'alias'])(
+  it.each(['factorial', 'burbuja', 'alias', 'flappy_ga'])(
     '%s: es válida y todas sus anclas están en el programa',
     (name) => {
       const { source, lesson } = load(name)
@@ -350,5 +350,20 @@ describe('las lecciones de ejemplo', () => {
     expect(load('factorial').lesson.show).toEqual(['stack', 'tree'])
     expect(load('burbuja').lesson.show).toEqual(['collection', 'variables'])
     expect(load('alias').lesson.show).toEqual(['memory', 'variables'])
+    expect(load('flappy_ga').lesson.show).toEqual(['trail', 'evolution', 'stack'])
+  })
+
+  it('flappy_ga: además pide las series y la trayectoria con las que dibuja sus dos tarjetas nuevas', () => {
+    const { lesson } = load('flappy_ga')
+    expect(lesson.track).toEqual([
+      { label: 'Media', name: 'aptitud_media' },
+      { label: 'Mejor', name: 'mejor_aptitud' },
+    ])
+    expect(lesson.trail).toEqual({
+      value: 'altura',
+      min: 0,
+      max: 30,
+      obstacle: { name: 'tuberia_x', gap: 'hueco_y', width: 12 },
+    })
   })
 })

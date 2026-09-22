@@ -750,6 +750,8 @@ export function App() {
                 }
               }}
               side={wide}
+              track={lesson?.track}
+              trail={lesson?.trail}
             />
           </ErrorBoundary>
         )}

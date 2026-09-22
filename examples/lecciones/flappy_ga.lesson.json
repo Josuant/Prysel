@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "title": "Un algoritmo genético que aprende a jugar",
+  "level": "para quien ya sabe funciones y clases",
+  "lang": "es",
+  "source": "flappy_ga.py",
+  "show": ["trail", "evolution", "stack"],
+  "track": [
+    { "label": "Media", "name": "aptitud_media" },
+    { "label": "Mejor", "name": "mejor_aptitud" }
+  ],
+  "trail": {
+    "value": "altura",
+    "min": 0,
+    "max": 30,
+    "obstacle": { "name": "tuberia_x", "gap": "hueco_y", "width": 12 }
+  },
+  "beats": [
+    {
+      "id": "idea",
+      "at": { "text": "class Pajaro:" },
+      "note": {
+        "title": "La idea",
+        "text": "Nadie programa **cómo volar**. Cada pájaro nace con cuatro números al azar (su `genoma`) que deciden cuándo aletea; los que sobreviven más tienen hijos, y esos hijos heredan (con algún cambio) lo que funcionó.",
+        "style": "sticky"
+      }
+    },
+    {
+      "id": "cerebro",
+      "at": { "text": "def decidir(self, distancia, hueco_altura):" },
+      "note": {
+        "title": "El cerebro",
+        "text": "No hay ninguna red neuronal: cuatro números (`peso_altura`, `peso_velocidad`, `peso_distancia`, `sesgo`) se multiplican por lo que el pájaro nota y se suman. Si el resultado es positivo, aletea. **Todo el aprendizaje está en esos cuatro números.**",
+        "style": "definition"
+      }
+    },
+    {
+      "id": "fisica",
+      "at": { "text": "def mover(self, aletea):" },
+      "note": {
+        "text": "Cada paso: si aletea, sube de golpe (`IMPULSO`); si no, la gravedad lo va frenando. `altura <= 0` o `altura >= ALTO` es tocar el suelo o el techo: se acabó el vuelo.",
+        "style": "sticky"
+      }
+    },
+    {
+      "id": "vuelo",
+      "at": { "text": "def volar(genoma):" },
+      "note": {
+        "title": "Un vuelo",
+        "text": "Un genoma se pone a prueba aquí: tantos pasos como aguante (`MAX_TICKS` como mucho), esquivando tuberías que vienen de la derecha. Al final, cuenta cuánto sobrevivió y cuántas tuberías pasó.",
+        "style": "callout"
+      }
+    },
+    {
+      "id": "colision",
+      "at": { "text": "if -1 < tuberia_x - X_PAJARO < 1 and abs(altura - hueco_y) > HUECO / 2:" },
+      "note": {
+        "text": "El pájaro está siempre en `X_PAJARO`; cuando la tubería llega justo ahí, si su altura no cae dentro del hueco (`HUECO`), muere. **La tubería se mueve; el pájaro no.**",
+        "style": "warning"
+      }
+    },
+    {
+      "id": "aleatorio",
+      "at": { "text": "def genoma_aleatorio():" },
+      "note": {
+        "text": "La primera generación no sabe nada: cuatro números al azar, entre -2.5 y 2.5. Casi todos van a chocar enseguida.",
+        "style": "sticky"
+      }
+    },
+    {
+      "id": "cruce",
+      "at": { "text": "def cruzar(madre, padre):" },
+      "note": {
+        "title": "Herencia",
+        "text": "El hijo no es la media de sus padres: **cada número** se hereda entero de uno de los dos, al azar. Así se recombinan rasgos completos, no se difuminan.",
+        "style": "analogy"
+      }
+    },
+    {
+      "id": "mutacion",
+      "at": { "text": "def mutar(genoma, fuerza=0.3):" },
+      "note": {
+        "text": "Un empujón pequeño y al azar a cada número. Sin esto, la población nunca probaría nada que sus padres no tuvieran ya.",
+        "style": "sticky"
+      }
+    },
+    {
+      "id": "principal",
+      "at": { "text": "if __name__ == \"__main__\":" },
+      "note": {
+        "text": "El idioma con el que un script en Python marca por dónde se empieza a ejecutar: aquí solo llama a `entrenar()`.",
+        "style": "margin"
+      }
+    },
+    {
+      "id": "generacion1",
+      "at": { "text": "for generacion in range(1, GENERACIONES + 1):" },
+      "when": { "text": "for generacion in range(1, GENERACIONES + 1):", "visit": 1 },
+      "note": {
+        "title": "Una generación",
+        "text": "Cada vuelta: **vuela toda la población**, se juzga a cada uno por su aptitud, y los mejores dan hijos para la siguiente vuelta. Mira la tarjeta «Trayectoria» mientras cada pájaro vuela.",
+        "style": "callout"
+      }
+    },
+    {
+      "id": "media1",
+      "at": { "text": "aptitud_media = sum(aptitudes) / TAMANO_POBLACION" },
+      "when": { "text": "aptitud_media = sum(aptitudes) / TAMANO_POBLACION", "visit": 1 },
+      "ask": {
+        "text": "Con genomas al azar, ¿la aptitud media de esta primera generación será alta o baja?",
+        "expect": "value",
+        "name": "aptitud_media"
+      },
+      "note": {
+        "text": "La media cuenta a **toda la población**, no solo al mejor: por eso puede subir aunque el mejor no cambie.",
+        "style": "definition"
+      }
+    },
+    {
+      "id": "generacion3",
+      "at": {
+        "text": "print(f\"Generación {generacion}: mejor aptitud = {mejor_aptitud}, media = {aptitud_media:.1f}\")"
+      },
+      "when": {
+        "text": "print(f\"Generación {generacion}: mejor aptitud = {mejor_aptitud}, media = {aptitud_media:.1f}\")",
+        "visit": 3
+      },
+      "ask": {
+        "text": "Han pasado dos generaciones de selección y cruces. ¿Qué imprimirá esta vez?",
+        "expect": "output"
+      },
+      "note": {
+        "text": "Compara este número con el de la generación 1, en la tarjeta «Evolución»: **eso es aprender**, aunque nadie haya escrito una sola regla de vuelo.",
+        "style": "callout"
+      }
+    },
+    {
+      "id": "reemplazo",
+      "at": { "text": "poblacion = nueva_poblacion" },
+      "note": {
+        "text": "La generación vieja desaparece entera: solo sus genes (a través de los padres elegidos) siguen en la nueva.",
+        "style": "margin"
+      }
+    },
+    {
+      "id": "final",
+      "at": {
+        "text": "print(f\"Mejor genoma: {mejor_genoma_historico}, aptitud {mejor_aptitud_historica}\")"
+      },
+      "note": {
+        "title": "El resultado",
+        "text": "El mejor genoma de **toda la evolución**, no solo de la última generación: por si la mejor idea apareció antes y luego se perdió por una mutación mala.",
+        "style": "sticky"
+      }
+    }
+  ]
+}

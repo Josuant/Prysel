@@ -291,3 +291,65 @@ Pendiente de la fase: «Explicar un tema» (generar el código además del guion
 sección 5: allowlist de módulos, sin ejecutar nada que no se haya visto), streaming (hoy se espera la
 respuesta entera antes de validar, no se dibuja «en directo»), y caché por (tema, nivel, idioma, modelo) —
 hoy la única «caché» es que no se regenera un guion existente sin confirmar.
+
+### Revisión: correcciones y el ejemplo que pone todo a prueba
+
+Tres arreglos y un ejemplo final para comprobar que las cuatro fases encajan entre sí.
+
+- **Un modelo pequeño traduce lo que no debe** (`src/ai/normalize.ts`): `gpt-4o-mini` (vía Copilot) a veces
+  traduce los códigos fijos del guion (`"value"` → `"valor"`, `"sticky"` → `"pegajosa"`, `"stack"` →
+  `"pila"`) aunque el prompt pida no tocarlos. `normalizeAiJson()` corrige estos sinónimos (con y sin
+  acentos, mayúsculas) antes de validar, así una traducción de más no gasta un intento de reparación;
+  `src/ai/prompt.ts` además lo pide explícito con un ejemplo de JSON.
+- **Un chip no se podía arrastrar a Imprimir**: la casilla de `TextInput` (mensaje de una sola línea, a
+  diferencia del `TextArea` multilínea de al lado) no llevaba `slot`, así que no había ningún
+  `data-slot="value"` en el DOM donde soltar el cable. El modelo de datos (`inputsOf`, `checkConnection`) ya
+  lo permitía; faltaba la marca en `packages/ui/src/controls.tsx`. Corregido con el mismo `slot`/`linked`
+  que ya tenía el `TextArea`.
+- **Las tarjetas «Entender» pedidas por el guion (`show`) no se veían sin darle antes a «▶ Paso a paso»**:
+  ahora, si el guion trae `show`, la extensión pide la traza sola al abrir el archivo (`App.tsx`), así las
+  tarjetas aparecen desde el primer vistazo.
+- **`if __name__ == "__main__":`** es ahora un tipo de nodo propio (`control.entrypoint`,
+  `packages/morphology/src/kinds.ts`; reconocido en `packages/python/src/program.ts` por
+  `isMainGuard()`/`entryPoint()`, sin importar el orden de los operandos ni si compara con `!=`). Se dibuja
+  como una pestaña de un solo camino (igual que `with`), no como una decisión de dos salidas: en la
+  práctica esa condición siempre es cierta cuando Prysel traza el archivo, así que un rombo con «verdadero»
+  y «falso» sería confuso. Un `if __name__` con otro nombre o comparación (o con `elif`/`else`) sigue
+  cayendo en `control.condition`, sin cambios.
+- **Seguir automáticamente a lo que ocurre en una función o clase oculta**: durante la reproducción paso a
+  paso, si el paso actual ocurre dentro de una función o método que no está a la vista, el lienzo la abre
+  solo (`enclosingFunctionNode()` en `webview/src/player.ts`, un efecto en `App.tsx`); al salir de la
+  reproducción, vuelve a lo que se veía antes de empezar. Antes había que abrir cada función a mano para
+  seguir la ejecución si se metía en ellas.
+
+**El ejemplo final**: `examples/lecciones/flappy_ga` — un algoritmo genético que aprende a jugar. Se pidió
+explícitamente como prueba de fondo: que el diagrama por sí solo explique cómo funciona el algoritmo, y que
+si hacía falta un nodo nuevo para lograrlo, se creara. De ahí salieron dos tarjetas «Entender» nuevas, además
+de las cinco de la Fase C:
+
+- **Evolución** (`show: "evolution"`, campo de guion `track: [{label, name}]`, hasta seis series): una
+  línea por variable seguida, un punto por cada vez que el bucle de generaciones vuelve a su cabecera; se
+  revela punto a punto según el paso actual, nunca de golpe. Sirve para cualquier programa con un bucle de
+  optimización o entrenamiento, no solo para este ejemplo.
+- **Trayectoria** (`show: "trail"`, campo de guion `trail: {value, min, max, obstacle?: {name, gap,
+  width}}`): una escena SVG con un punto (la variable seguida, escalada entre `min` y `max`) y, si el guion
+  declara un `obstacle`, dos barras que marcan un hueco a esquivar más una chispa (sparkline) de los últimos
+  valores. Sigue el fotograma más reciente que tenga la variable seguida, así que funciona aunque esa
+  variable solo exista dentro de una función que no es la que se ejecuta en este preciso paso.
+- **Una limitación real del motor de traza, resuelta sin tocarlo**: la traza solo graba variables locales que
+  cambian; una mutación de atributo (`self.altura = ...`) es invisible para ella, porque el `repr` de un
+  objeto no cambia. Se resolvió añadiendo una variable local (`altura = pajaro.altura`) justo después de
+  mutar el objeto — también hace el código más legible (evita repetir el acceso al atributo) y de paso deja
+  el valor disponible para la tarjeta «Trayectoria». Cualquier otra lección con estado en atributos de
+  instancia necesitará el mismo truco si quiere que ese estado se siga con una tarjeta.
+- **Tope de pasos de la traza subido de 5000 a 20 000** (`Kernel.trace`/`Session.trace`): la simulación
+  entera (cinco generaciones, población de cuatro) genera del orden de 7000 pasos; reducir el ejemplo para
+  caber en 5000 le habría quitado margen para mostrar una curva de aprendizaje que de verdad mejora.
+- El guion tiene 13 momentos (idea → cerebro → física → vuelo → colisión → aleatorio → cruce → mutación →
+  `if __name__` → primera generación → una predicción de valor → una predicción de salida en la tercera
+  generación → reemplazo de la población → resultado final), pensados para leerse en ese orden sin saltos.
+
+Comprobado: las 1385 pruebas (`pnpm verify`) y la prueba real dentro de un VS Code de verdad (`pnpm e2e`)
+pasan; capturas del lienzo confirmaron a mano que la ruta de reproducción sigue sola de `entrenar` a `volar`
+a `decidir`, y que la tarjeta «Trayectoria» dibuja las dos barras del hueco y el punto del pájaro con la
+geometría esperada.

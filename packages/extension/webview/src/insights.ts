@@ -1,4 +1,5 @@
 import type { Program } from '@prysel/python'
+import type { Trail, TrackedSeries } from '../../src/lesson.ts'
 import {
   isShownList,
   stateAt,
@@ -17,7 +18,15 @@ import { formatShown } from './player.ts'
  * ir hacia atrás o saltar cuesta lo mismo que avanzar, y una lección grabada se ve sin Python.
  */
 
-export const INSIGHTS = ['variables', 'stack', 'tree', 'memory', 'collection'] as const
+export const INSIGHTS = [
+  'variables',
+  'stack',
+  'tree',
+  'memory',
+  'collection',
+  'evolution',
+  'trail',
+] as const
 export type InsightId = (typeof INSIGHTS)[number]
 
 export const INSIGHT_LABELS: Record<InsightId, string> = {
@@ -26,6 +35,8 @@ export const INSIGHT_LABELS: Record<InsightId, string> = {
   tree: 'Árbol de llamadas',
   memory: 'Memoria',
   collection: 'Colección',
+  evolution: 'Evolución',
+  trail: 'Trayectoria',
 }
 
 /** Un texto corto para una celda o una etiqueta: con puntos suspensivos si no cabe. */
@@ -365,4 +376,90 @@ export function collectionModels(
     }
   }
   return models
+}
+
+// ─── Evolución ───────────────────────────────────────────────────────────────────────────────────
+
+export interface EvolutionSeries {
+  label: string
+  /** Un valor por cada vez que la variable cambió, hasta el paso que se mira: crece según se reproduce. */
+  points: number[]
+}
+
+export interface EvolutionModel {
+  series: EvolutionSeries[]
+  min: number
+  max: number
+}
+
+/**
+ * Cómo cambian, paso a paso hasta el que se mira, unas variables numéricas que el guion señala (por
+ * ejemplo, la aptitud media de cada generación): una línea por serie. Se lee directamente de los cambios
+ * de la traza (`ch`), sin reconstruir el estado completo — más barato, y de sobra para un número suelto.
+ */
+export function evolutionModel(
+  trace: Trace,
+  step: number,
+  tracked: readonly TrackedSeries[],
+): EvolutionModel {
+  const series = tracked.map((t) => ({ label: t.label, points: [] as number[] }))
+  const last = Math.min(step, trace.events.length - 1)
+  for (let i = 0; i <= last; i++) {
+    const changes = trace.events[i]?.ch
+    if (!changes) continue
+    tracked.forEach((t, index) => {
+      const value = changes[t.name]
+      if (typeof value === 'number') series[index]?.points.push(value)
+    })
+  }
+  const all = series.flatMap((s) => s.points)
+  return {
+    series,
+    min: all.length > 0 ? Math.min(0, ...all) : 0,
+    max: all.length > 0 ? Math.max(1, ...all) : 1,
+  }
+}
+
+// ─── Trayectoria ─────────────────────────────────────────────────────────────────────────────────
+
+export interface TrailPoint {
+  step: number
+  value: number
+  obstacle: number | null
+  gap: number | null
+}
+
+export interface TrailModel {
+  points: TrailPoint[]
+  min: number
+  max: number
+  obstacleWidth: number | null
+}
+
+/**
+ * El camino de un valor numérico (una altura, una posición) a lo largo del tiempo, con el obstáculo que
+ * lo acompaña si el guion lo pide. Sigue a la llamada más reciente que tiene esa variable: al entrar en
+ * una llamada nueva («otro vuelo»), empieza de cero, como se ve de verdad en la traza.
+ */
+export function trailModel(trace: Trace, state: TraceState, spec: Trail): TrailModel {
+  const obstacleWidth = spec.obstacle?.width ?? null
+  const frame = [...state.frames].reverse().find((f) => spec.value in f.locals)
+  if (!frame) return { points: [], min: spec.min, max: spec.max, obstacleWidth }
+  const points: TrailPoint[] = []
+  let obstacle: number | null = null
+  let gap: number | null = null
+  const last = Math.min(state.step, trace.events.length - 1)
+  for (let i = 0; i <= last; i++) {
+    const event = trace.events[i]
+    if (!event || event.f !== frame.id || !event.ch) continue
+    if (spec.obstacle) {
+      const o = event.ch[spec.obstacle.name]
+      if (typeof o === 'number') obstacle = o
+      const g = event.ch[spec.obstacle.gap]
+      if (typeof g === 'number') gap = g
+    }
+    const value = event.ch[spec.value]
+    if (typeof value === 'number') points.push({ step: i, value, obstacle, gap })
+  }
+  return { points, min: spec.min, max: spec.max, obstacleWidth }
 }

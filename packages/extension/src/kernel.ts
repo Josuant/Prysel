@@ -363,9 +363,11 @@ export class Kernel {
 
   /**
    * Ejecuta un programa entero, en un espacio de nombres aparte (no toca el de las ejecuciones), grabando
-   * qué pasa línea a línea. `limit` corta la traza (y el programa) al llegar a ese número de pasos.
+   * qué pasa línea a línea. `limit` corta la traza (y el programa) al llegar a ese número de pasos: de
+   * sobra para una clase o una función normal, y con sitio para una simulación pequeña (una población que
+   * entrena unas pocas generaciones) sin que se corte a medias.
    */
-  trace(code: string, limit = 5000): Promise<Trace> {
+  trace(code: string, limit = 20_000): Promise<Trace> {
     const id = `t${++this.counter}`
     return new Promise((resolve, reject) => {
       if (this.dead) return reject(this.dead)

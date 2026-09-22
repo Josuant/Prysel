@@ -1,22 +1,26 @@
 import { useMemo, type ReactNode } from 'react'
 import type { Program } from '@prysel/python'
-import type { Ask } from '../../src/lesson.ts'
+import type { Ask, TrackedSeries, Trail } from '../../src/lesson.ts'
 import { stateAt, type TraceIndex, type TraceState } from '../../src/trace.ts'
 import {
   INSIGHT_LABELS,
   clip,
   collectionModels,
+  evolutionModel,
   indexNames,
   maxDepth,
   memoryModel,
   stackModel,
+  trailModel,
   treeModel,
   treeStatus,
   variablesModel,
   type CollectionModel,
+  type EvolutionModel,
   type InsightId,
   type MemoryModel,
   type StackModel,
+  type TrailModel,
   type TreeModel,
   type VariablesModel,
 } from './insights.ts'
@@ -518,6 +522,152 @@ function PredictionCard({
   )
 }
 
+// ─── Evolución ───────────────────────────────────────────────────────────────────────────────────
+
+const EVOLUTION = { w: 280, h: 120, pad: 20 }
+const SERIES_COLORS = [
+  'var(--accent)',
+  'var(--chip-success-fg)',
+  'var(--chip-warning-fg)',
+  'var(--chip-error-fg)',
+]
+
+function EvolutionCard({ model }: { model: EvolutionModel }) {
+  const longest = Math.max(1, ...model.series.map((s) => s.points.length))
+  const range = model.max - model.min || 1
+  const x = (i: number) =>
+    EVOLUTION.pad + (longest <= 1 ? 0 : (i / (longest - 1)) * (EVOLUTION.w - EVOLUTION.pad * 2))
+  const y = (v: number) =>
+    EVOLUTION.h - EVOLUTION.pad - ((v - model.min) / range) * (EVOLUTION.h - EVOLUTION.pad * 2)
+  const empty = model.series.every((s) => s.points.length === 0)
+  return (
+    <Card title="Evolución" hint="una línea por serie, una generación por punto" wide>
+      {empty ? (
+        <p className="text-[11px] text-ink-faint">
+          Aún no ha acabado ninguna vuelta de este bucle.
+        </p>
+      ) : (
+        <svg
+          width={EVOLUTION.w}
+          height={EVOLUTION.h}
+          role="img"
+          aria-label={`Evolución: ${model.series.map((s) => s.label).join(', ')}`}
+        >
+          <line
+            x1={EVOLUTION.pad}
+            y1={EVOLUTION.h - EVOLUTION.pad}
+            x2={EVOLUTION.w - EVOLUTION.pad}
+            y2={EVOLUTION.h - EVOLUTION.pad}
+            stroke="var(--line)"
+          />
+          {model.series.map((series, index) => {
+            const color = SERIES_COLORS[index % SERIES_COLORS.length]
+            const d = series.points
+              .map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(v)}`)
+              .join(' ')
+            return (
+              <g key={series.label}>
+                {series.points.length > 1 && (
+                  <path d={d} fill="none" stroke={color} strokeWidth={2} />
+                )}
+                {series.points.map((v, i) => (
+                  <circle key={i} cx={x(i)} cy={y(v)} r={2.5} fill={color} />
+                ))}
+              </g>
+            )
+          })}
+        </svg>
+      )}
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+        {model.series.map((series, index) => (
+          <span key={series.label} className="flex items-center gap-1 text-[11px] text-ink-muted">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: SERIES_COLORS[index % SERIES_COLORS.length] }}
+            />
+            {series.label}:{' '}
+            {series.points.length > 0 ? clip(String(series.points.at(-1)), 10) : '—'}
+          </span>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+// ─── Trayectoria ─────────────────────────────────────────────────────────────────────────────────
+
+const TRAIL = { w: 280, h: 96, spark: 40, birdX: 22, barW: 12 }
+
+function TrailCard({ model }: { model: TrailModel }) {
+  const latest = model.points.at(-1)
+  const range = model.max - model.min || 1
+  const y = (v: number) => TRAIL.h - ((v - model.min) / range) * TRAIL.h
+  // El alcance horizontal del juego se ve en los propios datos: hasta dónde llegó a estar el obstáculo.
+  const reach = Math.max(1, ...model.points.map((p) => p.obstacle ?? 0))
+  const x = (v: number) =>
+    TRAIL.birdX + 16 + (v / reach) * (TRAIL.w - TRAIL.birdX - 16 - TRAIL.barW)
+  const recent = model.points.slice(-30)
+  return (
+    <Card title="Trayectoria" hint="el vuelo, ahora mismo" wide>
+      {!latest ? (
+        <p className="text-[11px] text-ink-faint">Aún no hay ningún vuelo en marcha.</p>
+      ) : (
+        <>
+          <svg width={TRAIL.w} height={TRAIL.h} role="img" aria-label="El juego, en este instante">
+            <rect
+              x={0.5}
+              y={0.5}
+              width={TRAIL.w - 1}
+              height={TRAIL.h - 1}
+              fill="none"
+              stroke="var(--line)"
+            />
+            {latest.obstacle !== null && latest.gap !== null && model.obstacleWidth !== null && (
+              <g fill="var(--ink-muted)" opacity={0.55}>
+                <rect
+                  x={x(latest.obstacle) - TRAIL.barW / 2}
+                  y={0}
+                  width={TRAIL.barW}
+                  height={Math.max(0, y(latest.gap + model.obstacleWidth / 2))}
+                />
+                <rect
+                  x={x(latest.obstacle) - TRAIL.barW / 2}
+                  y={y(latest.gap - model.obstacleWidth / 2)}
+                  width={TRAIL.barW}
+                  height={Math.max(0, TRAIL.h - y(latest.gap - model.obstacleWidth / 2))}
+                />
+              </g>
+            )}
+            <circle cx={TRAIL.birdX} cy={y(latest.value)} r={6} fill="var(--accent)" />
+          </svg>
+          <svg
+            width={TRAIL.w}
+            height={TRAIL.spark}
+            role="img"
+            aria-label="La altura en los últimos pasos de este vuelo"
+            className="mt-1"
+          >
+            {recent.length > 1 && (
+              <path
+                d={recent
+                  .map((p, i) => {
+                    const step = TRAIL.w / (recent.length - 1)
+                    const py = TRAIL.spark - ((p.value - model.min) / range) * TRAIL.spark
+                    return `${i === 0 ? 'M' : 'L'} ${i * step} ${py}`
+                  })
+                  .join(' ')}
+                fill="none"
+                stroke="var(--accent)"
+                strokeWidth={1.5}
+              />
+            )}
+          </svg>
+        </>
+      )}
+    </Card>
+  )
+}
+
 // ─── El conjunto ─────────────────────────────────────────────────────────────────────────────────
 
 export function InsightDock({
@@ -531,6 +681,8 @@ export function InsightDock({
   answer,
   onAnswer,
   side,
+  track,
+  trail,
 }: {
   program: Program
   index: TraceIndex
@@ -544,6 +696,10 @@ export function InsightDock({
   onAnswer: (next: Answer) => void
   /** Las tarjetas se apilan en columna, a la izquierda del lienzo (lo auxiliar va a ese lado), en vez de en fila debajo. */
   side: boolean
+  /** Las series que sigue «Evolución», si el guion las pide. */
+  track?: readonly TrackedSeries[]
+  /** Lo que dibuja «Trayectoria», si el guion lo pide. */
+  trail?: Trail
 }) {
   // Lo que solo depende de la traza y del programa se calcula una vez.
   const tree = useMemo(() => treeModel(index.trace), [index])
@@ -569,6 +725,10 @@ export function InsightDock({
       {wanted.has('collection') && (
         <CollectionCard models={collectionModels(state, previous, indexes)} />
       )}
+      {wanted.has('evolution') && track && track.length > 0 && (
+        <EvolutionCard model={evolutionModel(index.trace, step, track)} />
+      )}
+      {wanted.has('trail') && trail && <TrailCard model={trailModel(index.trace, state, trail)} />}
     </aside>
   )
 }
