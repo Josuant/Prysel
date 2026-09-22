@@ -806,3 +806,53 @@ describe('las asignaciones con destino y valor', () => {
     expect(plan.chipSlots['y']?.['value']?.name).toBe('a')
   })
 })
+
+describe('la cajita en columna (el programa se lee hacia abajo)', () => {
+  const items = [
+    { id: 'a', w: 120, h: 28 },
+    { id: 'b', w: 200, h: 28 },
+    { id: 'c', w: 90, h: 28 },
+  ]
+
+  it('un chip por fila, en el orden del código, con hueco para su número de línea', () => {
+    const tray = trayLayout(items, false, true)
+    expect(tray?.chips.map((c) => c.id)).toEqual(['a', 'b', 'c'])
+    const ys = tray?.chips.map((c) => c.y) ?? []
+    expect([...ys].sort((p, q) => p - q)).toEqual(ys)
+    expect(new Set(ys).size).toBe(3)
+    // Todos alineados a la izquierda, dejando sitio al número.
+    expect(new Set(tray?.chips.map((c) => c.x)).size).toBe(1)
+    expect(tray?.chips[0]?.x).toBe(TRAY.pad + TRAY.number)
+  })
+
+  it('la cajita es tan ancha como el chip más ancho, más el hueco del número', () => {
+    const tray = trayLayout(items, false, true)
+    expect(tray?.w).toBe(TRAY.pad + TRAY.number + 200 + TRAY.pad)
+  })
+
+  it('en fila (lo de siempre) los chips comparten fila mientras quepan', () => {
+    const tray = trayLayout(items, false)
+    expect(new Set(tray?.chips.map((c) => c.y)).size).toBe(1)
+  })
+
+  it('el botón de añadir va debajo del último', () => {
+    const tray = trayLayout(items, true, true)
+    expect(tray?.add?.y).toBeGreaterThan(tray?.chips.at(-1)?.y ?? 0)
+  })
+})
+
+describe('el orden de la cajita del programa en columna', () => {
+  it('mezcla variables y funciones en el orden del código', () => {
+    const nodes = [value('total', 7), value('limite', 2)]
+    const palette = [{ id: 'def:1', name: 'f', signature: '()', params: [], line: 4 }]
+    const column = planChips(nodes, [], { canAdd: false, column: true, palette })
+    expect(column.trays.get(MODULE)?.chips.map((c) => c.id)).toEqual([
+      'limite',
+      'fn:def:1',
+      'total',
+    ])
+    // En fila, primero las variables y después las funciones (lo de siempre).
+    const row = planChips(nodes, [], { canAdd: false, palette })
+    expect(row.trays.get(MODULE)?.chips.map((c) => c.id)).toEqual(['limite', 'total', 'fn:def:1'])
+  })
+})

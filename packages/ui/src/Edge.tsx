@@ -49,6 +49,18 @@ export function EdgeDefs() {
           <path className="edge__head" d="M1 1L9 5L1 9z" />
         </marker>
       ))}
+      {/* La punta de la espina de la secuencia: más grande, para que se vea hacia dónde se lee. */}
+      <marker
+        id="prysel-arrow-spine"
+        viewBox="0 0 10 10"
+        refX={8}
+        refY={5}
+        markerWidth={6}
+        markerHeight={6}
+        orient="auto-start-reverse"
+      >
+        <path className="edge__head" d="M1 1L9 5L1 9z" />
+      </marker>
     </defs>
   )
 }

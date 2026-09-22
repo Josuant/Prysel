@@ -248,6 +248,38 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         isConnectable={false}
         className="note-handle"
       />
+      {/* Y de aquí el cable hacia un visor a la izquierda. */}
+      <Handle
+        type="source"
+        id="aux-out"
+        position={Position.Left}
+        isConnectable={false}
+        className="note-handle"
+      />
+      {/* La espina de la secuencia, leída hacia abajo: entra por el centro de arriba y sale por el de abajo. */}
+      {axis === 'vertical' && (
+        <>
+          <Handle
+            type="target"
+            id="step-in"
+            position={Position.Top}
+            isConnectable={false}
+            className="note-handle"
+          />
+          <Handle
+            type="source"
+            id="step-out"
+            position={Position.Bottom}
+            isConnectable={false}
+            className="note-handle"
+          />
+        </>
+      )}
+      {axis === 'vertical' && node.line !== undefined && (
+        <span className="flow-step" aria-hidden title={`Línea ${node.line}`}>
+          {node.line}
+        </span>
+      )}
       {container && node.laps && (
         <div
           className="laps-slot"

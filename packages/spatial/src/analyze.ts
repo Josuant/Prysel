@@ -21,6 +21,22 @@ export interface Legibility {
   crossingsPerEdge: number
   /** Conexiones de flujo que retroceden DENTRO de su fila. Solo los retornos pueden. */
   backward: number
+  /**
+   * Conexiones de flujo que van CONTRA el sentido de lectura: en un programa que se lee hacia abajo, las que
+   * suben (`vertical`); en uno que se lee a lo ancho, las que retroceden entre filas. Debe ser 0: un paso
+   * nunca puede quedar por encima del que lo precede.
+   */
+  against: number
+  /**
+   * Cuánto se aparta, de media, cada paso del eje del anterior (en el eje transversal): con 0 la secuencia es
+   * una columna recta y se lee de un vistazo; cuanto más crece, más se quiebra la espina.
+   */
+  drift: number
+  /**
+   * Lo mismo, pero solo entre pasos consecutivos (las conexiones de orden): es la espina del programa. Con 0,
+   * los pasos van uno bajo otro por el mismo eje, y la secuencia se lee sin seguir ningún cable.
+   */
+  spineDrift: number
   /** Saltos de fila: el retorno de carro del plegado. Ni son errores ni retrocesos. */
   wraps: number
   /** Filas que ocupa el programa. */
@@ -118,9 +134,21 @@ export function analyze(graph: SemanticGraph, result: LayoutResult): Legibility 
   const flow = segments.filter((s) => s.edge.relation !== 'feedback')
   // Un salto de fila no es un retroceso: es el retorno de carro del plegado.
   const wraps = flow.filter((s) => rowOf(s.edge.to) > rowOf(s.edge.from)).length
-  const backward = flow.filter(
-    (s) => rowOf(s.edge.from) === rowOf(s.edge.to) && s.b.x < s.a.x,
+  // Retroceder es ir contra el eje de lectura, sea cual sea.
+  const backward = flow.filter((s) =>
+    result.axis === 'vertical'
+      ? s.b.y < s.a.y - 0.5
+      : rowOf(s.edge.from) === rowOf(s.edge.to) && s.b.x < s.a.x,
   ).length
+  const vertical = result.axis === 'vertical'
+  const against = flow.filter((s) =>
+    vertical ? s.b.y < s.a.y - 0.5 : rowOf(s.edge.to) < rowOf(s.edge.from),
+  ).length
+  const offset = (s: { a: Point; b: Point }) => Math.abs(vertical ? s.b.x - s.a.x : s.b.y - s.a.y)
+  const mean = (values: number[]) =>
+    values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length
+  const drift = mean(flow.map(offset))
+  const spineDrift = mean(flow.filter((s) => s.edge.relation === 'sequence').map(offset))
   const longJumps = graph.edges.filter((e) => {
     if (e.relation === 'feedback') return false
     const from = result.layers[e.from]
@@ -141,6 +169,9 @@ export function analyze(graph: SemanticGraph, result: LayoutResult): Legibility 
     crossings,
     crossingsPerEdge: graph.edges.length === 0 ? 0 : crossings / graph.edges.length,
     backward,
+    against,
+    drift,
+    spineDrift,
     wraps,
     rows: result.rows,
     longJumps,

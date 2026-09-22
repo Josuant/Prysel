@@ -555,7 +555,13 @@ export function App() {
   /** Las funciones del programa, como chips que se arrastran a una llamada. */
   const palette = view.functions
     .filter((fn) => fn.id !== view.focus?.id)
-    .map((fn) => ({ id: fn.id, name: fn.name, signature: fn.signature, params: fn.params }))
+    .map((fn) => ({
+      id: fn.id,
+      name: fn.name,
+      signature: fn.signature,
+      params: fn.params,
+      ...(fn.line === undefined ? {} : { line: fn.line }),
+    }))
   const add = (template: TemplateId) => {
     act({ type: 'add', template, ...place })
   }
@@ -674,6 +680,7 @@ export function App() {
                 addToModule={view.focus === null}
                 selected={selected}
                 onSelect={setSelected}
+                axis="vertical"
                 interactive
                 height="fill"
                 fitKey={view.viewKey}

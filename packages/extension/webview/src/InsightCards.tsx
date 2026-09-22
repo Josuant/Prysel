@@ -542,7 +542,7 @@ export function InsightDock({
   askStep?: number | undefined
   answer: Answer
   onAnswer: (next: Answer) => void
-  /** Las tarjetas se apilan en columna (a un lado del lienzo) en vez de en fila (debajo). */
+  /** Las tarjetas se apilan en columna, a la izquierda del lienzo (lo auxiliar va a ese lado), en vez de en fila debajo. */
   side: boolean
 }) {
   // Lo que solo depende de la traza y del programa se calcula una vez.
@@ -557,7 +557,7 @@ export function InsightDock({
       aria-label="Nodos para entender"
       className={`flex gap-2 overflow-auto bg-void p-2 ${
         side
-          ? 'w-[380px] shrink-0 flex-col border-l border-border-card [&>section]:min-w-0 [&>section]:flex-none'
+          ? 'order-first w-[380px] shrink-0 flex-col border-r border-border-card [&>section]:min-w-0 [&>section]:flex-none'
           : 'max-h-[42%] flex-wrap border-t border-border-card'
       }`}
     >

@@ -2,11 +2,14 @@
 // Mide si el diagrama se sigue entendiendo cuando el programa crece.
 import { analyze, generateProgram, layout } from '../src/index.ts'
 
+// `node scripts/density.ts vertical` mide el programa leído hacia abajo.
+const axis = process.argv[2] === 'vertical' ? 'vertical' : 'horizontal'
+
 const SIZES = [6, 12, 25, 50, 100, 200]
 const rows = SIZES.map((steps) => {
   const graph = generateProgram({ steps })
   const started = performance.now()
-  const result = layout(graph)
+  const result = layout(graph, axis === 'vertical' ? { axis, maxRun: 0 } : {})
   const ms = performance.now() - started
   const m = analyze(graph, result)
   return {
@@ -17,6 +20,8 @@ const rows = SIZES.map((steps) => {
     cruces: m.crossings,
     'cruces/conexión': Number(m.crossingsPerEdge.toFixed(2)),
     'hacia atrás': m.backward,
+    'contra la lectura': m.against,
+    'desvío medio': Math.round(m.drift),
     filas: m.rows,
     'saltos largos': m.longJumps,
     'long. media': Math.round(m.avgEdgeLength),

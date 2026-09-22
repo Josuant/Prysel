@@ -95,3 +95,57 @@ describe('el generador produce programas con forma de programa', () => {
     expect(generateProgram({ steps: 25 })).toEqual(graph)
   })
 })
+
+/**
+ * Leído hacia abajo (los pasos uno bajo otro, como una lista): es como se lee una secuencia. Se mide que sea
+ * de verdad más legible que a lo ancho, no que lo parezca.
+ */
+describe('un programa que se lee hacia abajo', () => {
+  const down = (steps: number) => {
+    const graph = generateProgram({ steps })
+    return analyze(graph, layout(graph, { axis: 'vertical', maxRun: 0 }))
+  }
+
+  it.each(SIZES)('%i pasos: nada se pisa y ninguna conexión sube', (steps) => {
+    const m = down(steps)
+    expect(m.overlaps).toBe(0)
+    expect(m.against).toBe(0)
+    expect(m.backward).toBe(0)
+  })
+
+  it.each(SIZES)(
+    '%i pasos: cabe en una sola columna (sin plegar), que se recorre hacia abajo',
+    (steps) => {
+      expect(down(steps).rows).toBe(1)
+    },
+  )
+
+  it.each(SIZES)('%i pasos: no cruza más conexiones que leído a lo ancho', (steps) => {
+    const graph = generateProgram({ steps })
+    const wide = analyze(graph, layout(graph))
+    expect(down(steps).crossings).toBeLessThanOrEqual(wide.crossings)
+  })
+
+  it('una secuencia de pasos de distinto ancho forma una columna recta', () => {
+    const widths = [120, 260, 180, 340, 90, 220, 300, 150]
+    const graph = {
+      nodes: widths.map((w, i) => ({
+        id: `s${i}`,
+        role: 'transform' as const,
+        size: { w, h: 60 },
+      })),
+      edges: widths.slice(1).map((_, i) => ({
+        from: `s${i}`,
+        to: `s${i + 1}`,
+        relation: 'sequence' as const,
+      })),
+    }
+    const result = layout(graph, { axis: 'vertical', maxRun: 0 })
+    const m = analyze(graph, result)
+    expect(m.spineDrift).toBeCloseTo(0)
+    expect(m.against).toBe(0)
+    // Uno bajo otro, en el orden del programa.
+    const ys = graph.nodes.map((n) => result.placements.find((p) => p.id === n.id)?.y ?? -1)
+    expect([...ys].sort((a, b) => a - b)).toEqual(ys)
+  })
+})

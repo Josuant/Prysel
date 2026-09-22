@@ -67,6 +67,8 @@ export interface FunctionChip {
   /** `(a, b)`: lo que recibe. */
   signature: string
   params: readonly string[]
+  /** Su línea en el archivo: la cajita en columna la enseña como el número de un paso. */
+  line?: number
 }
 
 export const CHIP_H = 28
@@ -202,6 +204,8 @@ export const TRAY = {
   addLabelW: 98,
   /** Aire entre la cajita y lo que hay debajo. */
   below: 10,
+  /** Hueco a la izquierda de una cajita en columna, para el número de línea de cada chip. */
+  number: 26,
 } as const
 
 const CHAR = 7.4
@@ -299,21 +303,24 @@ export interface TrayLayout {
 export function trayLayout(
   items: readonly { id: string; w: number; h: number }[],
   canAdd: boolean,
+  /** Un chip por fila, con hueco para su número de línea: lo que se lee hacia abajo, en orden. */
+  column = false,
 ): TrayLayout | null {
   if (items.length === 0 && !canAdd) return null
   const label = items.length === 0
   const addW = label ? TRAY.addLabelW : TRAY.addW
   const all = canAdd ? [...items, { id: '+', w: addW, h: CHIP_H }] : [...items]
-  const packed = packChips(all)
+  const packed = packChips(all, column ? 1 : TRAY.maxW)
+  const left = TRAY.pad + (column ? TRAY.number : 0)
   const chips = packed.placed
     .filter((p) => p.id !== '+')
-    .map((p) => ({ ...p, x: p.x + TRAY.pad, y: p.y + TRAY.pad }))
+    .map((p) => ({ ...p, x: p.x + left, y: p.y + TRAY.pad }))
   const plus = packed.placed.find((p) => p.id === '+')
   return {
-    w: packed.w + TRAY.pad * 2,
+    w: packed.w + left + TRAY.pad,
     h: packed.h + TRAY.pad * 2,
     chips,
-    ...(plus ? { add: { x: plus.x + TRAY.pad, y: plus.y + TRAY.pad, w: addW, label } } : {}),
+    ...(plus ? { add: { x: plus.x + left, y: plus.y + TRAY.pad, w: addW, label } } : {}),
   }
 }
 
@@ -491,6 +498,8 @@ export function contractOrder(
 }
 
 export interface ChipOptions {
+  /** La cajita del programa va en columna (un chip por fila, con su número de línea): el plano se lee hacia abajo. */
+  column?: boolean
   /** La densidad con la que se dibuja cada nodo: solo en normal un resultado es un chip. */
   density?: (node: CanvasNode) => Density
   /** Se pueden añadir variables (el lienzo es editable). */
@@ -542,10 +551,22 @@ export function planChips(
     if (tray) trays.set(node.id, tray)
   }
   const moduleItems = [
-    ...(chipsOf.get(MODULE) ?? []).map((chip) => ({ id: chip.id, ...chipSize(chip) })),
-    ...functions.map((fn) => ({ id: `fn:${fn.id}`, ...functionChipSize(fn) })),
+    ...(chipsOf.get(MODULE) ?? []).map((chip) => ({
+      id: chip.id,
+      ...chipSize(chip),
+      line: chip.line,
+    })),
+    ...functions.map((fn) => ({ id: `fn:${fn.id}`, ...functionChipSize(fn), line: fn.line })),
   ]
-  const moduleTray = trayLayout(moduleItems, options.canAdd && options.addToModule !== false)
+  // En columna, todo va en el orden del código (variables y funciones mezcladas), como los pasos.
+  if (options.column === true) {
+    moduleItems.sort((a, b) => (a.line ?? Infinity) - (b.line ?? Infinity))
+  }
+  const moduleTray = trayLayout(
+    moduleItems,
+    options.canAdd && options.addToModule !== false,
+    options.column === true,
+  )
   if (moduleTray) trays.set(MODULE, moduleTray)
 
   const results = new Set(

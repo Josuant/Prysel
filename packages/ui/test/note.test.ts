@@ -139,3 +139,17 @@ describe('el margen de las notas', () => {
     expect(two.get('a')).toEqual(one.get('a'))
   })
 })
+
+describe('el margen de la izquierda', () => {
+  it('lo que no puede subir de una altura (la cajita de variables ocupa el sitio) empieza por debajo', () => {
+    const slot = (id: string, y: number) => ({
+      id,
+      anchor: { x: 0, y, w: 100, h: 40 },
+      size: { w: 240, h: 60 },
+    })
+    const placed = placeNotes([slot('a', 0), slot('b', 20)], 28, 14, 120)
+    expect(placed.get('a')?.y).toBeGreaterThanOrEqual(120)
+    // Siguen sin solaparse.
+    expect((placed.get('b')?.y ?? 0) - (placed.get('a')?.y ?? 0)).toBeGreaterThanOrEqual(74)
+  })
+})

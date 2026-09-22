@@ -260,6 +260,8 @@ const MODULE_TRAY_AT = { x: 28, y: 28 }
 const EDGE_TYPES = { prysel: PryselEdge }
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
 const MAX_HEIGHT = 640
+/** Hueco entre lo auxiliar (a la izquierda) y el diagrama. */
+const SIDE_GAP = 48
 /** Lo más que la cámara se aleja para que quepan a la vez el cursor y la nota que se lee. */
 const MIN_FOLLOW_ZOOM = 0.45
 
@@ -401,13 +403,30 @@ function CanvasInner({
 
   // Las notas no entran en el reparto del diagrama: van en un margen aparte, y aparecer o desaparecer una
   // nota nunca mueve nada de lo que ya estaba.
-  const nodes = useMemo(() => allNodes.filter((node) => !node.handwritten), [allNodes])
+  // Leído hacia abajo, lo que no es un paso se aparta: las notas a la derecha y los visores a la izquierda.
+  const aside = axis === 'vertical'
+  const nodes = useMemo(
+    () => allNodes.filter((node) => !node.handwritten && !(aside && node.viewer)),
+    [allNodes, aside],
+  )
   const noteNodes = useMemo(() => allNodes.filter((node) => node.handwritten), [allNodes])
+  const sideViewers = useMemo(
+    () => (aside ? allNodes.filter((node) => node.viewer) : []),
+    [allNodes, aside],
+  )
   const noteIds = useMemo(() => new Set(noteNodes.map((node) => node.id)), [noteNodes])
-  const edges = useMemo(() => allEdges.filter((edge) => !noteIds.has(edge.to)), [allEdges, noteIds])
+  const viewerIds = useMemo(() => new Set(sideViewers.map((node) => node.id)), [sideViewers])
+  const edges = useMemo(
+    () => allEdges.filter((edge) => !noteIds.has(edge.to) && !viewerIds.has(edge.to)),
+    [allEdges, noteIds, viewerIds],
+  )
   const noteLinks = useMemo(
     () => allEdges.filter((edge) => noteIds.has(edge.to)),
     [allEdges, noteIds],
+  )
+  const viewerLinks = useMemo(
+    () => allEdges.filter((edge) => viewerIds.has(edge.to)),
+    [allEdges, viewerIds],
   )
 
   const byId = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
@@ -417,11 +436,12 @@ function CanvasInner({
     () =>
       planChips(nodes, edges, {
         canAdd: connectable,
+        column: aside,
         density: densityOf,
         ...(palette ? { palette } : {}),
         addToModule,
       }),
-    [nodes, edges, connectable, palette, addToModule, densityOf],
+    [nodes, edges, connectable, palette, addToModule, densityOf, aside],
   )
 
   /** De todo lo que puede dar un valor: los nodos, y las funciones que se ofrecen como chips. */
@@ -616,7 +636,8 @@ function CanvasInner({
       axis,
       ...(gapX === undefined ? {} : { gapX }),
       ...(gapY === undefined ? {} : { gapY }),
-      ...(run === undefined ? {} : { maxRun: run }),
+      // Una lista de pasos que se lee hacia abajo no se pliega en columnas: se recorre.
+      ...(axis === 'vertical' ? { maxRun: 0 } : run === undefined ? {} : { maxRun: run }),
     })
   }, [plan, densityOf, axis, gapX, gapY, linked, resized, run])
 
@@ -659,12 +680,31 @@ function CanvasInner({
 
   // Lo que un ámbito envuelve ya lo dice el espacio: la conexión de la función a su propio
   // cuerpo (sus parámetros) sería una línea redundante que cruza su cabecera.
+  const dataPairs = useMemo(
+    () =>
+      new Set(
+        edges
+          .filter(
+            (edge) =>
+              edge.relation !== 'sequence' &&
+              edge.relation !== 'feedback' &&
+              !plan.hidden.has(edge) &&
+              !plan.docked.has(edge.from),
+          )
+          .map((edge) => `${edge.from}|${edge.to}`),
+      ),
+    [edges, plan],
+  )
   const visibleEdges = useMemo(
     () =>
       // El orden de ejecución no se dibuja: en un bloque lineal ya lo dice la posición. Solo se ve, junto
       // con los cables ocultos, al seleccionar un nodo.
       [...edges.filter((edge) => edge.relation !== 'sequence'), ...plan.order].filter((edge) => {
-        if (edge.relation === 'sequence') return revealed.has(edge)
+        // Leído hacia abajo el orden sí se dibuja (es lo que hace legible la secuencia), salvo entre dos
+        // nodos que ya se unen por un dato: iría por el mismo camino.
+        if (edge.relation === 'sequence') {
+          return revealed.has(edge) || (aside && !dataPairs.has(`${edge.from}|${edge.to}`))
+        }
         // Un valor que llega a un nodo que ya lo nombra (una constante, la variable de un bucle, un
         // parámetro, el resultado de otra línea) no se dibuja como cable: es un chip en su casilla.
         if (plan.docked.has(edge.from) || (plan.hidden.has(edge) && !revealed.has(edge))) {
@@ -674,7 +714,7 @@ function CanvasInner({
         if (edge.relation === 'feedback' && scopes[edge.to]?.includes(edge.from)) return false
         return edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to)
       }),
-    [edges, scopes, plan, revealed],
+    [edges, scopes, plan, revealed, aside, dataPairs],
   )
 
   const parentOf = useMemo(() => {
@@ -703,14 +743,31 @@ function CanvasInner({
   // la animación se relanzaría sin parar en vez de avanzar.
   // La cajita del programa va arriba del todo, y el resto del plano baja lo que ocupa.
   const moduleTray = plan.trays.get(MODULE)
-  const shiftY = moduleTray ? moduleTray.h + 24 : 0
+  // Los pasos van por el centro. A la izquierda, lo auxiliar (la cajita de variables y los visores); a la
+  // derecha, las notas. Leído en horizontal, la cajita va arriba y el resto del plano baja lo que ocupa.
+  const sideW = aside
+    ? Math.max(
+        moduleTray?.w ?? 0,
+        ...sideViewers.map((node) => (node.viewer ? viewerSize(node.viewer).w : 0)),
+      )
+    : 0
+  const shiftX = aside && sideW > 0 ? sideW + MODULE_TRAY_AT.x + SIDE_GAP : 0
+  const shiftY = !aside && moduleTray ? moduleTray.h + 24 : 0
   /** Hasta dónde llega el diagrama; a partir de ahí, el margen de las notas. */
-  const diagramW = Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0)
+  const diagramW = aside
+    ? shiftX + layoutBounds.w
+    : Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0)
   // Con notas, el margen cuenta para el encuadre: el zoom es el mismo llegue la nota que llegue.
   const noteReserve = noteNodes.length > 0 ? NOTE_GUTTER + NOTE.width + 24 : 0
   const bounds = useMemo(
-    () => ({ w: diagramW + noteReserve, h: layoutBounds.h + shiftY }),
-    [diagramW, noteReserve, layoutBounds.h, shiftY],
+    () => ({
+      w: diagramW + noteReserve,
+      h: Math.max(
+        layoutBounds.h + shiftY,
+        aside && moduleTray ? moduleTray.h + MODULE_TRAY_AT.y * 2 : 0,
+      ),
+    }),
+    [diagramW, noteReserve, layoutBounds.h, shiftY, aside, moduleTray],
   )
 
   const motionItems = useMemo(
@@ -718,9 +775,9 @@ function CanvasInner({
       placements.map((placement) => ({
         id: placement.id,
         value: placement,
-        position: moved[placement.id] ?? { x: placement.x, y: placement.y + shiftY },
+        position: moved[placement.id] ?? { x: placement.x + shiftX, y: placement.y + shiftY },
       })),
-    [placements, moved, shiftY],
+    [placements, moved, shiftX, shiftY],
   )
 
   // El movimiento: las posiciones se interpolan, así que un nodo se puede seguir con la vista.
@@ -1284,6 +1341,10 @@ function CanvasInner({
             size,
             ...(chip ? { chip } : {}),
             ...(fn ? { fn } : {}),
+            // La cajita en columna numera sus chips como los pasos: la línea en la que se definen.
+            ...(aside && context === MODULE && (chip?.line ?? fn?.line) !== undefined
+              ? { line: chip?.line ?? fn?.line }
+              : {}),
             ...(iter
               ? {
                   iter: {
@@ -1328,14 +1389,25 @@ function CanvasInner({
     target: edge.to,
     // En compacto un nodo no tiene casillas (ni puertos por campo): todo entra y sale por el borde.
     // Un resultado entre varios es un chip: su cable, si se dibuja, sale por el puerto normal.
+    // Leída hacia abajo, la secuencia sale por el centro de cada paso y entra por el centro del siguiente.
     sourceHandle:
-      edge.fromPort && !edge.fromPort.startsWith('result:') && !isCompact(edge.from)
-        ? edge.fromPort
-        : 'out',
-    targetHandle: edge.toPort && !isCompact(edge.to) ? edge.toPort : 'in',
+      aside && edge.relation === 'sequence'
+        ? 'step-out'
+        : edge.fromPort && !edge.fromPort.startsWith('result:') && !isCompact(edge.from)
+          ? edge.fromPort
+          : 'out',
+    targetHandle:
+      aside && edge.relation === 'sequence'
+        ? 'step-in'
+        : edge.toPort && !isCompact(edge.to)
+          ? edge.toPort
+          : 'in',
     type: 'prysel' as const,
     ...(edge.label === undefined ? {} : { label: edge.label }),
-    markerEnd: `url(#prysel-arrow-${channelOf(edge) === 'control' ? 'thick' : 'thin'})`,
+    markerEnd:
+      aside && edge.relation === 'sequence'
+        ? 'url(#prysel-arrow-spine)'
+        : `url(#prysel-arrow-${channelOf(edge) === 'control' ? 'thick' : 'thin'})`,
     // Con algo seleccionado, sus conexiones destacan y el resto se retira.
     ...(lit ? { zIndex: lit.has(edge.from) || lit.has(edge.to) ? 10 : 0 } : {}),
     data: {
@@ -1365,15 +1437,63 @@ function CanvasInner({
    * Las notas: cada una en el margen a la derecha del diagrama, a la altura de lo que explica, con su flecha
    * a mano. Las que aún no llegaron ocupan su sitio pero no se dibujan.
    */
+  /** Dónde está cada nodo y cada chip ahora mismo: lo que las notas y los visores tienen al lado. */
+  const anchorRects = new Map<string, { x: number; y: number; w: number; h: number }>()
+  for (const flow of [...flowNodes, ...dockedNodes]) {
+    const size = (flow.data as { size?: { w: number; h: number } }).size
+    if (size) anchorRects.set(flow.id, { ...flow.position, ...size })
+  }
+
+  /**
+   * Los visores fijados, a la izquierda del diagrama y a la altura de lo que enseñan (debajo de la cajita de
+   * variables), con su cable. Como las notas, no entran en el reparto: no mueven nada.
+   */
+  const sideFlow = (() => {
+    const nodesOut: ViewerFlowNode[] = []
+    const edgesOut: PryselFlowEdge[] = []
+    if (sideViewers.length === 0) return { nodes: nodesOut, edges: edgesOut }
+    const linkOf = new Map(viewerLinks.map((link) => [link.to, link]))
+    const slots: NoteSlot[] = []
+    for (const node of sideViewers) {
+      const anchor = anchorRects.get(linkOf.get(node.id)?.from ?? '')
+      if (anchor && node.viewer) slots.push({ id: node.id, anchor, size: viewerSize(node.viewer) })
+    }
+    const top = moduleTray ? MODULE_TRAY_AT.y + moduleTray.h + 16 : -Infinity
+    const placed = placeNotes(slots, MODULE_TRAY_AT.x, 14, top)
+    for (const node of sideViewers) {
+      const at = placed.get(node.id)
+      const link = linkOf.get(node.id)
+      if (!node.viewer || !at || !link) continue
+      nodesOut.push({
+        ...viewerNode(node, node.viewer, at, viewerSize(node.viewer)),
+        data: {
+          node,
+          content: node.viewer,
+          size: viewerSize(node.viewer),
+          aside: true,
+          ...(onUnpin ? { onUnpin } : {}),
+        },
+      })
+      edgesOut.push({
+        id: `viewer-${link.from}-${node.id}`,
+        source: link.from,
+        target: node.id,
+        sourceHandle: 'aux-out',
+        targetHandle: 'in',
+        type: 'prysel' as const,
+        markerEnd: 'url(#prysel-arrow-thin)',
+        zIndex: 6,
+        data: { relation: 'transform', channel: 'data', obstacles, parentOf, axis: 'horizontal' },
+      })
+    }
+    return { nodes: nodesOut, edges: edgesOut }
+  })()
+
   const noteFlow = (() => {
     const nodesOut: NoteFlowNode[] = []
     const edgesOut: PryselFlowEdge[] = []
     if (noteNodes.length === 0) return { nodes: nodesOut, edges: edgesOut }
-    const rects = new Map<string, { x: number; y: number; w: number; h: number }>()
-    for (const flow of [...flowNodes, ...dockedNodes]) {
-      const size = (flow.data as { size?: { w: number; h: number } }).size
-      if (size) rects.set(flow.id, { ...flow.position, ...size })
-    }
+    const rects = anchorRects
     const linkOf = new Map(noteLinks.map((link) => [link.to, link]))
     const slots: NoteSlot[] = []
     for (const note of noteNodes) {
@@ -1416,7 +1536,7 @@ function CanvasInner({
           note: true,
           obstacles,
           parentOf,
-          axis,
+          axis: 'horizontal',
         },
       })
     }
@@ -1587,8 +1707,8 @@ function CanvasInner({
         <EdgeDefs />
       </svg>
       <ReactFlow
-        nodes={[...flowNodes, ...dockedNodes, ...noteFlow.nodes]}
-        edges={[...flowEdges, ...noteFlow.edges]}
+        nodes={[...flowNodes, ...dockedNodes, ...sideFlow.nodes, ...noteFlow.nodes]}
+        edges={[...flowEdges, ...sideFlow.edges, ...noteFlow.edges]}
         nodeTypes={NODE_TYPES}
         edgeTypes={EDGE_TYPES}
         onNodesChange={interactive ? onNodesChange : undefined}

@@ -12,6 +12,8 @@ export interface ViewerNodeData extends Record<string, unknown> {
   node: CanvasNode
   content: ViewerContent
   size: { w: number; h: number }
+  /** Está a la izquierda del diagrama: el cable le llega por la derecha. */
+  aside?: boolean
   onUnpin?: (id: string) => void
 }
 
@@ -27,7 +29,12 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
       data-stale={content.stale ? '' : undefined}
       style={{ width: size.w, height: size.h }}
     >
-      <Handle type="target" id="in" position={Position.Left} isConnectable={false} />
+      <Handle
+        type="target"
+        id="in"
+        position={data.aside ? Position.Right : Position.Left}
+        isConnectable={false}
+      />
       <header className="viewer__head">
         <Icon name="chart" size={13} />
         <span className="viewer__title" title={content.title}>

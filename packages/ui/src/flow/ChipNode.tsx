@@ -22,6 +22,8 @@ export interface ChipNodeData extends Record<string, unknown> {
   /** O la variable de iteración de un bucle. */
   iter?: { name: string; param?: boolean; icon?: IconId }
   size: { w: number; h: number }
+  /** El número de línea del chip, fuera de él y a su izquierda (en la cajita en columna). */
+  line?: number
   onControlChange?: (id: string, next: ControlModel) => void
   onRename?: (id: string, to: string) => void
   /** Sube cada vez que el menú del nodo pide renombrarlo. */
@@ -39,10 +41,22 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
         data-selected={selected ? '' : undefined}
         title={`${data.fn.name}${data.fn.signature}: arrástrala a una llamada`}
       >
+        {data.line !== undefined && (
+          <span className="flow-step" aria-hidden>
+            {data.line}
+          </span>
+        )}
         <Handle
           type="source"
           id="note-out"
           position={Position.Right}
+          isConnectable={false}
+          className="note-handle"
+        />
+        <Handle
+          type="source"
+          id="aux-out"
+          position={Position.Left}
           isConnectable={false}
           className="note-handle"
         />
@@ -71,6 +85,13 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
           isConnectable={false}
           className="note-handle"
         />
+        <Handle
+          type="source"
+          id="aux-out"
+          position={Position.Left}
+          isConnectable={false}
+          className="note-handle"
+        />
         <Icon
           name={data.iter.param ? 'function' : (data.iter.icon ?? 'loop')}
           size={12}
@@ -90,10 +111,22 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
       data-selected={selected ? '' : undefined}
       title={`${chip.label}: arrástrala a una casilla que reciba un valor`}
     >
+      {data.line !== undefined && (
+        <span className="flow-step" aria-hidden>
+          {data.line}
+        </span>
+      )}
       <Handle
         type="source"
         id="note-out"
         position={Position.Right}
+        isConnectable={false}
+        className="note-handle"
+      />
+      <Handle
+        type="source"
+        id="aux-out"
+        position={Position.Left}
         isConnectable={false}
         className="note-handle"
       />

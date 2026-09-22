@@ -212,3 +212,33 @@ Hecho (probado con la traza real de factorial, Fibonacci, burbuja y alias, y com
 Ejemplos: `factorial` (pila y árbol), `burbuja` (colección y variables, con una predicción) y `alias` (memoria y variables, con dos predicciones).
 
 Pendiente: Estructura (lista enlazada, árbol, grafo), Coste, Concepto y Ejercicio; la ficha que viaja por el cable; los valores que vuelan de origen a destino.
+
+### Revisión: leer la secuencia de pasos hacia abajo
+
+El usuario pidió, antes de la Fase D, que el orden de ejecución se lea de arriba abajo, con las notas a la
+derecha y lo auxiliar (variables, visores) a la izquierda; con el plegado a lo ancho de antes, la secuencia
+de un programa no se seguía de un vistazo.
+
+- **`Canvas` con `axis="vertical"`** (activado en el lienzo de la extensión): el plegado en filas se
+  desactiva (`maxRun: 0`, una sola columna) y la propia gramática de conexiones ya sabe leer en ese eje.
+- **La espina se ve**: leído hacia abajo, el cable de orden entre dos pasos consecutivos sí se dibuja (antes
+  solo aparecía al seleccionar un nodo, porque en horizontal ya lo decía la posición). Entra y sale por el
+  centro de cada tarjeta (asas `step-in`/`step-out`, invisibles) para que quede recto; una punta de flecha
+  más grande (`prysel-arrow-spine`) marca el sentido. Medido con `packages/spatial/scripts/density.ts
+vertical` y fijado en `packages/spatial/test/density.test.ts`: 0 solapes, 0 conexiones «contra la
+  lectura» y una sola columna hasta 200 pasos.
+- **Números de línea** fuera de cada tarjeta y de cada chip de la cajita del programa (`.flow-step`): se
+  lee el orden sin seguir ningún cable. La cajita de variables pasa a una columna (`trayLayout(..., column:
+true)`, un chip por fila) y mezcla variables y funciones por su línea.
+- **Las notas** siguen a la derecha (ya lo estaban desde la Fase B); ahora, además, su flecha usa el eje
+  horizontal aunque el diagrama sea vertical (nace de un asa `note-out`/`aux-out` a la derecha o la
+  izquierda del nodo, no de la espina).
+- **Los visores fijados** (antes mezclados con los pasos) se sacan a un margen a la izquierda, bajo la
+  cajita de variables, con su propio cable (`viewerNode` reutilizado, asa `in` a la derecha). `placeNotes`
+  (renombrada de hecho a «reparto en un margen») ahora acepta un `top`: nada sube por encima de lo que ya
+  ocupa ese sitio (la cajita), y la pila nunca baja respecto a la fila anterior.
+- **Métricas nuevas** en `analyze()`: `against` (conexiones que van contra el sentido de lectura; debe ser 0) y `drift`/`spineDrift` (cuánto se desvía cada paso del anterior en el eje transversal; 0 en una
+  secuencia lineal).
+
+Comprobado con las tres lecciones de ejemplo en un VS Code real: la burbuja, el factorial (con su función y
+sus variables en columna) y sin romper ninguna densidad (compacto/normal/expandido).

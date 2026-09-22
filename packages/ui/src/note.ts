@@ -126,6 +126,8 @@ export function placeNotes(
   slots: readonly NoteSlot[],
   x: number,
   spacing = 14,
+  /** Por encima de esta altura no se coloca nada (algo ya ocupa el sitio). */
+  top = -Infinity,
 ): Map<string, { x: number; y: number }> {
   // Por la altura del ancla (y por el orden en que llegan, si coinciden): el orden de lectura.
   const ordered = slots
@@ -155,8 +157,11 @@ export function placeNotes(
   }
   const placed = new Map<string, { x: number; y: number }>()
   let at = 0
+  // Nada empieza por encima de `top`, y ninguna pila baja respecto a la anterior.
+  let floor = top
   for (const block of blocks) {
-    const start = block.sum / block.count
+    const start = Math.max(block.sum / block.count, floor)
+    floor = start
     for (let i = at; i < at + block.count; i++) {
       const slot = ordered[i]
       if (slot) placed.set(slot.id, { x, y: start + (stacked[i] ?? 0) })

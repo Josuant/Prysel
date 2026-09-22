@@ -199,10 +199,13 @@ describe.skipIf(!available)('el motor de ejecución', () => {
     )
     const table = result.values['df']?.table
     expect(result.values['df']?.shape).toEqual([3, 2])
-    expect(table?.columns).toEqual([
-      { name: 'a', dtype: 'float64', nulls: 1 },
-      { name: 'b', dtype: 'object', nulls: 0 },
+    // Una columna de texto es `object` hasta pandas 2 y `str` desde pandas 3.
+    expect(table?.columns.map((c) => [c.name, c.nulls])).toEqual([
+      ['a', 1],
+      ['b', 0],
     ])
+    expect(table?.columns[0]?.dtype).toBe('float64')
+    expect(['object', 'str']).toContain(table?.columns[1]?.dtype)
     expect(table?.rows).toHaveLength(3)
   })
 

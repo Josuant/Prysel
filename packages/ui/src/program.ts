@@ -142,6 +142,8 @@ export interface FunctionInfo {
   signature: string
   /** Los nombres de sus parámetros, en orden. */
   params: string[]
+  /** Su línea en el archivo. */
+  line?: number
   /** Cuántas llamadas hay a ella en el archivo. */
   calls: number
   /**
@@ -174,6 +176,7 @@ export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): Functio
         name: node.label,
         signature: `(${names.join(', ')})`,
         params: names,
+        ...(node.line === undefined ? {} : { line: node.line }),
         calls: nodes.filter((other) => other.opens === node.id).length,
         used: edges.some((edge) => edge.from === node.id && !body.has(edge.to)),
         size: body.size,
