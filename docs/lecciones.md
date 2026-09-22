@@ -198,3 +198,17 @@ Formato mínimo:
 ```
 
 Pendiente: código en línea que enlaza con su nodo (al pasar el puntero se ilumina), fórmulas, preguntas (`ask`), y arrastrar una nota para dejarla donde se quiera (hoy el margen la coloca).
+
+### Fase C: nodos para entender
+
+Hecho (probado con la traza real de factorial, Fibonacci, burbuja y alias, y comprobado en VS Code real con las tres lecciones de `examples/lecciones`):
+
+- **Cinco tarjetas de solo lectura**, todas calculadas de la traza (`webview/src/insights.ts`, puro) y por eso también valen hacia atrás y sin Python: **Variables** (tabla de seguimiento: una columna por cada momento en que algo cambió en la llamada actual, lo cambiado resaltado), **Pila de llamadas** (un marco por llamada, la de arriba es la que se ejecuta, muestra lo que devuelve; una recursión profunda se resume), **Árbol de llamadas** (se construye de la traza entera y se ilumina con el paso: las futuras no se ven, las abiertas van a trazos, la actual manda; un bosque si el programa llama varias veces; tope de 120 llamadas), **Memoria** (cada variable de cada llamada abierta y los objetos a los que apuntan, con la identidad que graba el motor: dos flechas al mismo objeto son un alias, con su `×2`) y **Colección viva** (una lista como celdas o barras; se resaltan las celdas que cambiaron desde el paso anterior y las variables que el programa usa como índice —`xs[j]`— marcan su celda con `▲j`).
+- **Predicción** (`ask` en un momento del guion): «¿qué valdrá `total` tras esta línea?» (`expect: "value"`, con `name`) o «¿qué imprimirá?» (`expect: "output"`). Se responde al llegar al momento y se compara con lo que dice la traza (tolerante a espacios, comillas y `2` frente a `2.0`); el alumno ve si acertó y qué pasó. No bloquea: se puede seguir sin responder.
+- **Dónde viven**: en un panel junto al lienzo (a un lado si es ancho, debajo si es estrecho), no dentro del plano con zoom: así se leen siempre a su tamaño y no se pierden de vista mientras la cámara se mueve. Los botones «Entender: …» de la barra de reproducción los encienden y apagan (se recuerda por archivo); el guion puede pedir los que necesita con `"show": ["stack", "tree"]`.
+- **La traza graba las listas cortas enteras** (hasta 40 escalares: `{l: [...], n, t}`): antes se recortaban a ocho elementos, y un intercambio en la cola de una lista no contaba como cambio.
+- La cámara ahora se aleja lo justo (hasta un 0,45) para que quepan el nodo que se ejecuta y la nota que se lee.
+
+Ejemplos: `factorial` (pila y árbol), `burbuja` (colección y variables, con una predicción) y `alias` (memoria y variables, con dos predicciones).
+
+Pendiente: Estructura (lista enlazada, árbol, grafo), Coste, Concepto y Ejercicio; la ficha que viaja por el cable; los valores que vuelan de origen a destino.

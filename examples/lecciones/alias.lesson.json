@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "title": "Alias y copias",
+  "level": "principiante",
+  "lang": "es",
+  "source": "alias.py",
+  "show": ["memory", "variables"],
+  "beats": [
+    {
+      "id": "lista",
+      "at": {
+        "text": "a = [1, 2, 3]"
+      },
+      "note": {
+        "text": "Se crea **una lista** en memoria, y el nombre `a` apunta a ella.",
+        "style": "sticky"
+      }
+    },
+    {
+      "id": "alias",
+      "at": {
+        "text": "b = a"
+      },
+      "note": {
+        "title": "Ojo",
+        "text": "Esto **no copia** la lista: `b` es otro nombre para la misma. Mira cómo las dos flechas van al mismo sitio.",
+        "style": "warning"
+      }
+    },
+    {
+      "id": "copia",
+      "at": {
+        "text": "c = list(a)"
+      },
+      "note": {
+        "title": "Copia",
+        "text": "`list(a)` sí crea **otra lista** con los mismos elementos: `c` apunta a una distinta.",
+        "style": "definition"
+      }
+    },
+    {
+      "id": "cambio",
+      "at": {
+        "text": "b.append(4)"
+      },
+      "ask": {
+        "text": "Añadimos un 4 usando el nombre `b`. ¿Cómo quedará a?",
+        "expect": "value",
+        "name": "a"
+      },
+      "note": {
+        "text": "Cambiar la lista por `b` la cambia también para `a`: **es la misma**.",
+        "style": "callout"
+      }
+    },
+    {
+      "id": "fin",
+      "at": {
+        "text": "print(a, c)"
+      },
+      "ask": {
+        "text": "¿Qué imprimirá?",
+        "expect": "output"
+      },
+      "note": {
+        "text": "`a` (y `b`) cambiaron; la copia `c` no.",
+        "style": "margin"
+      }
+    }
+  ]
+}

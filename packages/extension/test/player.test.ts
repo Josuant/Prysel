@@ -170,3 +170,15 @@ describe.skipIf(!available)('con la traza real de un programa', () => {
     expect(describeEvent(program, stateAt(index, -1))).toBe('Antes de empezar')
   }, 30_000)
 })
+
+describe('formatear una lista grabada', () => {
+  it('se lee como Python: corchetes, paréntesis, y los puntos suspensivos si faltan elementos', () => {
+    expect(formatShown({ l: [1, 'a', null, true], n: 4, t: 'list' } as never)).toBe(
+      '[1, a, None, True]',
+    )
+    expect(formatShown({ l: [1], n: 1, t: 'tuple' } as never)).toBe('(1,)')
+    expect(formatShown({ l: [1, 2], n: 2, t: 'tuple' } as never)).toBe('(1, 2)')
+    expect(formatShown({ l: [1, 2], n: 9, t: 'list' } as never)).toBe('[1, 2, …]')
+    expect(formatShown({ l: [], n: 0, t: 'list' } as never)).toBe('[]')
+  })
+})

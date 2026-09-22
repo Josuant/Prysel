@@ -325,3 +325,30 @@ describe.skipIf(!available)('con la traza real', () => {
     expect(only?.step).toBeNull()
   }, 30_000)
 })
+
+describe('las lecciones de ejemplo', () => {
+  const load = (name: string) => {
+    const source = readFileSync(path.join(examples, `${name}.py`), 'utf8')
+    const result = readLesson(readFileSync(path.join(examples, `${name}.lesson.json`), 'utf8'))
+    if (!result.ok) throw new Error(`${name}: ${result.error}`)
+    return { source, lesson: result.lesson }
+  }
+
+  it.each(['factorial', 'burbuja', 'alias'])(
+    '%s: es válida y todas sus anclas están en el programa',
+    (name) => {
+      const { source, lesson } = load(name)
+      const program = parse(source)
+      for (const beat of lesson.beats) {
+        expect(anchorNode(program, beat.at), `${name}/${beat.id}`).not.toBeNull()
+        if (beat.when) expect(anchorNode(program, beat.when), `${name}/${beat.id}`).not.toBeNull()
+      }
+    },
+  )
+
+  it('cada una pide los nodos para entender que le hacen falta', () => {
+    expect(load('factorial').lesson.show).toEqual(['stack', 'tree'])
+    expect(load('burbuja').lesson.show).toEqual(['collection', 'variables'])
+    expect(load('alias').lesson.show).toEqual(['memory', 'variables'])
+  })
+})

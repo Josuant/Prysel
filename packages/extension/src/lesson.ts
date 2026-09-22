@@ -27,6 +27,21 @@ export interface Anchor {
   nth?: number
 }
 
+/** Los nodos para entender que sabe dibujar el lienzo. Deben coincidir con `INSIGHTS` del webview. */
+export const INSIGHT_IDS = ['variables', 'stack', 'tree', 'memory', 'collection'] as const
+export type InsightIdentifier = (typeof INSIGHT_IDS)[number]
+
+/**
+ * Una pregunta antes de ver lo que pasa: «¿qué valdrá `total` tras esta línea?» (`value`, con el nombre) o
+ * «¿qué imprimirá?» (`output`). Se responde al llegar al momento y luego se revela con la traza.
+ */
+export interface Ask {
+  text: string
+  expect: 'value' | 'output'
+  /** La variable por la que se pregunta, si se espera un valor. */
+  name?: string
+}
+
 export interface Beat {
   id: string
   /** El nodo al que se refiere la nota: de él sale la flecha. */
@@ -37,6 +52,7 @@ export interface Beat {
    */
   when?: Anchor & { visit?: number }
   note: { text: string; style: NoteStyleId; title?: string }
+  ask?: Ask
 }
 
 export interface Lesson {
@@ -46,6 +62,8 @@ export interface Lesson {
   lang?: string
   /** El archivo del programa, tal como lo llama el guion (informativo). */
   source?: string
+  /** Qué nodos para entender se enseñan al abrir la lección (el alumno puede cambiarlos). */
+  show?: InsightIdentifier[]
   beats: Beat[]
 }
 
@@ -94,6 +112,18 @@ export function parseLesson(value: unknown): LessonResult {
   const lang = text(value['lang'], LESSON_LIMITS.meta)
   const source = text(value['source'], LESSON_LIMITS.anchor)
   if (level === null || lang === null || source === null) return fail('Datos del guion no válidos.')
+  let show: InsightIdentifier[] | undefined
+  if (value['show'] !== undefined) {
+    const listed = value['show']
+    if (
+      !Array.isArray(listed) ||
+      listed.length > INSIGHT_IDS.length ||
+      !listed.every((id) => INSIGHT_IDS.includes(id as InsightIdentifier))
+    ) {
+      return fail(`«show» es una lista de: ${INSIGHT_IDS.join(', ')}.`)
+    }
+    show = [...new Set(listed as InsightIdentifier[])]
+  }
   const raw = value['beats']
   if (!Array.isArray(raw)) return fail('«beats» debe ser una lista.')
   if (raw.length > LESSON_LIMITS.beats)
@@ -135,10 +165,27 @@ export function parseLesson(value: unknown): LessonResult {
         `${where}: la clase de nota «${String(style)}» no existe (${NOTE_STYLE_IDS.join(', ')}).`,
       )
     }
+    let ask: Ask | undefined
+    if (entry['ask'] !== undefined) {
+      const question = entry['ask']
+      if (!isRecord(question)) return fail(`${where}: «ask» debe ser un objeto.`)
+      const prompt = text(question['text'], LESSON_LIMITS.title)
+      if (!prompt || prompt.trim() === '') return fail(`${where}: la pregunta necesita un texto.`)
+      const expect = question['expect']
+      if (expect !== 'value' && expect !== 'output') {
+        return fail(`${where}: «expect» es «value» o «output».`)
+      }
+      const name = text(question['name'], LESSON_LIMITS.meta)
+      if (name === null) return fail(`${where}: el nombre de la pregunta no es válido.`)
+      if (expect === 'value' && !name)
+        return fail(`${where}: preguntar por un valor necesita «name».`)
+      ask = { text: prompt, expect, ...(name ? { name } : {}) }
+    }
     beats.push({
       id,
       at,
       ...(when ? { when } : {}),
+      ...(ask ? { ask } : {}),
       note: {
         text: body,
         style: style as NoteStyleId,
@@ -155,6 +202,7 @@ export function parseLesson(value: unknown): LessonResult {
       ...(level ? { level } : {}),
       ...(lang ? { lang } : {}),
       ...(source ? { source } : {}),
+      ...(show ? { show } : {}),
       beats,
     },
   }

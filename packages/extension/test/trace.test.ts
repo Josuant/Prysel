@@ -211,6 +211,7 @@ describe.skipIf(!available)('grabar la traza con el motor', () => {
     expect(locals['a']).toBe(3)
     expect(locals['b']).toBe(2.5)
     expect(locals['c']).toBe("'hola'")
+    // Más de 40 elementos: texto recortado.
     expect(String(locals['d'])).toMatch(/^\[0, 1, 2, 3, 4, 5, 6, 7, .*\]$/)
     expect(String(locals['d']).length).toBeLessThanOrEqual(70)
     expect(locals['e']).toBe("{'k': [1, 2]}")
@@ -263,5 +264,48 @@ describe.skipIf(!available)('grabar la traza con el motor', () => {
   it('el programa se ejecuta como principal: `if __name__ == "__main__"` corre', async () => {
     const result = await kernel.trace('if __name__ == "__main__":\n    print("hola")\n')
     expect(result.output).toBe('hola\n')
+  })
+})
+
+describe.skipIf(!available)('las listas cortas se graban enteras', () => {
+  let kernel: Kernel
+  beforeAll(async () => {
+    kernel = await Kernel.start({ python })
+  }, 30_000)
+  afterAll(() => {
+    kernel.dispose()
+  })
+
+  const SWAP = 'xs = [5, 3, 8, 1, 9, 2, 7, 4, 6, 0]\nxs[9], xs[0] = xs[0], xs[9]\nt = (1, "a")\n'
+
+  it('una lista de escalares llega con todos sus elementos, aunque sean más de los que caben en un repr', async () => {
+    const result = await kernel.trace(SWAP)
+    const state = stateAt(indexOf(result), result.events.length - 1)
+    expect(state.frames[0]?.locals['xs']).toEqual({
+      l: [0, 3, 8, 1, 9, 2, 7, 4, 6, 5],
+      n: 10,
+      t: 'list',
+    })
+    expect(state.frames[0]?.locals['t']).toEqual({ l: [1, "'a'"], n: 2, t: 'tuple' })
+  })
+
+  it('un cambio lejos del principio (un intercambio en la cola) cuenta como cambio', async () => {
+    const result = await kernel.trace(
+      'xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\nxs[9] = 0\nxs[9] = 99\n',
+    )
+    // Un evento por línea, y las dos escrituras son cambios de `xs`.
+    const changed = result.events.filter((e) => e.ch && 'xs' in e.ch)
+    expect(changed).toHaveLength(3)
+  })
+
+  it('una lista con objetos dentro, o larguísima, se enseña como texto corto', async () => {
+    const result = await kernel.trace(
+      'a = [[1], [2]]\nb = list(range(41))\nc = [1.5, float("nan")]\n',
+    )
+    const locals = stateAt(indexOf(result), result.events.length - 1).frames[0]?.locals ?? {}
+    expect(typeof locals['a']).toBe('string')
+    expect(typeof locals['b']).toBe('string')
+    // Un `nan` no es JSON: se cuenta como texto.
+    expect(locals['c']).toEqual({ l: [1.5, 'nan'], n: 2, t: 'list' })
   })
 })

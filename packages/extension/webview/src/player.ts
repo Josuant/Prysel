@@ -1,5 +1,5 @@
 import type { Program, ProgramNode } from '@prysel/python'
-import { visibleLocals, type Shown, type TraceState } from '../../src/trace.ts'
+import { isShownList, visibleLocals, type Shown, type TraceState } from '../../src/trace.ts'
 
 /**
  * La reproducción de una traza puesta sobre el diagrama: qué nodo es el que se está ejecutando, qué vale
@@ -11,6 +11,12 @@ import { visibleLocals, type Shown, type TraceState } from '../../src/trace.ts'
 export function formatShown(value: Shown): string {
   if (value === null) return 'None'
   if (typeof value === 'boolean') return value ? 'True' : 'False'
+  if (isShownList(value)) {
+    const items = value.l.map((item) => formatShown(item)).join(', ')
+    const more = value.n > value.l.length ? ', …' : ''
+    if (value.t === 'tuple') return `(${items}${value.l.length === 1 && !more ? ',' : ''}${more})`
+    return `[${items}${more}]`
+  }
   return String(value)
 }
 
@@ -135,7 +141,11 @@ export function observedAt(
     for (const name of names) {
       if (!(name in frame.locals)) continue
       const text = formatShown(frame.locals[name] as Shown)
-      values[name] = { short: text, long: `${name} = ${text}` }
+      // El chip es pequeño: una lista larga se recorta ahí, y entera al pasar el puntero.
+      values[name] = {
+        short: text.length > 22 ? `${text.slice(0, 21)}…` : text,
+        long: `${name} = ${text}`,
+      }
     }
     if (Object.keys(values).length > 0) found.set(node.id, values)
   }

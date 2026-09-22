@@ -6,8 +6,24 @@
  * Puro: sin motor ni `vscode`. El motor (`runtime/prysel_runner.py`) la graba; aquí se lee.
  */
 
-/** Lo que enseña una traza de un valor: un número, un booleano o `None` tal cual, y lo demás como texto corto. */
-export type Shown = number | string | boolean | null
+/** Un valor suelto: un número, un booleano o `None` tal cual, y un texto (o el de un objeto) como su `repr`. */
+export type Scalar = number | string | boolean | null
+
+/**
+ * Una lista o tupla corta de escalares, entera (hasta 40 elementos): es lo que permite verla como celdas y
+ * notar que un elemento cambió aunque esté lejos. `n` es su largo; los elementos de texto van ya con comillas.
+ */
+export interface ShownList {
+  l: Scalar[]
+  n: number
+  t: 'list' | 'tuple'
+}
+
+/** Lo que enseña una traza de un valor: un escalar, una lista corta entera, o un texto corto para lo demás. */
+export type Shown = Scalar | ShownList
+
+export const isShownList = (value: Shown | undefined): value is ShownList =>
+  typeof value === 'object' && value !== null && Array.isArray((value as ShownList).l)
 
 /**
  * Un paso de la ejecución. `call`: entra en una función; `line`: está a punto de ejecutarse una línea;

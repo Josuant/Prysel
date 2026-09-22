@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "title": "Ordenación de burbuja",
+  "level": "principiante",
+  "lang": "es",
+  "source": "burbuja.py",
+  "show": ["collection", "variables"],
+  "beats": [
+    {
+      "id": "lista",
+      "at": {
+        "text": "xs = [5, 3, 8, 1, 9, 2]"
+      },
+      "note": {
+        "title": "La lista",
+        "text": "Seis números **desordenados**. Queremos dejarlos de menor a mayor.",
+        "style": "sticky"
+      }
+    },
+    {
+      "id": "pasada",
+      "at": {
+        "text": "for i in range(n):"
+      },
+      "note": {
+        "title": "Fíjate",
+        "text": "Cada pasada lleva el mayor que queda hasta su sitio, al final, como una burbuja que sube.",
+        "style": "callout"
+      }
+    },
+    {
+      "id": "comparar",
+      "at": {
+        "text": "if xs[j] > xs[j + 1]:"
+      },
+      "note": {
+        "text": "Se comparan **dos vecinos**: la celda marcada por `j` y la siguiente.",
+        "style": "definition"
+      }
+    },
+    {
+      "id": "cambio",
+      "at": {
+        "text": "xs[j], xs[j + 1] = xs[j + 1], xs[j]"
+      },
+      "ask": {
+        "text": "5 es mayor que 3, así que se intercambian. ¿Cómo quedará xs tras esta línea?",
+        "expect": "value",
+        "name": "xs"
+      },
+      "note": {
+        "title": "Intercambio",
+        "text": "Los dos vecinos **cambian de sitio**: las celdas resaltadas son las que se movieron.",
+        "style": "warning"
+      }
+    },
+    {
+      "id": "fin",
+      "at": {
+        "text": "print(xs)"
+      },
+      "note": {
+        "text": "Al terminar, la lista está **ordenada**.",
+        "style": "margin"
+      }
+    }
+  ]
+}

@@ -260,6 +260,8 @@ const MODULE_TRAY_AT = { x: 28, y: 28 }
 const EDGE_TYPES = { prysel: PryselEdge }
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
 const MAX_HEIGHT = 640
+/** Lo más que la cámara se aleja para que quepan a la vez el cursor y la nota que se lee. */
+const MIN_FOLLOW_ZOOM = 0.45
 
 type Point = { x: number; y: number }
 const NO_POSITIONS: Record<string, Point> = {}
@@ -1452,16 +1454,22 @@ function CanvasInner({
     const top = Math.min(...boxes.map((box) => box.y))
     const right = Math.max(...boxes.map((box) => box.x + box.w))
     const bottom = Math.max(...boxes.map((box) => box.y + box.h))
-    const fits =
-      (right - left) * zoom <= frame.clientWidth - 2 * margin &&
-      (bottom - top) * zoom <= frame.clientHeight - 2 * margin
+    // El zoom con el que caben las dos cosas; si hay que alejarse demasiado, no merece la pena.
+    const room = Math.min(
+      (frame.clientWidth - 2 * margin) / (right - left),
+      (frame.clientHeight - 2 * margin) / (bottom - top),
+    )
+    const both = Math.min(zoom, room)
     // Si no caben las dos, manda lo que se ejecuta: perder el diagrama de vista es peor que leer la nota a medias.
     const only = cursorBox ?? noteBox
-    const target =
-      fits || !only
-        ? { x: (left + right) / 2, y: (top + bottom) / 2 }
-        : { x: only.x + only.w / 2, y: only.y + only.h / 2 }
-    void setCenter(target.x, target.y, { zoom, duration: animate ? 350 : 0 })
+    const together = both >= MIN_FOLLOW_ZOOM || !only
+    const target = together
+      ? { x: (left + right) / 2, y: (top + bottom) / 2 }
+      : { x: only.x + only.w / 2, y: only.y + only.h / 2 }
+    void setCenter(target.x, target.y, {
+      zoom: together ? both : zoom,
+      duration: animate ? 350 : 0,
+    })
   }, [cursor, currentNote, getViewport, setCenter, animate])
 
   const onNodesChange = useCallback(

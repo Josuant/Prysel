@@ -561,10 +561,34 @@ _SHORT.maxother = 40
 _SHORT.maxlevel = 3
 
 
+# Hasta cuántos elementos se graba una lista entera: para verla como celdas (ordenar, buscar) hacen falta todos.
+_LIST_LIMIT = 40
+
+
+def _items(value):
+    """Los elementos de una lista o tupla de escalares, tal como los enseña la traza; `None` si no lo es."""
+    items = []
+    for item in value:
+        if item is None or isinstance(item, (bool, int)):
+            items.append(item)
+        elif isinstance(item, float):
+            items.append(item if math.isfinite(item) else str(item))
+        elif isinstance(item, str) and len(item) <= 12:
+            items.append(repr(item))
+        else:
+            return None
+    return items
+
+
 def _show(value):
-    """Lo que enseña una traza de un valor: un número tal cual, y lo demás como texto corto."""
+    """Lo que enseña una traza de un valor: un número tal cual, una lista corta de escalares entera
+    (`{"l": [...], "n": largo, "t": "list"|"tuple"}`), y lo demás como texto corto."""
     if isinstance(value, bool) or value is None:
         return value
+    if isinstance(value, (list, tuple)) and len(value) <= _LIST_LIMIT:
+        items = _items(value)
+        if items is not None:
+            return {"l": items, "n": len(value), "t": "list" if isinstance(value, list) else "tuple"}
     if isinstance(value, (int, float)):
         return value if isinstance(value, int) or math.isfinite(value) else str(value)
     try:

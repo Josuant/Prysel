@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { Program } from '@prysel/python'
 import { plainNote } from '@prysel/ui'
 import { describeEvent, variablesAt } from './player.ts'
@@ -18,6 +19,7 @@ export function PlayerBar({
   truncated,
   failure,
   lesson,
+  extras,
   onClose,
 }: {
   program: Program
@@ -32,6 +34,8 @@ export function PlayerBar({
     moments: { step: number; title?: string; text: string }[]
     unreached: number
   }
+  /** Más controles (los nodos para entender), bajo los botones. */
+  extras?: ReactNode
   onClose: () => void
 }) {
   const { state, step, last } = player
@@ -176,6 +180,8 @@ export function PlayerBar({
           Salir
         </button>
       </div>
+
+      {extras && <div className="mt-1.5">{extras}</div>}
 
       {lesson && moment && (
         <p className="player__caption" aria-live="polite">

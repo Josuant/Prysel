@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Density, NodeState } from '@prysel/morphology'
 import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
@@ -30,8 +30,10 @@ import {
 import { ErrorBoundary } from './ErrorBoundary.tsx'
 import { OutputPanel } from './OutputPanel.tsx'
 import { PlayerBar } from './Player.tsx'
+import { InsightDock, InsightToggles, type Answer } from './InsightCards.tsx'
+import { INSIGHTS, type InsightId } from './insights.ts'
 import { cursorNode, observedAt } from './player.ts'
-import { lessonNotes, momentsOf, resolveBeats } from './lessons.ts'
+import { currentMoment, lessonNotes, momentsOf, resolveBeats } from './lessons.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -50,6 +52,8 @@ import {
 import { useWriteBack } from './useWriteBack.ts'
 
 const vscode = acquireVsCodeApi()
+/** Lo guardado por el lienzo (densidad, visores, nodos para entender): se reescribe entero, sin perder nada. */
+const saved = (): SavedState => (vscode.getState() as SavedState | undefined) ?? {}
 const post = (message: unknown) => {
   vscode.postMessage(message)
 }
@@ -65,7 +69,12 @@ interface SavedState {
   density?: Density
   /** Los visores fijados, por archivo: viven en el lienzo, no en el código. */
   pins?: Record<string, PinKey[]>
+  /** Los nodos para entender que se enseñan al reproducir, por archivo. */
+  insights?: Record<string, InsightId[]>
 }
+
+/** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
+const WIDE_PANEL = 1100
 
 /** La grabación de la traza del programa: cómo va, y la traza lista para reproducir. */
 interface Recording {
@@ -176,7 +185,7 @@ export function App() {
   )
   const pins = useMemo(() => allPins[file ?? ''] ?? [], [allPins, file])
   const remember = (nextDensity: Density, nextPins: Record<string, PinKey[]>) => {
-    vscode.setState({ density: nextDensity, pins: nextPins } satisfies SavedState)
+    vscode.setState({ ...saved(), density: nextDensity, pins: nextPins } satisfies SavedState)
   }
   const changeDensity = (next: Density) => {
     setDensity(next)
@@ -187,7 +196,7 @@ export function App() {
     (key: PinKey) => {
       const next = { ...allPins, [file ?? '']: togglePin(pins, key) }
       setAllPins(next)
-      vscode.setState({ density, pins: next } satisfies SavedState)
+      vscode.setState({ ...saved(), density, pins: next } satisfies SavedState)
     },
     [allPins, pins, file, density],
   )
@@ -205,6 +214,49 @@ export function App() {
   // La reproducción se detiene en cada momento del guion: hay algo que leer.
   const stops = useMemo(() => new Set(moments.map((moment) => moment.step)), [moments])
   const player = usePlayer(replay?.index ?? null, stops)
+
+  // Los nodos para entender: los que eligió el alumno para este archivo, o los que pide la lección.
+  const [insightChoice, setInsightChoice] = useState<Record<string, InsightId[]>>(
+    () => saved().insights ?? {},
+  )
+  const insightIds = useMemo(
+    () => insightChoice[file ?? ''] ?? lesson?.show ?? [],
+    [insightChoice, file, lesson],
+  )
+  // Se enciende o apaga sobre lo que había en ese momento (dos pulsaciones seguidas no se pisan).
+  const toggleInsight = (id: InsightId) => {
+    setInsightChoice((previous) => {
+      const current = previous[file ?? ''] ?? lesson?.show ?? []
+      const now = current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
+      return { ...previous, [file ?? '']: INSIGHTS.filter((x) => now.includes(x)) }
+    })
+  }
+  useEffect(() => {
+    vscode.setState({ ...saved(), insights: insightChoice } satisfies SavedState)
+  }, [insightChoice])
+  // Las respuestas a las preguntas del guion valen para esta reproducción: otra traza empieza limpia.
+  const [answered, setAnswered] = useState<{
+    of: unknown
+    map: Record<string, Answer>
+  }>({ of: null, map: {} })
+  const answers = answered.of === (replay?.index ?? null) ? answered.map : {}
+  const moment = currentMoment(moments, player.step)
+  const question = moment?.beat.ask
+  const noAnswer: Answer = { text: '', checked: false }
+  // Cuánto mide el panel decide dónde van los nodos para entender: a un lado, o debajo.
+  const [wide, setWide] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const observer = new ResizeObserver(() => {
+      setWide(root.clientWidth >= WIDE_PANEL)
+    })
+    observer.observe(root)
+    return () => {
+      observer.disconnect()
+    }
+  }, [])
   /** Lo que valen los nombres del programa en el paso que se está mirando. */
   const traced = useMemo(
     () => (program && replay && player.state ? observedAt(program, player.state) : null),
@@ -512,7 +564,7 @@ export function App() {
     : 'Lienzo vacío'
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={rootRef} className="flex h-full flex-col">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border-card px-3 py-2">
         <span className="text-xs font-semibold tracking-widest text-ink-faint">PRYSEL</span>
         <span className="min-w-0 flex-1 truncate text-xs text-ink-muted" title={file ?? undefined}>
@@ -597,43 +649,69 @@ export function App() {
         </div>
       )}
 
-      <main className="min-h-0 flex-1 p-3">
-        {program && program.nodes.length > 0 ? (
-          <ErrorBoundary label="No se pudo dibujar el lienzo" resetKey={program}>
-            <Canvas
-              nodes={canvasNodes}
-              edges={canvasEdges}
-              density={density}
-              onEnter={view.enter}
-              onControlChange={changeControl}
-              onAction={act}
-              onRun={(id) => {
-                run([id])
+      <div className={`flex min-h-0 flex-1 ${wide ? 'flex-row' : 'flex-col'}`}>
+        <main className="min-h-0 min-w-0 flex-1 p-3">
+          {program && program.nodes.length > 0 ? (
+            <ErrorBoundary label="No se pudo dibujar el lienzo" resetKey={program}>
+              <Canvas
+                nodes={canvasNodes}
+                edges={canvasEdges}
+                density={density}
+                onEnter={view.enter}
+                onControlChange={changeControl}
+                onAction={act}
+                onRun={(id) => {
+                  run([id])
+                }}
+                stateOf={stateOf}
+                extraMenu={viewerMenu}
+                onUnpin={(id) => {
+                  const key = pins.find((p) => pinNodeId(p) === id)
+                  if (key) pin(key)
+                }}
+                addTarget={'into' in place ? place.into : null}
+                palette={palette}
+                addToModule={view.focus === null}
+                selected={selected}
+                onSelect={setSelected}
+                interactive
+                height="fill"
+                fitKey={view.viewKey}
+                cursor={cursor}
+                showActions
+                showStatus={started}
+                ariaLabel={canvasLabel}
+              />
+            </ErrorBoundary>
+          ) : (
+            <EmptyState />
+          )}
+        </main>
+
+        {program && replay && player.state && (insightIds.length > 0 || question) && (
+          <ErrorBoundary label="No se pudo dibujar los nodos para entender" resetKey={replay}>
+            <InsightDock
+              program={program}
+              index={replay.index as TraceIndex}
+              step={player.step}
+              state={player.state}
+              ids={insightIds}
+              ask={question}
+              askStep={moment?.step}
+              answer={(moment && answers[moment.beat.id]) || noAnswer}
+              onAnswer={(next) => {
+                if (moment) {
+                  setAnswered({
+                    of: replay.index,
+                    map: { ...answers, [moment.beat.id]: next },
+                  })
+                }
               }}
-              stateOf={stateOf}
-              extraMenu={viewerMenu}
-              onUnpin={(id) => {
-                const key = pins.find((p) => pinNodeId(p) === id)
-                if (key) pin(key)
-              }}
-              addTarget={'into' in place ? place.into : null}
-              palette={palette}
-              addToModule={view.focus === null}
-              selected={selected}
-              onSelect={setSelected}
-              interactive
-              height="fill"
-              fitKey={view.viewKey}
-              cursor={cursor}
-              showActions
-              showStatus={started}
-              ariaLabel={canvasLabel}
+              side={wide}
             />
           </ErrorBoundary>
-        ) : (
-          <EmptyState />
         )}
-      </main>
+      </div>
 
       {program && replay?.trace && (
         <ErrorBoundary label="No se pudo dibujar la reproducción" resetKey={replay}>
@@ -642,6 +720,7 @@ export function App() {
             player={player}
             truncated={replay.trace.truncated}
             failure={replay.trace.error}
+            extras={<InsightToggles ids={insightIds} onToggle={toggleInsight} />}
             {...(lesson
               ? {
                   lesson: {
