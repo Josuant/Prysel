@@ -159,6 +159,11 @@ export interface CanvasProps {
   edges: SemanticEdge[]
   density: Density
   stateOf?: (id: string) => NodeState
+  /**
+   * Reproduciendo una lección con construcción progresiva: un nodo que la ejecución aún no ha alcanzado
+   * se atenúa (`'pending'`) hasta que le toque. Igual que `stateOf`, por id: la app decide, el lienzo dibuja.
+   */
+  modifierOf?: (id: string) => 'dead' | 'generating' | 'pending' | undefined
   onControlChange?: (id: string, next: ControlModel) => void
   /** Lo que el usuario le hace a un nodo: reescribirlo como código, eliminarlo, duplicarlo, renombrarlo. */
   onAction?: (action: NodeAction) => void
@@ -283,6 +288,7 @@ function CanvasInner({
   edges: allEdges,
   density,
   stateOf,
+  modifierOf,
   onControlChange,
   onAction,
   addTarget,
@@ -1235,6 +1241,7 @@ function CanvasInner({
           node,
           density: densityOf(node),
           state: stateOf?.(node.id) ?? 'dormant',
+          modifier: modifierOf?.(node.id),
           axis,
           size: item.value.size,
           container,

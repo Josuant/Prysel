@@ -46,6 +46,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   node: CanvasNode
   density: Density
   state: NodeState
+  /** `pending`: la reproducción de una lección aún no ha llegado aquí (construcción progresiva). */
+  modifier?: 'dead' | 'generating' | 'pending'
   axis: Axis
   size: { w: number; h: number }
   container: boolean
@@ -116,8 +118,19 @@ function railPath(w: number, h: number, top: number): string {
 }
 
 export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
-  const { node, density, state, axis, size, container, linkedSlots, connectable, eligible, phase } =
-    data
+  const {
+    node,
+    density,
+    state,
+    modifier,
+    axis,
+    size,
+    container,
+    linkedSlots,
+    connectable,
+    eligible,
+    phase,
+  } = data
   const [slots, setSlots] = useState<MeasuredSlot[]>([])
   const updateNodeInternals = useUpdateNodeInternals()
 
@@ -602,6 +615,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         density={density}
         size={size}
         state={state}
+        {...(modifier ? { modifier } : {})}
         container={container}
         renameSignal={data.renameSignal ?? 0}
         showStatus={data.showStatus}

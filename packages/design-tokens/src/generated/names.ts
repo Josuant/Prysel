@@ -7,7 +7,7 @@ export const tokenNames = {
   shadow: ['shadow-raised', 'shadow-card'] as const,
   blur: ['blur-glass'] as const,
   stroke: ['stroke-node', 'stroke-control', 'stroke-data'] as const,
-  opacity: ['opacity-ghost', 'opacity-dead', 'opacity-veil'] as const,
+  opacity: ['opacity-ghost', 'opacity-dead', 'opacity-pending', 'opacity-veil'] as const,
   typeStyle: ['primary', 'secondary', 'tertiary', 'space-title', 'architecture', 'node-title', 'badge', 'field-label', 'stat', 'code', 'value'] as const,
 } as const
 

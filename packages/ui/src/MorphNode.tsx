@@ -75,8 +75,11 @@ export interface MorphNodeProps {
   /** Nombres que se ofrecen al escribir en los campos que son expresiones. */
   suggestions?: readonly string[]
   onControlChange?: (next: ControlModel) => void
-  /** `dead`: código inalcanzable. `generating`: la UI del nodo aún se está generando. */
-  modifier?: 'dead' | 'generating'
+  /**
+   * `dead`: código inalcanzable. `generating`: la UI del nodo aún se está generando. `pending`:
+   * reproduciendo una lección, la ejecución aún no ha llegado aquí (construcción progresiva).
+   */
+  modifier?: 'dead' | 'generating' | 'pending'
   /** Enfocado por el usuario: gana elevación. */
   focused?: boolean
   /** `flat` desactiva desenfoque, sombras y animación (zoom lejano, lienzos grandes). */

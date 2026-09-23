@@ -13,6 +13,7 @@ import {
   formatShown,
   nodeAtLine,
   observedAt,
+  reachedNodes,
   variablesAt,
 } from '../webview/src/player.ts'
 
@@ -133,6 +134,32 @@ describe.skipIf(!available)('con la traza real de un programa', () => {
     expect(observedAt(program, last).get(inLoop?.id ?? '')?.['total']?.short).toBe('6')
     // El último paso imprime; no vuelve a escribir `total`, así que ya no está «recién llegado».
     expect(observedAt(program, last).get(inLoop?.id ?? '')?.['total']?.changed).toBe(false)
+  }, 30_000)
+
+  it('construcción progresiva: lo que la ejecución no ha tocado todavía queda fuera del conjunto', async () => {
+    const program = parse(SOURCE)
+    const trace = await record(SOURCE)
+    const def = program.nodes.find((node) => node.line === 1)
+    const total = program.nodes.find((node) => node.line === 4)
+    const loop = program.nodes.find((node) => node.line === 5)
+
+    // Antes de empezar (paso −1), nada se ha tocado todavía.
+    const before = reachedNodes(program, trace, -1)
+    expect(before.has(total?.id ?? '')).toBe(false)
+    expect(before.has(def?.id ?? '')).toBe(false)
+
+    // Justo cuando se ejecuta la línea 4: esa sí, pero la función (nunca llamada aún) y el bucle, no.
+    const atTotal = trace.events.findIndex((event) => event.l === 4)
+    const midway = reachedNodes(program, trace, atTotal)
+    expect(midway.has(total?.id ?? '')).toBe(true)
+    expect(midway.has(def?.id ?? '')).toBe(false)
+    expect(midway.has(loop?.id ?? '')).toBe(false)
+
+    // Al final, la función se llamó (línea 2 se ejecutó) y el bucle también: todo tocado.
+    const after = reachedNodes(program, trace, trace.events.length - 1)
+    expect(after.has(total?.id ?? '')).toBe(true)
+    expect(after.has(def?.id ?? '')).toBe(true)
+    expect(after.has(loop?.id ?? '')).toBe(true)
   }, 30_000)
 
   it('dentro de una función, el cursor sube a la función si esta está plegada', async () => {

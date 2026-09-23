@@ -33,7 +33,13 @@ import { OutputPanel } from './OutputPanel.tsx'
 import { PlayerBar } from './Player.tsx'
 import { InsightDock, InsightToggles, type Answer } from './InsightCards.tsx'
 import { INSIGHTS, type InsightId } from './insights.ts'
-import { cursorNode, enclosingFunctionNode, nodeAtLine, observedAt } from './player.ts'
+import {
+  cursorNode,
+  enclosingFunctionNode,
+  nodeAtLine,
+  observedAt,
+  reachedNodes,
+} from './player.ts'
 import { currentMoment, lessonNotes, momentsOf, resolveBeats } from './lessons.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
@@ -519,6 +525,15 @@ export function App() {
         : null,
     [program, replay, player.state, view.nodes],
   )
+  /** Construcción progresiva: lo que la reproducción ya tocó. Sin reproducción, todo se ve a todo color. */
+  const reached = useMemo(
+    () => (program && replay?.trace ? reachedNodes(program, replay.trace, player.step) : null),
+    [program, replay, player.step],
+  )
+  const modifierOf = useCallback(
+    (id: string) => (reached && !reached.has(id) ? ('pending' as const) : undefined),
+    [reached],
+  )
   /** Las notas de la lección, con su flecha: todas sobre el diagrama, o las del momento si se reproduce. */
   const notes = useMemo(
     () =>
@@ -710,6 +725,7 @@ export function App() {
                   run([id])
                 }}
                 stateOf={stateOf}
+                modifierOf={modifierOf}
                 extraMenu={viewerMenu}
                 onUnpin={(id) => {
                   const key = pins.find((p) => pinNodeId(p) === id)

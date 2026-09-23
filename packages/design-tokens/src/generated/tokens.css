@@ -25,6 +25,7 @@
   --stroke-data: 2px;
   --opacity-ghost: 0.55;
   --opacity-dead: 0.45;
+  --opacity-pending: 0.18;
   --opacity-veil: 0.72;
   --void: #f5f6f8;
   --surface: #ffffff;

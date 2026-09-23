@@ -430,7 +430,42 @@ pendientes.
   - Ambas animaciones se apagan solas bajo `prefers-reduced-motion: reduce` (mismo patrón que ya usaba el
     resto del lienzo).
 
-Pendiente de la fase: construcción progresiva (los nodos aparecen a medida que se explican, no todos de
-golpe), voz sincronizada, y exportar la lección a un HTML autónomo (el criterio de «hecho» de toda la fase
+Pendiente de la fase (al terminar la entrada de arriba): construcción progresiva, voz sincronizada y
+exportar a HTML autónomo.
+
+### Fase E: construcción progresiva
+
+De las tres piezas que quedaban, esta: «los nodos aparecen a medida que se explican, no todos de golpe».
+Antes de tocar el layout se le preguntó al usuario el criterio de «todavía no» (tres opciones: atenuar sin
+mover nada, quitar de verdad —como las notas— recolocando el lienzo en cada paso, o dejarlo para después);
+eligió **atenuar, no ocultar**: más seguro (no toca el motor de layout, que ya está muy probado) y el
+diagrama entero sigue sirviendo de mapa.
+
+- **`reachedNodes(program, trace, step)`** (`webview/src/player.ts`, pura): qué nodos ha tocado la
+  ejecución hasta este paso (incluido). Un nodo cuenta como tocado si alguna línea ejecutada cae dentro de
+  su rango `[line, lineEnd]` — así un contenedor (bucle, decisión, `with`/`try`) se enciende en cuanto se
+  ejecuta cualquier línea de su interior, sin recorrer hijos uno a uno.
+- **Caso especial: una función o una clase «se define» mucho antes de llamarla.** La línea `def f():` se
+  ejecuta (crea el objeto función) nada más cargar el módulo, muy antes de que `f()` se llame de verdad; si
+  contara como «tocada» igual que cualquier otra línea, casi todas las funciones se encenderían de golpe al
+  principio y la construcción progresiva no diría nada. Por eso, para `abstraction.collapsed`
+  (función/método) y `abstraction.class`, el rango que cuenta empieza en `line + 1` (el cuerpo), nunca en
+  la cabecera: una función se enciende cuando se ejecuta lo que hace, no cuando se define.
+- **Token nuevo del sistema de diseño: `opacity-pending` (0.18)**, más tenue que `opacity-dead` (0.45, el
+  código inalcanzable): no es un juicio sobre el código, es solo que todavía no le toca. Modificador nuevo
+  en `MorphNode` (`modifier: 'pending'`, junto a los ya existentes `dead`/`generating`), con transición de
+  220 ms al aclararse (apagada bajo «reducir movimiento»).
+- **Cableado**: `Canvas` gana `modifierOf?: (id) => 'dead' | 'generating' | 'pending' | undefined` — el
+  mismo patrón que `stateOf` (la app decide por id, el lienzo dibuja) — y solo se aplica a los nodos de
+  verdad del programa (el bloque de `'prysel'`, no a chips, notas ni visores, que tienen sus propios
+  mecanismos o no aplica). `App.tsx` calcula `reached` con `reachedNodes()` solo mientras hay reproducción.
+
+Comprobado en un VS Code real (`factorial`, capturas paso a paso): antes de que el bucle escriba
+`total = total + factorial(i)`, esa línea y el `Imprimir` final se ven muy tenues; en cuanto se ejecutan, se
+aclaran del todo y ya no vuelven a atenuarse (aunque el paso avance a otra parte del programa). `pnpm
+verify` (1405 tests, con un test nuevo de `reachedNodes` que cubre justo el caso de la función que aún no
+se llamó) y `pnpm e2e` reales, en verde.
+
+Pendiente de la fase: voz sincronizada, y exportar a HTML autónomo (el criterio de «hecho» de toda la fase
 en la hoja de ruta: «una lección se comparte como un solo archivo y se ve sin Python») — este último es un
-proyecto en sí, aparte de las animaciones de esta entrada.
+proyecto en sí.

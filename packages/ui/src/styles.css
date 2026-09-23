@@ -52,6 +52,18 @@
   opacity: var(--opacity-dead);
 }
 
+/* Construcción progresiva (Fase E): la reproducción aún no ha llegado aquí. Más tenue que «dead» —
+   no es un juicio sobre el código, solo que todavía no le toca — y se aclara en cuanto se ejecuta. */
+.node[data-modifier='pending'] {
+  opacity: var(--opacity-pending);
+  transition: opacity 220ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .node[data-modifier='pending'] {
+    transition: none;
+  }
+}
+
 .node__shadow,
 .node__back,
 .node__stroke {

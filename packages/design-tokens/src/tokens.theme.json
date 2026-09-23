@@ -501,6 +501,11 @@
         "usage": "Opacidad de un nodo inalcanzable (código muerto). Se aplica al nodo completo, texto incluido."
       },
       {
+        "name": "opacity-pending",
+        "value": "0.18",
+        "usage": "Opacidad de un nodo que la reproducción aún no ha alcanzado (construcción progresiva, Fase E): se aclara del todo en cuanto se ejecuta. Más tenue que «dead» porque no es un juicio sobre el código, es solo que todavía no le toca."
+      },
+      {
         "name": "opacity-veil",
         "value": "0.72",
         "usage": "Opacidad de la lámina de surface bajo un nodo de vidrio: garantiza el contraste del texto cuando el lienzo se transparenta."

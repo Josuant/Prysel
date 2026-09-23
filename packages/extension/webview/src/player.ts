@@ -1,5 +1,11 @@
 import type { Program, ProgramNode } from '@prysel/python'
-import { isShownList, visibleLocals, type Shown, type TraceState } from '../../src/trace.ts'
+import {
+  isShownList,
+  visibleLocals,
+  type Shown,
+  type Trace,
+  type TraceState,
+} from '../../src/trace.ts'
 
 /**
  * La reproducción de una traza puesta sobre el diagrama: qué nodo es el que se está ejecutando, qué vale
@@ -131,6 +137,36 @@ export function cursorNode(
     if (found !== null) return found
   }
   return null
+}
+
+/**
+ * Construcción progresiva (Fase E): los nodos que la ejecución ya ha tocado hasta este paso (incluido). El
+ * resto se atenúa (`modifier: 'pending'`) en vez de dibujarse a todo color desde el principio — «los nodos
+ * aparecen a medida que se explican», adaptado a que aquí «explicar» es «ejecutar» (rondas 9-17: casi todo
+ * el programa se ve siempre, no solo lo que anota un momento del guion). Un contenedor (función, bucle,
+ * decisión) cuenta como tocado en cuanto lo está cualquier línea de su interior, sin recorrer hijos: basta
+ * con mirar si su rango `[line, lineEnd]` contiene alguna línea ejecutada. `step` es el índice en
+ * `trace.events` (−1: antes de empezar, nada tocado todavía).
+ */
+export function reachedNodes(program: Program, trace: Trace, step: number): ReadonlySet<string> {
+  const lines = new Set<number>()
+  for (let i = 0; i <= step && i < trace.events.length; i++) lines.add(trace.events[i]?.l ?? -1)
+  const reached = new Set<string>()
+  for (const node of program.nodes) {
+    // Una función o una clase «se define» (esa línea se ejecuta) mucho antes de llamarla: no cuenta como
+    // tocada por su propia cabecera, solo por algo de dentro (`decidir` no se explica hasta que se llama).
+    const isDefinition = node.kind === 'abstraction.collapsed' || node.kind === 'abstraction.class'
+    const start = isDefinition ? node.line + 1 : node.line
+    const end = node.lineEnd ?? node.line
+    if (start > end) continue
+    for (const line of lines) {
+      if (line >= start && line <= end) {
+        reached.add(node.id)
+        break
+      }
+    }
+  }
+  return reached
 }
 
 /**
