@@ -41,6 +41,7 @@ import {
   reachedNodes,
 } from './player.ts'
 import { currentMoment, lessonNotes, momentsOf, resolveBeats } from './lessons.ts'
+import { speakableNote, useNarration } from './useNarration.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -78,6 +79,8 @@ interface SavedState {
   pins?: Record<string, PinKey[]>
   /** Los nodos para entender que se enseñan al reproducir, por archivo. */
   insights?: Record<string, InsightId[]>
+  /** Voz sincronizada al reproducir una lección: leer en voz alta la nota del momento actual. */
+  narrate?: boolean
 }
 
 /** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
@@ -146,6 +149,16 @@ export function App() {
     const saved = vscode.getState() as SavedState | undefined
     return saved?.density ?? 'normal'
   })
+  // Voz sincronizada (Fase E): apagada por defecto, se recuerda entre archivos (es una preferencia de
+  // quien mira, no de la lección).
+  const [narrate, setNarrate] = useState<boolean>(() => saved().narrate ?? false)
+  const toggleNarrate = useCallback(() => {
+    setNarrate((previous) => {
+      const next = !previous
+      vscode.setState({ ...saved(), narrate: next } satisfies SavedState)
+      return next
+    })
+  }, [])
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -265,6 +278,12 @@ export function App() {
   const answers = answered.of === (replay?.index ?? null) ? answered.map : {}
   const moment = currentMoment(moments, player.step)
   const question = moment?.beat.ask
+  useNarration({
+    enabled: narrate,
+    lang: lesson?.lang,
+    text: moment ? speakableNote(moment.beat.note) : null,
+    key: moment?.beat.id ?? null,
+  })
   const noAnswer: Answer = { text: '', checked: false }
   // Cuánto mide el panel decide dónde van los nodos para entender: a un lado, o debajo.
   const [wide, setWide] = useState(false)
@@ -787,6 +806,8 @@ export function App() {
             truncated={replay.trace.truncated}
             failure={replay.trace.error}
             extras={<InsightToggles ids={insightIds} onToggle={toggleInsight} />}
+            narrate={narrate}
+            onToggleNarrate={toggleNarrate}
             {...(lesson
               ? {
                   lesson: {

@@ -20,6 +20,8 @@ export function PlayerBar({
   failure,
   lesson,
   extras,
+  narrate,
+  onToggleNarrate,
   onClose,
 }: {
   program: Program
@@ -36,6 +38,9 @@ export function PlayerBar({
   }
   /** Más controles (los nodos para entender), bajo los botones. */
   extras?: ReactNode
+  /** Voz sincronizada: se lee en voz alta la nota del momento actual. Apagada por defecto. */
+  narrate?: boolean
+  onToggleNarrate?: () => void
   onClose: () => void
 }) {
   const { state, step, last } = player
@@ -172,6 +177,21 @@ export function PlayerBar({
             ))}
           </select>
         </label>
+        {lesson && onToggleNarrate && (
+          <button
+            type="button"
+            className={`rounded-md border border-border-card px-2 py-1 text-[11px] ${narrate ? 'text-ink' : 'text-ink-muted hover:text-ink'}`}
+            aria-pressed={narrate ?? false}
+            title={
+              narrate
+                ? 'Se lee en voz alta la nota de cada momento'
+                : 'Leer en voz alta la nota de cada momento'
+            }
+            onClick={onToggleNarrate}
+          >
+            {narrate ? '🔊 Voz' : '🔈 Voz'}
+          </button>
+        )}
         <button
           type="button"
           className="rounded-md border border-border-card px-2 py-1 text-[11px] text-ink-muted hover:text-ink"

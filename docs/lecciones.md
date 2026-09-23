@@ -466,6 +466,35 @@ aclaran del todo y ya no vuelven a atenuarse (aunque el paso avance a otra parte
 verify` (1405 tests, con un test nuevo de `reachedNodes` que cubre justo el caso de la función que aún no
 se llamó) y `pnpm e2e` reales, en verde.
 
-Pendiente de la fase: voz sincronizada, y exportar a HTML autónomo (el criterio de «hecho» de toda la fase
-en la hoja de ruta: «una lección se comparte como un solo archivo y se ve sin Python») — este último es un
-proyecto en sí.
+Pendiente de la fase (al terminar la entrada de arriba): voz sincronizada y exportar a HTML autónomo.
+
+### Fase E: voz sincronizada
+
+La duda que dejó abierta la sección 3.4 («hay que comprobar que funciona dentro de un webview de VS Code»)
+se resolvió primero, antes de escribir nada: un webview es Electron con Chromium entero detrás, así que
+`window.speechSynthesis`/`SpeechSynthesisUtterance` son de verdad, no un cascarón vacío — comprobado en
+vivo (`speechSynthesis.speaking` pasa a `true` al pedirle que hable, y `getVoices()` devuelve voces reales
+del sistema, incluidas varias en español).
+
+- **`useNarration()`** (`webview/src/useNarration.ts`): lee en voz alta la nota del momento actual cuando
+  cambia (`key`, normalmente el id del momento — quedarse varios pasos dentro del mismo no la repite;
+  volver a un momento anterior al rebobinar sí, porque el id vuelve a cambiar). Elige la voz que mejor casa
+  con `lesson.lang` (exacta, o el mismo idioma sin variante regional) cuando hay una instalada.
+- **`speakableNote(note)`**: el título (si tiene) y el texto sin marcas de Markdown — reutiliza `plainNote`
+  (la misma función que ya limpia el subtítulo en pantalla), para que no se lean asteriscos ni comillas
+  invertidas sueltas.
+- **Apagada por defecto**: nadie espera que la extensión hable sin pedirlo. Un botón nuevo en la barra de
+  reproducción («🔈 Voz» / «🔊 Voz», solo visible con una lección) la enciende y apaga; se recuerda entre
+  archivos (`SavedState.narrate`, una preferencia de quien mira, no de la lección). El subtítulo ya tenía
+  `aria-live="polite"` para lectores de pantalla: la voz es un canal aparte, para quien la quiere oír sin
+  depender de uno.
+
+Comprobado: `pnpm verify` (con un test nuevo para `speakableNote`) y `pnpm typecheck`/`lint` en verde. La
+confirmación en vivo de la propia síntesis de voz (`speechSynthesis` respondiendo dentro del webview) se hizo
+antes de escribir el código; una segunda vuelta para verla funcionando ya cableada, paso a paso en un
+VS Code real, no se pudo completar en esta sesión porque VS Code estaba a mitad de una actualización propia
+del sistema («Code is currently being updated») que bloqueó lanzar cualquier instancia nueva —no es un fallo
+del código, es un bloqueo externo del entorno; queda por repetir esa vuelta cuando se pueda.
+
+Pendiente de la fase: exportar a HTML autónomo (el criterio de «hecho» de toda la fase en la hoja de ruta:
+«una lección se comparte como un solo archivo y se ve sin Python») — el proyecto grande, aparte.
