@@ -203,7 +203,11 @@ function Editor({
         </Field>
       )
 
-    case 'list':
+    case 'list': {
+      // Cambiar un elemento en su sitio: la lista se reescribe entera, en el mismo orden.
+      const editItem = on('items', ([i, item]: [number, string]) =>
+        patch({ items: model.items.map((current, j) => (j === i ? item : current)) }),
+      )
       return (
         <div className="control-stack">
           <Chips
@@ -213,6 +217,7 @@ function Editor({
               patch({ items: model.items.filter((_, j) => j !== i) }),
             )}
             onAdd={on('items', (item: string) => patch({ items: [...model.items, item] }))}
+            {...(editItem ? { onChange: (i: number, item: string) => editItem([i, item]) } : {})}
           />
           {full && model.itemType && (
             <span className="type-field-label muted">
@@ -221,6 +226,7 @@ function Editor({
           )}
         </div>
       )
+    }
 
     case 'dict': {
       const change = (index: number, at: 0 | 1) =>
@@ -715,10 +721,57 @@ function Editor({
         </Row>
       )
 
+    case 'match':
+      return (
+        <Row>
+          <span className="type-field-label muted">según</span>
+          <TextInput
+            value={model.subject}
+            slot={{ id: 'subject', label: 'Qué se compara' }}
+            linked={isLinked('subject')}
+            {...(suggestions ? { suggestions } : {})}
+            onChange={on('subject', (subject: string) => patch({ subject }))}
+          />
+        </Row>
+      )
+
+    case 'case':
+      return (
+        <Row>
+          {/* `case _:` no compara nada: es lo que queda. */}
+          {model.pattern.trim() === '_' && model.guard === '' ? (
+            <span className="type-field-label muted">en otro caso</span>
+          ) : (
+            <>
+              <span className="type-field-label muted">caso</span>
+              <TextInput
+                value={model.pattern}
+                onChange={on('pattern', (pattern: string) => patch({ pattern }))}
+              />
+            </>
+          )}
+          {model.guard !== '' && (
+            <>
+              <span className="type-field-label muted">y si</span>
+              <TextInput
+                value={model.guard}
+                slot={{ id: 'guard', label: 'Condición' }}
+                linked={isLinked('guard')}
+                {...(suggestions ? { suggestions } : {})}
+                onChange={on('guard', (guard: string) => patch({ guard }))}
+              />
+            </>
+          )}
+        </Row>
+      )
+
     case 'handler':
       return (
         <Row>
-          <span className="type-field-label muted">si falla</span>
+          {/* `except*`: los de ese tipo que vengan dentro de un grupo de errores. */}
+          <span className="type-field-label muted">
+            {model.group ? 'si falla alguno de' : 'si falla'}
+          </span>
           <TextInput
             value={model.type}
             placeholder="cualquier error"

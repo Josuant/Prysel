@@ -38,6 +38,9 @@ const inset = (top: number, right: number, bottom: number, left: number): Insets
   left: Math.round(left),
 })
 
+/** El alto de la franja del rombo donde va la condición: una fila de campos, o una etiqueta en compacto. */
+export const diamondBand = (h: number) => (h >= 64 ? 34 : 22)
+
 const NO_OVERFLOW: Insets = { top: 0, right: 0, bottom: 0, left: 0 }
 const PAD = inset(12, 14, 12, 14)
 const sides = (w: number, h: number): ShapeGeometry['handles'] => ({
@@ -200,6 +203,39 @@ const builders: Record<ShapeId, Builder> = {
       layers: [{ d: roundRect(w - 8, h - 8, R_CARD - 4), kind: 'detail', dx: 4, dy: 4 }],
       inset: inset(15, 17, 15, 17),
     }),
+
+  /**
+   * El rombo de un diagrama de flujo: una pregunta. Achatado para que la condición quepa en la franja del
+   * medio, con los vértices apenas redondeados. Entra por arriba, el «sí» sale por abajo y el «no» por la
+   * derecha.
+   */
+  diamond: (w, h) => {
+    const cx = w / 2
+    const cy = h / 2
+    const vertices = [
+      { x: cx, y: 0 },
+      { x: w, y: cy },
+      { x: cx, y: h },
+      { x: 0, y: cy },
+    ]
+    const edge = Math.hypot(cx, cy)
+    const t = Math.min(0.2, 9 / Math.max(edge, 1))
+    const toward = (from: { x: number; y: number }, to: { x: number; y: number }) =>
+      `${num(from.x + (to.x - from.x) * t)} ${num(from.y + (to.y - from.y) * t)}`
+    let d = ''
+    vertices.forEach((v, i) => {
+      const prev = vertices[(i + 3) % 4] ?? v
+      const next = vertices[(i + 1) % 4] ?? v
+      d += `${i === 0 ? 'M' : 'L'}${toward(v, prev)}Q${num(v.x)} ${num(v.y)} ${toward(v, next)}`
+    })
+    // La condición va en una franja en el centro: a esa altura, el rombo aún es ancho.
+    const band = diamondBand(h)
+    const side = (w / 2) * (band / h)
+    return shape(`${d}Z`, w, h, {
+      handles: { in: { x: cx, y: 0 }, out: { x: cx, y: h }, alt: { x: w, y: cy } },
+      inset: inset((h - band) / 2, side, (h - band) / 2, side),
+    })
+  },
 
   pill: (w, h) => shape(roundRect(w, h, h / 2), w, h, { inset: inset(0, 12, 0, 12) }),
 

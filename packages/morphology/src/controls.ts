@@ -59,8 +59,19 @@ export type ControlModel =
     }
   /** `with abre() as f:`: el recurso que se abre y el nombre con el que se usa dentro (vacío si no lo lleva). */
   | { kind: 'with'; context: string; name: string }
-  /** `except ValueError as e:`: qué error se atrapa (vacío: cualquiera) y el nombre con el que se usa dentro. */
-  | { kind: 'handler'; type: string; name: string }
+  /**
+   * `except ValueError as e:`: qué error se atrapa (vacío: cualquiera) y el nombre con el que se usa dentro.
+   * `group`: es un `except*` — atrapa los de ese tipo que vengan dentro de un grupo de errores
+   * (`ExceptionGroup`), y el nombre es el grupo con solo esos, no un error suelto.
+   */
+  | { kind: 'handler'; type: string; name: string; group?: boolean }
+  /** `match orden:`: lo que se compara con cada caso. */
+  | { kind: 'match'; subject: string }
+  /**
+   * `case "sí" | "s" if listo:`: el patrón con el que encaja (`_`: cualquier otra cosa) y la condición
+   * extra que además tiene que cumplirse (vacía si no la lleva).
+   */
+  | { kind: 'case'; pattern: string; guard: string }
   /**
    * `class Perro(Animal):`: de quién hereda (el texto entre paréntesis, vacío si de nadie) y lo que
    * recibe al crearse (los parámetros de su `__init__`, sin `self`).

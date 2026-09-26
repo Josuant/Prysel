@@ -51,9 +51,9 @@ describe('de Python a nodos', () => {
   })
 
   it('lo que no entiende lo marca como opaco en vez de inventárselo', () => {
-    const { nodes, unsupported } = parse('match x:\n    case 1:\n        pass\n')
+    const { nodes, unsupported } = parse('assert x > 0\n')
     expect(nodes[0]?.kind).toBe('opaque.code')
-    expect(unsupported[0]?.type).toBe('match_statement')
+    expect(unsupported[0]?.type).toBe('assert_statement')
   })
 
   it('aguanta código a medio escribir: es lo que permite dibujar mientras se teclea', () => {
@@ -149,6 +149,37 @@ describe('control y datos son canales distintos', () => {
     const returns = loop.edges.filter((e) => e.relation === 'feedback')
     expect(returns.length).toBeGreaterThan(0)
     expect(returns.every((e) => channelOf(e) === 'control')).toBe(true)
+  })
+
+  it('un bucle vuelve a empezar desde cada final de su cuerpo, no desde el if entero', () => {
+    const source = [
+      'for n in xs:',
+      '    if n > 5:',
+      '        a = 1',
+      '    else:',
+      '        b = 2',
+      'while x:',
+      '    if x == 4:',
+      '        break',
+      'for m in ys:',
+      '    if m:',
+      '        break',
+      '    continue',
+      '',
+    ].join('\n')
+    const { nodes, edges } = parse(source)
+    const at = (line: number) => nodes.find((n) => n.line === line)?.id
+    const into = (line: number) =>
+      edges
+        .filter((e) => e.relation === 'feedback' && e.to === at(line))
+        .map((e) => nodes.find((n) => n.id === e.from)?.line)
+        .sort()
+    // Con else: desde el final de cada camino.
+    expect(into(1)).toEqual([3, 5])
+    // Sin else: desde la propia decisión (su camino «no»); el break no vuelve.
+    expect(into(6)).toEqual([7])
+    // Un cuerpo que acaba en un salto no vuelve por el retorno (el continue ya salta a la cabecera).
+    expect(into(9)).toEqual([])
   })
 
   it('entrar al cuerpo de un bucle es control aunque se trace como una transformación', () => {

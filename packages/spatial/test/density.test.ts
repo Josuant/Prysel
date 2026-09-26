@@ -101,8 +101,9 @@ describe('el generador produce programas con forma de programa', () => {
  * de verdad más legible que a lo ancho, no que lo parezca.
  */
 describe('un programa que se lee hacia abajo', () => {
+  // Leído hacia abajo es un diagrama de flujo: lo coloca el orden de ejecución, como el del analizador.
   const down = (steps: number) => {
-    const graph = generateProgram({ steps })
+    const graph = generateProgram({ steps, order: true })
     return analyze(graph, layout(graph, { axis: 'vertical', maxRun: 0 }))
   }
 
@@ -121,7 +122,7 @@ describe('un programa que se lee hacia abajo', () => {
   )
 
   it.each(SIZES)('%i pasos: no cruza más conexiones que leído a lo ancho', (steps) => {
-    const graph = generateProgram({ steps })
+    const graph = generateProgram({ steps, order: true })
     const wide = analyze(graph, layout(graph))
     expect(down(steps).crossings).toBeLessThanOrEqual(wide.crossings)
   })

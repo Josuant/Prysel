@@ -154,7 +154,7 @@ const JUMPS: ReadonlySet<string> = new Set([
   'control.continue',
 ])
 
-const CLAUSES: ReadonlySet<string> = new Set(['control.except', 'control.clause'])
+const CLAUSES: ReadonlySet<string> = new Set(['control.except', 'control.clause', 'control.case'])
 
 /** ¿Está `child` dentro de `ancestor`, a cualquier profundidad? Moverlo ahí cerraría un ciclo. */
 function within(nodes: ReadonlyMap<string, CanvasNode>, child: string, ancestor: string): boolean {
@@ -222,8 +222,18 @@ export function checkOrder(
       return { ok: true, action: { type: 'move', id: target.id, after: source.id } }
     case 'order-yes':
     case 'order-no':
+      // El `else` de un bucle: lo que se hace al acabar sin salir. No tiene camino «verdadero».
+      if (link.port === 'order-no' && source.kind === 'control.loop') {
+        return { ok: true, action: { type: 'move', id: target.id, into: source.id, branch: 'no' } }
+      }
       if (source.kind !== 'control.condition') {
         return { ok: false, reason: 'Solo una decisión tiene camino verdadero y falso.' }
+      }
+      if (link.port === 'order-no' && source.continues !== undefined) {
+        return {
+          ok: false,
+          reason: 'Su camino falso sigue en el elif de abajo: suéltalo en los puertos de ese elif.',
+        }
       }
       return {
         ok: true,

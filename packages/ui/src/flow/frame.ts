@@ -55,6 +55,35 @@ export function territoryHeadroom(node: {
   )
 }
 
+/**
+ * Leído como diagrama de flujo, lo que un bucle deja entre su cabecera y su cuerpo: por ahí vuelve a entrar su
+ * carril de repetición, sin pisar la cajita de chips.
+ */
+export const FLOW_ENTRY = 20
+
+/** El hueco de entrada de un territorio leído hacia abajo: solo los bucles lo necesitan (su carril). */
+export const flowEntry = (
+  node: { kind: string; contains?: readonly string[] | undefined },
+  vertical: boolean,
+) => (vertical && isLoopTerritory(node) ? FLOW_ENTRY : 0)
+
+/**
+ * Y lo que deja bajo su cuerpo: el carril por el que vuelve a empezar (al que llegan el final del cuerpo, el
+ * «no» de su última decisión y los `continue`).
+ */
+export const FLOW_FOOT = 24
+
+/** Lo que se aparta de lo que rodea el carril de un camino que da la vuelta (un «no» sin `else`, un salto). */
+export const FLOW_LANE = 26
+
+/** Dónde corre el carril de vuelta de un bucle leído hacia abajo, medido desde su borde inferior. */
+export const FLOW_RAIL = 14
+
+export const flowFoot = (
+  node: { kind: string; contains?: readonly string[] | undefined },
+  vertical: boolean,
+) => (vertical && isLoopTerritory(node) ? FLOW_FOOT : 0)
+
 export function nodeFrame(size: { w: number; h: number }): NodeFrame {
   return {
     width: size.w,

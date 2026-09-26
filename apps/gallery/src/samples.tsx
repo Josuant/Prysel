@@ -183,6 +183,18 @@ export const SAMPLES: Record<NodeKindId, Sample> = {
     code: 'finally:',
     meta: 'sales.py:28',
   },
+  'control.match': {
+    label: 'según orden',
+    code: 'match orden:',
+    meta: 'sales.py:40',
+    control: { kind: 'match', subject: 'orden' },
+  },
+  'control.case': {
+    label: 'caso "sí" | "s"',
+    code: 'case "sí" | "s" if listo:',
+    meta: 'sales.py:41',
+    control: { kind: 'case', pattern: '"sí" | "s"', guard: 'listo' },
+  },
   'control.raise': {
     label: 'Importe inválido',
     code: 'raise ValueError("importe negativo")',
@@ -286,12 +298,12 @@ export const SAMPLES: Record<NodeKindId, Sample> = {
     },
   },
   'opaque.code': {
-    label: 'match / case',
-    code: 'match status: …',
+    label: 'assert',
+    code: 'assert total > 0, "…"',
     meta: 'no soportado · sales.py:71',
     control: {
       kind: 'code',
-      source: 'match status:\n    case "ok": ...\n    case _: ...',
+      source: 'assert total > 0, "el total no puede ser negativo"',
     },
   },
 
@@ -337,6 +349,8 @@ export const GROUPS: Group[] = [
       'control.entrypoint',
       'control.except',
       'control.clause',
+      'control.match',
+      'control.case',
       'control.break',
       'control.continue',
       'control.raise',

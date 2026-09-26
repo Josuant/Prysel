@@ -12,6 +12,7 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import {
+  diamondSize,
   extraHeight,
   isLineCard,
   lineHeight,
@@ -41,7 +42,16 @@ import { NOTE, NOTE_GUTTER, noteSize, placeNotes, type NoteContent, type NoteSlo
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
 import { dragTerritory, territoryAt } from './drag.ts'
-import { isTerritory, nodeFrame, territoryHeadroom } from './flow/frame.ts'
+import {
+  FLOW_LANE,
+  FLOW_RAIL,
+  flowEntry,
+  flowFoot,
+  isLoopTerritory,
+  isTerritory,
+  nodeFrame,
+  territoryHeadroom,
+} from './flow/frame.ts'
 import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
@@ -64,6 +74,7 @@ import {
   iterName,
   parseIterChip,
   planChips,
+  namedBy,
   promoteTarget,
   resultChipId,
   resultNames,
@@ -111,6 +122,8 @@ export interface CanvasNode {
   opens?: string
   /** Lo que el código dice de sí mismo: sus comentarios y, en una función, su documentación. */
   note?: string
+  /** En una decisión: el `elif` en el que sigue su camino falso (sus puertos son los de ese `elif`). */
+  continues?: string
   /**
    * Qué campos del editor se pueden escribir de vuelta en el código, por su camino. Sin lista, todos
    * (un nodo de ejemplo, sin código detrás); con lista vacía, ninguno.
@@ -164,6 +177,11 @@ export interface CanvasProps {
    * se atenúa (`'pending'`) hasta que le toque. Igual que `stateOf`, por id: la app decide, el lienzo dibuja.
    */
   modifierOf?: (id: string) => 'dead' | 'generating' | 'pending' | undefined
+  /**
+   * Una nota se arrastró a mano: cuánto se aparta ahora del sitio que le da el margen (`null`: se devolvió
+   * a su sitio con doble clic). Sin él, las notas no se arrastran.
+   */
+  onNoteMove?: (id: string, offset: { x: number; y: number } | null) => void
   onControlChange?: (id: string, next: ControlModel) => void
   /** Lo que el usuario le hace a un nodo: reescribirlo como código, eliminarlo, duplicarlo, renombrarlo. */
   onAction?: (action: NodeAction) => void
@@ -226,6 +244,24 @@ export interface CanvasProps {
   className?: string
 }
 
+/** Una decisión: leída como diagrama de flujo, un rombo con un camino «sí» y uno «no». */
+const isDecision = (node: Pick<CanvasNode, 'kind'>) => node.kind === 'control.condition'
+
+/** Una conexión de la secuencia: lo que sigue a un paso, o uno de los caminos de una decisión. */
+const isStep = (edge: SemanticEdge) => edge.relation === 'sequence' || edge.relation === 'branch'
+
+/** El papel de una conexión en el diagrama de flujo: de qué puerto sale, a cuál llega y por dónde va. */
+interface FlowRole {
+  target: string
+  sourceHandle: string
+  targetHandle: string
+  exit: 'bottom' | 'right'
+  lane?: number
+  tag?: string
+  /** A qué altura sobre el destino se junta con los demás caminos (0: llega ya por la línea del carril). */
+  bend?: number
+}
+
 /** La identidad de un cable, con la que se selecciona. */
 const edgeKey = (edge: SemanticEdge) =>
   `${edge.from}${edge.fromPort ? `:${edge.fromPort}` : ''}-${edge.to}-${edge.toPort ?? ''}-${edge.relation}`
@@ -274,6 +310,7 @@ const MIN_FOLLOW_ZOOM = 0.45
 type Point = { x: number; y: number }
 const NO_POSITIONS: Record<string, Point> = {}
 const NO_SIZES: Record<string, { w: number; h: number }> = {}
+const NO_PLACED: ReadonlyMap<string, Point> = new Map()
 
 export function Canvas(props: CanvasProps) {
   return (
@@ -289,6 +326,7 @@ function CanvasInner({
   density,
   stateOf,
   modifierOf,
+  onNoteMove,
   onControlChange,
   onAction,
   addTarget,
@@ -333,6 +371,10 @@ function CanvasInner({
         : null
   /** El cable seleccionado (para desconectarlo), si es de los que se pueden soltar. */
   const [edgeState, setEdgeState] = useState<{ key: string; id: string } | null>(null)
+  /** El `código` de una nota por el que pasa el puntero: se iluminan los nodos que nombra. */
+  const [hint, setHint] = useState<string | null>(null)
+  /** Notas que se están arrastrando o que ya se dejaron en otro sitio (hasta que el guion lo recoja). */
+  const [noteMoves, setNoteMoves] = useState<Record<string, Point>>({})
   const edgeId = edgeState?.key === fitKey ? edgeState.id : null
   const select = useCallback(
     (id: string | null) => {
@@ -412,6 +454,12 @@ function CanvasInner({
   // nota nunca mueve nada de lo que ya estaba.
   // Leído hacia abajo, lo que no es un paso se aparta: las notas a la derecha y los visores a la izquierda.
   const aside = axis === 'vertical'
+  /**
+   * Leído hacia abajo, el lienzo es un **diagrama de flujo**: los nodos y las conexiones cuentan solo la
+   * secuencia (pasos, decisiones en rombo, caminos que se juntan, bucles que vuelven), y las variables viajan
+   * únicamente como chips. No hay cables de datos, ni puertos para ellos.
+   */
+  const flow = aside
   const nodes = useMemo(
     () => allNodes.filter((node) => !node.handwritten && !(aside && node.viewer)),
     [allNodes, aside],
@@ -466,6 +514,13 @@ function CanvasInner({
     }
     return all
   }, [byId, palette])
+
+  /** Lo que ilumina el `código` de una nota bajo el puntero (y si un trozo de código nombra algo que se vea). */
+  const hinted = useMemo(
+    () => (hint === null ? null : new Set(namedBy(hint, nodes))),
+    [hint, nodes],
+  )
+  const knowsCode = useCallback((code: string) => namedBy(code, nodes).length > 0, [nodes])
 
   /** ¿Es un chip acoplado a una cajita (o el de una función)? Esos no se colocan: se llevan a una casilla. */
   const isDockedChip = useCallback(
@@ -581,6 +636,7 @@ function CanvasInner({
     placements,
     bounds: layoutBounds,
     scopes,
+    spines,
   } = useMemo(() => {
     const graph: SemanticGraph = {
       nodes: plan.flowNodes.map((node) => {
@@ -588,7 +644,8 @@ function CanvasInner({
         const d = densityOf(node)
         const base = nodeSize(spec, d, node.metrics)
         const tray = plan.trays.get(node.id)
-        const head = territoryHeadroom(node) + (tray ? tray.h + TRAY.below : 0)
+        const head =
+          territoryHeadroom(node) + (tray ? tray.h + TRAY.below : 0) + flowEntry(node, flow)
         return {
           id: node.id,
           role: spec.role,
@@ -598,46 +655,53 @@ function CanvasInner({
             ? viewerSize(node.viewer)
             : isChipKind(node)
               ? chipSize(node)
-              : d === 'normal' && isLineCard(node.kind, node.control)
-                ? // Una operación o una llamada: una sola línea, con su nombre como chip.
-                  {
-                    w: lineWidth(
-                      node.control,
-                      // Cada pastilla mide también lo que se observó de su valor (`200×2`).
-                      resultNames(node, d).map((name) => {
-                        const short = node.observed?.[name]?.short
-                        return short ? `${name} ${short}` : name
-                      }),
-                      linked[node.id],
-                      node.openable ? 26 : 0,
-                    ),
-                    h: lineHeight(node.note),
-                  }
-                : d === 'normal'
-                  ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+              : flow && isDecision(node)
+                ? // Leído como diagrama de flujo, una decisión es un rombo con su pregunta dentro.
+                  diamondSize(node.control, d, node.label, node.code)
+                : d === 'normal' && isLineCard(node.kind, node.control)
+                  ? // Una operación o una llamada: una sola línea, con su nombre como chip.
                     {
-                      w: slimWidth(base.w, node.control),
-                      h: slimHeight(
+                      w: lineWidth(
                         node.control,
+                        // Cada pastilla mide también lo que se observó de su valor (`200×2`).
+                        resultNames(node, d).map((name) => {
+                          const short = node.observed?.[name]?.short
+                          return short ? `${name} ${short}` : name
+                        }),
                         linked[node.id],
-                        node.note,
-                        node.code !== undefined,
+                        node.openable ? 26 : 0,
                       ),
+                      h: lineHeight(node.note),
                     }
-                  : {
-                      w: base.w,
-                      h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
-                    },
+                  : d === 'normal'
+                    ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+                      {
+                        w: slimWidth(base.w, node.control),
+                        h: slimHeight(
+                          node.control,
+                          linked[node.id],
+                          node.note,
+                          node.code !== undefined,
+                        ),
+                      }
+                    : {
+                        w: base.w,
+                        h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
+                      },
           // La documentación, el editor de un bucle y la cajita de chips viven en la cabecera de un territorio.
           ...(head > 0 ? { headroom: head } : {}),
+          ...(flowFoot(node, flow) > 0 ? { footroom: flowFoot(node, flow) } : {}),
           ...(tray ? { headerWidth: tray.w } : {}),
           // Un bucle con cuerpo envuelve lo que repite, igual que una función.
           ...(isTerritory(node) ? { territory: true } : {}),
           ...(node.contains && resized[node.id] ? { minSize: resized[node.id] } : {}),
           ...(node.contains ? { contains: node.contains } : {}),
+          // De qué camino es cada paso: el diagrama de flujo lo necesita para saber dónde se juntan.
+          ...(node.owner === undefined ? {} : { owner: node.owner }),
         }
       }),
-      edges: plan.flowEdges,
+      // Como diagrama de flujo, solo el orden coloca el plano: los datos van en chips, no en cables.
+      edges: flow ? plan.flowEdges.filter((edge) => channelOf(edge) === 'control') : plan.flowEdges,
     }
     return layout(graph, {
       axis,
@@ -646,7 +710,7 @@ function CanvasInner({
       // Una lista de pasos que se lee hacia abajo no se pliega en columnas: se recorre.
       ...(axis === 'vertical' ? { maxRun: 0 } : run === undefined ? {} : { maxRun: run }),
     })
-  }, [plan, densityOf, axis, gapX, gapY, linked, resized, run])
+  }, [plan, densityOf, axis, flow, gapX, gapY, linked, resized, run])
 
   /**
    * La procedencia a demanda: al seleccionar un nodo se dibujan sus cables ocultos (de dónde le llegan
@@ -655,7 +719,8 @@ function CanvasInner({
    */
   const revealed = useMemo(() => {
     const shown = new Set<SemanticEdge>()
-    if (selectedId === null) return shown
+    // En un diagrama de flujo no hay cables de datos que revelar: la selección marca las casillas de sus chips.
+    if (selectedId === null || flow) return shown
     for (const edge of [...plan.hidden, ...plan.order]) {
       if (edge.from !== selectedId && edge.to !== selectedId) continue
       const from = byId.get(edge.from)
@@ -672,7 +737,7 @@ function CanvasInner({
       if (edge.relation === 'sequence' && linked.has(`${edge.from}|${edge.to}`)) shown.delete(edge)
     }
     return shown
-  }, [selectedId, plan, byId])
+  }, [selectedId, plan, byId, flow])
 
   /** Las casillas que solo reciben chips y no llevan puerto, salvo las que ahora enseñan su cable. */
   const chipOnly = useMemo(() => {
@@ -702,26 +767,45 @@ function CanvasInner({
       ),
     [edges, plan],
   )
+  const flowIds = useMemo(() => new Set(plan.flowNodes.map((node) => node.id)), [plan])
   const visibleEdges = useMemo(
     () =>
-      // El orden de ejecución no se dibuja: en un bloque lineal ya lo dice la posición. Solo se ve, junto
-      // con los cables ocultos, al seleccionar un nodo.
-      [...edges.filter((edge) => edge.relation !== 'sequence'), ...plan.order].filter((edge) => {
-        // Leído hacia abajo el orden sí se dibuja (es lo que hace legible la secuencia), salvo entre dos
-        // nodos que ya se unen por un dato: iría por el mismo camino.
-        if (edge.relation === 'sequence') {
-          return revealed.has(edge) || (aside && !dataPairs.has(`${edge.from}|${edge.to}`))
-        }
-        // Un valor que llega a un nodo que ya lo nombra (una constante, la variable de un bucle, un
-        // parámetro, el resultado de otra línea) no se dibuja como cable: es un chip en su casilla.
-        if (plan.docked.has(edge.from) || (plan.hidden.has(edge) && !revealed.has(edge))) {
-          return false
-        }
-        // El retorno de un bucle territorio lo dibuja el propio bucle (su carril de repetición).
-        if (edge.relation === 'feedback' && scopes[edge.to]?.includes(edge.from)) return false
-        return edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to)
-      }),
-    [edges, scopes, plan, revealed, aside, dataPairs],
+      flow
+        ? // Un diagrama de flujo solo dibuja la secuencia: el orden, las ramas, los saltos (`break`,
+          // `continue`) y los retornos que no dibuja el propio bucle. Nunca un dato.
+          [
+            ...edges.filter(
+              (edge) => edge.relation !== 'sequence' && channelOf(edge) === 'control',
+            ),
+            ...plan.order,
+          ].filter(
+            (edge) =>
+              flowIds.has(edge.from) &&
+              flowIds.has(edge.to) &&
+              // La entrada de un territorio a su propio cuerpo la dice el espacio (y su carril). Lo que
+              // vuelve a empezar sí se dibuja: llega al carril del bucle.
+              !scopes[edge.from]?.includes(edge.to),
+          )
+        : // El orden de ejecución no se dibuja: en un bloque lineal ya lo dice la posición. Solo se ve, junto
+          // con los cables ocultos, al seleccionar un nodo.
+          [...edges.filter((edge) => edge.relation !== 'sequence'), ...plan.order].filter(
+            (edge) => {
+              // Leído hacia abajo el orden sí se dibuja (es lo que hace legible la secuencia), salvo entre dos
+              // nodos que ya se unen por un dato: iría por el mismo camino.
+              if (edge.relation === 'sequence') {
+                return revealed.has(edge) || (aside && !dataPairs.has(`${edge.from}|${edge.to}`))
+              }
+              // Un valor que llega a un nodo que ya lo nombra (una constante, la variable de un bucle, un
+              // parámetro, el resultado de otra línea) no se dibuja como cable: es un chip en su casilla.
+              if (plan.docked.has(edge.from) || (plan.hidden.has(edge) && !revealed.has(edge))) {
+                return false
+              }
+              // El retorno de un bucle territorio lo dibuja el propio bucle (su carril de repetición).
+              if (edge.relation === 'feedback' && scopes[edge.to]?.includes(edge.from)) return false
+              return edge.fromPort?.startsWith('param:') || !scopes[edge.from]?.includes(edge.to)
+            },
+          ),
+    [edges, scopes, plan, revealed, aside, dataPairs, flow, flowIds],
   )
 
   const parentOf = useMemo(() => {
@@ -768,13 +852,14 @@ function CanvasInner({
   const noteReserve = noteNodes.length > 0 ? NOTE_GUTTER + NOTE.width + 24 : 0
   const bounds = useMemo(
     () => ({
-      w: diagramW + noteReserve,
+      // Un salto que sale de un bucle (`break`) baja por su derecha: el encuadre le deja sitio.
+      w: diagramW + noteReserve + (flow ? FLOW_LANE + 8 : 0),
       h: Math.max(
         layoutBounds.h + shiftY,
         aside && moduleTray ? moduleTray.h + MODULE_TRAY_AT.y * 2 : 0,
       ),
     }),
-    [diagramW, noteReserve, layoutBounds.h, shiftY, aside, moduleTray],
+    [diagramW, noteReserve, layoutBounds.h, shiftY, aside, moduleTray, flow],
   )
 
   const motionItems = useMemo(
@@ -1012,6 +1097,61 @@ function CanvasInner({
     [onAction, setEdgeState],
   )
 
+  /**
+   * Mover un extremo de un cable ya tendido. El destino a otra casilla: la de antes vuelve a un valor
+   * neutro y la nueva lee el nombre (una sola edición). El origen a otro nodo: la casilla pasa a leer el
+   * nombre del nuevo. Soltado en el vacío: el cable se quita, como con Supr.
+   */
+  const reconnected = useRef(false)
+  const cableOf = useCallback(
+    (edge: { id: string }) => visibleEdges.find((candidate) => edgeKey(candidate) === edge.id),
+    [visibleEdges],
+  )
+  const onReconnect = useCallback(
+    (old: PryselFlowEdge, connection: Connection) => {
+      reconnected.current = true
+      const was = cableOf(old)
+      if (!was || was.toPort === undefined || isOrderHandle(connection.sourceHandle)) return
+      const link = linkOf(connection)
+      const verdict = checkConnection(lookup, link)
+      if (!verdict.ok) {
+        setNotice(verdict.reason)
+        return
+      }
+      onAction?.({
+        type: 'reconnect',
+        was: { id: was.to, slot: was.toPort },
+        from: link.from,
+        ...(link.port ? { port: link.port } : {}),
+        to: link.to,
+        slot: link.slot,
+        ...(verdict.convert ? { convert: verdict.convert } : {}),
+      })
+      if (verdict.convert) setNotice(convertNotice(verdict.name))
+      setEdgeState(null)
+    },
+    [cableOf, linkOf, lookup, onAction, setEdgeState],
+  )
+  const onReconnectEnd = useCallback(
+    (
+      _: MouseEvent | TouchEvent,
+      edge: PryselFlowEdge,
+      _fixed: unknown,
+      state: FinalConnectionState,
+    ) => {
+      setConnecting(null)
+      if (reconnected.current) {
+        reconnected.current = false
+        return
+      }
+      const was = cableOf(edge)
+      if (!was) return
+      if (!state.toNode) disconnect(was)
+      else setNotice('Suelta el extremo sobre el puerto de un campo donde valga ese valor.')
+    },
+    [cableOf, disconnect],
+  )
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement
     if (target.closest('input, textarea, select, [contenteditable="true"]')) return
@@ -1197,6 +1337,9 @@ function CanvasInner({
         ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
         : {}),
       renameSignal: renaming.id === node.id ? renaming.n : 0,
+      hinted: hinted?.has(node.id) === true,
+      // En el diagrama de flujo es un paso más: la secuencia entra por arriba y sale por abajo.
+      ...(flow ? { step: true } : {}),
     },
   })
 
@@ -1245,6 +1388,8 @@ function CanvasInner({
           axis,
           size: item.value.size,
           container,
+          // Leído como diagrama de flujo, por dónde entra y sale la secuencia de un territorio.
+          ...(container && spines?.[node.id] !== undefined ? { spine: spines[node.id] } : {}),
           renameSignal: renaming.id === node.id ? renaming.n : 0,
           showStatus,
           linkedSlots: linked[node.id] ?? [],
@@ -1254,6 +1399,7 @@ function CanvasInner({
           drop: reparent?.to === node.id ? 'into' : reparent?.from === node.id ? 'out' : undefined,
           addTarget: addTarget === node.id,
           cursor: cursor === node.id,
+          hinted: hinted?.has(node.id) === true,
           // La cajita de chips del territorio, y lo que llevan las casillas de este nodo.
           tray: container ? plan.trays.get(node.id) : undefined,
           chipSlots: plan.chipSlots[node.id],
@@ -1367,6 +1513,7 @@ function CanvasInner({
               ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
               : {}),
             renameSignal: renaming.id === placed.id ? renaming.n : 0,
+            hinted: hinted?.has(placed.id) === true,
           },
         })
       }
@@ -1390,56 +1537,182 @@ function CanvasInner({
     const node = byId.get(id)
     return node !== undefined && densityOf(node) === 'compact'
   }
-  const flowEdges: PryselFlowEdge[] = visibleEdges.map((edge) => ({
-    id: edgeKey(edge),
-    selected: edgeId === edgeKey(edge),
-    source: edge.from,
-    target: edge.to,
-    // En compacto un nodo no tiene casillas (ni puertos por campo): todo entra y sale por el borde.
-    // Un resultado entre varios es un chip: su cable, si se dibuja, sale por el puerto normal.
-    // Leída hacia abajo, la secuencia sale por el centro de cada paso y entra por el centro del siguiente.
-    sourceHandle:
-      aside && edge.relation === 'sequence'
-        ? 'step-out'
-        : edge.fromPort && !edge.fromPort.startsWith('result:') && !isCompact(edge.from)
-          ? edge.fromPort
-          : 'out',
-    targetHandle:
-      aside && edge.relation === 'sequence'
-        ? 'step-in'
-        : edge.toPort && !isCompact(edge.to)
-          ? edge.toPort
-          : 'in',
-    type: 'prysel' as const,
-    ...(edge.label === undefined ? {} : { label: edge.label }),
-    markerEnd:
-      aside && edge.relation === 'sequence'
-        ? 'url(#prysel-arrow-spine)'
-        : `url(#prysel-arrow-${channelOf(edge) === 'control' ? 'thick' : 'thin'})`,
-    // Con algo seleccionado, sus conexiones destacan y el resto se retira.
-    ...(lit ? { zIndex: lit.has(edge.from) || lit.has(edge.to) ? 10 : 0 } : {}),
-    data: {
-      relation: edge.relation,
-      channel: channelOf(edge),
-      obstacles,
-      parentOf,
-      axis,
-      ...(connectable &&
-      edge.toPort !== undefined &&
-      (edge.toPort !== 'return' || edge.via !== undefined) &&
-      byId.get(edge.to)?.inputs?.includes(edge.toPort)
-        ? {
-            removable: true,
-            onRemove: () => {
-              disconnect(edge)
-            },
-          }
-        : {}),
-      ...(lit ? { emphasis: lit.has(edge.from) || lit.has(edge.to) ? 'active' : 'dim' } : {}),
-      live:
-        stateOf !== undefined && stateOf(edge.from) === 'success' && stateOf(edge.to) !== 'dormant',
-    },
-  }))
+  /** Un cable de datos que llega a una casilla: se puede soltar (Supr) y mover por sus extremos. */
+  const removableCable = (edge: SemanticEdge): boolean =>
+    connectable &&
+    edge.toPort !== undefined &&
+    (edge.toPort !== 'return' || edge.via !== undefined) &&
+    byId.get(edge.to)?.inputs?.includes(edge.toPort) === true
+  // ── El diagrama de flujo: por dónde sale cada paso y cómo se juntan los caminos ──
+  const boxOf = new Map(animated.map((item) => [item.id, { ...item.position, ...item.value.size }]))
+  /**
+   * Por dónde baja un camino que tiene que rodear lo que queda debajo de un paso (el «no» de una decisión sin
+   * `else`, un `continue`): a la derecha de todo lo que haya entre ese paso y `bottom`. Se mide con las
+   * posiciones de ahora, así que sigue valiendo si el usuario mueve algo.
+   */
+  const laneBetween = (fromId: string, bottom: number): number | undefined => {
+    const from = boxOf.get(fromId)
+    if (!from) return undefined
+    const right = from.x + from.w
+    let lane = right
+    for (const [id, box] of boxOf) {
+      if (id === fromId) continue
+      if (box.y < from.y + from.h - 1 || box.y + box.h > bottom + 1) continue
+      if (box.x > right + 60 || box.x + box.w < from.x) continue
+      lane = Math.max(lane, box.x + box.w)
+    }
+    return lane + FLOW_LANE
+  }
+  /** El bucle (dibujado como territorio) que es el destino de una conexión, si lo es. */
+  const loopAt = (id: string) => {
+    const node = byId.get(id)
+    return node && scopes[id] !== undefined && isLoopTerritory(node) ? node : undefined
+  }
+  /**
+   * El papel de cada conexión en el diagrama de flujo: de qué puerto sale y a cuál llega, por dónde se traza y
+   * qué dice junto al vértice. `null` si no es parte de la secuencia.
+   */
+  const flowRole = (edge: SemanticEdge): FlowRole | null => {
+    if (!flow) return null
+    const from = byId.get(edge.from)
+    const decision = from !== undefined && isDecision(from)
+    const loop = loopAt(edge.to)
+    // Vuelve a empezar: el final del cuerpo, el «no» de su última decisión o un `continue` llegan al carril.
+    if (loop && (edge.relation === 'feedback' || edge.toPort === 'next')) {
+      const box = boxOf.get(loop.id)
+      const side = decision || edge.toPort === 'next'
+      const lane = side && box ? laneBetween(edge.from, box.y + box.h - FLOW_RAIL) : undefined
+      return {
+        target: loop.id,
+        sourceHandle: decision ? 'step-no' : side ? 'step-side' : 'step-out',
+        targetHandle: 'rail-in',
+        exit: side ? 'right' : 'bottom',
+        ...(lane === undefined ? {} : { lane }),
+        ...(decision ? { tag: 'no' } : {}),
+        // Llega por el fondo, a la altura del carril: se funde con él en vez de entrar desde arriba.
+        bend: 0,
+      }
+    }
+    // Un `break` sale del bucle: rodea su territorio por la derecha y llega a lo que sigue al bucle (que no
+    // es su `else`: ese solo se hace al acabar sin salir). Si no sigue nada, sale por la derecha hacia abajo.
+    if (loop && edge.toPort === 'exit') {
+      const box = boxOf.get(loop.id)
+      if (!box) return null
+      const successor = (id: string) => plan.order.find((candidate) => candidate.from === id)?.to
+      let after = successor(loop.id)
+      if (after !== undefined && byId.get(after)?.kind === 'control.clause')
+        after = successor(after)
+      return {
+        target: after ?? loop.id,
+        sourceHandle: 'step-side',
+        targetHandle: after === undefined ? 'exit' : 'step-in',
+        exit: 'right',
+        lane: box.x + box.w + FLOW_LANE,
+      }
+    }
+    if (!isStep(edge)) return null
+    // El «no» de una decisión: su rama falsa, o lo que la sigue si no tiene `else`.
+    const no =
+      decision &&
+      (edge.relation === 'sequence' || (edge.relation === 'branch' && edge.label === 'falso'))
+    const to = boxOf.get(edge.to)
+    const fromBox = boxOf.get(edge.from)
+    // Un destino a la derecha (el `else`, un `elif`) se alcanza sin rodear nada; si vuelve a la espina, rodea.
+    const around =
+      no &&
+      to !== undefined &&
+      fromBox !== undefined &&
+      to.x + to.w / 2 <= fromBox.x + fromBox.w + 12
+    const lane = around && to ? laneBetween(edge.from, to.y) : undefined
+    return {
+      target: edge.to,
+      sourceHandle: no ? 'step-no' : 'step-out',
+      targetHandle: 'step-in',
+      exit: no ? 'right' : 'bottom',
+      ...(lane === undefined ? {} : { lane }),
+      ...(no ? { tag: 'no' } : edge.relation === 'branch' ? { tag: 'sí' } : {}),
+    }
+  }
+  const roles = new Map(visibleEdges.map((edge) => [edge, flowRole(edge)]))
+  /** Cuántos caminos llegan a cada punto: si son varios, se juntan en un punto justo encima de él. */
+  const arriving = new Map<string, number>()
+  for (const role of roles.values()) {
+    if (!role) continue
+    const key = `${role.target}:${role.targetHandle}`
+    arriving.set(key, (arriving.get(key) ?? 0) + 1)
+  }
+
+  const flowEdges: PryselFlowEdge[] = visibleEdges.map((edge) => {
+    const role = roles.get(edge) ?? null
+    const step = role !== null
+    return {
+      id: edgeKey(edge),
+      selected: edgeId === edgeKey(edge),
+      source: edge.from,
+      target: role?.target ?? edge.to,
+      // En compacto un nodo no tiene casillas (ni puertos por campo): todo entra y sale por el borde.
+      // Un resultado entre varios es un chip: su cable, si se dibuja, sale por el puerto normal.
+      // Leída hacia abajo, la secuencia sale por el centro de cada paso y entra por el centro del siguiente; el
+      // «no» de una decisión, por el vértice derecho de su rombo.
+      sourceHandle: role
+        ? role.sourceHandle
+        : aside && edge.relation === 'sequence'
+          ? 'step-out'
+          : edge.fromPort && !edge.fromPort.startsWith('result:') && !isCompact(edge.from)
+            ? edge.fromPort
+            : 'out',
+      targetHandle: role
+        ? role.targetHandle
+        : aside && edge.relation === 'sequence'
+          ? 'step-in'
+          : edge.toPort && !isCompact(edge.to)
+            ? edge.toPort
+            : 'in',
+      type: 'prysel' as const,
+      // Un cable de datos que se puede soltar también se puede mover por sus extremos (no el de un
+      // `return` que el lienzo se salta: ese se quita, no se mueve).
+      reconnectable: removableCable(edge) && edge.via === undefined,
+      // En el diagrama de flujo, «sí» y «no» van junto al vértice del que salen (no en medio del camino).
+      ...(edge.label === undefined || step ? {} : { label: edge.label }),
+      markerEnd:
+        step || (aside && edge.relation === 'sequence')
+          ? 'url(#prysel-arrow-spine)'
+          : `url(#prysel-arrow-${channelOf(edge) === 'control' ? 'thick' : 'thin'})`,
+      // Con algo seleccionado, sus conexiones destacan y el resto se retira.
+      ...(lit ? { zIndex: lit.has(edge.from) || lit.has(edge.to) ? 10 : 0 } : {}),
+      data: {
+        relation: edge.relation,
+        channel: channelOf(edge),
+        obstacles,
+        parentOf,
+        axis,
+        ...(removableCable(edge)
+          ? {
+              removable: true,
+              onRemove: () => {
+                disconnect(edge)
+              },
+            }
+          : {}),
+        ...(lit ? { emphasis: lit.has(edge.from) || lit.has(edge.to) ? 'active' : 'dim' } : {}),
+        live:
+          stateOf !== undefined &&
+          stateOf(edge.from) === 'success' &&
+          stateOf(edge.to) !== 'dormant',
+        ...(role
+          ? {
+              flow: {
+                exit: role.exit,
+                ...(role.lane === undefined ? {} : { lane: role.lane }),
+                join: (arriving.get(`${role.target}:${role.targetHandle}`) ?? 0) > 1,
+                ...(role.bend === undefined ? {} : { bend: role.bend }),
+                ...(role.tag === undefined ? {} : { tag: role.tag }),
+              },
+            }
+          : {}),
+      },
+    }
+  })
 
   /**
    * Las notas: cada una en el margen a la derecha del diagrama, a la altura de lo que explica, con su flecha
@@ -1497,10 +1770,12 @@ function CanvasInner({
     return { nodes: nodesOut, edges: edgesOut }
   })()
 
+  /** Dónde pondría el margen cada nota: el origen desde el que se mide lo que se aparta una arrastrada. */
+  const notePlaced = useRef<ReadonlyMap<string, Point>>(NO_PLACED)
   const noteFlow = (() => {
     const nodesOut: NoteFlowNode[] = []
     const edgesOut: PryselFlowEdge[] = []
-    if (noteNodes.length === 0) return { nodes: nodesOut, edges: edgesOut }
+    if (noteNodes.length === 0) return { nodes: nodesOut, edges: edgesOut, placed: NO_PLACED }
     const rects = anchorRects
     const linkOf = new Map(noteLinks.map((link) => [link.to, link]))
     const slots: NoteSlot[] = []
@@ -1517,16 +1792,37 @@ function CanvasInner({
       const link = linkOf.get(note.id)
       if (!content || content.hidden || !at || !link) continue
       const size = noteSize(content)
+      // Donde la dejó quien la arrastró: mientras se arrastra, o ya soltada (hasta que el guion lo recoja),
+      // manda lo del lienzo; si no, lo que dice el guion.
+      const offset = content.offset
+      const position =
+        noteMoves[note.id] ?? (offset ? { x: at.x + offset.x, y: at.y + offset.y } : at)
       nodesOut.push({
         id: note.id,
         type: 'note' as const,
-        position: at,
+        position,
         ...nodeFrame(size),
         zIndex: 4,
-        draggable: false,
+        draggable: interactive && onNoteMove !== undefined,
         selectable: false,
         focusable: false,
-        data: { note: content, size },
+        data: {
+          note: content,
+          size,
+          moved: noteMoves[note.id] !== undefined || offset !== undefined,
+          onHint: setHint,
+          knows: knowsCode,
+          ...(onNoteMove
+            ? {
+                onReset: () => {
+                  setNoteMoves((previous) =>
+                    Object.fromEntries(Object.entries(previous).filter(([id]) => id !== note.id)),
+                  )
+                  onNoteMove(note.id, null)
+                },
+              }
+            : {}),
+        },
       })
       edgesOut.push({
         id: `note-${link.from}-${note.id}`,
@@ -1548,8 +1844,13 @@ function CanvasInner({
         },
       })
     }
-    return { nodes: nodesOut, edges: edgesOut }
+    return { nodes: nodesOut, edges: edgesOut, placed }
   })()
+  // Dónde las puso el margen, para medir cuánto se aparta una nota arrastrada (se lee al soltarla).
+  const placedNotes = noteFlow.placed
+  useEffect(() => {
+    notePlaced.current = placedNotes
+  }, [placedNotes])
 
   /** Dónde están las notas que se dibujan: la cámara las busca cuando toca leer la actual. */
   const noteBoxesRef = useRef<Record<string, { x: number; y: number; w: number; h: number }>>({})
@@ -1605,6 +1906,11 @@ function CanvasInner({
       for (const change of changes) {
         if (change.type !== 'position' || !change.position) continue
         const { id, position } = change
+        // Una nota no entra en el reparto: se lleva a mano, y lo que se aparta se guarda en el guion al soltarla.
+        if (noteIds.has(id)) {
+          setNoteMoves((previous) => ({ ...previous, [id]: position }))
+          continue
+        }
         // Un chip se lleva hasta una casilla y vuelve a su cajita: no cambia de sitio en el plano.
         if (isDockedChip(id)) {
           chipDrag.carry(id, position)
@@ -1619,7 +1925,7 @@ function CanvasInner({
         })
       }
     },
-    [descendantsOf, fitKey, isDockedChip, chipDrag],
+    [descendantsOf, fitKey, isDockedChip, chipDrag, noteIds],
   )
 
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
@@ -1783,6 +2089,28 @@ function CanvasInner({
             : undefined
         }
         onConnectEnd={connectable ? onConnectEnd : undefined}
+        // Solo los cables que lo dicen (`reconnectable`) se mueven: los de orden y control, no.
+        edgesReconnectable={false}
+        onReconnect={connectable ? onReconnect : undefined}
+        onReconnectStart={
+          connectable
+            ? (_, edge, fixed) => {
+                setQuick(null)
+                // Se mueve la punta: se iluminan las casillas donde valdría, como al tender uno nuevo.
+                const was = cableOf(edge)
+                setConnecting(
+                  fixed === 'source' && was
+                    ? {
+                        from: was.from,
+                        ...(was.fromPort?.startsWith('param:') ? { port: was.fromPort } : {}),
+                      }
+                    : null,
+                )
+              }
+            : undefined
+        }
+        onReconnectEnd={connectable ? onReconnectEnd : undefined}
+        reconnectRadius={14}
         isValidConnection={(connection) =>
           isOrderHandle(connection.sourceHandle) || isOrderHandle(connection.targetHandle)
             ? connection.targetHandle === ORDER_IN &&
@@ -1802,7 +2130,7 @@ function CanvasInner({
             ? (_, node) => {
                 // Arrastrar un nodo lo selecciona: React Flow mueve a la vez todo lo seleccionado,
                 // y si quedara otro nodo elegido se desplazaría también, sumándose a mi propio arrastre.
-                if (!node.id.startsWith(FUNCTION_CHIP)) select(node.id)
+                if (!node.id.startsWith(FUNCTION_CHIP) && !noteIds.has(node.id)) select(node.id)
                 setDragging(true)
               }
             : undefined
@@ -1813,7 +2141,7 @@ function CanvasInner({
                 if (isDockedChip(node.id)) {
                   const point = 'touches' in event ? event.touches[0] : event
                   if (point) chipDrag.over(node.id, point)
-                } else onNodeDrag(node)
+                } else if (!noteIds.has(node.id)) onNodeDrag(node)
               }
             : undefined
         }
@@ -1822,7 +2150,17 @@ function CanvasInner({
             ? (_, node) => {
                 setDragging(false)
                 if (isDockedChip(node.id)) chipDrag.drop(node.id)
-                else onNodeDrop(node.id)
+                else if (noteIds.has(node.id)) {
+                  // Lo que se aparta del sitio que le da el margen: eso es lo que se guarda (y sigue valiendo
+                  // aunque el diagrama se reordene).
+                  const at = notePlaced.current.get(node.id)
+                  if (at) {
+                    onNoteMove?.(node.id, {
+                      x: Math.round(node.position.x - at.x),
+                      y: Math.round(node.position.y - at.y),
+                    })
+                  }
+                } else onNodeDrop(node.id)
               }
             : undefined
         }

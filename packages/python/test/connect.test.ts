@@ -422,3 +422,52 @@ describe('meter un nodo dentro de una función vacía', () => {
     expect(text).toBe('for i in range(2):\n    print(i)\n')
   })
 })
+
+describe('mover un extremo de un cable ya tendido', () => {
+  it('la punta a otra casilla: la de antes vuelve a un valor neutro y la nueva lee el nombre', () => {
+    const { text, change } = act('a = 1\nc = a + 2\n', (p) => ({
+      type: 'reconnect',
+      was: { id: find(p, 'c').id, slot: 'left' },
+      from: find(p, 'a').id,
+      to: find(p, 'c').id,
+      slot: 'right',
+    }))
+    expect(text).toBe('a = 1\nc = 0 + a\n')
+    // Una sola edición (dos cambios de texto a la vez): se aplica o no, nunca a medias.
+    expect(change.edits).toHaveLength(2)
+    expect(valid(text)).toBe(true)
+  })
+
+  it('la punta a otro nodo', () => {
+    const { text } = act('a = 1\nc = a + 2\nd = 3 * 4\n', (p) => ({
+      type: 'reconnect',
+      was: { id: find(p, 'c').id, slot: 'left' },
+      from: find(p, 'a').id,
+      to: find(p, 'd').id,
+      slot: 'right',
+    }))
+    expect(text).toBe('a = 1\nc = 0 + 2\nd = 3 * a\n')
+  })
+
+  it('el origen a otro valor: la misma casilla pasa a leer el nombre del nuevo', () => {
+    const { text } = act('a = 1\nb = 5\nc = a + 2\n', (p) => ({
+      type: 'reconnect',
+      was: { id: find(p, 'c').id, slot: 'left' },
+      from: find(p, 'b').id,
+      to: find(p, 'c').id,
+      slot: 'left',
+    }))
+    expect(text).toBe('a = 1\nb = 5\nc = b + 2\n')
+  })
+
+  it('a un sitio donde el nombre no está al alcance: no se toca nada, el cable de antes se queda', () => {
+    const { change } = act('c = 1 + 2\na = 1\n', (p) => ({
+      type: 'reconnect',
+      was: { id: find(p, 'c').id, slot: 'left' },
+      from: find(p, 'a').id,
+      to: find(p, 'c').id,
+      slot: 'right',
+    }))
+    expect(change.edits).toEqual([])
+  })
+})

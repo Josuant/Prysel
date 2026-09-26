@@ -94,6 +94,27 @@ describe('el retorno de una función es su salida, no un nodo más', () => {
     expect(view.nodes.map((n) => n.id)).toContain('ret')
   })
 
+  it('un return dentro de una rama es un paso de ese camino: se queda a la vista', () => {
+    // def f(x): if x: y = x; return y
+    const view = foldReturns(
+      [
+        node('f', { kind: 'abstraction.collapsed', contains: ['si', 'y', 'ret'] }),
+        node('si', { kind: 'control.condition', owner: 'f' }),
+        node('y', { provides: 'y', owner: 'si' }),
+        { ...ret('ret', 'y'), owner: 'si' },
+      ],
+      [edge('y', 'ret', { toPort: 'arg:valor' })],
+    )
+    expect(view.nodes.map((n) => n.id)).toContain('ret')
+  })
+
+  it('leído como diagrama de flujo, ningún return se esconde: es el último paso', () => {
+    const view = foldReturns(NODES, EDGES, { hide: false })
+    expect(view.nodes.map((n) => n.id)).toEqual(['sumar', 'suma', 'ret'])
+    // Y sin return escondido no hay pastilla «devuelve»: ningún cable se salta un nodo.
+    expect(view.edges.some((e) => e.via !== undefined)).toBe(false)
+  })
+
   it('una función plegada (sin su cuerpo a la vista) no se toca', () => {
     const view = foldReturns([node('f', { kind: 'abstraction.collapsed', contains: ['ret'] })], [])
     expect(view.nodes[0]?.inputs).toBeUndefined()

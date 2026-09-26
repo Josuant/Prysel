@@ -110,6 +110,7 @@ export function lessonNotes(
         text: beat.note.text,
         style: beat.note.style,
         ...(beat.note.title ? { title: beat.note.title } : {}),
+        ...(beat.note.offset ? { offset: beat.note.offset } : {}),
         ...(pending ? { hidden: true } : {}),
         ...(step !== null && !pending
           ? beat.id === current

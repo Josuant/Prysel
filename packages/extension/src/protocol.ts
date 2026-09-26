@@ -1,6 +1,6 @@
 import type { Program, TextEdit } from '@prysel/python'
 import type { Assets, KernelStatus, RunView } from './runs.ts'
-import { parseLesson, type Lesson } from './lesson.ts'
+import { LESSON_LIMITS, parseLesson, type Lesson } from './lesson.ts'
 import type { Trace } from './trace.ts'
 
 /**
@@ -75,8 +75,24 @@ export interface LessonMessage {
   error?: string
 }
 
+/**
+ * Extensión → webview: cuántos cambios hechos desde el lienzo se pueden deshacer y rehacer ahora (en el
+ * documento que se enseña). Es lo que enciende o apaga los botones.
+ */
+export interface HistoryMessage {
+  type: 'history'
+  undo: number
+  redo: number
+}
+
 export type WebviewMessage =
-  UpdateMessage | ThemeMessage | RunsMessage | AssetsMessage | TraceResultMessage | LessonMessage
+  | UpdateMessage
+  | ThemeMessage
+  | RunsMessage
+  | AssetsMessage
+  | TraceResultMessage
+  | LessonMessage
+  | HistoryMessage
 
 /** Webview → extensión. */
 export interface ReadyMessage {
@@ -118,6 +134,22 @@ export interface NewLessonMessage {
   type: 'newLesson'
 }
 
+/** Deshacer o rehacer el último cambio hecho desde el lienzo. */
+export interface UndoMessage {
+  type: 'undo' | 'redo'
+}
+
+/**
+ * Una nota de la lección se dejó a mano en otro sitio (`offset`: cuánto se aparta del que le da el margen),
+ * o se devolvió al suyo (`offset` nulo). Se guarda en el guion, junto a esa nota.
+ */
+export interface NoteMoveMessage {
+  type: 'noteMove'
+  /** El id del momento del guion al que pertenece la nota. */
+  beat: string
+  offset: { x: number; y: number } | null
+}
+
 export type HostMessage =
   | ReadyMessage
   | EditMessage
@@ -126,6 +158,8 @@ export type HostMessage =
   | RestartMessage
   | TraceMessage
   | NewLessonMessage
+  | UndoMessage
+  | NoteMoveMessage
 
 /** Tope de lo que un solo cambio puede reescribir: un mensaje absurdo no se aplica. */
 const MAX_EDITS = 64
@@ -208,6 +242,13 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (theme === 'light' || theme === 'dark') return value as ThemeMessage
     return null
   }
+  if (type === 'history') {
+    const { undo, redo } = value as { undo?: unknown; redo?: unknown }
+    const count = (n: unknown) => Number.isInteger(n) && (n as number) >= 0
+    return count(undo) && count(redo)
+      ? { type: 'history', undo: undo as number, redo: redo as number }
+      : null
+  }
   return null
 }
 
@@ -239,5 +280,17 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   if (type === 'newLesson') return { type: 'newLesson' }
   if (type === 'interrupt') return { type: 'interrupt' }
   if (type === 'restart') return { type: 'restart' }
+  if (type === 'undo' || type === 'redo') return { type }
+  if (type === 'noteMove') {
+    const { beat, offset } = value as { beat?: unknown; offset?: unknown }
+    if (typeof beat !== 'string' || beat === '' || beat.length > 200) return null
+    if (offset === null) return { type: 'noteMove', beat, offset: null }
+    const { x, y } = (offset ?? {}) as { x?: unknown; y?: unknown }
+    const coordinate = (n: unknown) =>
+      typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= LESSON_LIMITS.offset
+    return coordinate(x) && coordinate(y)
+      ? { type: 'noteMove', beat, offset: { x: x as number, y: y as number } }
+      : null
+  }
   return null
 }

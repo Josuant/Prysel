@@ -8,6 +8,8 @@ import {
   isChain,
   unwrapParens,
   augmented,
+  caseOf,
+  caseSources,
   classOf,
   classSources,
   condition as conditionOf,
@@ -16,6 +18,8 @@ import {
   loop,
   inputsOf,
   loopSources,
+  matchOf,
+  matchSources,
   withOf,
   withSources,
   moduleOf,
@@ -115,6 +119,11 @@ export interface ProgramNode {
    * y, en una función, su docstring y los comentarios que la explican. Nada se pierde en silencio.
    */
   note?: string
+  /**
+   * En una decisión: el `elif` en el que sigue su camino falso, si lo hay. Lo que se quiera poner al
+   * principio de ese camino va en los puertos de ese `elif`, no en los de esta decisión.
+   */
+  continues?: string
 }
 
 export interface Program {
@@ -227,10 +236,19 @@ const COMPOUND = new Set([
   'else_clause',
   'finally_clause',
   'class_definition',
+  'match_statement',
+  'case_clause',
+  'elif_clause',
 ])
 
 class Builder {
   constructor(readonly source: string) {}
+
+  /**
+   * El `else` de un bucle, pendiente de visitar: va detrás del bucle, en el mismo bloque (no dentro de él,
+   * que se repite), así que se visita donde se sabe de quién es ese bloque (`visitBlock`).
+   */
+  readonly loopElse = new Map<string, TsNode>()
 
   readonly nodes: ProgramNode[] = []
   readonly edges: SemanticEdge[] = []
@@ -334,19 +352,35 @@ class Builder {
         : statement
     const compound = COMPOUND.has(core.type)
     const colon = compound ? core.children.find((c) => c?.type === ':') : undefined
+    const decision = core.type === 'if_statement' || core.type === 'elif_clause'
     const body = compound
-      ? (field(core, core.type === 'if_statement' ? 'consequence' : 'body') ??
+      ? (field(core, decision ? 'consequence' : 'body') ??
         // Las cláusulas de un try (except, finally) llevan su bloque sin nombre de campo.
         core.namedChildren.find((c) => c?.type === 'block') ??
         null)
       : null
     const first = body?.namedChildren.find((c) => c && c.type !== 'comment')
     const indent = statement.startPosition.column
-    // Una decisión: dónde acaba cada camino, para poder meter algo al principio del que se quiera.
+    // Una decisión: dónde acaba cada camino, para poder meter algo al principio del que se quiera. Su
+    // `else` es el que la sigue: el del `if` si no tiene ningún `elif`; si no, el del último `elif`.
+    // Un bucle también puede tener `else` (lo que se hace al acabar sin salir con `break`).
+    const nextClause = (clause: TsNode): TsNode | null => {
+      let next = clause.nextNamedSibling
+      while (next?.type === 'comment') next = next.nextNamedSibling
+      return next
+    }
     const orElse =
       core.type === 'if_statement'
-        ? core.namedChildren.find((c) => c?.type === 'else_clause')
-        : undefined
+        ? core.namedChildren.some((c) => c?.type === 'elif_clause')
+          ? undefined
+          : core.namedChildren.find((c) => c?.type === 'else_clause')
+        : core.type === 'elif_clause'
+          ? nextClause(core)?.type === 'else_clause'
+            ? nextClause(core)
+            : undefined
+          : core.type === 'for_statement' || core.type === 'while_statement'
+            ? field(core, 'alternative')
+            : undefined
     const elseBody = orElse ? field(orElse, 'body') : null
     const elseColon = orElse?.children.find((c) => c?.type === ':')
     node.range = {
@@ -364,7 +398,7 @@ class Builder {
             bodyIndent: first?.startPosition.column ?? indent + 4,
           }
         : {}),
-      ...(core.type === 'if_statement' && body ? { yesEnd: body.endIndex } : {}),
+      ...(decision && body ? { yesEnd: body.endIndex } : {}),
       ...(orElse && elseColon && elseBody
         ? { elseAt: orElse.startIndex, elseHead: elseColon.endIndex, elseEnd: elseBody.endIndex }
         : {}),
@@ -674,6 +708,16 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
       for (const from of flow) builder.link(from, id, 'sequence')
       flow = builder.tails.get(id) ?? (node && JUMPS.has(node.kind) ? [] : [id])
     }
+
+    // El `else` de un bucle va justo detrás de él, en este mismo bloque: se hace una vez, al acabar el
+    // bucle sin salir con `break` (no en cada vuelta, así que no va dentro de su territorio).
+    const orElse = builder.loopElse.get(id)
+    if (orElse) {
+      builder.loopElse.delete(id)
+      const clauseId = visitClause(builder, orElse, options.owner, 'loop')
+      builder.link(id, clauseId, 'sequence')
+      flow = [clauseId]
+    }
   }
   if (last && pending.length > 0) builder.annotate(last.id, pending.join('\n'))
   for (const id of produced) {
@@ -722,6 +766,80 @@ function entryPoint(
   return id
 }
 
+/**
+ * Los nombres que captura un patrón de `case` (`[x, y]`, `Punto(x=a)`, `{"k": v}`, `_ as todo`): los que
+ * quedan definidos dentro del caso. Un nombre con puntos (`Color.ROJO`) no captura: compara con un valor.
+ */
+function capturedNames(pattern: TsNode): string[] {
+  const names: string[] = []
+  const walk = (node: TsNode) => {
+    if (node.type === 'dotted_name') {
+      const parts = node.namedChildren.filter((c) => c?.type === 'identifier')
+      if (parts.length === 1 && parts[0] && parts[0].text !== '_') names.push(parts[0].text)
+      return
+    }
+    // Los argumentos con nombre de un patrón de clase (`x=a`): la clave no captura, el valor sí.
+    if (node.type === 'keyword_pattern') {
+      const value = node.namedChildren[node.namedChildren.length - 1]
+      if (value) walk(value)
+      return
+    }
+    // `… as nombre`: el alias captura lo que encaje.
+    if (node.type === 'as_pattern') {
+      const target = node.namedChildren[node.namedChildren.length - 1]
+      if (target?.type === 'identifier') names.push(target.text)
+    }
+    for (const child of node.namedChildren) if (child) walk(child)
+  }
+  walk(pattern)
+  return [...new Set(names)]
+}
+
+/**
+ * Un `case` de un `match`: un territorio con su patrón (y su condición, si la lleva) en la cabecera, y
+ * su cuerpo dentro. Los nombres que el patrón captura quedan definidos dentro, como el alias de un
+ * `except` o la variable de un bucle.
+ */
+function visitCase(builder: Builder, clause: TsNode, owner: string): string {
+  const line = clause.startPosition.row + 1
+  const code = firstLine(clause.text)
+  const id = statementId(clause, 'case')
+  const patterns = clause.namedChildren.filter(
+    (c): c is TsNode => c !== null && c.type === 'case_pattern',
+  )
+  const guardClause = field(clause, 'guard')
+  const guard = guardClause?.namedChildren[0] ?? null
+  const first = patterns[0]
+  const last = patterns[patterns.length - 1]
+  const pattern = first && last ? builder.source.slice(first.startIndex, last.endIndex) : ''
+  const control = caseOf(pattern, guard)
+  const wildcard = pattern.trim() === '_' && !guard
+  builder.add({
+    id,
+    kind: 'control.case',
+    label: wildcard ? 'en otro caso' : `caso ${pattern}`,
+    code,
+    line,
+    ...(control ? { control } : {}),
+    ...(control ? sourcesOf(caseSources(patterns, guard)) : {}),
+    ...(control ? inputsIn(inputsOf(caseSources(patterns, guard))) : {}),
+  })
+  builder.place(id, clause, { owner })
+  const placed = builder.nodes.find((n) => n.id === id)
+  // Como una cláusula de un `try`: quitarla no deja un `pass` en su lugar.
+  if (placed?.range) placed.range.block = 99
+  if (guard) linkReads(builder, id, guard, portsOf(guard, 'guard'))
+  for (const pattern of patterns) {
+    for (const name of capturedNames(pattern)) builder.bindParam(name, id)
+  }
+  const body = field(clause, 'consequence')
+  const before = builder.nodes.length
+  const inside = body ? visitBlock(builder, body, { owner: id }) : []
+  if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
+  contain(builder, id, before)
+  return id
+}
+
 /** Todo lo que nace dentro de un nodo es suyo, a cualquier profundidad. */
 function contain(builder: Builder, id: string, before: number) {
   const nested = builder.nodes.slice(before).map((n) => n.id)
@@ -758,8 +876,16 @@ function bindAlias(
   for (const name of patternNames(alias)) builder.bindParam(name, id)
 }
 
-/** `except X as e:`, `else:` y `finally:` de un `try`: cada una es un territorio con su cuerpo dentro. */
-function visitClause(builder: Builder, clause: TsNode, owner: string): string {
+/**
+ * `except X as e:`, `else:` y `finally:` de un `try` (cada una es un territorio con su cuerpo dentro), o
+ * el `else:` de un bucle (`of` = `'loop'`), que va detrás del bucle en su mismo bloque.
+ */
+function visitClause(
+  builder: Builder,
+  clause: TsNode,
+  owner: string | undefined,
+  of: 'try' | 'loop' = 'try',
+): string {
   const line = clause.startPosition.row + 1
   const code = firstLine(clause.text)
   const isExcept = clause.type === 'except_clause'
@@ -777,14 +903,18 @@ function visitClause(builder: Builder, clause: TsNode, owner: string): string {
       alias = target?.namedChildren[0] ?? target
     } else type = value ?? null
   }
-  const control = isExcept ? handlerOf(type, alias) : null
+  // `except*`: la misma cláusula con un `*` suelto tras `except` (atrapa dentro de un grupo de errores).
+  const group = isExcept && clause.children.some((child) => child?.type === '*')
+  const control = isExcept ? handlerOf(type, alias, group) : null
   builder.add({
     id,
     kind: isExcept ? 'control.except' : 'control.clause',
     label: isExcept
-      ? `si falla${type ? `: ${type.text}` : ''}`
+      ? `si falla${group ? ' alguno de' : ''}${type ? `: ${type.text}` : ''}`
       : clause.type === 'else_clause'
-        ? 'si no falla'
+        ? of === 'loop'
+          ? 'al acabar sin salir'
+          : 'si no falla'
         : 'al final',
     code,
     line,
@@ -792,7 +922,7 @@ function visitClause(builder: Builder, clause: TsNode, owner: string): string {
     ...(control ? sourcesOf(handlerSources(type)) : {}),
     ...(control ? inputsIn(inputsOf(handlerSources(type))) : {}),
   })
-  builder.place(id, clause, { owner })
+  builder.place(id, clause, owner === undefined ? {} : { owner })
   const placed = builder.nodes.find((n) => n.id === id)
   // Una cláusula no es una sentencia suelta de un bloque: quitarla no deja un `pass`.
   if (placed?.range) placed.range.block = 99
@@ -810,6 +940,18 @@ function visitClause(builder: Builder, clause: TsNode, owner: string): string {
 }
 
 /** Las sentencias tras las que la ejecución no sigue con la siguiente del bloque. */
+/**
+ * El retorno de un bucle: vuelve a empezar desde **cada final** de su cuerpo, igual que el orden sale de cada
+ * final de un `if` — el último paso de cada camino, o la propia decisión si le falta el `else` (su camino
+ * «no»). Un cuerpo que acaba en un salto (`break`, `return`) no vuelve.
+ */
+function closeLoop(builder: Builder, last: string | undefined, loop: string) {
+  if (last === undefined) return
+  const node = builder.nodes.find((n) => n.id === last)
+  const ends = builder.tails.get(last) ?? (node && JUMPS.has(node.kind) ? [] : [last])
+  for (const end of ends) builder.link(end, loop, 'feedback')
+}
+
 const JUMPS: ReadonlySet<string> = new Set([
   'control.return',
   'control.raise',
@@ -905,6 +1047,8 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
 
       const body = field(statement, 'body')
       const before = builder.nodes.length
+      const orElse = field(statement, 'alternative')
+      if (orElse) builder.loopElse.set(id, orElse)
       builder.loops.push(id)
       const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
       builder.loops.pop()
@@ -913,7 +1057,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
         const last = inside[inside.length - 1]
         if (first) builder.link(id, first, 'transform', undefined, undefined, 'control')
         // El retorno cierra el bucle: es la única conexión que va contra el tiempo.
-        if (last) builder.link(last, id, 'feedback')
+        closeLoop(builder, last, id)
         // Todo lo que nace dentro es suyo, a cualquier profundidad (las ramas de un `if` incluidas).
         const nested = builder.nodes.slice(before).map((n) => n.id)
         const node = builder.nodes.find((n) => n.id === id)
@@ -946,12 +1090,14 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       builder.annotate(id, own.header.join('\n'))
       const body = field(statement, 'body')
       const before = builder.nodes.length
+      const orElse = field(statement, 'alternative')
+      if (orElse) builder.loopElse.set(id, orElse)
       builder.loops.push(id)
       const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
       builder.loops.pop()
       const last = inside[inside.length - 1]
       if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
-      if (last) builder.link(last, id, 'feedback')
+      closeLoop(builder, last, id)
       const nested = builder.nodes.slice(before).map((n) => n.id)
       const node = builder.nodes.find((n) => n.id === id)
       if (node && nested.length > 0) {
@@ -1113,6 +1259,39 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       return id
     }
 
+    // `match`: un territorio con lo que se compara en la cabecera y, dentro, cada caso en su propio marco
+    // (como las cláusulas de un `try`), en el orden en que Python los prueba.
+    case 'match_statement': {
+      const id = statementId(statement, 'match')
+      const subject = field(statement, 'subject')
+      const control = matchOf(subject)
+      builder.add({
+        id,
+        kind: 'control.match',
+        label: `según ${subject?.text ?? ''}`.trim(),
+        code,
+        line,
+        ...(control ? { control } : {}),
+        ...(control ? sourcesOf(matchSources(subject)) : {}),
+        ...(control ? inputsIn(inputsOf(matchSources(subject))) : {}),
+      })
+      const own = ownComments(statement)
+      builder.annotate(id, own.header.join('\n'))
+      linkReads(builder, id, subject, portsOf(subject, 'subject'))
+      const body = field(statement, 'body')
+      const before = builder.nodes.length
+      let previous: string | undefined
+      for (const clause of body?.namedChildren ?? []) {
+        if (!clause || clause.type !== 'case_clause') continue
+        const caseId = visitCase(builder, clause, id)
+        if (previous) builder.link(previous, caseId, 'sequence')
+        else builder.link(id, caseId, 'transform', undefined, undefined, 'control')
+        previous = caseId
+      }
+      contain(builder, id, before)
+      return id
+    }
+
     case 'if_statement': {
       const id = statementId(statement, 'if')
       const condition = field(statement, 'condition')
@@ -1151,17 +1330,50 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       }
       endOf(yes)
       if (yes.length === 0) tails.push(id)
+      // Cada `elif` es una decisión propia en el camino falso de la anterior (`if a … elif b … else …`
+      // es `if a … else: if b … else …`): con su condición a la vista y editable, y sus dos caminos con
+      // sus propios puertos. El `else` final es el camino falso del último.
+      let decision = id
       let hasElse = false
       for (const clause of statement.namedChildren) {
         if (!clause || (clause.type !== 'else_clause' && clause.type !== 'elif_clause')) continue
-        if (clause.type === 'else_clause') hasElse = true
+        if (clause.type === 'elif_clause') {
+          const elifId = statementId(clause, 'elif')
+          const elifCondition = field(clause, 'condition')
+          const elifSem = conditionOf(elifCondition)
+          builder.add({
+            id: elifId,
+            kind: 'control.condition',
+            label: `¿${describe(elifCondition)}?`,
+            code: firstLine(clause.text),
+            line: clause.startPosition.row + 1,
+            ...fromSemantics(elifSem),
+          })
+          linkReads(builder, elifId, elifCondition, elifSem?.ports ?? conditionPorts(elifCondition))
+          builder.place(elifId, clause, { owner: id })
+          const placed = builder.nodes.find((n) => n.id === elifId)
+          // Como una cláusula: no es una sentencia suelta, ni se mueve sola.
+          if (placed?.range) placed.range.block = 99
+          const previous = builder.nodes.find((n) => n.id === decision)
+          if (previous) previous.continues = elifId
+          builder.link(decision, elifId, 'branch', undefined, 'falso')
+          const elifBody = field(clause, 'consequence')
+          const elifYes = elifBody ? visitBlock(builder, elifBody, { owner: elifId }) : []
+          if (elifYes[0]) builder.link(elifId, elifYes[0], 'branch', undefined, 'verdadero')
+          endOf(elifYes)
+          if (elifYes.length === 0) tails.push(elifId)
+          decision = elifId
+          continue
+        }
+        hasElse = true
         const clauseBody = field(clause, 'body')
-        const no = clauseBody ? visitBlock(builder, clauseBody, { owner: id }) : []
-        if (no[0]) builder.link(id, no[0], 'branch', undefined, 'falso')
+        // El `else` es de la última decisión de la cadena (el `if`, si no hay ningún `elif`).
+        const no = clauseBody ? visitBlock(builder, clauseBody, { owner: decision }) : []
+        if (no[0]) builder.link(decision, no[0], 'branch', undefined, 'falso')
         endOf(no)
-        if (no.length === 0) tails.push(id)
+        if (no.length === 0) tails.push(decision)
       }
-      if (!hasElse) tails.push(id)
+      if (!hasElse) tails.push(decision)
       builder.tails.set(id, [...new Set(tails)])
       return id
     }

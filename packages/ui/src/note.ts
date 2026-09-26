@@ -36,6 +36,8 @@ export interface NoteContent {
   past?: boolean
   /** Todavía no llegó su momento: no se dibuja, pero conserva su sitio en el margen para que nada se mueva. */
   hidden?: boolean
+  /** Arrastrada a mano: cuánto se aparta (en píxeles del lienzo) del sitio que le da el margen. */
+  offset?: { x: number; y: number }
 }
 
 /** Un trozo de texto con su formato: `**negrita**` y `` `código` ``. */

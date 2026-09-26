@@ -54,10 +54,11 @@ const isConstantOperation = (node: Pick<CanvasNode, 'kind' | 'control'>): boolea
 
 /**
  * Los nodos que tienen una cajita de variables: una función y todo lo que envuelve un cuerpo (un
- * bucle, un `with`, un `try` y sus cláusulas).
+ * bucle, un `with`, un `try` y sus cláusulas, cada `case`). Un `match` no: su cuerpo solo admite
+ * casos, y una variable se inicializa dentro de uno de ellos.
  */
 export const isContextKind = (kind: string): boolean =>
-  kind === 'abstraction.collapsed' || isTerritoryKind(kind)
+  kind !== 'control.match' && (kind === 'abstraction.collapsed' || isTerritoryKind(kind))
 
 /** Un chip que representa una función del programa: se arrastra a una llamada. */
 export interface FunctionChip {
@@ -69,6 +70,11 @@ export interface FunctionChip {
   params: readonly string[]
   /** Su línea en el archivo: la cajita en columna la enseña como el número de un paso. */
   line?: number
+  /**
+   * La función dentro de la que está definida, si no es del programa: solo se puede llamar desde ahí, así
+   * que su chip va en la cajita de esa función y no en la del programa (donde daría un `NameError`).
+   */
+  scope?: string
 }
 
 export const CHIP_H = 28
@@ -141,6 +147,10 @@ export function slotText(control: ControlModel | undefined, slot: string): strin
       return slot === 'context' ? control.context : undefined
     case 'handler':
       return slot === 'type' ? control.type : undefined
+    case 'match':
+      return slot === 'subject' ? control.subject : undefined
+    case 'case':
+      return slot === 'guard' ? control.guard : undefined
     case 'args':
       if (slot === 'callee') return control.target
       return slot.startsWith('arg:')
@@ -546,6 +556,10 @@ export function planChips(
     const items = [
       ...vars.map((v) => ({ id: v.id, ...iterChipSize(v.name) })),
       ...(chipsOf.get(node.id) ?? []).map((chip) => ({ id: chip.id, ...chipSize(chip) })),
+      // Una función definida dentro de esta: se ofrece aquí, que es desde donde se puede llamar.
+      ...functions
+        .filter((fn) => fn.scope === node.id)
+        .map((fn) => ({ id: `fn:${fn.id}`, ...functionChipSize(fn) })),
     ]
     const tray = trayLayout(items, options.canAdd)
     if (tray) trays.set(node.id, tray)
@@ -556,7 +570,10 @@ export function planChips(
       ...chipSize(chip),
       line: chip.line,
     })),
-    ...functions.map((fn) => ({ id: `fn:${fn.id}`, ...functionChipSize(fn), line: fn.line })),
+    // Solo las del programa: una anidada no existe fuera de la función que la define.
+    ...functions
+      .filter((fn) => fn.scope === undefined)
+      .map((fn) => ({ id: `fn:${fn.id}`, ...functionChipSize(fn), line: fn.line })),
   ]
   // En columna, todo va en el orden del código (variables y funciones mezcladas), como los pasos.
   if (options.column === true) {
@@ -688,4 +705,35 @@ export function promoteTarget(nodes: readonly CanvasNode[], node: CanvasNode): s
     )
     .sort((a, b) => (a.line ?? 0) - (b.line ?? 0))[0]
   return first && first.id !== node.id && (first.line ?? 0) < (node.line ?? 0) ? first.id : null
+}
+
+/**
+ * Los nodos del diagrama que nombra un trozo de `código` de una nota: lo que se ilumina al pasar el
+ * puntero por él. Un nombre (`total`, `entrenar()`, `pajaro.altura`) señala lo que lo define —la
+ * variable, la función, la variable de un bucle o el parámetro (su chip)—; un trozo de sentencia
+ * (`total = 0`, `for i in xs:`) señala esa sentencia. Sin nada que case, no ilumina nada.
+ */
+export function namedBy(code: string, nodes: readonly CanvasNode[]): string[] {
+  const text = code.trim()
+  if (text === '') return []
+  // `entrenar()` o `f(x)` hablan de la función; `pajaro.altura`, del objeto `pajaro`.
+  const call = /^([\p{L}_][\p{L}\p{N}_]*)(?:\.[\p{L}_][\p{L}\p{N}_.]*)?(?:\(.*\))?$/u.exec(text)
+  const name = call?.[1]
+  if (name !== undefined) {
+    const found = new Set<string>()
+    for (const node of nodes) {
+      if (node.provides === name || node.results?.includes(name)) found.add(node.id)
+      else if (node.kind === 'abstraction.collapsed' && node.label === name) found.add(node.id)
+      if (node.params?.includes(name)) found.add(iterChipId(node.id, name))
+    }
+    if (found.size > 0) return [...found]
+  }
+  // Un trozo de sentencia: la sentencia que empieza así (la cabecera se reconoce con o sin sus dos puntos).
+  const statement = text.replace(/:$/, '')
+  return nodes
+    .filter((node) => {
+      const head = (node.text ?? node.code ?? '').split('\n')[0]?.trim().replace(/:$/, '')
+      return head !== undefined && head !== '' && head === statement
+    })
+    .map((node) => node.id)
 }

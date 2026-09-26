@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import type { ControlModel } from '@prysel/morphology'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { applyEdits, editsFor, escapeString, validEdits } from '../src/edits.ts'
+import { applyEdits, editsFor, escapeString, invertEdits, validEdits } from '../src/edits.ts'
 import { buildProgram, createPythonParser, type Program, type ProgramNode } from '../src/index.ts'
 
 const require = createRequire(import.meta.url)
@@ -273,5 +273,48 @@ describe('validar y aplicar ediciones', () => {
 
   it('aplica varias ediciones sin que una descoloque a la otra', () => {
     expect(applyEdits('abcdefgh', edits)).toBe('xbcyyfgh')
+  })
+})
+
+describe('deshacer unas ediciones', () => {
+  it('aplicar unas ediciones y luego sus inversas deja el texto como estaba', () => {
+    const before = 'total = 0\nfor i in r:\n    total = total + i\nprint(total)\n'
+    const edits = [
+      { start: 8, end: 9, text: '10' },
+      { start: 21, end: 21, text: 'ango(' },
+      { start: 56, end: 61, text: 'total * 2' },
+    ]
+    const after = applyEdits(before, edits)
+    expect(applyEdits(after, invertEdits(before, edits))).toBe(before)
+  })
+
+  it('también con inserciones, borrados y caracteres fuera de ASCII delante', () => {
+    const before = 'nombre = "Ñandú"\nx = 1\ny = 2\n'
+    const edits = [
+      { start: 17, end: 23, text: '' },
+      { start: 29, end: 29, text: 'z = x + y\n' },
+    ]
+    const after = applyEdits(before, edits)
+    expect(applyEdits(after, invertEdits(before, edits))).toBe(before)
+  })
+
+  it('las inversas no se pisan entre sí (se pueden aplicar de una vez)', () => {
+    const before = 'abcdefgh'
+    const edits = [
+      { start: 0, end: 1, text: 'xx' },
+      { start: 4, end: 6, text: '' },
+    ]
+    const inverse = invertEdits(before, edits)
+    expect(validEdits(inverse, applyEdits(before, edits).length)).toBe(true)
+  })
+})
+
+describe('un elemento de una lista cambiado en su sitio', () => {
+  it('se reescribe la lista entera, con el elemento en la misma posición', async () => {
+    const source = 'xs = [3, 1, 2]\n'
+    const program = parse(source)
+    const node = program.nodes[0] as ProgramNode
+    const text = applyEdits(source, editsFor(node, { kind: 'list', items: ['3', '5', '2'] }))
+    expect(text).toBe('xs = [3, 5, 2]\n')
   })
 })

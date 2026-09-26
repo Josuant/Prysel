@@ -115,6 +115,10 @@ export function inputsOf(
         'bases',
         'destination',
         'receiver',
+        // Lo que compara un `match` y la condición de un `case`. El patrón no: un nombre soltado ahí
+        // pasaría a capturar (definir) en vez de comparar, y cambiaría lo que significa el caso.
+        'subject',
+        'guard',
       ].includes(path)
     ) {
       found[path] ??= source
@@ -566,10 +570,58 @@ export function withSources(context: TsNode | null): Record<string, Source> | un
   return context ? { context: span(context, 'expression') } : undefined
 }
 
-/** `except ValueError as e:`: qué error se atrapa (vacío: cualquiera) y el nombre con el que se usa dentro. */
-export function handlerOf(type: TsNode | null, alias: TsNode | null): ControlModel | null {
+/**
+ * `except ValueError as e:`: qué error se atrapa (vacío: cualquiera) y el nombre con el que se usa dentro.
+ * `group`: es un `except*` (atrapa los de ese tipo dentro de un grupo de errores).
+ */
+export function handlerOf(
+  type: TsNode | null,
+  alias: TsNode | null,
+  group = false,
+): ControlModel | null {
   if (alias && alias.type !== 'identifier') return null
-  return { kind: 'handler', type: type?.text ?? '', name: alias?.text ?? '' }
+  return {
+    kind: 'handler',
+    type: type?.text ?? '',
+    name: alias?.text ?? '',
+    ...(group ? { group: true } : {}),
+  }
+}
+
+/** `match orden:`: lo que se compara. Solo si cabe en una línea (se edita en un campo). */
+export function matchOf(subject: TsNode | null): ControlModel | null {
+  if (!subject || /[\r\n]/.test(subject.text)) return null
+  return { kind: 'match', subject: subject.text }
+}
+
+/** Lo que compara un `match` se puede reescribir. */
+export function matchSources(subject: TsNode | null): Record<string, Source> | undefined {
+  return subject && !/[\r\n]/.test(subject.text)
+    ? { subject: span(subject, 'expression') }
+    : undefined
+}
+
+/**
+ * `case "sí" | "s" if listo:`: el patrón (uno o varios separados por comas, tal como se escribieron) y la
+ * condición extra. Solo si cada uno cabe en una línea.
+ */
+export function caseOf(pattern: string, guard: TsNode | null): ControlModel | null {
+  if (pattern === '' || /[\r\n]/.test(pattern) || (guard && /[\r\n]/.test(guard.text))) return null
+  return { kind: 'case', pattern, guard: guard?.text ?? '' }
+}
+
+/** El patrón de un caso y su condición se pueden reescribir. */
+export function caseSources(
+  patterns: readonly TsNode[],
+  guard: TsNode | null,
+): Record<string, Source> | undefined {
+  const first = patterns[0]
+  const last = patterns[patterns.length - 1]
+  if (!first || !last) return undefined
+  return {
+    pattern: { start: first.startIndex, end: last.endIndex, as: 'expression' },
+    ...(guard ? { guard: span(guard, 'expression') } : {}),
+  }
 }
 
 /** El tipo de error de un `except` se puede reescribir. */

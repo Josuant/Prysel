@@ -26,6 +26,24 @@ export const isShownList = (value: Shown | undefined): value is ShownList =>
   typeof value === 'object' && value !== null && Array.isArray((value as ShownList).l)
 
 /**
+ * Un atributo de un objeto del programa: una referencia a otro objeto (`{r: id}`), una lista de ellas
+ * (`{rl: [...]}`, `null` en los huecos), o un valor como el de cualquier variable.
+ */
+export type HeapValue = Shown | { r: number } | { rl: (number | null)[] }
+
+/** Un objeto del programa (una instancia de una de sus clases): su clase y sus atributos. */
+export interface HeapObject {
+  c: string
+  f: Record<string, HeapValue>
+}
+
+export const isRef = (value: HeapValue | undefined): value is { r: number } =>
+  typeof value === 'object' && value !== null && typeof (value as { r?: unknown }).r === 'number'
+
+export const isRefList = (value: HeapValue | undefined): value is { rl: (number | null)[] } =>
+  typeof value === 'object' && value !== null && Array.isArray((value as { rl?: unknown }).rl)
+
+/**
  * Un paso de la ejecución. `call`: entra en una función; `line`: está a punto de ejecutarse una línea;
  * `return`: sale de una función con un valor; `exception`: se lanzó un error; `end`: el programa acabó.
  */
@@ -49,6 +67,8 @@ export interface TraceEvent {
   e?: string
   /** Lo que se imprimió desde el evento anterior. */
   o?: string
+  /** Los objetos del programa (por su identidad) que cambiaron o aparecieron: sus atributos, enteros. */
+  h?: Record<string, HeapObject>
 }
 
 export interface Trace {
@@ -83,9 +103,12 @@ export interface TraceState {
   output: string
   /** El error que acaba de lanzarse, si este paso es una excepción. */
   error: string | null
+  /** Los objetos del programa tal como están en este paso, por su identidad (la misma de `ids`). */
+  heap: Readonly<Record<string, HeapObject>>
 }
 
 const ROOT: FrameState = { id: 0, fn: null, line: 1, locals: {}, ids: {} }
+const NO_HEAP: Readonly<Record<string, HeapObject>> = {}
 
 export const initialState = (): TraceState => ({
   step: -1,
@@ -93,6 +116,7 @@ export const initialState = (): TraceState => ({
   frames: [ROOT],
   output: '',
   error: null,
+  heap: NO_HEAP,
 })
 
 /** Las variables del marco con lo que cambió: lo nuevo entra, y lo que dejó de ser un objeto pierde su identidad. */
@@ -141,6 +165,8 @@ export function apply(state: TraceState, event: TraceEvent): TraceState {
     frames,
     output: event.o ? state.output + event.o : state.output,
     error: event.k === 'exception' ? (event.e ?? 'error') : null,
+    // Solo cambia si el paso trae objetos nuevos o cambiados: si no, se comparte con el anterior.
+    heap: event.h ? { ...state.heap, ...event.h } : state.heap,
   }
 }
 

@@ -363,6 +363,27 @@ Antes del plegado, un programa de 12 pasos ya dejaba los nodos en 68 px —por d
 
 El eje de lectura es un parámetro, no una suposición. `layout(graph, { axis: 'vertical' })` coloca el mismo grafo como una lista de pasos hacia abajo, y las estrategias siguen funcionando porque razonan en ejes «principal» y «transversal», no en x e y. `AXIS_FOR` declara qué eje le sienta mejor a cada topología.
 
+## El diagrama de flujo (leído hacia abajo)
+
+Leído hacia abajo —como lo lee la extensión— el lienzo es un **diagrama de flujo tradicional**. Tres reglas, pedidas así:
+
+1. **Los nodos y las conexiones solo cuentan la secuencia.** No hay cables de datos (ni se dibujan, ni al seleccionar un nodo, ni tienen puertos): las variables viajan únicamente como **chips** (en su cajita y en las casillas donde se usan). Tampoco se esconde ningún paso: un `return` es el último paso de su camino (no se pliega en la pastilla «devuelve») y un valor asignado a mitad de camino es una píldora con su entrada y su salida.
+2. **Las decisiones son rombos.** La pregunta va dentro, en la franja del medio y entre signos (`¿ campo operador valor ?`), editable como siempre. Entra por el vértice de arriba; el **«sí»** sale por el de abajo y sigue la espina; el **«no»** sale por el de la derecha. El rombo mide lo que pregunta (`diamondSize`, alto fijo para que todas las preguntas se parezcan).
+3. **La secuencia se ve, sin saturar.** Un trazo fino y continuo con punta, en ángulos rectos (`routeFlow`), del color de la tinta tenue: no compite con las tarjetas y solo se enciende (violeta) con la selección. «sí» / «no» van junto al vértice del que salen, no en medio del camino, y **donde se juntan varios caminos hay un punto** justo encima del paso al que llegan.
+
+La colocación no reparte capas: **reconstruye la estructura** (`layoutFlowchart`):
+
+- Un bloque es una columna; sus pasos bajan centrados en una misma **espina**.
+- Una decisión pone su camino «sí» debajo (en la espina) y abre el «no» a la derecha, pasado el vértice del rombo y sin tocar el camino «sí». Sin `else`, el «no» es un **carril** que rodea el camino «sí» por la derecha. Los caminos se juntan justo encima del paso que sigue, que vuelve a la espina.
+- Un `elif` es la decisión del camino «no» de la anterior: la cadena escalona hacia la derecha, y todos sus caminos se juntan en el mismo punto.
+- Qué pasos son de cada camino lo dice su **dueño** (`owner`, la sentencia que lo envuelve), no una heurística: así un camino que acaba en `return` no arrastra lo de después.
+- Un territorio (bucle, `with`, `try`, función) lleva su espina **donde la tenga su contenido** (`LayoutResult.spines`), y la espina de fuera pasa por ella: una cadena de `elif` dentro de un bucle no deja medio territorio vacío.
+- Solo mandan `sequence` y `branch`: los datos no colocan nada. Un grafo sin orden (las ilustraciones de la galería) se lee siguiendo su flujo de datos.
+
+Los bucles cierran el círculo con su **carril de vuelta**: sale del pie del cuerpo, en la espina, recorre el fondo y el lateral izquierdo y vuelve a entrar arriba del cuerpo. A él llegan el final de cada camino (el analizador cierra el bucle desde **cada final** del cuerpo, no desde el último `if` entero), el «no» de una decisión sin `else` y los `continue`, que rodean por la derecha lo que queda debajo. Un `break` sale del territorio por su derecha y llega a lo que sigue al bucle, **saltándose su `else`** (que solo se hace al acabar sin salir).
+
+Medido con los programas sintéticos (`generateProgram({ order: true })`, 12–200 pasos): ningún nodo se pisa, ninguna conexión sube (`against = 0`), una sola columna, y no cruza más conexiones que la lectura a lo ancho. Tests en `packages/spatial/test/flowchart.test.ts`.
+
 ## Profundidad por abstracción
 
 `collapse(graph, groups)` sustituye un grupo de nodos por uno solo que los encapsula y recablea las conexiones que cruzaban su borde. Un `def` se convierte en un nodo en el que se puede entrar.
@@ -432,15 +453,11 @@ Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo sele
 - Micro-interfaces semánticas: sustituir la línea de código literal de cada nodo (`print`, `input`…) por controles reales — un desplegable para un operador lógico, un campo de formulario para un literal.
 - **Un nodo sin nombre como origen** (`print(x)` no define nada; `float(input())` sin asignar): para usarlos habría que introducir una variable.
 - **Meter una función dentro de otra** arrastrándola (hoy solo se reubican nodos).
-- **La cláusula `else` de un bucle** no se representa.
-- **Funciones definidas dentro de otra** como chips de su contexto: hoy las funciones solo se ofrecen en la cajita del programa.
-- **Puertos de orden para el `elif` y el `else` de un bucle**: el puerto «falso» de una decisión escribe siempre en el `else` (lo crea detrás de los `elif` si falta); un `elif` concreto y la cláusula `else` de un bucle no tienen puerto, y el segundo tampoco se representa.
 - **Auto-layout jerárquico** (Dagre/ELK): el reparto lo hace la gramática espacial; Mayús+F solo le devuelve lo que el usuario movió.
-- **Editar un elemento de una lista en su sitio**: se añade, se quita y se reescribe como cadena de chips; un elemento suelto no se edita.
-- **`match`** (y `except*`) como nodos con estructura: hoy `match` es un nodo opaco (se edita como texto en el panel «Código»). Un `self.x = valor` cuyo valor sí tiene editor (`self.edad = edad + 1`, un literal) enseña su destino solo como título, sin campo propio; y no hay herencia entre clases dibujada más allá de su casilla de bases.
-- **Deshacer propio**: se apoya en el del editor (una operación = un deshacer); el lienzo no tiene historial propio.
+- Un `self.x = valor` cuyo valor sí tiene editor (`self.edad = edad + 1`, un literal) enseña su destino solo como título, sin campo propio; y no hay herencia entre clases dibujada más allá de su casilla de bases.
 - **Comentarios**: los que cuelgan entre las ramas de un `if`/`elif`/`else` se recogen solo si tree-sitter los cuelga de la sentencia; los de otras construcciones (`with`, `try`) no se tratan porque esas construcciones aún son nodos opacos.
 - Enrutado: separar en carriles las conexiones que comparten pasillo, y esquivar también a los retornos de bucle.
 - `timeline` y `hub-and-spoke` como topologías propias (hoy caen en `pipeline` y `fan-out`).
-- Orientación vertical a fondo: el eje ya es un parámetro, pero las estrategias están afinadas para horizontal.
+- El diagrama de flujo en horizontal: la lectura a lo ancho sigue siendo la del grafo de datos (con sus cables), la de las ilustraciones de la galería.
+- En el diagrama de flujo, el carril de vuelta de un bucle entra arriba del cuerpo, no en su cabecera (la condición de un `while`): se lee bien, pero un diagrama de flujo de libro volvería a la pregunta.
 - Análisis incremental: hoy se reanaliza el archivo entero en cada cambio (bastan décimas de milisegundo, pero tree-sitter puede hacerlo incremental).

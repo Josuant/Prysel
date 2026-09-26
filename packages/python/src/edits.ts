@@ -255,6 +255,22 @@ export function applyEdits(text: string, edits: readonly TextEdit[]): string {
   return out
 }
 
+/**
+ * Las ediciones que deshacen `edits` aplicadas sobre `before`: sobre el texto que resulta de ellas,
+ * devuelven cada trozo a lo que era. Es lo que guarda el «deshacer» del lienzo: aplicar unas y luego sus
+ * inversas deja el texto exactamente como estaba.
+ */
+export function invertEdits(before: string, edits: readonly TextEdit[]): TextEdit[] {
+  let shift = 0
+  return [...edits]
+    .sort((a, b) => a.start - b.start)
+    .map((edit) => {
+      const start = edit.start + shift
+      shift += edit.text.length - (edit.end - edit.start)
+      return { start, end: start + edit.text.length, text: before.slice(edit.start, edit.end) }
+    })
+}
+
 // ───────────────────────── estructura ─────────────────────────
 
 /** El resultado de una operación de estructura: qué reescribir y, si crea algo, dónde quedará. */
@@ -630,7 +646,11 @@ const SETUP: ReadonlySet<string> = new Set([
 ])
 
 /** Las cláusulas de un try: viven dentro de él, con su propio cuerpo. */
-const CLAUSE_KINDS: ReadonlySet<string> = new Set(['control.except', 'control.clause'])
+const CLAUSE_KINDS: ReadonlySet<string> = new Set([
+  'control.except',
+  'control.clause',
+  'control.case',
+])
 
 /** El cuerpo de un camino de una decisión, con la sangría de lo que ya lleva dentro. */
 function regionOf(head: number, end: number, indent: number, bodyIndent?: number): Region {
@@ -657,10 +677,27 @@ function resolvePlace(
       // Las cláusulas de un try cuelgan de él, pero no son sentencias de su cuerpo.
       .filter((n) => n.range?.owner === owner && !CLAUSE_KINDS.has(n.kind))
       .sort((a, b) => (a.range?.start ?? 0) - (b.range?.start ?? 0))
+  // El cuerpo de un `match` solo admite casos: una sentencia suelta ahí dentro no sería Python. Lo que
+  // se quiera meter va dentro de uno de sus casos.
+  if (into !== undefined && nodeById(program, into)?.kind === 'control.match') return null
   if (into !== undefined && branch !== undefined) {
     const decision = nodeById(program, into)
     const r = decision?.range
+    // Un bucle solo tiene el camino de su `else` (lo que se hace al acabar sin salir): al principio de él,
+    // y si no lo tiene, se crea. Su `else` es una cláusula aparte (va detrás del bucle), con su cuerpo.
+    if (decision?.kind === 'control.loop' && r && branch === 'no') {
+      const { elseAt } = r
+      if (elseAt === undefined) return { elseOf: decision.id }
+      const clause = program.nodes.find(
+        (n) => n.kind === 'control.clause' && n.range?.start === elseAt,
+      )
+      if (!clause) return null
+      const first = inside(clause.id)[0]
+      return first ? { before: first.id } : { into: clause.id }
+    }
     if (!decision || decision.kind !== 'control.condition' || !r) return null
+    // Su camino falso sigue en un `elif`: lo que vaya ahí entra por los puertos de ese `elif`.
+    if (branch === 'no' && decision.continues !== undefined) return null
     const { head, yesEnd } = r
     if (head === undefined || yesEnd === undefined) return null
     const nodes = inside(decision.id)
@@ -831,6 +868,34 @@ export function changeCallee(program: Program, id: string, callee: string): Chan
   return { edits }
 }
 
+/**
+ * Mueve un extremo de un cable ya tendido. El cable nuevo se escribe igual que al conectar
+ * (`connectNodes`, con sus mismas comprobaciones de alcance); si cambió el destino, el campo que
+ * alimentaba antes vuelve a un valor neutro en la misma edición. Si el cable nuevo no vale, no hay
+ * edición: el de antes se queda donde estaba, en vez de quedar suelto.
+ */
+export function reconnectNodes(
+  program: Program,
+  action: {
+    was: { id: string; slot: string }
+    from: string
+    port?: string
+    to: string
+    slot: string
+    convert?: 'float'
+  },
+): Change {
+  const moved = action.was.id !== action.to || action.was.slot !== action.slot
+  const connected = connectNodes(program, action)
+  if (connected.edits.length === 0) {
+    // Mismo destino y mismo nombre (se soltó donde estaba): nada que hacer. Otro destino que no vale: tampoco.
+    return { edits: [] }
+  }
+  if (!moved) return connected
+  const released = disconnectNode(program, action.was.id, action.was.slot)
+  return { edits: [...released.edits, ...connected.edits].sort((a, b) => a.start - b.start) }
+}
+
 /** Suelta el cable de un campo: vuelve a un valor neutro que Python acepta. */
 export function disconnectNode(program: Program, id: string, slot: string): Change {
   const at = nodeById(program, id)?.inputs?.[slot]
@@ -860,6 +925,10 @@ export function actionEdits(program: Program, action: NodeAction): Change {
     case 'rename':
       return renameNode(program, action.id, action.to, action.from)
     case 'add': {
+      // Dentro de un `match` solo caben casos (ver `resolvePlace`).
+      if (action.into !== undefined && nodeById(program, action.into)?.kind === 'control.match') {
+        return { edits: [] }
+      }
       const source = action.connect ? nodeById(program, action.connect.from) : undefined
       const fill = source && action.connect ? outputName(source, action.connect.port) : undefined
       // Al principio de un cuerpo o de un camino de una decisión (donde llevan los puertos de orden).
@@ -904,5 +973,7 @@ export function actionEdits(program: Program, action: NodeAction): Change {
       return connectNodes(program, action)
     case 'disconnect':
       return disconnectNode(program, action.id, action.slot)
+    case 'reconnect':
+      return reconnectNodes(program, action)
   }
 }

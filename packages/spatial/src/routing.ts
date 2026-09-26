@@ -294,3 +294,50 @@ function finish(input: Point[], radius: number): Route {
 
   return { points, d, mid: { x: round(mid.x), y: round(mid.y) } }
 }
+
+/** Por dónde sale una conexión de un paso en un diagrama de flujo: por abajo, o por el vértice derecho del rombo. */
+export type FlowExit = 'bottom' | 'right'
+
+export interface FlowRouteOptions {
+  /** Por dónde sale. */
+  exit?: FlowExit
+  /**
+   * La x del carril por el que baja un «no» sin `else`: rodea el camino «sí» por la derecha antes de volver
+   * a la espina.
+   */
+  lane?: number
+  /** A qué distancia por encima del destino se juntan los caminos que llegan a él. */
+  join?: number
+  radius?: number
+}
+
+/** A qué altura, por encima del paso al que llegan, se juntan los caminos (y se dibuja el punto de unión). */
+export const FLOW_JOIN = 16
+
+/**
+ * El trazado de una conexión de orden en un diagrama de flujo, leído hacia abajo. No busca camino: la
+ * colocación ya dejó el hueco, así que basta con la forma de siempre en ángulos rectos:
+ *
+ * - Hacia abajo, entre dos pasos de la misma espina: una recta.
+ * - Hacia abajo, de otra columna: baja hasta justo encima del destino, cruza y entra; todos los caminos que
+ *   llegan al mismo paso se juntan a esa misma altura.
+ * - Del vértice derecho de un rombo (el «no») a un paso de su derecha: sale en horizontal y baja.
+ * - Del vértice derecho a lo que sigue a la decisión (sin `else`): rodea por su carril y vuelve a la espina.
+ */
+export function routeFlow(a: Point, b: Point, options: FlowRouteOptions = {}): Route {
+  const join = options.join ?? FLOW_JOIN
+  const radius = options.radius ?? 8
+  const exit = options.exit ?? 'bottom'
+  const above = b.y - join
+  if (exit === 'right') {
+    const straight = options.lane === undefined && b.x > a.x + 12 && b.y > a.y
+    if (straight) return finish([a, { x: b.x, y: a.y }, b], radius)
+    const lane = Math.max(options.lane ?? a.x + 24, a.x + 12)
+    const down = Math.max(above, a.y + 12)
+    return finish([a, { x: lane, y: a.y }, { x: lane, y: down }, { x: b.x, y: down }, b], radius)
+  }
+  if (Math.abs(a.x - b.x) < 1 && b.y >= a.y) return finish([a, { x: a.x, y: b.y }], radius)
+  // Un paso que quedó más arriba (lo movió el usuario): sale un poco, cruza y entra desde arriba.
+  const down = b.y > a.y + join ? above : a.y + 12
+  return finish([a, { x: a.x, y: down }, { x: b.x, y: down }, b], radius)
+}

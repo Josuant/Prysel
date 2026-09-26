@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useId,
   useRef,
   useState,
@@ -446,27 +447,84 @@ export function Chips({
   items,
   onRemove,
   onAdd,
+  onChange,
   max = 4,
 }: {
   items: string[]
   onRemove?: (index: number) => void
   /** Sin él, la lista solo se lee. Con él, se escribe un elemento nuevo y se añade con Intro o al salir. */
   onAdd?: (item: string) => void
+  /**
+   * Con él, cada elemento se edita en su sitio (se pulsa, se escribe, Intro o salir): sin quitarlo y
+   * volverlo a añadir al final, que le cambiaría el orden. Vaciarlo lo quita; Escape no cambia nada.
+   */
+  onChange?: (index: number, item: string) => void
   max?: number
 }) {
   const shown = items.slice(0, max)
   const [draft, setDraft] = useState('')
+  const [editing, setEditing] = useState<{ index: number; text: string } | null>(null)
+  // El elemento que se empieza a editar recibe el foco (sin `autoFocus`, que roba el foco al montar).
+  const editRef = useRef<HTMLInputElement>(null)
+  const editingIndex = editing?.index
+  useEffect(() => {
+    if (editingIndex !== undefined) editRef.current?.focus()
+  }, [editingIndex])
   const commit = () => {
     const item = draft.trim()
     setDraft('')
     if (item) onAdd?.(item)
   }
+  const commitEdit = () => {
+    if (!editing) return
+    const value = editing.text.trim()
+    setEditing(null)
+    if (value === (items[editing.index] ?? '').trim()) return
+    if (value === '') onRemove?.(editing.index)
+    else onChange?.(editing.index, value)
+  }
   return (
     <div className="chips">
       {shown.map((item, i) => (
         <span key={`${item}-${i}`} className="chips__item type-value">
-          {item}
-          {onRemove && (
+          {editing?.index === i ? (
+            <input
+              className="chips__edit type-value nodrag"
+              aria-label={`Editar ${item}`}
+              value={editing.text}
+              // Se escribe solo lo que se escribe: el tamaño sigue al texto.
+              size={Math.max(2, editing.text.length)}
+              ref={editRef}
+              onChange={(event) => {
+                setEditing({ index: i, text: event.target.value })
+              }}
+              onBlur={commitEdit}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  commitEdit()
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setEditing(null)
+                }
+              }}
+            />
+          ) : onChange ? (
+            <button
+              type="button"
+              className="chips__text nodrag"
+              title="Pulsa para cambiarlo"
+              aria-label={`Editar ${item}`}
+              onClick={() => {
+                setEditing({ index: i, text: item })
+              }}
+            >
+              {item}
+            </button>
+          ) : (
+            item
+          )}
+          {onRemove && editing?.index !== i && (
             <button
               type="button"
               className="chips__remove nodrag"

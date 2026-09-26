@@ -1,9 +1,12 @@
 import { useId, useMemo } from 'react'
 import { EdgeLabelRenderer, type EdgeProps, type Edge as FlowEdge } from '@xyflow/react'
 import {
+  FLOW_JOIN,
   routeEdge,
+  routeFlow,
   routeOrthogonal,
   type Axis,
+  type FlowExit,
   type Channel,
   type Rect,
   type Relation,
@@ -40,6 +43,13 @@ export interface PryselEdgeData extends Record<string, unknown> {
   /** Es un cable de datos que se puede soltar: se puede seleccionar y aparece su botón de desconectar. */
   removable?: boolean
   onRemove?: () => void
+  /**
+   * Es la secuencia de un diagrama de flujo: se traza en ángulos rectos por el hueco que dejó la colocación.
+   * `exit` dice si sale por abajo o por el vértice derecho de un rombo; `lane`, por dónde baja un «no» sin
+   * `else`; `join`, que llegan varios caminos a ese paso (y se dibuja el punto donde se juntan); `tag`, «sí» o
+   * «no» junto al vértice.
+   */
+  flow?: { exit: FlowExit; lane?: number; join: boolean; tag?: string; bend?: number }
 }
 
 export type PryselFlowEdge = FlowEdge<PryselEdgeData, 'prysel'>
@@ -75,7 +85,19 @@ export function PryselEdge({
     (axis === 'horizontal' ? targetX < sourceX - 40 : targetY < sourceY - 40)
   const obstacles = data?.obstacles
   const parentOf = data?.parentOf
+  const flow = data?.flow
   const route = useMemo(() => {
+    if (flow) {
+      return routeFlow(
+        { x: sourceX, y: sourceY },
+        { x: targetX, y: targetY },
+        {
+          exit: flow.exit,
+          ...(flow.lane === undefined ? {} : { lane: flow.lane }),
+          ...(flow.bend === undefined ? {} : { join: flow.bend }),
+        },
+      )
+    }
     if (wrap || relation === 'feedback' || !obstacles) return null
     // No es obstáculo ni el propio origen o destino, ni el territorio que los envuelve.
     const own = new Set([source, target])
@@ -87,6 +109,7 @@ export function PryselEdge({
       { axis },
     )
   }, [
+    flow,
     wrap,
     relation,
     obstacles,
@@ -132,6 +155,7 @@ export function PryselEdge({
       data-failed={data?.failed ? '' : undefined}
       data-selected={selected ? '' : undefined}
       data-note={hand ? '' : undefined}
+      data-flow={flow ? flow.exit : undefined}
     >
       {hand && (
         <filter id={handId} filterUnits="userSpaceOnUse" {...hand}>
@@ -173,6 +197,32 @@ export function PryselEdge({
           >
             ×
           </button>
+        </EdgeLabelRenderer>
+      )}
+      {/* Donde se juntan los caminos que llegan a un mismo paso: un punto, como en un diagrama de flujo. */}
+      {flow?.join && (
+        <circle
+          className="edge__join"
+          cx={targetX}
+          cy={targetY - (flow.bend ?? FLOW_JOIN)}
+          r={3.5}
+        />
+      )}
+      {flow?.tag && (
+        <EdgeLabelRenderer>
+          <div
+            className="edge__tag type-badge"
+            data-exit={flow.exit}
+            data-emphasis={data?.emphasis}
+            style={{
+              transform:
+                flow.exit === 'right'
+                  ? `translate(${sourceX + 8}px, ${sourceY - 18}px)`
+                  : `translate(${sourceX + 7}px, ${sourceY + 3}px)`,
+            }}
+          >
+            {flow.tag}
+          </div>
         </EdgeLabelRenderer>
       )}
       {data?.live && (

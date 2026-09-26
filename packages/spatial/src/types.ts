@@ -81,6 +81,8 @@ export interface SemanticNode {
   ops?: number
   /** Sitio extra que pide la cabecera de un ámbito (su documentación), sobre `SCOPE_FRAME.top`. */
   headroom?: number
+  /** Sitio extra al pie de un ámbito, bajo su contenido (el carril por el que vuelve un bucle). */
+  footroom?: number
   /**
    * Sitio extra a la izquierda, dentro del ámbito, para sus puertos: los parámetros de una función
    * salen de su borde, y sus etiquetas y sus cables necesitan aire antes de llegar al primer nodo.
@@ -92,6 +94,16 @@ export interface SemanticNode {
   territory?: boolean
   /** Tamaño mínimo de un ámbito que el usuario ha ensanchado: nunca queda por debajo de su contenido. */
   minSize?: Size
+  /**
+   * La sentencia que lo envuelve (una decisión, un bucle, una función). Leído como diagrama de flujo, dice
+   * qué pasos son de cada camino de una decisión y dónde se vuelven a juntar.
+   */
+  owner?: string
+  /**
+   * Dónde cae su espina, medido desde su borde izquierdo (sin él, en el centro). Un territorio leído como
+   * diagrama de flujo la tiene donde la tenga su contenido: por ahí entra y sale la secuencia.
+   */
+  spine?: number
 }
 
 export interface SemanticEdge {
@@ -248,4 +260,10 @@ export interface LayoutResult {
   rows: number
   /** Ámbitos que envuelven a otros nodos: id del contenedor → nodos de su interior. */
   scopes: Record<string, string[]>
+  /**
+   * Leído como diagrama de flujo: dónde cae la espina (la x del eje por el que bajan los pasos).
+   */
+  spine?: number
+  /** La espina de cada ámbito, medida desde su borde izquierdo: por ahí entra y sale su secuencia. */
+  spines?: Record<string, number>
 }

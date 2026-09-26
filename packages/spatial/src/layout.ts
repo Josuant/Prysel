@@ -1,4 +1,5 @@
 import { classify, incoming, outgoing } from './classify.ts'
+import { layoutFlowchart } from './flowchart.ts'
 import {
   SCOPE_FRAME,
   type Axis,
@@ -8,6 +9,7 @@ import {
   type Region,
   type Relation,
   type SemanticGraph,
+  type SemanticNode,
   type Size,
 } from './types.ts'
 
@@ -393,8 +395,14 @@ function findScopes(graph: SemanticGraph): Map<string, string[]> {
  * mezcla con lo de fuera — igual que la indentación agrupa un cuerpo en el texto.
  */
 export function layout(graph: SemanticGraph, options: LayoutOptions = {}): LayoutResult {
+  // Leído hacia abajo, el programa es un diagrama de flujo: lo coloca su estructura, no sus capas.
+  const flow = options.axis === 'vertical'
+  const flat = (g: SemanticGraph, o: LayoutOptions): LayoutResult =>
+    flow
+      ? layoutFlowchart(g, o.padding === undefined ? {} : { padding: o.padding })
+      : layoutFlat(g, o)
   const scopes = findScopes(graph)
-  if (scopes.size === 0) return layoutFlat(graph, options)
+  if (scopes.size === 0) return flat(graph, options)
 
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
   const parentOf = new Map<string, string>()
@@ -414,6 +422,8 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     top: number
     /** Lo que hay a la izquierda del contenido: el margen y, si la hay, la zona de puertos. */
     left: number
+    /** Leído como diagrama de flujo: dónde cae su espina, desde su borde izquierdo. */
+    spine?: number
   }
   const frames = new Map<string, Frame>()
   /** El tamaño de cada nodo tal como lo ven los de su nivel: un ámbito mide lo que abarca. */
@@ -426,15 +436,13 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     const members = new Set(scopes.get(scope))
     for (const id of members) if (scopes.has(id)) sizes.set(id, measure(id))
 
-    const inner = layoutFlat(
+    const inner = flat(
       {
         nodes: [...members].flatMap((id) => {
           const node = byId.get(id)
           if (!node) return []
           // Un ámbito anidado llega ya resuelto: para su nivel es un bloque más.
-          return [
-            scopes.has(id) ? { ...node, size: sizes.get(id) ?? node.size, contains: [] } : node,
-          ]
+          return [scopes.has(id) ? resolved(node) : node]
         }),
         edges: graph.edges.filter((e) => members.has(e.from) && members.has(e.to)),
       },
@@ -442,7 +450,7 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     )
     const own = byId.get(scope)?.size.w ?? 0
     const top = SCOPE_FRAME.top + (byId.get(scope)?.headroom ?? 0)
-    const left = SCOPE_FRAME.side + (byId.get(scope)?.gutter ?? 0)
+    let left = SCOPE_FRAME.side + (byId.get(scope)?.gutter ?? 0)
     const min = byId.get(scope)?.minSize
     const size = {
       w: Math.max(
@@ -451,13 +459,33 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
         min?.w ?? 0,
         (byId.get(scope)?.headerWidth ?? 0) + left + SCOPE_FRAME.side,
       ),
-      h: Math.max(inner.bounds.h + top + SCOPE_FRAME.bottom, min?.h ?? 0),
+      h: Math.max(
+        inner.bounds.h + top + SCOPE_FRAME.bottom + (byId.get(scope)?.footroom ?? 0),
+        min?.h ?? 0,
+      ),
     }
-    frames.set(scope, { size, inner, top, left })
+    // Como diagrama de flujo, el territorio lleva su espina donde la tenga su contenido (una cadena de
+    // `elif` crece a la derecha, y centrarla dejaría medio territorio vacío). Si sobra sitio, se reparte.
+    let spine: number | undefined
+    if (flow) {
+      left += Math.max(0, Math.round((size.w - left - SCOPE_FRAME.side - inner.bounds.w) / 2))
+      spine = left + (inner.spine ?? inner.bounds.w / 2)
+    }
+    frames.set(scope, { size, inner, top, left, ...(spine === undefined ? {} : { spine }) })
     sizes.set(scope, size)
     return size
   }
   for (const scope of scopes.keys()) measure(scope)
+  /** Un ámbito ya resuelto, tal como lo ve su nivel: un bloque de su tamaño, con su espina. */
+  function resolved(node: SemanticNode): SemanticNode {
+    const spine = frames.get(node.id)?.spine
+    return {
+      ...node,
+      size: sizes.get(node.id) ?? node.size,
+      contains: [],
+      ...(spine === undefined ? {} : { spine }),
+    }
+  }
 
   // El plano de fuera solo ve lo que no está dentro de nadie. Las conexiones que entran o
   // salen de un ámbito se recogen en su borde, y las que quedan dentro ya no cuentan aquí.
@@ -465,18 +493,19 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
   const outerEdges = graph.edges.flatMap((e) => {
     const from = topOf(e.from)
     const to = topOf(e.to)
-    const key = `${from}|${to}|${e.relation}`
+    // La etiqueta cuenta: el camino «sí» y el «no» de una decisión son dos conexiones distintas.
+    const key = `${from}|${to}|${e.relation}|${e.label ?? ''}`
     if (from === to || seen.has(key)) return []
     seen.add(key)
-    return [{ from, to, relation: e.relation }]
+    return [
+      { from, to, relation: e.relation, ...(e.label === undefined ? {} : { label: e.label }) },
+    ]
   })
-  const outer = layoutFlat(
+  const outer = flat(
     {
       nodes: graph.nodes
         .filter((n) => !parentOf.has(n.id))
-        .map((n) =>
-          scopes.has(n.id) ? { ...n, size: sizes.get(n.id) ?? n.size, contains: [] } : n,
-        ),
+        .map((n) => (scopes.has(n.id) ? resolved(n) : n)),
       edges: outerEdges,
     },
     options,
@@ -513,6 +542,16 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     rows: outer.rows,
     bounds: outer.bounds,
     scopes: Object.fromEntries(scopes),
+    ...(outer.spine === undefined ? {} : { spine: outer.spine }),
+    ...(flow
+      ? {
+          spines: Object.fromEntries(
+            [...frames].flatMap(([id, frame]) =>
+              frame.spine === undefined ? [] : [[id, frame.spine]],
+            ),
+          ),
+        }
+      : {}),
   }
 }
 

@@ -328,3 +328,37 @@ describe('las cláusulas de un try en el gesto de orden', () => {
     })
   })
 })
+
+describe('los caminos de un elif y el else de un bucle en el gesto de orden', () => {
+  const all = new Map<string, CanvasNode>(
+    [
+      node('a', { kind: 'transform.call', provides: 'a' }),
+      node('if', { kind: 'control.condition', continues: 'elif' }),
+      node('elif', { kind: 'control.condition', owner: 'if' }),
+      node('bucle', { kind: 'control.loop', contains: ['cuerpo'] }),
+      node('cuerpo', { kind: 'transform.call', owner: 'bucle' }),
+    ].map((n) => [n.id, n]),
+  )
+
+  it('el camino falso de un if que sigue en un elif se rechaza, diciendo por dónde entrar', () => {
+    const verdict = checkOrder(all, { from: 'if', port: 'order-no', to: 'a' })
+    expect(verdict.ok).toBe(false)
+    expect(!verdict.ok && verdict.reason).toMatch(/elif/)
+  })
+
+  it('el elif tiene sus dos caminos', () => {
+    expect(checkOrder(all, { from: 'elif', port: 'order-yes', to: 'a' })).toEqual({
+      ok: true,
+      action: { type: 'move', id: 'a', into: 'elif', branch: 'yes' },
+    })
+    expect(checkOrder(all, { from: 'elif', port: 'order-no', to: 'a' }).ok).toBe(true)
+  })
+
+  it('un bucle tiene el camino de su else, pero no uno «verdadero»', () => {
+    expect(checkOrder(all, { from: 'bucle', port: 'order-no', to: 'a' })).toEqual({
+      ok: true,
+      action: { type: 'move', id: 'a', into: 'bucle', branch: 'no' },
+    })
+    expect(checkOrder(all, { from: 'bucle', port: 'order-yes', to: 'a' }).ok).toBe(false)
+  })
+})

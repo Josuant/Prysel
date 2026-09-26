@@ -10,6 +10,7 @@ import {
   dockChips,
   isChipKind,
   mentions,
+  namedBy,
   iterChipId,
   packChips,
   parseIterChip,
@@ -182,6 +183,25 @@ describe('el reparto en chips', () => {
     })
     expect(plan.functions.map((f) => f.name)).toEqual(['suma'])
     expect(plan.trays.get(MODULE)?.chips.map((c) => c.id)).toEqual(['a', 'b', 'fn:def'])
+  })
+
+  it('una función anidada va en la cajita de la función que la define, no en la del programa', () => {
+    const exterior = node('exterior', {
+      kind: 'abstraction.collapsed',
+      line: 1,
+      contains: ['total'],
+      params: ['x'],
+    })
+    const total = node('total', { line: 3, owner: 'exterior', inputs: ['left'] })
+    const plan = planChips([exterior, total], [], {
+      canAdd: true,
+      palette: [
+        { id: 'exterior', name: 'exterior', signature: '(x)', params: ['x'] },
+        { id: 'doble', name: 'doble', signature: '(n)', params: ['n'], scope: 'exterior' },
+      ],
+    })
+    expect(plan.trays.get(MODULE)?.chips.map((c) => c.id)).toEqual(['fn:exterior'])
+    expect(plan.trays.get('exterior')?.chips.map((c) => c.id)).toContain('fn:doble')
   })
 
   it('un lienzo de solo lectura sin chips no dibuja cajitas vacías', () => {
@@ -854,5 +874,33 @@ describe('el orden de la cajita del programa en columna', () => {
     // En fila, primero las variables y después las funciones (lo de siempre).
     const row = planChips(nodes, [], { canAdd: false, palette })
     expect(row.trays.get(MODULE)?.chips.map((c) => c.id)).toEqual(['limite', 'total', 'fn:def:1'])
+  })
+})
+
+describe('lo que nombra el código de una nota', () => {
+  const nodes = [
+    node('total', { line: 1, provides: 'total', text: 'total = 0' }),
+    node('bucle', { kind: 'control.loop', line: 2, params: ['i'], text: 'for i in xs:' }),
+    node('f', { kind: 'abstraction.collapsed', label: 'entrenar', provides: 'entrenar', line: 5 }),
+  ]
+
+  it('un nombre señala lo que lo define: la variable, la función (aunque se escriba como llamada)', () => {
+    expect(namedBy('total', nodes)).toEqual(['total'])
+    expect(namedBy('entrenar()', nodes)).toEqual(['f'])
+    expect(namedBy('total.real', nodes)).toEqual(['total'])
+  })
+
+  it('la variable de un bucle o un parámetro señala su chip', () => {
+    expect(namedBy('i', nodes)).toEqual(['iter:i@bucle'])
+  })
+
+  it('un trozo de sentencia señala esa sentencia, con o sin sus dos puntos', () => {
+    expect(namedBy('for i in xs', nodes)).toEqual(['bucle'])
+    expect(namedBy('for i in xs:', nodes)).toEqual(['bucle'])
+  })
+
+  it('lo que no está en el diagrama no señala nada', () => {
+    expect(namedBy('otra_cosa', nodes)).toEqual([])
+    expect(namedBy('1 + 1', nodes)).toEqual([])
   })
 })

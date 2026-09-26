@@ -605,6 +605,92 @@ def _identity(value):
     return id(value)
 
 
+# Los objetos del propio programa (instancias de sus clases) que se graban por paso: sus atributos, y a
+# qué otros objetos apuntan. Es lo que deja dibujar una lista enlazada, un árbol o un grafo tal como es.
+_HEAP_OBJECTS = 40
+_HEAP_FIELDS = 12
+_HEAP_REFS = 20
+
+
+def _is_object(value):
+    """Una instancia de una clase del programa (no de la biblioteca estándar ni de un módulo externo)."""
+    kind = type(value)
+    return (
+        getattr(kind, "__module__", None) == "__main__"
+        and not isinstance(value, type)
+        and not callable(value)
+        and (hasattr(value, "__dict__") or hasattr(kind, "__slots__"))
+    )
+
+
+def _fields(value):
+    """Los atributos de un objeto: su `__dict__` o, si usa `__slots__`, esos."""
+    found = {}
+    try:
+        found.update(vars(value))
+    except TypeError:
+        pass
+    for slot in getattr(type(value), "__slots__", ()) or ():
+        if isinstance(slot, str) and not slot.startswith("__") and hasattr(value, slot):
+            found[slot] = getattr(value, slot)
+    return {name: v for name, v in found.items() if not name.startswith("__")}
+
+
+def _heap_value(value, reached):
+    """Lo que se graba de un atributo: una referencia a otro objeto (`{"r": id}`), una lista de ellas
+    (`{"rl": [...]}`, con `None` para los huecos), o el valor como en cualquier variable."""
+    if _is_object(value):
+        reached.append(value)
+        return {"r": id(value)}
+    if isinstance(value, (list, tuple)) and 0 < len(value) <= _HEAP_REFS:
+        if all(item is None or _is_object(item) for item in value) and any(
+            item is not None for item in value
+        ):
+            refs = []
+            for item in value:
+                if item is None:
+                    refs.append(None)
+                else:
+                    reached.append(item)
+                    refs.append(id(item))
+            return {"rl": refs}
+    return _show(value)
+
+
+def _heap(roots):
+    """Los objetos del programa alcanzables desde `roots` (variables), con sus atributos: `id → objeto`."""
+    objects = {}
+    pending = []
+    for value in roots:
+        if _is_object(value):
+            pending.append(value)
+        elif isinstance(value, (list, tuple, dict)) and 0 < len(value) <= _HEAP_REFS:
+            # Una lista (o un diccionario) de objetos del programa: se graba como un objeto más, con sus
+            # referencias, para que la variable que la nombra lleve hasta ellos (su `id` es el de la variable).
+            items = list(value.values()) if isinstance(value, dict) else list(value)
+            if not any(_is_object(item) for item in items):
+                continue
+            reached = []
+            if isinstance(value, dict):
+                fields = {_short(str(k), 20): _heap_value(v, reached) for k, v in value.items()}
+            else:
+                fields = {"elementos": _heap_value(value, reached)}
+            objects[str(id(value))] = {"c": type(value).__name__, "f": fields}
+            pending.extend(reached)
+    while pending and len(objects) < _HEAP_OBJECTS:
+        value = pending.pop(0)
+        key = str(id(value))
+        if key in objects:
+            continue
+        reached = []
+        fields = {}
+        for name, attr in list(_fields(value).items())[:_HEAP_FIELDS]:
+            fields[name] = _heap_value(attr, reached)
+        objects[key] = {"c": type(value).__name__, "f": fields}
+        pending.extend(reached)
+    return objects
+
+
 def _is_data(name, value):
     """Una variable de datos: no las definiciones (funciones, clases, módulos) ni los nombres internos."""
     if name.startswith("__"):
@@ -732,6 +818,24 @@ class _Tracer:
         self.by_frame = {}
         self.next_id = 1
         self.printed = 0
+        # Lo último que se grabó de cada objeto del programa: solo se vuelve a grabar si cambió.
+        self.heap_last = {}
+
+    def heap_changes(self, frame):
+        """Los objetos del programa alcanzables desde las variables de este marco que cambiaron (o son nuevos)."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            values = [v for name, v in list(frame.f_locals.items()) if _is_data(name, v)]
+        changed = {}
+        for key, obj in _heap(values).items():
+            try:
+                text = json.dumps(obj, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                continue
+            if self.heap_last.get(key) != text:
+                self.heap_last[key] = text
+                changed[key] = obj
+        return changed
 
     def record(self, event):
         text = self.out.getvalue()
@@ -781,6 +885,9 @@ class _Tracer:
                 entry["ch"] = changed
             if ids:
                 entry["ids"] = ids
+            heap = self.heap_changes(frame)
+            if heap:
+                entry["h"] = heap
             self.record(entry)
         return self.local_trace
 
@@ -802,14 +909,17 @@ class _Tracer:
         else:
             return self.local_trace
         changed, ids = self.changes(record, frame)
+        heap = self.heap_changes(frame)
         # Una comprensión de una línea repite esa línea a cada vuelta sin cambiar nada visible: no es un paso.
-        if event == "line" and not changed and record.get("line") == frame.f_lineno:
+        if event == "line" and not changed and not heap and record.get("line") == frame.f_lineno:
             return self.local_trace
         record["line"] = frame.f_lineno
         if changed:
             entry["ch"] = changed
         if ids:
             entry["ids"] = ids
+        if heap:
+            entry["h"] = heap
         try:
             self.record(entry)
         finally:

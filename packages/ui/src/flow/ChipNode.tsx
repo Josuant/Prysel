@@ -28,6 +28,10 @@ export interface ChipNodeData extends Record<string, unknown> {
   onRename?: (id: string, to: string) => void
   /** Sube cada vez que el menú del nodo pide renombrarlo. */
   renameSignal?: number
+  /** Una nota nombra este chip en su `código`, y el puntero está encima de ese trozo. */
+  hinted?: boolean
+  /** Es un paso del diagrama de flujo (un valor a mitad de camino): la secuencia entra y sale por él. */
+  step?: boolean
 }
 
 export type ChipFlowNode = Node<ChipNodeData, 'chip'>
@@ -39,6 +43,7 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
         className="vchip"
         data-type="function"
         data-selected={selected ? '' : undefined}
+        data-hinted={data.hinted ? '' : undefined}
         title={`${data.fn.name}${data.fn.signature}: arrástrala a una llamada`}
       >
         {data.line !== undefined && (
@@ -72,6 +77,7 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
         className="vchip"
         data-type={data.iter.param ? 'param' : 'iter'}
         data-selected={selected ? '' : undefined}
+        data-hinted={data.hinted ? '' : undefined}
         title={
           data.iter.param
             ? `${data.iter.name}: lo que recibe la función; arrástrala a una casilla de dentro`
@@ -109,6 +115,8 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
       className="vchip"
       data-type={type}
       data-selected={selected ? '' : undefined}
+      data-hinted={data.hinted ? '' : undefined}
+      data-step={data.step ? '' : undefined}
       title={`${chip.label}: arrástrala a una casilla que reciba un valor`}
     >
       {data.line !== undefined && (
@@ -130,6 +138,24 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
         isConnectable={false}
         className="note-handle"
       />
+      {data.step && (
+        <>
+          <Handle
+            type="target"
+            id="step-in"
+            position={Position.Top}
+            isConnectable={false}
+            className="note-handle"
+          />
+          <Handle
+            type="source"
+            id="step-out"
+            position={Position.Bottom}
+            isConnectable={false}
+            className="note-handle"
+          />
+        </>
+      )}
       <Icon name={getKind(chip.kind).icon} size={12} className="vchip__icon" />
       <ChipName
         label={chip.label}

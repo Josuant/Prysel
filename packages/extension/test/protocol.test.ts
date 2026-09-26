@@ -212,3 +212,20 @@ describe('traza', () => {
     expect(parseWebviewMessage({ ...done, trace: { ...trace, truncated: 'sí' } })).toBeNull()
   })
 })
+
+describe('deshacer desde el lienzo', () => {
+  it('el lienzo pide deshacer o rehacer', () => {
+    expect(parseHostMessage({ type: 'undo' })).toEqual({ type: 'undo' })
+    expect(parseHostMessage({ type: 'redo' })).toEqual({ type: 'redo' })
+  })
+
+  it('la extensión dice cuánto se puede deshacer y rehacer, con números que tengan sentido', () => {
+    expect(parseWebviewMessage({ type: 'history', undo: 2, redo: 0 })).toEqual({
+      type: 'history',
+      undo: 2,
+      redo: 0,
+    })
+    expect(parseWebviewMessage({ type: 'history', undo: -1, redo: 0 })).toBeNull()
+    expect(parseWebviewMessage({ type: 'history', undo: '2', redo: 0 })).toBeNull()
+  })
+})

@@ -81,6 +81,21 @@ export type NodeAction =
   /** Soltar un cable: el campo vuelve a un valor neutro. */
   | { type: 'disconnect'; id: string; slot: string }
   /**
+   * Mover un extremo de un cable ya tendido: el que llegaba a `was` (un campo de un nodo) pasa a salir de
+   * `from` y a llegar a `to`/`slot`. Si cambia el destino, el campo de antes vuelve a un valor neutro y el
+   * nuevo lee el nombre, todo de una vez (una sola edición); si solo cambia el origen, el campo pasa a
+   * leer el nombre del nuevo. Si el cable nuevo no vale, no se toca nada (el de antes se queda).
+   */
+  | {
+      type: 'reconnect'
+      was: { id: string; slot: string }
+      from: string
+      port?: string
+      to: string
+      slot: string
+      convert?: 'float'
+    }
+  /**
    * Mover una sentencia a otro sitio: al final del cuerpo de una función (`into`), detrás de otro
    * nodo (`after`) o justo antes de otro (`before`). Es lo que pasa al arrastrar un nodo dentro o fuera de una función.
    */

@@ -58,6 +58,8 @@ export interface SourceNode {
   range?: { owner?: string }
   calls?: string
   note?: string
+  /** En una decisión: el `elif` en el que sigue su camino falso. */
+  continues?: string
 }
 
 /**
@@ -120,6 +122,7 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
     ...(node.ops === undefined ? {} : { metrics: { ops: node.ops } }),
     ...(node.contains ? { contains: node.contains } : {}),
     ...(node.note ? { note: node.note } : {}),
+    ...(node.continues ? { continues: node.continues } : {}),
     // Una llamada a una función del archivo lleva a ella.
     ...(node.calls ? { opens: node.calls, openable: true } : {}),
   }))
@@ -155,14 +158,36 @@ export interface FunctionInfo {
   size: number
   /** Lo que la función dice de sí misma: su docstring y los comentarios que la explican. */
   doc?: string
+  /**
+   * La función dentro de la que está definida (la más cercana hacia fuera), si no es del programa: una
+   * función anidada solo existe ahí dentro.
+   */
+  scope?: string
+}
+
+/** La función más cercana que envuelve a un nodo (atravesando bucles y decisiones), si la hay. */
+function enclosingFunctionOf(
+  node: CanvasNode,
+  byId: ReadonlyMap<string, CanvasNode>,
+): string | undefined {
+  let up = node.owner
+  for (let guard = 0; up !== undefined && guard < 64; guard++) {
+    const owner = byId.get(up)
+    if (!owner) return undefined
+    if (owner.kind === 'abstraction.collapsed') return owner.id
+    up = owner.owner
+  }
+  return undefined
 }
 
 export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): FunctionInfo[] {
   // Un método vive dentro de su clase: no es una función que se llame suelta, ni se ofrece como chip.
   const classes = new Set(nodes.filter((n) => n.kind === 'abstraction.class').map((n) => n.id))
+  const byId = new Map(nodes.map((node) => [node.id, node]))
   return nodes
     .filter((node) => isFunction(node) && !classes.has(node.owner ?? ''))
     .map((node) => {
+      const scope = enclosingFunctionOf(node, byId)
       const body = new Set(node.contains)
       // Una función recibe sus parámetros; una clase, los de su `__init__` al crearse.
       const names =
@@ -181,6 +206,7 @@ export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): Functio
         used: edges.some((edge) => edge.from === node.id && !body.has(edge.to)),
         size: body.size,
         ...(node.note ? { doc: node.note } : {}),
+        ...(scope === undefined ? {} : { scope }),
       }
     })
 }
@@ -263,7 +289,15 @@ export function foldScopes(
  * control que los alcanza), y una función cuyo cuerpo sería solo su retorno también: sin nada
  * dentro no habría territorio.
  */
-export function foldReturns(nodes: CanvasNode[], edges: SemanticEdge[]): FoldedView {
+export function foldReturns(
+  nodes: CanvasNode[],
+  edges: SemanticEdge[],
+  /**
+   * Leído como diagrama de flujo, ningún `return` se esconde: es el último paso de su camino, y sin él la
+   * secuencia no acabaría en ninguna parte.
+   */
+  options: { hide?: boolean } = {},
+): FoldedView {
   const byId = new Map(nodes.map((node) => [node.id, node]))
   const hiddenIn = new Map<string, string>()
   const patched = new Map<string, CanvasNode>()
@@ -283,6 +317,9 @@ export function foldReturns(nodes: CanvasNode[], edges: SemanticEdge[]): FoldedV
         .filter((node) => {
           const control = node.control
           if (control?.kind !== 'args' || control.args.length !== 1) return false
+          // Solo el `return` del cuerpo de la función: uno dentro de una rama o de un bucle es un paso de la
+          // secuencia (ahí termina ese camino) y se queda a la vista.
+          if (node.owner !== undefined && node.owner !== def.id) return false
           if (!IDENTIFIER.test(control.args[0]?.value.trim() ?? '')) return false
           // El orden no cuenta: un retorno alcanzado solo por la sentencia anterior sigue siendo simple.
           const incoming = edges.filter(
@@ -296,7 +333,7 @@ export function foldReturns(nodes: CanvasNode[], edges: SemanticEdge[]): FoldedV
         .map((node) => node.id),
     )
     // Sin nada más dentro, no habría territorio: se quedan a la vista.
-    if (body.every((id) => simple.has(id))) simple.clear()
+    if (body.every((id) => simple.has(id)) || options.hide === false) simple.clear()
 
     for (const id of simple) hiddenIn.set(id, def.id)
     for (const node of returns) {
@@ -361,7 +398,10 @@ export function useProgramView(
   nodes: CanvasNode[],
   edges: SemanticEdge[],
   density: Density,
+  /** Se dibuja como diagrama de flujo (leído hacia abajo): los `return` se quedan como pasos. */
+  options: { flow?: boolean } = {},
 ): ProgramView {
+  const flow = options.flow === true
   const mode = density === 'compact' ? 'compact' : 'open'
   const [focusId, setFocusId] = useState<string | null>(null)
   const [state, setState] = useState<{ mode: string; flipped: ReadonlySet<string> }>({
@@ -390,8 +430,8 @@ export function useProgramView(
   )
   const view = useMemo(() => {
     const folded = foldScopes(base.nodes, base.edges, foldedSet)
-    return foldReturns(folded.nodes, folded.edges)
-  }, [base, foldedSet])
+    return foldReturns(folded.nodes, folded.edges, { hide: !flow })
+  }, [base, foldedSet, flow])
 
   const toggle = useCallback(
     (id: string) => {

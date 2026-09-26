@@ -1,8 +1,12 @@
 import type { Program } from '@prysel/python'
-import type { Trail, TrackedSeries } from '../../src/lesson.ts'
+import type { Concept, Cost, Trail, TrackedSeries } from '../../src/lesson.ts'
 import {
+  isRef,
+  isRefList,
   isShownList,
   stateAt,
+  type HeapObject,
+  type HeapValue,
   type FrameState,
   type Shown,
   type Trace,
@@ -26,6 +30,9 @@ export const INSIGHTS = [
   'collection',
   'evolution',
   'trail',
+  'structure',
+  'cost',
+  'concept',
 ] as const
 export type InsightId = (typeof INSIGHTS)[number]
 
@@ -37,6 +44,9 @@ export const INSIGHT_LABELS: Record<InsightId, string> = {
   collection: 'Colección',
   evolution: 'Evolución',
   trail: 'Trayectoria',
+  structure: 'Estructura',
+  cost: 'Coste',
+  concept: 'Concepto',
 }
 
 /** Un texto corto para una celda o una etiqueta: con puntos suspensivos si no cabe. */
@@ -462,4 +472,289 @@ export function trailModel(trace: Trace, state: TraceState, spec: Trail): TrailM
     if (typeof value === 'number') points.push({ step: i, value, obstacle, gap })
   }
   return { points, min: spec.min, max: spec.max, obstacleWidth }
+}
+
+// ─── Estructura ───────────────────────────────────────────────────────────────────────────────────
+
+export interface StructureField {
+  name: string
+  /** El valor, si no es una referencia a otro objeto. */
+  text: string | null
+  /** Apunta a otro objeto (o a varios, en una lista): de aquí sale una flecha. */
+  ref: boolean
+}
+
+export interface StructureBox {
+  id: string
+  /** La clase del objeto (o `list`/`dict` si es una colección de objetos). */
+  cls: string
+  fields: StructureField[]
+  /** Columna (la distancia desde la variable que lleva hasta él) y fila, en una rejilla. */
+  col: number
+  row: number
+  /** Las variables que lo nombran directamente. */
+  names: string[]
+  /** Este paso acaba de cambiarlo (o de crearlo). */
+  changed: boolean
+}
+
+export interface StructureArrow {
+  from: string
+  field: string
+  to: string
+}
+
+export interface StructureModel {
+  boxes: StructureBox[]
+  arrows: StructureArrow[]
+  /** Lo que parece: una cadena (lista enlazada), un árbol, o un grafo (se comparten nodos o hay ciclos). */
+  shape: 'lista' | 'árbol' | 'grafo' | null
+  cols: number
+  rows: number
+  /** Hay más objetos de los que caben: se enseñan los más cercanos a las variables. */
+  truncated: boolean
+}
+
+/** Cuántos objetos dibuja como mucho la tarjeta. */
+export const STRUCTURE_LIMIT = 24
+
+const refsOf = (value: HeapValue): number[] =>
+  isRef(value)
+    ? [value.r]
+    : isRefList(value)
+      ? value.rl.filter((id): id is number => id !== null)
+      : []
+
+const fieldText = (value: HeapValue): string | null =>
+  isRef(value) || isRefList(value) ? null : formatShown(value as Shown)
+
+/**
+ * Los objetos del programa tal como están en este paso, dibujados como lo que son: desde cada variable que
+ * nombra uno, siguiendo sus atributos. Una cadena de `siguiente` es una lista enlazada; dos hijos por nodo,
+ * un árbol; si varios apuntan al mismo, un grafo. Solo lo alcanzable desde las variables que se ven (lo que
+ * ya nadie nombra no se enseña).
+ */
+export function structureModel(state: TraceState): StructureModel {
+  const empty: StructureModel = {
+    boxes: [],
+    arrows: [],
+    shape: null,
+    cols: 0,
+    rows: 0,
+    truncated: false,
+  }
+  const heap = state.heap
+  if (Object.keys(heap).length === 0) return empty
+  // Las raíces: las variables (de la llamada actual hacia el programa) que nombran un objeto.
+  const names = new Map<string, string[]>()
+  const roots: string[] = []
+  const seenName = new Set<string>()
+  for (const frame of [...state.frames].reverse()) {
+    for (const [name, id] of Object.entries(frame.ids)) {
+      if (seenName.has(name)) continue
+      seenName.add(name)
+      const key = String(id)
+      if (!heap[key]) continue
+      names.set(key, [...(names.get(key) ?? []), name])
+      if (!roots.includes(key)) roots.push(key)
+    }
+  }
+  if (roots.length === 0) return empty
+
+  // En anchura desde las raíces: la columna es la distancia; la fila, el orden de llegada en esa columna.
+  const depth = new Map<string, number>()
+  const order: string[] = []
+  const queue = roots.map((id) => ({ id, d: 0 }))
+  let truncated = false
+  while (queue.length > 0) {
+    const { id, d } = queue.shift() as { id: string; d: number }
+    if (depth.has(id)) continue
+    if (order.length >= STRUCTURE_LIMIT) {
+      truncated = true
+      break
+    }
+    const object: HeapObject | undefined = heap[id]
+    if (!object) continue
+    depth.set(id, d)
+    order.push(id)
+    for (const value of Object.values(object.f)) {
+      for (const ref of refsOf(value)) {
+        const next = String(ref)
+        if (!depth.has(next) && heap[next]) queue.push({ id: next, d: d + 1 })
+      }
+    }
+  }
+  const rowsIn = new Map<number, number>()
+  const changed = new Set(Object.keys(state.event?.h ?? {}))
+  const boxes: StructureBox[] = order.map((id) => {
+    const object = heap[id] as HeapObject
+    const col = depth.get(id) ?? 0
+    const row = rowsIn.get(col) ?? 0
+    rowsIn.set(col, row + 1)
+    return {
+      id,
+      cls: object.c,
+      fields: Object.entries(object.f).map(([name, value]) => ({
+        name,
+        text: fieldText(value),
+        ref: refsOf(value).length > 0,
+      })),
+      col,
+      row,
+      names: names.get(id) ?? [],
+      changed: changed.has(id),
+    }
+  })
+  const shown = new Set(order)
+  const arrows: StructureArrow[] = []
+  const incoming = new Map<string, number>()
+  let branching = false
+  for (const id of order) {
+    const object = heap[id] as HeapObject
+    let out = 0
+    for (const [field, value] of Object.entries(object.f)) {
+      for (const ref of refsOf(value)) {
+        const to = String(ref)
+        if (!shown.has(to)) continue
+        arrows.push({ from: id, field, to })
+        incoming.set(to, (incoming.get(to) ?? 0) + 1)
+        out++
+      }
+    }
+    if (out > 1) branching = true
+  }
+  const shared = [...incoming.values()].some((n) => n > 1)
+  const shape = boxes.length < 2 ? null : shared ? 'grafo' : branching ? 'árbol' : 'lista'
+  return {
+    boxes,
+    arrows,
+    shape,
+    cols: Math.max(0, ...boxes.map((b) => b.col)) + 1,
+    rows: Math.max(0, ...rowsIn.values()),
+    truncated,
+  }
+}
+
+// ─── Coste ────────────────────────────────────────────────────────────────────────────────────────
+
+export interface CostPoint {
+  /** El tamaño de lo que recibió la llamada. */
+  n: number
+  /** Cuántos pasos dio, contando lo que llamó a su vez. */
+  ops: number
+}
+
+export interface CostModel {
+  fn: string
+  /** El parámetro que da el tamaño (el que dice el guion, o el primero). */
+  param: string | null
+  /** Las llamadas que ya acabaron, con su tamaño (las que tienen uno legible). */
+  points: CostPoint[]
+  /** La llamada en curso: cuántos pasos lleva. */
+  current: CostPoint | null
+  /** Cómo crece, si hay llamadas de tamaños suficientes para verlo. */
+  growth: string | null
+}
+
+/** El tamaño de un valor: el largo de una lista o de un texto, o el propio número. */
+function sizeOf(value: Shown | undefined): number | null {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value
+  if (isShownList(value)) return value.n
+  if (typeof value === 'string' && /^(['"]).*\1$/.test(value)) return value.length - 2
+  return null
+}
+
+/** Una recta por mínimos cuadrados: pendiente y lo bien que ajusta (R²). */
+function fit(xs: readonly number[], ys: readonly number[]): { slope: number; r2: number } {
+  const n = xs.length
+  const mx = xs.reduce((a, b) => a + b, 0) / n
+  const my = ys.reduce((a, b) => a + b, 0) / n
+  let sxy = 0
+  let sxx = 0
+  let syy = 0
+  for (let i = 0; i < n; i++) {
+    const dx = (xs[i] as number) - mx
+    const dy = (ys[i] as number) - my
+    sxy += dx * dy
+    sxx += dx * dx
+    syy += dy * dy
+  }
+  const slope = sxx === 0 ? 0 : sxy / sxx
+  const r2 = sxx === 0 || syy === 0 ? 1 : (sxy * sxy) / (sxx * syy)
+  return { slope, r2 }
+}
+
+/** Cómo crecen los pasos con el tamaño: potencia (n, n², …) o exponencial, lo que mejor ajuste. */
+export function growthOf(points: readonly CostPoint[]): string | null {
+  // Un punto por tamaño (el mayor de los pasos, si se repite) y tamaños de al menos 2.
+  const bySize = new Map<number, number>()
+  for (const p of points) if (p.n >= 2) bySize.set(p.n, Math.max(bySize.get(p.n) ?? 0, p.ops))
+  if (bySize.size < 3) return null
+  const ns = [...bySize.keys()]
+  const ops = ns.map((n) => bySize.get(n) as number)
+  const power = fit(
+    ns.map((n) => Math.log(n)),
+    ops.map((o) => Math.log(o)),
+  )
+  const exponential = fit(
+    ns,
+    ops.map((o) => Math.log(o)),
+  )
+  if (exponential.r2 > power.r2 + 0.02 && Math.exp(exponential.slope) > 1.2) {
+    return `exponencial (≈ ${Math.exp(exponential.slope).toFixed(1)}ⁿ)`
+  }
+  const k = power.slope
+  if (k < 0.35) return 'constante (≈ 1)'
+  if (k < 1.35) return 'lineal (≈ n)'
+  if (k < 2.35) return 'cuadrático (≈ n²)'
+  if (k < 3.35) return 'cúbico (≈ n³)'
+  return `≈ n^${k.toFixed(1)}`
+}
+
+/**
+ * La complejidad, vista y no dicha: cada llamada a `fn` es un punto (el tamaño de lo que recibió, los pasos
+ * que dio). La que está en curso cuenta en directo. Todo sale de la traza, hasta el paso actual.
+ */
+export function costModel(trace: Trace, step: number, spec: Cost): CostModel {
+  const open = new Map<number, { start: number; n: number | null }>()
+  const points: CostPoint[] = []
+  let param: string | null = spec.n ?? null
+  const last = Math.min(step, trace.events.length - 1)
+  for (let i = 0; i <= last; i++) {
+    const event = trace.events[i]
+    if (!event) continue
+    if (event.k === 'call' && event.fn === spec.fn) {
+      const args = event.ch ?? {}
+      const name = spec.n ?? Object.keys(args)[0] ?? null
+      if (param === null) param = name
+      open.set(event.f, { start: i, n: name === null ? null : sizeOf(args[name]) })
+      continue
+    }
+    if (event.k === 'return' && open.has(event.f)) {
+      const call = open.get(event.f) as { start: number; n: number | null }
+      open.delete(event.f)
+      if (call.n !== null) points.push({ n: call.n, ops: i - call.start + 1 })
+    }
+  }
+  // La llamada en curso: la más reciente que sigue abierta.
+  const running = [...open.values()].at(-1)
+  const current =
+    running && running.n !== null ? { n: running.n, ops: last - running.start + 1 } : null
+  return { fn: spec.fn, param, points, current, growth: growthOf(points) }
+}
+
+// ─── Concepto ─────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * La idea que toca en este paso: la del último momento que ya llegó y trae una. Antes de llegar a ninguno,
+ * la primera: así se puede empezar por la idea, antes que por el código.
+ */
+export function conceptAt(
+  moments: readonly { step: number; concept?: Concept | undefined }[],
+  step: number,
+): Concept | null {
+  const withIdea = moments.filter((m) => m.concept !== undefined)
+  let found: Concept | null = null
+  for (const moment of withIdea) if (moment.step <= step) found = moment.concept as Concept
+  return found ?? withIdea[0]?.concept ?? null
 }

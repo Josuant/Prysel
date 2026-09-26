@@ -138,8 +138,17 @@ export function LiveParser() {
   // Compacto pliega las funciones (vista de pájaro: qué recibe y qué devuelve cada una);
   // normal y expandido las abren como territorios que envuelven su cuerpo.
   const canvasNodes = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
-  const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density)
+  const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density, { flow: true })
   const nodes = view.nodes
+  // `?fn=nombre` abre esa función al cargar: para capturar la vista de una función sin pasar por el menú.
+  const askedFunction = useRef(new URLSearchParams(location.search).get('fn'))
+  const { functions, open } = view
+  useEffect(() => {
+    const wanted = functions.find((fn) => fn.name === askedFunction.current)
+    if (!wanted) return
+    askedFunction.current = null
+    open(wanted.id)
+  }, [functions, open])
   /** Dónde va lo que se añade: dentro del territorio seleccionado, tras otro nodo, o al final de lo que se ve. */
   const { where: addWhere, place } = addPlace(
     program?.nodes.find((n) => n.id === selected),
@@ -148,7 +157,13 @@ export function LiveParser() {
   /** Las funciones del programa, como chips que se arrastran a una llamada. */
   const palette = view.functions
     .filter((fn) => fn.id !== view.focus?.id)
-    .map((fn) => ({ id: fn.id, name: fn.name, signature: fn.signature, params: fn.params }))
+    .map((fn) => ({
+      id: fn.id,
+      name: fn.name,
+      signature: fn.signature,
+      params: fn.params,
+      ...(fn.scope === undefined ? {} : { scope: fn.scope }),
+    }))
   const add = (template: TemplateId) => {
     act({ type: 'add', template, ...place })
   }
@@ -222,6 +237,8 @@ export function LiveParser() {
             selected={selected}
             onSelect={setSelected}
             fitKey={view.viewKey}
+            // Como en la extensión: el programa se lee hacia abajo, como un diagrama de flujo.
+            axis="vertical"
             ariaLabel="Diagrama del programa escrito a la izquierda"
           />
         ) : (

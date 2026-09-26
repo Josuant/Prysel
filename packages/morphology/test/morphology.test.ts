@@ -9,6 +9,8 @@ import {
   compactShape,
   complexityScale,
   controlHeight,
+  diamondBand,
+  diamondSize,
   docHeadroom,
   extraHeight,
   getKind,
@@ -64,6 +66,48 @@ describe('geometría', () => {
     const g = buildShape('card-fork', 258, 156)
     expect(g.handles.alt).toBeDefined()
     expect(Math.abs((g.handles.alt?.y ?? 0) - g.handles.out.y)).toBeGreaterThan(40)
+  })
+})
+
+describe('el rombo de una decisión (diagrama de flujo)', () => {
+  it('entra por el vértice de arriba, el «sí» sale por el de abajo y el «no» por el de la derecha', () => {
+    const g = buildShape('diamond', 320, 92)
+    expect(g.handles.in).toEqual({ x: 160, y: 0 })
+    expect(g.handles.out).toEqual({ x: 160, y: 92 })
+    expect(g.handles.alt).toEqual({ x: 320, y: 46 })
+  })
+
+  it('la pregunta cabe en la franja del medio, con el rombo a la medida de lo que pregunta', () => {
+    const cases: [ControlModel, Density][] = [
+      [{ kind: 'condition', field: 'n', operator: '>', value: '5', operators: ['>'] }, 'normal'],
+      [
+        {
+          kind: 'condition',
+          field: 'temperatura_media',
+          operator: '>=',
+          value: 'umbral_maximo',
+          operators: ['>='],
+        },
+        'expanded',
+      ],
+    ]
+    for (const [model, density] of cases) {
+      const { w, h } = diamondSize(model, density, '')
+      const { inset } = buildShape('diamond', w, h)
+      // La franja útil: lo que queda entre los lados del rombo a la altura de la pregunta.
+      expect(h - inset.top - inset.bottom).toBe(diamondBand(h))
+      const fields =
+        model.kind === 'condition' ? (model.field.length + model.value.length) * 7.8 + 46 : 0
+      expect(w - inset.left - inset.right).toBeGreaterThan(fields)
+    }
+  })
+
+  it('en compacto es una pregunta corta: una etiqueta dentro de un rombo más bajo', () => {
+    const normal = diamondSize(undefined, 'normal', '¿x > 1?')
+    const compact = diamondSize(undefined, 'compact', '¿x > 1?')
+    expect(compact.h).toBeLessThan(normal.h)
+    const { inset } = buildShape('diamond', compact.w, compact.h)
+    expect(compact.w - inset.left - inset.right).toBeGreaterThan('¿x > 1?'.length * 7)
   })
 })
 

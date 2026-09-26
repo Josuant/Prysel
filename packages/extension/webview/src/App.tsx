@@ -40,7 +40,7 @@ import {
   observedAt,
   reachedNodes,
 } from './player.ts'
-import { currentMoment, lessonNotes, momentsOf, resolveBeats } from './lessons.ts'
+import { currentMoment, lessonNotes, momentsOf, noteNodeId, resolveBeats } from './lessons.ts'
 import { speakableNote, useNarration } from './useNarration.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
@@ -138,6 +138,27 @@ export function App() {
     error?: string
   } | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  /** Cuánto de lo cambiado desde el lienzo se puede deshacer y rehacer (lo cuenta la extensión). */
+  const [history, setHistory] = useState({ undo: 0, redo: 0 })
+  // Deshacer propio: en un webview, Ctrl+Z no llega al editor de texto. Dentro de un campo, en cambio,
+  // es el deshacer del propio campo (lo que se está escribiendo), y no se toca.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      const key = event.key.toLowerCase()
+      const redo = (key === 'z' && event.shiftKey) || (key === 'y' && !event.shiftKey)
+      const undo = key === 'z' && !event.shiftKey
+      if (!undo && !redo) return
+      event.preventDefault()
+      post({ type: redo ? 'redo' : 'undo' })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [])
   // Lo que se acaba de crear queda enfocado: se localiza por la línea en la que se escribió.
   const focusCreated = useCallback((created: Program, line: number) => {
     const node = created.nodes.find((n) => n.line === line)
@@ -183,6 +204,8 @@ export function App() {
           lesson: message.lesson,
           ...(message.error ? { error: message.error } : {}),
         })
+      } else if (message.type === 'history') {
+        setHistory({ undo: message.undo, redo: message.redo })
       } else if (message.type === 'trace') {
         setRecording({
           version: message.version,
@@ -496,7 +519,8 @@ export function App() {
 
   // El programa enseña cada función una vez (como su llamada); una función se ve aparte.
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
-  const view = useProgramView(source, program?.edges ?? NO_EDGES, density)
+  // El lienzo se lee hacia abajo, como diagrama de flujo (ver `axis` más abajo).
+  const view = useProgramView(source, program?.edges ?? NO_EDGES, density, { flow: true })
   // Durante la reproducción, si el paso ocurre dentro de una función o un método que no se está viendo, el
   // lienzo entra en él solo: si no, solo se vería la llamada que lo abrió, nunca la línea que se ejecuta.
   // Al salir de la reproducción, se vuelve a lo que se estaba viendo antes de que empezara a seguir sola.
@@ -635,6 +659,7 @@ export function App() {
       signature: fn.signature,
       params: fn.params,
       ...(fn.line === undefined ? {} : { line: fn.line }),
+      ...(fn.scope === undefined ? {} : { scope: fn.scope }),
     }))
   const add = (template: TemplateId) => {
     act({ type: 'add', template, ...place })
@@ -707,6 +732,38 @@ export function App() {
         )}
         <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
         {program && <AddNodeMenu onAdd={add} where={addWhere} />}
+        {program && (
+          <div
+            role="group"
+            aria-label="Deshacer y rehacer lo cambiado en el lienzo"
+            className="flex overflow-hidden rounded-md border border-border-card"
+          >
+            <button
+              type="button"
+              className="bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40"
+              disabled={history.undo === 0}
+              aria-label="Deshacer"
+              title="Deshacer lo último que se cambió en el lienzo (Ctrl+Z)"
+              onClick={() => {
+                post({ type: 'undo' })
+              }}
+            >
+              ↶
+            </button>
+            <button
+              type="button"
+              className="bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40"
+              disabled={history.redo === 0}
+              aria-label="Rehacer"
+              title="Rehacer (Ctrl+Mayús+Z)"
+              onClick={() => {
+                post({ type: 'redo' })
+              }}
+            >
+              ↷
+            </button>
+          </div>
+        )}
         <DensityControl value={density} onChange={changeDensity} />
       </header>
 
@@ -745,6 +802,15 @@ export function App() {
                 }}
                 stateOf={stateOf}
                 modifierOf={modifierOf}
+                {...(lesson
+                  ? {
+                      // Una nota dejada a mano en otro sitio se guarda en el guion, junto a esa nota.
+                      onNoteMove: (id: string, offset: { x: number; y: number } | null) => {
+                        const beat = lesson.beats.find((b) => noteNodeId(b) === id)
+                        if (beat) post({ type: 'noteMove', beat: beat.id, offset })
+                      },
+                    }
+                  : {})}
                 extraMenu={viewerMenu}
                 onUnpin={(id) => {
                   const key = pins.find((p) => pinNodeId(p) === id)

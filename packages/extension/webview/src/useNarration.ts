@@ -22,7 +22,10 @@ function pickVoice(lang: string | undefined): SpeechSynthesisVoice | undefined {
   if (!lang || typeof window === 'undefined' || !window.speechSynthesis) return undefined
   const voices = window.speechSynthesis.getVoices()
   const short = lang.split('-')[0]
-  return voices.find((voice) => voice.lang === lang) ?? voices.find((voice) => voice.lang.split('-')[0] === short)
+  return (
+    voices.find((voice) => voice.lang === lang) ??
+    voices.find((voice) => voice.lang.split('-')[0] === short)
+  )
 }
 
 export interface NarrationOptions {

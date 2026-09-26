@@ -38,7 +38,11 @@ export interface NodeRange extends Span {
   /** Dónde acaba su cuerpo, y con qué sangría empieza. */
   bodyEnd?: number
   bodyIndent?: number
-  /** Solo en una decisión: dónde acaba su primer camino, y dónde está su `else` (si lo tiene). */
+  /**
+   * En una decisión (un `if` o un `elif`): dónde acaba su primer camino, y dónde está su `else` (si lo
+   * tiene y es suyo: un `if` que sigue en un `elif` no lo tiene, es del último `elif`). En un bucle,
+   * solo su `else` (lo que se hace al acabar sin salir con `break`).
+   */
   yesEnd?: number
   elseAt?: number
   elseHead?: number

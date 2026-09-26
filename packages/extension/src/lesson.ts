@@ -36,6 +36,9 @@ export const INSIGHT_IDS = [
   'collection',
   'evolution',
   'trail',
+  'structure',
+  'cost',
+  'concept',
 ] as const
 export type InsightIdentifier = (typeof INSIGHT_IDS)[number]
 
@@ -58,6 +61,38 @@ export interface Trail {
 }
 
 /**
+ * Lo que mide la tarjeta «Coste»: cuántos pasos da cada llamada a una función frente al tamaño de lo que
+ * recibe (`n`: el nombre del parámetro que da el tamaño; sin él, el primero). La complejidad, vista.
+ */
+export interface Cost {
+  fn: string
+  n?: string
+}
+
+/**
+ * Una idea sin código (tarjeta «Concepto»): qué es, a qué se parece y el error típico. Va con un momento
+ * del guion; antes de empezar se enseña la primera, para poder empezar por la idea.
+ */
+export interface Concept {
+  term: string
+  definition: string
+  analogy?: string
+  mistake?: string
+}
+
+/**
+ * Un ejercicio sobre el propio programa: qué conseguir y la comprobación (un `assert`, o varios) que dice
+ * si ya se consiguió. Se comprueba ejecutando el programa de verdad, tal como esté en ese momento.
+ */
+export interface Exercise {
+  goal: string
+  check: string
+  hint?: string
+  /** Lo que se dice al conseguirlo (si no, un «¡Bien!»). */
+  success?: string
+}
+
+/**
  * Una pregunta antes de ver lo que pasa: «¿qué valdrá `total` tras esta línea?» (`value`, con el nombre) o
  * «¿qué imprimirá?» (`output`). Se responde al llegar al momento y luego se revela con la traza.
  */
@@ -77,7 +112,18 @@ export interface Beat {
    * programa llega a esta sentencia. Sin él, es la de `at`.
    */
   when?: Anchor & { visit?: number }
-  note: { text: string; style: NoteStyleId; title?: string }
+  /** La idea que se cuenta en este momento (tarjeta «Concepto»). */
+  concept?: Concept
+  note: {
+    text: string
+    style: NoteStyleId
+    title?: string
+    /**
+     * Dónde la dejó quien la arrastró a mano: cuánto se aparta (en píxeles del lienzo) del sitio en que la
+     * pondría el margen. Relativo a ese sitio, así sigue cerca de lo que explica si el diagrama cambia.
+     */
+    offset?: { x: number; y: number }
+  }
   ask?: Ask
 }
 
@@ -94,6 +140,10 @@ export interface Lesson {
   track?: TrackedSeries[]
   /** Lo que dibuja la tarjeta «Trayectoria», si se pide en `show`. */
   trail?: Trail
+  /** Lo que mide la tarjeta «Coste», si se pide en `show`. */
+  cost?: Cost
+  /** Un ejercicio sobre el programa, con su comprobación. */
+  exercise?: Exercise
   beats: Beat[]
 }
 
@@ -103,8 +153,37 @@ export const LESSON_LIMITS = {
   text: 2000,
   anchor: 300,
   meta: 60,
+  /** Cuánto se puede apartar una nota, a mano, del sitio que le da el margen (en cada eje). */
+  offset: 5000,
   /** El guion entero, en caracteres: por encima, se descarta antes de mirarlo. */
   file: 512_000,
+}
+
+/**
+ * El guion con una nota puesta a mano en otro sitio (o devuelta al suyo, con `offset` nulo). Trabaja sobre
+ * el JSON tal como está en el archivo (no sobre el guion ya validado), así no se pierde nada que el
+ * guion lleve y esta versión no conozca. `null` si el texto no es un guion con ese momento.
+ */
+export function moveNoteIn(
+  raw: string,
+  beatId: string,
+  offset: { x: number; y: number } | null,
+): string | null {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!isRecord(value) || !Array.isArray(value['beats'])) return null
+  const beat = (value['beats'] as unknown[]).find(
+    (entry) => isRecord(entry) && entry['id'] === beatId,
+  )
+  if (!isRecord(beat) || !isRecord(beat['note'])) return null
+  const note = beat['note']
+  if (offset === null) delete note['offset']
+  else note['offset'] = { x: Math.round(offset.x), y: Math.round(offset.y) }
+  return `${JSON.stringify(value, null, 2)}\n`
 }
 
 export type LessonResult = { ok: true; lesson: Lesson } | { ok: false; error: string }
@@ -195,6 +274,34 @@ export function parseLesson(value: unknown): LessonResult {
     }
     trail = { value: trailValue, min, max, ...(obstacle ? { obstacle } : {}) }
   }
+  let cost: Cost | undefined
+  if (value['cost'] !== undefined) {
+    const spec = value['cost']
+    if (!isRecord(spec)) return fail('«cost» debe ser un objeto.')
+    const fn = text(spec['fn'], LESSON_LIMITS.meta)
+    const n = text(spec['n'], LESSON_LIMITS.meta)
+    if (!fn) return fail('«cost.fn» es obligatorio: la función cuyo coste se mide.')
+    if (n === null) return fail('«cost.n» no es válido.')
+    cost = { fn, ...(n ? { n } : {}) }
+  }
+  let exercise: Exercise | undefined
+  if (value['exercise'] !== undefined) {
+    const spec = value['exercise']
+    if (!isRecord(spec)) return fail('«exercise» debe ser un objeto.')
+    const goal = text(spec['goal'], LESSON_LIMITS.text)
+    const check = text(spec['check'], LESSON_LIMITS.text)
+    const hint = text(spec['hint'], LESSON_LIMITS.text)
+    const success = text(spec['success'], LESSON_LIMITS.text)
+    if (!goal || goal.trim() === '')
+      return fail('«exercise.goal» es obligatorio: qué hay que conseguir.')
+    if (!check || check.trim() === '') {
+      return fail(
+        '«exercise.check» es obligatorio: la comprobación (un assert) que dice si ya está.',
+      )
+    }
+    if (hint === null || success === null) return fail('«exercise.hint»/«success» no son válidos.')
+    exercise = { goal, check, ...(hint ? { hint } : {}), ...(success ? { success } : {}) }
+  }
   const raw = value['beats']
   if (!Array.isArray(raw)) return fail('«beats» debe ser una lista.')
   if (raw.length > LESSON_LIMITS.beats)
@@ -236,6 +343,18 @@ export function parseLesson(value: unknown): LessonResult {
         `${where}: la clase de nota «${String(style)}» no existe (${NOTE_STYLE_IDS.join(', ')}).`,
       )
     }
+    let offset: { x: number; y: number } | undefined
+    if (note['offset'] !== undefined) {
+      const moved = note['offset']
+      const coordinate = (n: unknown) =>
+        typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= LESSON_LIMITS.offset
+      if (!isRecord(moved) || !coordinate(moved['x']) || !coordinate(moved['y'])) {
+        return fail(
+          `${where}: «offset» es { "x": número, "y": número } (como mucho ${LESSON_LIMITS.offset} de cada lado).`,
+        )
+      }
+      offset = { x: Math.round(moved['x'] as number), y: Math.round(moved['y'] as number) }
+    }
     let ask: Ask | undefined
     if (entry['ask'] !== undefined) {
       const question = entry['ask']
@@ -252,15 +371,36 @@ export function parseLesson(value: unknown): LessonResult {
         return fail(`${where}: preguntar por un valor necesita «name».`)
       ask = { text: prompt, expect, ...(name ? { name } : {}) }
     }
+    let concept: Concept | undefined
+    if (entry['concept'] !== undefined) {
+      const idea = entry['concept']
+      if (!isRecord(idea)) return fail(`${where}: «concept» debe ser un objeto.`)
+      const term = text(idea['term'], LESSON_LIMITS.title)
+      const definition = text(idea['definition'], LESSON_LIMITS.text)
+      const analogy = text(idea['analogy'], LESSON_LIMITS.text)
+      const mistake = text(idea['mistake'], LESSON_LIMITS.text)
+      if (!term || !definition) return fail(`${where}: un concepto necesita «term» y «definition».`)
+      if (analogy === null || mistake === null) {
+        return fail(`${where}: «analogy»/«mistake» del concepto no son válidos.`)
+      }
+      concept = {
+        term,
+        definition,
+        ...(analogy ? { analogy } : {}),
+        ...(mistake ? { mistake } : {}),
+      }
+    }
     beats.push({
       id,
       at,
       ...(when ? { when } : {}),
       ...(ask ? { ask } : {}),
+      ...(concept ? { concept } : {}),
       note: {
         text: body,
         style: style as NoteStyleId,
         ...(noteTitle ? { title: noteTitle } : {}),
+        ...(offset ? { offset } : {}),
       },
     })
   }
@@ -276,6 +416,8 @@ export function parseLesson(value: unknown): LessonResult {
       ...(show ? { show } : {}),
       ...(track ? { track } : {}),
       ...(trail ? { trail } : {}),
+      ...(cost ? { cost } : {}),
+      ...(exercise ? { exercise } : {}),
       beats,
     },
   }

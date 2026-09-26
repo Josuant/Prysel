@@ -13,7 +13,7 @@ export {
   valueTypeOf,
   type ValueType,
 } from './values.ts'
-export { buildShape, SHAPE_IDS } from './geometry.ts'
+export { buildShape, diamondBand, SHAPE_IDS } from './geometry.ts'
 export { ICONS, ICON_IDS } from './icons.ts'
 export {
   HEADER_EDITOR_KINDS,
@@ -26,6 +26,8 @@ export {
 } from './kinds.ts'
 export {
   DENSITY_BASE,
+  DIAMOND_HEIGHT,
+  diamondSize,
   ACTION_CALLS,
   ACTION_TITLES,
   INLINE_ARGS,

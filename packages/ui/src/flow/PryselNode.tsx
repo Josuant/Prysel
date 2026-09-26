@@ -21,7 +21,7 @@ import { MorphNode, type MeasuredSlot, type NodeEdit } from '../MorphNode.tsx'
 import type { ControlModel } from '../controls.tsx'
 import type { MotionPhase } from '../motion.ts'
 import type { CanvasNode } from '../Canvas.tsx'
-import { isLoopTerritory, territoryHeadroom } from './frame.ts'
+import { FLOW_LANE, FLOW_RAIL, flowEntry, isLoopTerritory, territoryHeadroom } from './frame.ts'
 import { TrayBox } from './ChipNode.tsx'
 import { LapsStrip } from './LapsStrip.tsx'
 import { LAPS_HEADROOM } from '../laps.ts'
@@ -51,6 +51,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   axis: Axis
   size: { w: number; h: number }
   container: boolean
+  /** Un territorio leído como diagrama de flujo: dónde cae su espina (por ahí entra y sale la secuencia). */
+  spine?: number
   /** Sube cada vez que el menú del nodo pide renombrarlo. */
   renameSignal?: number
   showStatus: boolean
@@ -65,6 +67,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   addTarget?: boolean
   /** Por aquí va la reproducción de una traza: el nodo que se está ejecutando en este paso. */
   cursor?: boolean
+  /** Una nota nombra este nodo en su `código`, y el puntero está encima de ese trozo. */
+  hinted?: boolean
   /** La cajita de chips de este contexto, si es un territorio que tiene una. */
   tray?: TrayLayout | undefined
   /** Añadir una variable al principio de este contexto. */
@@ -96,6 +100,28 @@ export interface PryselNodeData extends Record<string, unknown> {
 }
 
 export type PryselFlowNode = Node<PryselNodeData, 'prysel'>
+
+/**
+ * El carril de repetición de un bucle leído hacia abajo: desde el pie del cuerpo, en la espina (donde llegan
+ * el final del cuerpo, el «no» de su última decisión y los `continue`), recorre el fondo hacia la izquierda,
+ * sube por el lateral y vuelve a entrar por arriba, justo antes del primer paso. Es el «vuelve a empezar» de un
+ * diagrama de flujo.
+ */
+function flowRailPath(cx: number, h: number, top: number): string {
+  const x0 = 12
+  const bottom = h - FLOW_RAIL
+  const entry = top - 14
+  const r = 8
+  return [
+    `M ${cx} ${bottom}`,
+    `Q ${x0} ${bottom} ${x0} ${bottom - r}`,
+    `V ${entry + r}`,
+    `Q ${x0} ${entry} ${x0 + r} ${entry}`,
+    `H ${cx - r}`,
+    `Q ${cx} ${entry} ${cx} ${entry + r}`,
+    `V ${top - 2}`,
+  ].join(' ')
+}
 
 /**
  * El carril de repetición de un bucle: sale del final del cuerpo (abajo a la derecha), recorre el
@@ -135,8 +161,18 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   const updateNodeInternals = useUpdateNodeInternals()
 
   const spec = getKind(node.kind)
-  const geo = buildShape(container ? territoryShape(spec) : shapeFor(spec, density), size.w, size.h)
   const horizontal = axis === 'horizontal'
+  /**
+   * Leído hacia abajo, el lienzo es un diagrama de flujo: solo la secuencia tiene puertos (entra arriba, sale
+   * abajo), y las variables van en chips, sin cables. Una decisión es un rombo.
+   */
+  const flow = !horizontal
+  const diamond = flow && !container && node.kind === 'control.condition'
+  const geo = buildShape(
+    container ? territoryShape(spec) : diamond ? 'diamond' : shapeFor(spec, density),
+    size.w,
+    size.h,
+  )
 
   const handleSlots = useCallback((measured: MeasuredSlot[]) => {
     setSlots(measured)
@@ -151,6 +187,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   const returnChip = takesReturn ? data.chipSlots?.['return'] : undefined
   /** Lo que devuelve es un valor sin nombre (`return a + b`): ese sí es un cable. */
   const returnCable =
+    !flow &&
     takesReturn &&
     ((linkedSlots.includes('return') && !(data.chipOnly ?? []).includes('return')) ||
       eligible?.includes('return') === true)
@@ -189,11 +226,14 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   /** Donde acaba la cabecera del territorio: el contenido empieza justo debajo. */
   const headTop = SCOPE_FRAME.top + territoryHeadroom(node)
   const tray = container ? data.tray : undefined
-  const contentTop = headTop + (tray ? tray.h + TRAY.below : 0)
+  const contentTop = headTop + (tray ? tray.h + TRAY.below : 0) + flowEntry(node, !horizontal)
   /** Lo que hay a la izquierda del contenido de un territorio: su margen y la zona de sus puertos. */
   const insetLeft = SCOPE_FRAME.side
   /** Un bucle con cuerpo: envuelve lo que repite, y su variable, su salida y su retorno son puertos. */
   const isLoop = container && isLoopTerritory(node)
+  /** Por dónde baja la secuencia de un territorio: su espina (en el centro, si no dice otra cosa). */
+  const spineX = data.spine ?? size.w / 2
+  const spineStyle = data.spine === undefined ? undefined : { left: data.spine }
   /** Hay un `continue` dentro: su cable vuelve a la cabecera por este puerto. */
   const hasNext = isLoop && linkedSlots.includes('next')
 
@@ -211,6 +251,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
     hasNext,
     linkedSlots.includes('exit'),
     contentTop,
+    spineX,
     ...connected.map((slot) => `${slot.id}@${slot.y}`),
     ...open.map((slot) => `${slot.id}@${slot.y}`),
     returnCable,
@@ -231,7 +272,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   /** Coloca un puerto a lo largo del borde correspondiente. */
   const along = (value: number) => (horizontal ? { top: value } : { left: value })
 
-  const takesInput = spec.ports.in || inputs.length > 0
+  // Sin cables de datos no hay puertos de datos: una casilla recibe chips, no conexiones.
+  const takesInput = !flow && (spec.ports.in || inputs.length > 0)
   const gives =
     spec.ports.out ||
     node.provides !== undefined ||
@@ -252,6 +294,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-selected={selected ? '' : undefined}
       data-add-target={data.addTarget ? '' : undefined}
       data-cursor={data.cursor ? '' : undefined}
+      data-hinted={data.hinted ? '' : undefined}
     >
       {/* De aquí sale la flecha de una nota: existe en todo nodo (también en un territorio, que no tiene salida). */}
       <Handle
@@ -278,6 +321,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
             position={Position.Top}
             isConnectable={false}
             className="note-handle"
+            {...(spineStyle ? { style: spineStyle } : {})}
           />
           <Handle
             type="source"
@@ -285,11 +329,38 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
             position={Position.Bottom}
             isConnectable={false}
             className="note-handle"
+            {...(spineStyle ? { style: spineStyle } : {})}
           />
+          {/* Un salto (`break`, `continue`) sale por la derecha: rodea lo que queda debajo. */}
+          {(node.kind === 'control.break' || node.kind === 'control.continue') && (
+            <Handle
+              type="source"
+              id="step-side"
+              position={Position.Right}
+              isConnectable={false}
+              className="note-handle"
+            />
+          )}
+          {/* El camino «no» de una decisión sale por el vértice derecho del rombo. */}
+          {diamond && (
+            <Handle
+              type="source"
+              id="step-no"
+              position={Position.Right}
+              isConnectable={false}
+              className="note-handle"
+            />
+          )}
         </>
       )}
       {axis === 'vertical' && node.line !== undefined && (
-        <span className="flow-step" aria-hidden title={`Línea ${node.line}`}>
+        <span
+          className="flow-step"
+          aria-hidden
+          title={`Línea ${node.line}`}
+          // Junto a un rombo, en su esquina vacía: a su izquierda pasan los carriles.
+          {...(diamond ? { 'data-diamond': '' } : {})}
+        >
           {node.line}
         </span>
       )}
@@ -455,20 +526,25 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
             type="target"
             id="exit"
             position={sourceSide}
-            style={along(middle)}
+            // Leído hacia abajo, un `break` sin nada detrás del bucle sale por su derecha, hacia abajo.
+            style={flow ? { left: size.w + FLOW_LANE, top: size.h + 18 } : along(middle)}
+            {...(flow ? { className: 'note-handle' } : {})}
             title="Por aquí sale el flujo cuando el bucle termina"
             isConnectable={false}
             data-type="any"
             data-open={linkedSlots.includes('exit') ? undefined : ''}
           />
-          <span
-            className="port-label type-badge"
-            data-side={horizontal ? 'right' : 'bottom'}
-            style={along(middle)}
-            aria-hidden
-          >
-            termina
-          </span>
+          {/* En el diagrama de flujo, el `break` ya sale hasta el paso que sigue al bucle. */}
+          {horizontal && (
+            <span
+              className="port-label type-badge"
+              data-side="right"
+              style={along(middle)}
+              aria-hidden
+            >
+              termina
+            </span>
+          )}
         </>
       )}
       {/* Un `continue` vuelve a la cabecera, no al final: su puerto está junto a ella. */}
@@ -482,31 +558,39 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
             title="Salta a la siguiente vuelta"
             isConnectable={false}
             data-type="any"
+            {...(flow ? { className: 'note-handle' } : {})}
           />
-          <span
-            className="port-label type-badge"
-            data-side={horizontal ? 'inside' : 'inside-top'}
-            data-rail=""
-            style={along(Math.max(20, contentTop - 10))}
-            aria-hidden
-          >
-            siguiente
-          </span>
+          {/* En el diagrama de flujo, un `continue` llega al carril de vuelta: no hace falta el puerto. */}
+          {horizontal && (
+            <span
+              className="port-label type-badge"
+              data-side="inside"
+              data-rail=""
+              style={along(Math.max(20, contentTop - 10))}
+              aria-hidden
+            >
+              siguiente
+            </span>
+          )}
         </>
       )}
-      {gives && !takesReturn && !isLoop && (
-        <Handle
-          type="source"
-          id="out"
-          position={sourceSide}
-          style={along(horizontal ? geo.handles.out.y : geo.handles.out.x)}
-          isConnectable={connectable && node.provides !== undefined}
-          {...(node.provides === undefined
-            ? {}
-            : { title: node.provides, 'data-type': node.valueType ?? 'any', 'data-gives': '' })}
-        />
-      )}
-      {spec.ports.out && geo.handles.alt && (
+      {gives &&
+        !takesReturn &&
+        !isLoop &&
+        // En un diagrama de flujo solo salen de un paso sus saltos (`break`, `continue`): no hay datos.
+        (!flow || node.kind === 'control.break' || node.kind === 'control.continue') && (
+          <Handle
+            type="source"
+            id="out"
+            position={sourceSide}
+            style={along(horizontal ? geo.handles.out.y : geo.handles.out.x)}
+            isConnectable={connectable && node.provides !== undefined}
+            {...(node.provides === undefined
+              ? {}
+              : { title: node.provides, 'data-type': node.valueType ?? 'any', 'data-gives': '' })}
+          />
+        )}
+      {!flow && spec.ports.out && geo.handles.alt && (
         <Handle
           type="source"
           id="alt"
@@ -516,6 +600,40 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         />
       )}
 
+      {/* Leído hacia abajo, el carril vuelve por la izquierda y entra de nuevo arriba del cuerpo. */}
+      {isLoop && !horizontal && (
+        <>
+          {/* Aquí, al pie del cuerpo y en la espina, llega todo lo que vuelve a empezar. */}
+          <Handle
+            type="target"
+            id="rail-in"
+            position={Position.Top}
+            isConnectable={false}
+            className="note-handle"
+            style={{ top: size.h - FLOW_RAIL, left: spineX }}
+          />
+          <svg className="loop-rail" data-flow="" width={size.w} height={size.h} aria-hidden>
+            <path
+              className="loop-rail__line"
+              d={flowRailPath(spineX, size.h, contentTop)}
+              fill="none"
+            />
+            <path
+              className="loop-rail__head"
+              d={`M ${spineX - 4.5} ${contentTop - 8} L ${spineX} ${contentTop - 2} L ${spineX + 4.5} ${contentTop - 8}`}
+              fill="none"
+            />
+          </svg>
+          <span
+            className="loop-rail__label type-badge"
+            data-flow=""
+            style={{ top: Math.round((contentTop + size.h) / 2) }}
+          >
+            <Icon name="repeat" size={11} />
+            repite
+          </span>
+        </>
+      )}
       {/* El retorno del bucle: un carril que vuelve del final del cuerpo a la cabecera. */}
       {isLoop && horizontal && (
         <>
@@ -558,30 +676,47 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
               <Handle
                 type="source"
                 id="order-yes"
-                position={orderOut}
+                // En el rombo, cada puerto en su vértice: el «sí» abajo y el «no» a la derecha.
+                position={diamond ? Position.Bottom : orderOut}
                 className="order-port"
                 data-branch="yes"
-                style={acrossEdge(25)}
+                style={diamond ? { left: '50%' } : acrossEdge(25)}
                 title="Al principio del camino verdadero"
                 isConnectable
               />
-              <Handle
-                type="source"
-                id="order-no"
-                position={orderOut}
-                className="order-port"
-                data-branch="no"
-                style={acrossEdge(75)}
-                title="Al principio del camino falso (else)"
-                isConnectable
-              />
+              {/* Si su camino falso sigue en un `elif`, se entra por los puertos de ese `elif`. */}
+              {node.continues === undefined && (
+                <Handle
+                  type="source"
+                  id="order-no"
+                  position={orderOut}
+                  className="order-port"
+                  data-branch="no"
+                  style={diamond ? { top: '50%' } : acrossEdge(75)}
+                  title="Al principio del camino falso (else)"
+                  isConnectable
+                />
+              )}
             </>
+          ) : node.kind === 'control.loop' ? (
+            // El `else` de un bucle: lo que se hace una vez, al acabar sin salir con `break`.
+            <Handle
+              type="source"
+              id="order-no"
+              position={orderOut}
+              className="order-port"
+              data-branch="no"
+              style={acrossEdge(75)}
+              title="Al acabar sin salir (else del bucle): se crea si no lo tiene"
+              isConnectable
+            />
           ) : null}
           <Handle
             type="source"
             id="order-out"
-            position={orderOut}
+            position={diamond ? Position.Bottom : orderOut}
             className="order-port"
+            {...(diamond ? { style: { left: '88%' } } : {})}
             title="Lo que sigue: arrastra a un nodo para ponerlo detrás de este"
             isConnectable
           />
@@ -617,6 +752,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         state={state}
         {...(modifier ? { modifier } : {})}
         container={container}
+        {...(diamond ? { diamond: true } : {})}
         renameSignal={data.renameSignal ?? 0}
         showStatus={data.showStatus}
         // Los puertos los dibuja React Flow a partir de los Handle: aquí solo se miden.

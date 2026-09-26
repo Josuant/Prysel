@@ -15,8 +15,16 @@ import {
   type TopicRuntime,
 } from './ai/topic.ts'
 import { vscodeLmProvider } from './ai/vscodeLm.ts'
+import { EditHistory } from './history.ts'
 import { Kernel } from './kernel.ts'
-import { lessonFileFor, parseLesson, readLesson, skeletonLesson, type Lesson } from './lesson.ts'
+import {
+  lessonFileFor,
+  moveNoteIn,
+  parseLesson,
+  readLesson,
+  skeletonLesson,
+  type Lesson,
+} from './lesson.ts'
 import { parseHostMessage, type Theme, type WebviewMessage } from './protocol.ts'
 import { Session } from './session.ts'
 import type { KernelStatus, RunState } from './runs.ts'
@@ -224,6 +232,7 @@ async function refresh() {
     const program = await analyse(doc)
     postToAll({ type: 'update', program, file: basename(doc.fileName), version: doc.version })
     postRuns()
+    postHistory(doc)
     void postLesson(doc)
   } catch {
     // El código a medio escribir no debe tumbar el lienzo.
@@ -560,6 +569,38 @@ async function postLesson(doc: vscode.TextDocument) {
   )
 }
 
+/**
+ * Guarda en el guion dónde se dejó a mano una nota (o que vuelve a su sitio). Si el guion está abierto en
+ * un editor se cambia ahí (respeta lo que aún no se guardó, y se deshace con Ctrl+Z en ese editor); si no,
+ * en el disco. El guion vuelve al lienzo como siempre que cambia.
+ */
+async function moveNote(
+  doc: vscode.TextDocument,
+  beat: string,
+  offset: { x: number; y: number } | null,
+) {
+  const uri = lessonUriOf(doc)
+  const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString())
+  let raw: string
+  try {
+    raw = open
+      ? open.getText()
+      : Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8')
+  } catch {
+    return
+  }
+  const next = moveNoteIn(raw, beat, offset)
+  if (next === null || next === raw) return
+  if (open) {
+    const change = new vscode.WorkspaceEdit()
+    change.replace(uri, new vscode.Range(open.positionAt(0), open.positionAt(raw.length)), next)
+    await vscode.workspace.applyEdit(change)
+  } else {
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(next, 'utf8'))
+  }
+  await postLesson(doc)
+}
+
 /** Crea el guion de partida del archivo (si no lo tiene) y lo abre para escribirlo. */
 async function openLesson(doc: vscode.TextDocument) {
   const uri = lessonUriOf(doc)
@@ -624,13 +665,75 @@ async function applyEdits(edits: TextEdit[], version: number) {
     void refresh()
     return
   }
+  const before = doc.getText()
+  // El cambio dispara `onDidChangeTextDocument`, que reanaliza y reenvía el programa.
+  if (!(await writeEdits(doc, edits))) {
+    void refresh()
+    return
+  }
+  historyOf(doc).applied(before, edits, doc.version)
+  postHistory(doc)
+}
+
+/** Escribe unas ediciones en el documento. `false` si VS Code no las aplicó. */
+async function writeEdits(doc: vscode.TextDocument, edits: readonly TextEdit[]): Promise<boolean> {
   const change = new vscode.WorkspaceEdit()
   for (const edit of edits) {
     const range = new vscode.Range(doc.positionAt(edit.start), doc.positionAt(edit.end))
     change.replace(doc.uri, range, edit.text)
   }
-  // El cambio dispara `onDidChangeTextDocument`, que reanaliza y reenvía el programa.
-  if (!(await vscode.workspace.applyEdit(change))) void refresh()
+  return vscode.workspace.applyEdit(change)
+}
+
+/** Lo que se cambió desde el lienzo en cada documento, para deshacerlo desde el lienzo. */
+const histories = new Map<string, EditHistory>()
+const historyOf = (doc: vscode.TextDocument): EditHistory => {
+  const key = doc.uri.toString()
+  let history = histories.get(key)
+  if (!history) {
+    history = new EditHistory()
+    histories.set(key, history)
+  }
+  return history
+}
+
+/** Cuánto se puede deshacer y rehacer ahora: el lienzo enciende o apaga sus botones. */
+function postHistory(doc: vscode.TextDocument | null) {
+  const sizes = doc ? historyOf(doc).sizes : { undo: 0, redo: 0 }
+  postToAll({ type: 'history', ...sizes })
+}
+
+/**
+ * Deshace (o rehace) el último cambio hecho desde el lienzo. Solo si el documento sigue como lo dejó el
+ * lienzo: si se escribió en el editor entre medias, se avisa y la historia del lienzo se olvida (la del
+ * editor, con Ctrl+Z allí, sigue intacta).
+ */
+async function stepHistory(direction: 'undo' | 'redo') {
+  const doc = currentDoc
+  if (!doc || doc.languageId !== 'python') return
+  const history = historyOf(doc)
+  const edits = direction === 'undo' ? history.nextUndo(doc.version) : history.nextRedo(doc.version)
+  if (!edits) {
+    postHistory(doc)
+    if (history.sizes.undo === 0 && history.sizes.redo === 0) {
+      void vscode.window.setStatusBarMessage(
+        direction === 'undo'
+          ? 'Prysel: nada que deshacer desde el lienzo (lo escrito en el editor se deshace allí).'
+          : 'Prysel: nada que rehacer.',
+        4000,
+      )
+    }
+    return
+  }
+  const before = doc.getText()
+  if (!validEdits(edits, before.length) || !(await writeEdits(doc, edits))) {
+    history.clear()
+    postHistory(doc)
+    return
+  }
+  if (direction === 'undo') history.undone(before, doc.version)
+  else history.redone(before, doc.version)
+  postHistory(doc)
 }
 
 /** Graba la traza del archivo entero y se la manda al lienzo (con la versión del texto que se trazó). */
@@ -665,6 +768,15 @@ function wireWebview(webview: vscode.Webview) {
     }
     if (parsed.type === 'newLesson') {
       void vscode.commands.executeCommand('prysel.newLesson')
+      return
+    }
+    if (parsed.type === 'undo' || parsed.type === 'redo') {
+      void stepHistory(parsed.type)
+      return
+    }
+    if (parsed.type === 'noteMove') {
+      const doc = currentDoc
+      if (doc && doc.uri.scheme === 'file') void moveNote(doc, parsed.beat, parsed.offset)
       return
     }
     if (parsed.type === 'trace') {

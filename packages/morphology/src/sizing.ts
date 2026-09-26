@@ -1,5 +1,6 @@
 import type { ControlModel } from './controls.ts'
 import type { Density, Metrics, NodeKindSpec, ScaleBy, ShapeId } from './types.ts'
+import { diamondBand } from './geometry.ts'
 
 /**
  * Tamaño base por densidad (w × h), en píxeles del lienzo.
@@ -451,4 +452,33 @@ export function extraHeight(
   return (
     Math.max(0, controlHeight(model, density, linked) - ROOM[density]) + noteHeight(note, density)
   )
+}
+
+/** El alto del rombo de una decisión: con su fila de campos, o con su etiqueta en compacto. */
+export const DIAMOND_HEIGHT = { full: 92, compact: 50 } as const
+
+/**
+ * Lo que mide el rombo de una decisión leída como diagrama de flujo. La condición va en la franja del medio
+ * (`¿ campo operador valor ?`), y a esa altura el rombo tiene que ser al menos así de ancho: el ancho sale
+ * del contenido, y el alto es fijo para que todas las preguntas se parezcan.
+ */
+export function diamondSize(
+  model: ControlModel | undefined,
+  density: Density,
+  label: string,
+  code?: string,
+): { w: number; h: number } {
+  const compact = density === 'compact'
+  const h = compact ? DIAMOND_HEIGHT.compact : DIAMOND_HEIGHT.full
+  const band = diamondBand(h)
+  // Los signos de pregunta, a cada lado, y lo que va entre ellos.
+  const marks = 2 * 16
+  const content = compact
+    ? 22 + label.length * 7
+    : model?.kind === 'condition'
+      ? // Cada campo puede llevar un chip (su nombre y la × para quitarlo): algo más que su texto.
+        marks + lineField(model.field) + 16 + 6 + 50 + 6 + lineField(model.value) + 16
+      : marks + Math.min(60, (code ?? label).length) * 7.4 + 16
+  const useful = 1 - band / h
+  return { w: snap(Math.max(compact ? 140 : 200, content / useful + 8)), h }
 }

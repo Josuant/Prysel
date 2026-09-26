@@ -22,6 +22,11 @@ export interface GenerateOptions {
   loopEvery?: number
   /** Cuántas constantes globales hay, y a cuántos pasos alimenta cada una. */
   constants?: number
+  /**
+   * Emite también el orden de ejecución (`sequence`), las ramas con su etiqueta y el dueño de cada paso de
+   * una rama, como hace el analizador: es lo que lee el diagrama de flujo. Las constantes van al principio.
+   */
+  order?: boolean
 }
 
 const DEFAULTS = {
@@ -34,6 +39,10 @@ const DEFAULTS = {
 
 export function generateProgram(options: GenerateOptions): SemanticGraph {
   const { steps, seed, size, branchEvery, loopEvery, constants } = { ...DEFAULTS, ...options }
+  const order = options.order === true
+  const seq = (from: string, to: string) => {
+    if (order) edges.push({ from, to, relation: 'sequence' })
+  }
   let state = seed
   const rand = () => {
     state = (state * 1103515245 + 12345) % 2147483648
@@ -42,8 +51,8 @@ export function generateProgram(options: GenerateOptions): SemanticGraph {
 
   const nodes: SemanticNode[] = []
   const edges: SemanticEdge[] = []
-  const add = (id: string, role: Role) => {
-    nodes.push({ id, role, size })
+  const add = (id: string, role: Role, owner?: string) => {
+    nodes.push({ id, role, size, ...(order && owner !== undefined ? { owner } : {}) })
     return id
   }
 
@@ -54,6 +63,15 @@ export function generateProgram(options: GenerateOptions): SemanticGraph {
   for (const id of imports) {
     edges.push({ from: id, to: previous, relation: 'reference' })
   }
+  // En orden: los imports, las constantes y después el primer paso.
+  const opening = [
+    ...imports,
+    ...Array.from({ length: constants }, (_, c) => `CONST_${c}`),
+    previous,
+  ]
+  opening.slice(1).forEach((id, i) => {
+    seq(opening[i] ?? id, id)
+  })
 
   const consumers: string[] = []
 
@@ -62,13 +80,16 @@ export function generateProgram(options: GenerateOptions): SemanticGraph {
       // Una decisión que se abre en dos y vuelve a juntarse: el caso más común en un script.
       const condition = add(`if:${i}`, 'control')
       edges.push({ from: previous, to: condition, relation: 'transform', toPort: 'field' })
-      const yes = add(`then:${i}`, 'transform')
-      const no = add(`else:${i}`, 'transform')
+      seq(previous, condition)
+      const yes = add(`then:${i}`, 'transform', condition)
+      const no = add(`else:${i}`, 'transform', condition)
       edges.push({ from: condition, to: yes, relation: 'branch', label: 'sí' })
       edges.push({ from: condition, to: no, relation: 'branch', label: 'no', fromPort: 'alt' })
       const join = add(`join:${i}`, 'transform')
       edges.push({ from: yes, to: join, relation: 'merge' })
       edges.push({ from: no, to: join, relation: 'merge' })
+      seq(yes, join)
+      seq(no, join)
       previous = join
       consumers.push(condition)
       continue
@@ -78,13 +99,17 @@ export function generateProgram(options: GenerateOptions): SemanticGraph {
       // Un bucle de dos pasos que se cierra sobre su cabecera.
       const head = add(`for:${i}`, 'control')
       edges.push({ from: previous, to: head, relation: 'transform', toPort: 'iterable' })
+      seq(previous, head)
       const body = add(`body:${i}`, 'transform')
       const tail = add(`acc:${i}`, 'transform')
       edges.push({ from: head, to: body, relation: 'transform' })
       edges.push({ from: body, to: tail, relation: 'transform' })
       edges.push({ from: tail, to: head, relation: 'feedback' })
+      seq(head, body)
+      seq(body, tail)
       const after = add(`after:${i}`, 'transform')
       edges.push({ from: tail, to: after, relation: 'transform' })
+      seq(tail, after)
       previous = after
       continue
     }
@@ -92,12 +117,14 @@ export function generateProgram(options: GenerateOptions): SemanticGraph {
     const role: Role = rand() < 0.2 ? 'data' : 'transform'
     const step = add(`step:${i}`, role)
     edges.push({ from: previous, to: step, relation: 'transform' })
+    seq(previous, step)
     previous = step
     if (rand() < 0.35) consumers.push(step)
   }
 
   add('display', 'output')
   edges.push({ from: previous, to: 'display', relation: 'transform' })
+  seq(previous, 'display')
 
   // Constantes globales: el caso que produce un abanico y ensancha una capa.
   for (let c = 0; c < constants; c++) {

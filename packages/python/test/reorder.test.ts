@@ -241,3 +241,115 @@ describe('las constantes calculadas cuentan como inicializaciones', () => {
     expect(text).toBe('def f(p):\n    n = 0\n    x = k()\n    t = p * 3\n    a = g()\n')
   })
 })
+
+describe('los caminos de un elif, y el else de un bucle', () => {
+  const ELIF = 'if a:\n    x = 1\nelif b:\n    y = 2\nelse:\n    w = 4\nz = h()\n'
+
+  it('un elif es una decisión propia, con su condición, en el camino falso de la anterior', () => {
+    const program = parse(ELIF)
+    const elif = at(program, 3)
+    expect(elif.kind).toBe('control.condition')
+    // Una comparación tiene su editor, como la de un if (un nombre suelto, como `b`, no).
+    const compared = at(parse('if a > 1:\n    x = 1\nelif b > 2:\n    y = 2\n'), 3)
+    expect(compared.control).toMatchObject({
+      kind: 'condition',
+      field: 'b',
+      operator: '>',
+      value: '2',
+    })
+    expect(at(program, 1).continues).toBe(elif.id)
+    expect(
+      program.edges.some(
+        (e) => e.from === at(program, 1).id && e.to === elif.id && e.label === 'falso',
+      ),
+    ).toBe(true)
+    // El else final es el camino falso del elif, no del if.
+    expect(
+      program.edges.some(
+        (e) => e.from === elif.id && e.to === at(program, 6).id && e.label === 'falso',
+      ),
+    ).toBe(true)
+  })
+
+  it('al principio del camino verdadero de un elif', () => {
+    const text = act(ELIF, (p) => ({
+      type: 'move',
+      id: at(p, 7).id,
+      into: at(p, 3).id,
+      branch: 'yes',
+    }))
+    expect(text).toBe('if a:\n    x = 1\nelif b:\n    z = h()\n    y = 2\nelse:\n    w = 4\n')
+  })
+
+  it('al principio del else, por el camino falso del último elif', () => {
+    const text = act(ELIF, (p) => ({
+      type: 'move',
+      id: at(p, 7).id,
+      into: at(p, 3).id,
+      branch: 'no',
+    }))
+    expect(text).toBe('if a:\n    x = 1\nelif b:\n    y = 2\nelse:\n    z = h()\n    w = 4\n')
+  })
+
+  it('el camino falso de un if que sigue en un elif no salta al else: se entra por el elif', () => {
+    const program = parse(ELIF)
+    expect(
+      actionEdits(program, {
+        type: 'move',
+        id: at(program, 7).id,
+        into: at(program, 1).id,
+        branch: 'no',
+      }).edits,
+    ).toEqual([])
+  })
+
+  it('un último elif sin else lo crea', () => {
+    const text = act('if a:\n    x = 1\nelif b:\n    y = 2\nz = h()\n', (p) => ({
+      type: 'move',
+      id: at(p, 5).id,
+      into: at(p, 3).id,
+      branch: 'no',
+    }))
+    expect(text).toBe('if a:\n    x = 1\nelif b:\n    y = 2\nelse:\n    z = h()\n')
+  })
+
+  const LOOP_ELSE =
+    'for i in r:\n    if i:\n        break\nelse:\n    print("sin salir")\nz = h()\n'
+
+  it('el else de un bucle ya no se pierde: es una cláusula detrás del bucle, con su cuerpo', () => {
+    const program = parse(LOOP_ELSE)
+    const clause = at(program, 4)
+    expect(clause.kind).toBe('control.clause')
+    expect(clause.label).toBe('al acabar sin salir')
+    expect(clause.contains).toEqual([at(program, 5).id])
+    // Va detrás del bucle, en su mismo bloque: no dentro del territorio que se repite.
+    expect(at(program, 1).contains).not.toContain(clause.id)
+    expect(clause.range?.owner).toBeUndefined()
+    // El orden: bucle → su else → lo que sigue.
+    const seq = program.edges.filter((e) => e.relation === 'sequence')
+    expect(seq.some((e) => e.from === at(program, 1).id && e.to === clause.id)).toBe(true)
+    expect(seq.some((e) => e.from === clause.id && e.to === at(program, 6).id)).toBe(true)
+  })
+
+  it('al principio del else de un bucle, por su camino falso', () => {
+    const text = act(LOOP_ELSE, (p) => ({
+      type: 'move',
+      id: at(p, 6).id,
+      into: at(p, 1).id,
+      branch: 'no',
+    }))
+    expect(text).toBe(
+      'for i in r:\n    if i:\n        break\nelse:\n    z = h()\n    print("sin salir")\n',
+    )
+  })
+
+  it('un bucle sin else lo crea', () => {
+    const text = act('while n > 0:\n    n -= 1\nz = h()\n', (p) => ({
+      type: 'move',
+      id: at(p, 3).id,
+      into: at(p, 1).id,
+      branch: 'no',
+    }))
+    expect(text).toBe('while n > 0:\n    n -= 1\nelse:\n    z = h()\n')
+  })
+})

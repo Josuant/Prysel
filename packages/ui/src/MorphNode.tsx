@@ -10,6 +10,7 @@ import {
 } from 'react'
 import {
   ACTION_TITLES,
+  HEADER_EDITOR_KINDS,
   buildShape,
   getKind,
   nodeSize,
@@ -107,6 +108,11 @@ export interface MorphNodeProps {
    * o la llamada al lado. Solo en la tarjeta esbelta.
    */
   line?: boolean
+  /**
+   * Una decisión leída como diagrama de flujo: un **rombo** con la pregunta dentro (`¿ campo operador valor ?`),
+   * sin cabecera, porque la forma ya dice que es una decisión.
+   */
+  diamond?: boolean
   /**
    * Lo que asigna la línea (`A = funcion()`, o `a, b = f()`): cada nombre es un chip que se arrastra a
    * una casilla.
@@ -306,6 +312,7 @@ export function MorphNode({
   linkedSlots,
   chipSlots,
   line = false,
+  diamond = false,
   results = [],
   steps,
   onGrabResult,
@@ -323,7 +330,12 @@ export function MorphNode({
   const spec = getKind(kind)
   const { w, h } = size ?? nodeSize(spec, density, metrics)
   // Un ámbito es un territorio, no una píldora: conserva su pestaña de carpeta a cualquier densidad.
-  const geo = buildShape(container ? territoryShape(spec) : shapeFor(spec, density), w, h)
+  const rhomb = diamond && !container
+  const geo = buildShape(
+    container ? territoryShape(spec) : rhomb ? 'diamond' : shapeFor(spec, density),
+    w,
+    h,
+  )
 
   const compact = density === 'compact' && !container
   // Una tarjeta esbelta: solo lo relevante. El icono dice el tipo, el nombre va en la cabecera y el
@@ -451,6 +463,7 @@ export function MorphNode({
         data-density={container ? 'normal' : density}
         data-slim={slim ? '' : undefined}
         data-line={lined ? '' : undefined}
+        data-diamond={rhomb ? '' : undefined}
         data-lod={lod}
         data-modifier={modifier}
         data-raised={raised ? '' : undefined}
@@ -517,6 +530,31 @@ export function MorphNode({
               ) : showStatus ? (
                 <StatusChip state={state} showLabel={false} className="node__glance-state" />
               ) : null}
+            </div>
+          ) : rhomb ? (
+            <div className="node__diamond" {...(meta ? { title: meta } : {})}>
+              <span className="node__ask" aria-hidden>
+                ¿
+              </span>
+              {control ? (
+                <div className="node__control">
+                  <Control
+                    model={control}
+                    level="summary"
+                    onChange={onControlChange}
+                    {...(editable ? { editable } : {})}
+                    {...(suggestions ? { suggestions } : {})}
+                    {...(linkedSlots ? { linked: linkedSlots } : {})}
+                  />
+                </div>
+              ) : (
+                // Sin editor, la pregunta tal cual (la etiqueta ya viene como `¿…?`).
+                <code className="node__code type-code">{label.replace(/^¿|\?$/g, '')}</code>
+              )}
+              <span className="node__ask" aria-hidden>
+                ?
+              </span>
+              {showStatus && state !== 'dormant' && <StatusChip state={state} showLabel={false} />}
             </div>
           ) : lined && control ? (
             <>
@@ -619,23 +657,21 @@ export function MorphNode({
                 </p>
               )}
 
-              {/* El bucle es un territorio, pero lo que recorre y con qué variable se edita en su cabecera. */}
-              {container &&
-                (control?.kind === 'loop' ||
-                  control?.kind === 'with' ||
-                  control?.kind === 'handler' ||
-                  control?.kind === 'class') && (
-                  <div className="node__control node__control--territory">
-                    <Control
-                      model={control}
-                      level="summary"
-                      onChange={onControlChange}
-                      {...(editable ? { editable } : {})}
-                      {...(suggestions ? { suggestions } : {})}
-                      {...(linkedSlots ? { linked: linkedSlots } : {})}
-                    />
-                  </div>
-                )}
+              {/* El bucle es un territorio, pero lo que recorre y con qué variable se edita en su cabecera.
+                  Lo mismo un `with`, un `except`, una clase, un `match` y cada `case`: la misma lista con la
+                  que el reparto les deja sitio (`territoryHeadroom`), para que no se desalineen. */}
+              {container && control && HEADER_EDITOR_KINDS.has(kind) && (
+                <div className="node__control node__control--territory">
+                  <Control
+                    model={control}
+                    level="summary"
+                    onChange={onControlChange}
+                    {...(editable ? { editable } : {})}
+                    {...(suggestions ? { suggestions } : {})}
+                    {...(linkedSlots ? { linked: linkedSlots } : {})}
+                  />
+                </div>
+              )}
 
               {!container && (
                 <div className="node__body">
