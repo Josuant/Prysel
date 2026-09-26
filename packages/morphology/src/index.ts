@@ -26,8 +26,8 @@ export {
 } from './kinds.ts'
 export {
   DENSITY_BASE,
-  DIAMOND_HEIGHT,
-  diamondSize,
+  GATEWAY,
+  questionSize,
   ACTION_CALLS,
   ACTION_TITLES,
   INLINE_ARGS,

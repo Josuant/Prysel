@@ -239,6 +239,7 @@ export function LiveParser() {
             fitKey={view.viewKey}
             // Como en la extensión: el programa se lee hacia abajo, como un diagrama de flujo.
             axis="vertical"
+            controls
             ariaLabel="Diagrama del programa escrito a la izquierda"
           />
         ) : (

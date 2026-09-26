@@ -1,3 +1,5 @@
+import type { IconId } from './types.ts'
+
 /**
  * Lo que se le puede hacer a un nodo del diagrama, y lo que se puede añadir.
  *
@@ -7,28 +9,123 @@
 
 /** Qué se puede añadir al programa: cada plantilla es una sentencia (o un bloque) de Python. */
 export const TEMPLATES = {
-  variable: { label: 'Variable', group: 'Valores' },
-  text: { label: 'Texto', group: 'Valores' },
-  boolean: { label: 'Verdadero / falso', group: 'Valores' },
-  list: { label: 'Lista', group: 'Valores' },
-  dict: { label: 'Diccionario', group: 'Valores' },
-  operation: { label: 'Operación', group: 'Cálculo' },
-  call: { label: 'Llamada a función', group: 'Cálculo' },
-  input: { label: 'Pedir dato', group: 'Entrada y salida' },
-  print: { label: 'Imprimir', group: 'Entrada y salida' },
-  if: { label: 'Decisión', group: 'Control' },
-  ifelse: { label: 'Decisión con alternativa', group: 'Control' },
-  for: { label: 'Bucle para cada', group: 'Control' },
-  while: { label: 'Bucle mientras', group: 'Control' },
-  try: { label: 'Intentar / si falla', group: 'Control' },
-  with: { label: 'Con un recurso (with)', group: 'Control' },
-  break: { label: 'Salir del bucle', group: 'Control' },
-  continue: { label: 'Siguiente vuelta', group: 'Control' },
-  return: { label: 'Devolver', group: 'Control' },
-  raise: { label: 'Lanzar un error', group: 'Control' },
-  import: { label: 'Importar un módulo', group: 'Estructura' },
-  function: { label: 'Función', group: 'Estructura' },
-} as const
+  variable: {
+    label: 'Variable',
+    group: 'Valores',
+    icon: 'hash',
+    hint: 'Guarda un número con un nombre',
+  },
+  text: {
+    label: 'Texto',
+    group: 'Valores',
+    icon: 'quote',
+    hint: 'Guarda unas palabras entre comillas',
+  },
+  boolean: {
+    label: 'Verdadero / falso',
+    group: 'Valores',
+    icon: 'toggle',
+    hint: 'Guarda sí o no (True / False)',
+  },
+  list: { label: 'Lista', group: 'Valores', icon: 'list', hint: 'Varios valores, en orden' },
+  dict: { label: 'Diccionario', group: 'Valores', icon: 'braces', hint: 'Pares de nombre y valor' },
+  operation: {
+    label: 'Operación',
+    group: 'Cálculo',
+    icon: 'sigma',
+    hint: 'Suma, resta, multiplica, compara…',
+  },
+  call: {
+    label: 'Llamada a función',
+    group: 'Cálculo',
+    icon: 'function',
+    hint: 'Usa una función que ya existe',
+  },
+  input: {
+    label: 'Pedir dato',
+    group: 'Entrada y salida',
+    icon: 'pencil',
+    hint: 'Pregunta un valor a quien ejecuta',
+  },
+  print: {
+    label: 'Imprimir',
+    group: 'Entrada y salida',
+    icon: 'globe',
+    hint: 'Muestra un valor en la salida',
+  },
+  if: {
+    label: 'Decisión',
+    group: 'Control',
+    icon: 'branch',
+    hint: 'Hace algo solo si se cumple una condición',
+  },
+  ifelse: {
+    label: 'Decisión con alternativa',
+    group: 'Control',
+    icon: 'branch',
+    hint: 'Elige entre dos caminos',
+  },
+  for: {
+    label: 'Bucle para cada',
+    group: 'Control',
+    icon: 'loop',
+    hint: 'Repite para cada elemento de algo',
+  },
+  while: {
+    label: 'Bucle mientras',
+    group: 'Control',
+    icon: 'repeat',
+    hint: 'Repite mientras se cumpla una condición',
+  },
+  try: {
+    label: 'Intentar / si falla',
+    group: 'Control',
+    icon: 'shield',
+    hint: 'Prueba algo y reacciona si falla',
+  },
+  with: {
+    label: 'Con un recurso (with)',
+    group: 'Control',
+    icon: 'lock',
+    hint: 'Usa un recurso y lo cierra solo',
+  },
+  break: {
+    label: 'Salir del bucle',
+    group: 'Control',
+    icon: 'exit',
+    hint: 'Deja de repetir y sigue después',
+  },
+  continue: {
+    label: 'Siguiente vuelta',
+    group: 'Control',
+    icon: 'skip',
+    hint: 'Salta a la siguiente vuelta del bucle',
+  },
+  return: {
+    label: 'Devolver',
+    group: 'Control',
+    icon: 'return',
+    hint: 'Termina la función con un resultado',
+  },
+  raise: {
+    label: 'Lanzar un error',
+    group: 'Control',
+    icon: 'alert',
+    hint: 'Avisa de que algo va mal',
+  },
+  import: {
+    label: 'Importar un módulo',
+    group: 'Estructura',
+    icon: 'package',
+    hint: 'Trae math, random, numpy…',
+  },
+  function: {
+    label: 'Función',
+    group: 'Estructura',
+    icon: 'function',
+    hint: 'Agrupa pasos bajo un nombre',
+  },
+} as const satisfies Record<string, { label: string; group: string; icon: IconId; hint: string }>
 
 export type TemplateId = keyof typeof TEMPLATES
 

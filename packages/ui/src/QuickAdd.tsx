@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { TEMPLATES, VALUE_NAMES, type TemplateId, type ValueType } from '@prysel/morphology'
+import { Icon } from './Icon.tsx'
 
 /**
  * El menú que aparece al soltar un cable en el vacío: crea un nodo nuevo **ya conectado** al que
@@ -78,19 +79,28 @@ export function QuickAdd({ x, y, type = 'any', name = '', title, onPick, onClose
       <p className="quick-add__title type-field-label">
         {title ?? `Conectar «${name}» (${VALUE_NAMES[type]}) a…`}
       </p>
-      {(title === undefined ? SUGGESTED[type] : STATEMENTS).map((id) => (
-        <button
-          key={id}
-          type="button"
-          role="menuitem"
-          className="add-menu__item"
-          onClick={() => {
-            onPick(id)
-          }}
-        >
-          {TEMPLATES[id].label}
-        </button>
-      ))}
+      <div className="quick-add__list">
+        {(title === undefined ? SUGGESTED[type] : STATEMENTS).map((id) => (
+          <button
+            key={id}
+            type="button"
+            role="menuitem"
+            className="palette__item"
+            data-group={TEMPLATES[id].group}
+            title={TEMPLATES[id].hint}
+            onClick={() => {
+              onPick(id)
+            }}
+          >
+            <span className="palette__icon" aria-hidden>
+              <Icon name={TEMPLATES[id].icon} size={14} />
+            </span>
+            <span className="palette__text">
+              <span className="palette__label">{TEMPLATES[id].label}</span>
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

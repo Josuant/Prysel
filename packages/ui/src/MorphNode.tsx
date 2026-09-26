@@ -22,6 +22,7 @@ import {
   type NodeKindId,
   type NodeState,
   type Point,
+  type ShapeId,
   type ValueType,
 } from '@prysel/morphology'
 import { StatusChip, TypeBadge } from './Badge.tsx'
@@ -109,10 +110,15 @@ export interface MorphNodeProps {
    */
   line?: boolean
   /**
-   * Una decisión leída como diagrama de flujo: un **rombo** con la pregunta dentro (`¿ campo operador valor ?`),
-   * sin cabecera, porque la forma ya dice que es una decisión.
+   * Una decisión leída como diagrama de flujo: la **pregunta** en una sola línea (`¿ campo operador valor ?`),
+   * en una píldora como cualquier paso. El rombo de la bifurcación lo dibuja quien la coloca, debajo.
    */
-  diamond?: boolean
+  question?: boolean
+  /**
+   * Se dibuja como un paso de un cuaderno (el diagrama de flujo, leído hacia abajo): siluetas sencillas —píldora,
+   * tarjeta, territorio— con sombra de verdad, y el tipo dicho por el icono de color, no por una etiqueta.
+   */
+  flow?: boolean
   /**
    * Lo que asigna la línea (`A = funcion()`, o `a, b = f()`): cada nombre es un chip que se arrastra a
    * una casilla.
@@ -312,7 +318,8 @@ export function MorphNode({
   linkedSlots,
   chipSlots,
   line = false,
-  diamond = false,
+  question = false,
+  flow = false,
   results = [],
   steps,
   onGrabResult,
@@ -329,13 +336,7 @@ export function MorphNode({
 }: MorphNodeProps) {
   const spec = getKind(kind)
   const { w, h } = size ?? nodeSize(spec, density, metrics)
-  // Un ámbito es un territorio, no una píldora: conserva su pestaña de carpeta a cualquier densidad.
-  const rhomb = diamond && !container
-  const geo = buildShape(
-    container ? territoryShape(spec) : rhomb ? 'diamond' : shapeFor(spec, density),
-    w,
-    h,
-  )
+  const asked = question && !container
 
   const compact = density === 'compact' && !container
   // Una tarjeta esbelta: solo lo relevante. El icono dice el tipo, el nombre va en la cabecera y el
@@ -346,6 +347,20 @@ export function MorphNode({
     slim &&
     line &&
     (control?.kind === 'expression' || control?.kind === 'args' || control?.kind === 'assign')
+  // Un ámbito es un territorio, no una píldora: conserva su pestaña de carpeta a cualquier densidad. Leído como
+  // cuaderno, todo es más sencillo: una línea es una píldora, lo demás una tarjeta, y un ámbito un marco.
+  const silhouette: ShapeId = container
+    ? flow
+      ? 'frame'
+      : territoryShape(spec)
+    : flow
+      ? compact || asked || lined
+        ? 'pill'
+        : 'card'
+      : shapeFor(spec, density)
+  const geo = buildShape(silhouette, w, h)
+  /** Una silueta redondeada se dibuja sin recorte: así lleva una sombra de verdad. */
+  const round = geo.radius !== undefined
   const lineTitle =
     control?.kind === 'args'
       ? ACTION_TITLES[control.target]
@@ -463,14 +478,16 @@ export function MorphNode({
         data-density={container ? 'normal' : density}
         data-slim={slim ? '' : undefined}
         data-line={lined ? '' : undefined}
-        data-diamond={rhomb ? '' : undefined}
+        data-question={asked ? '' : undefined}
+        data-flow={flow ? '' : undefined}
+        data-round={round ? '' : undefined}
         data-lod={lod}
         data-modifier={modifier}
         data-raised={raised ? '' : undefined}
         data-container={container ? '' : undefined}
         data-band={band === undefined ? undefined : ''}
       >
-        {raised && (
+        {raised && !round && (
           <svg className="node__shadow" width={w} height={h} aria-hidden>
             <path d={geo.d} />
           </svg>
@@ -489,7 +506,10 @@ export function MorphNode({
             ))}
         </svg>
 
-        <div className="node__fill" style={{ clipPath: `path('${geo.d}')` }} />
+        <div
+          className="node__fill"
+          style={round ? { borderRadius: geo.radius } : { clipPath: `path('${geo.d}')` }}
+        />
 
         <svg className="node__stroke" width={w} height={h} aria-hidden>
           <g transform={`translate(${HAIRLINE} ${HAIRLINE})`}>
@@ -531,8 +551,9 @@ export function MorphNode({
                 <StatusChip state={state} showLabel={false} className="node__glance-state" />
               ) : null}
             </div>
-          ) : rhomb ? (
-            <div className="node__diamond" {...(meta ? { title: meta } : {})}>
+          ) : asked ? (
+            <div className="node__line node__question" {...(meta ? { title: meta } : {})}>
+              <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} iconOnly />
               <span className="node__ask" aria-hidden>
                 ¿
               </span>
@@ -608,7 +629,12 @@ export function MorphNode({
           ) : (
             <>
               <header className="node__head" {...(slim && meta ? { title: meta } : {})}>
-                <TypeBadge family={spec.badge} icon={spec.icon} label={spec.name} iconOnly={slim} />
+                <TypeBadge
+                  family={spec.badge}
+                  icon={spec.icon}
+                  label={spec.name}
+                  iconOnly={slim || flow}
+                />
                 {/* Lo que asigna el nodo es una pastilla: se lleva a una casilla como cualquier chip. */}
                 {slim && results.length > 0
                   ? resultChips

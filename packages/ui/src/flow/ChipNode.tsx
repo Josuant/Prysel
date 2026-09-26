@@ -288,13 +288,12 @@ function ChipValue({
       {control.value ? 'True' : 'False'}
     </button>
   ) : control?.kind === 'number' ? (
-    <ChipInput
-      value={String(control.value)}
+    <ChipNumber
+      name={chip.label}
+      value={control.value}
       editable={editable}
-      label={`Valor de ${chip.label}`}
-      onCommit={(text) => {
-        const value = Number(text)
-        if (text.trim() !== '' && Number.isFinite(value)) onChange({ ...control, value })
+      onCommit={(value) => {
+        onChange({ ...control, value })
       }}
     />
   ) : control?.kind === 'text' ? (
@@ -374,6 +373,156 @@ function ChipCollection({
             {...(editable ? { onChange } : {})}
             {...(chip.editable ? { editable: chip.editable } : {})}
           />
+        </div>
+      )}
+    </span>
+  )
+}
+
+/**
+ * El rango del deslizador de un número: de cero (o de su opuesto, si es negativo) a la siguiente potencia de
+ * diez, con cien pasos. Así `5` se mueve entre 0 y 10, `170` entre 0 y 1000 y `0.01` entre 0 y 0.1: lo
+ * bastante cerca para afinar y lo bastante lejos para probar otro orden de magnitud.
+ */
+export function numberRange(value: number): { min: number; max: number; step: number } {
+  const size = Math.abs(value)
+  const magnitude = size === 0 ? 10 : 10 ** (Math.floor(Math.log10(size)) + 1)
+  const whole = Number.isInteger(value)
+  const step = whole ? Math.max(1, magnitude / 100) : magnitude / 100
+  return { min: value < 0 ? -magnitude : 0, max: magnitude, step }
+}
+
+/** Un número con los decimales de su paso, sin arrastrar los errores de la coma flotante. */
+const tidy = (value: number, step: number) => {
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)))
+  return Number(value.toFixed(Math.min(decimals, 10)))
+}
+
+/**
+ * El valor de un chip de número: se pulsa y se abre una tarjeta con el valor grande, un deslizador para
+ * probar otros y un campo para el exacto. Lo que se prueba no se escribe hasta «Guardar» (o Intro); Escape
+ * lo deja como estaba. Es la forma amable de tocar un parámetro (el número de vueltas, la tasa de aprendizaje).
+ */
+function ChipNumber({
+  name,
+  value,
+  editable,
+  onCommit,
+}: {
+  name: string
+  value: number
+  editable: boolean
+  onCommit: (next: number) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(String(value))
+  const root = useRef<HTMLSpanElement>(null)
+  const exact = useRef<HTMLInputElement>(null)
+  const range = numberRange(value)
+  const parsed = Number(draft)
+  const valid = draft.trim() !== '' && Number.isFinite(parsed)
+
+  useEffect(() => {
+    if (!open) return
+    exact.current?.select()
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target
+      if (root.current && target instanceof HTMLElement && !root.current.contains(target)) {
+        setOpen(false)
+      }
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointer)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const save = () => {
+    if (valid && parsed !== value) onCommit(parsed)
+    setOpen(false)
+  }
+
+  return (
+    <span ref={root} className="vchip__collection">
+      <button
+        type="button"
+        className="vchip__value vchip__value--switch nodrag"
+        aria-expanded={open}
+        aria-label={`Cambiar el valor de ${name}`}
+        disabled={!editable}
+        onClick={() => {
+          setDraft(String(value))
+          setOpen((current) => !current)
+        }}
+      >
+        {value}
+      </button>
+      {open && (
+        <div
+          className="vchip__pop vchip__pop--number nodrag nopan"
+          role="dialog"
+          aria-label={`Valor de ${name}`}
+        >
+          <div className="number-pop__head">
+            <span className="number-pop__name">{name}</span>
+            <span className="number-pop__value" aria-live="polite">
+              {valid ? parsed : '—'}
+            </span>
+          </div>
+          <input
+            type="range"
+            className="slider number-pop__slider"
+            aria-label={`Probar otro valor de ${name}`}
+            min={Math.min(range.min, valid ? parsed : range.min)}
+            max={Math.max(range.max, valid ? parsed : range.max)}
+            step={range.step}
+            value={valid ? parsed : value}
+            style={
+              {
+                '--pct': `${
+                  (((valid ? parsed : value) - range.min) / Math.max(range.max - range.min, 1e-9)) *
+                  100
+                }%`,
+              } as React.CSSProperties
+            }
+            onChange={(event) => {
+              setDraft(String(tidy(Number(event.target.value), range.step)))
+            }}
+          />
+          <div className="number-pop__scale" aria-hidden>
+            <span>{range.min}</span>
+            <span>{range.max}</span>
+          </div>
+          <input
+            ref={exact}
+            className="input number-pop__exact type-value"
+            aria-label={`Valor exacto de ${name}`}
+            value={draft}
+            inputMode="decimal"
+            onChange={(event) => {
+              setDraft(event.target.value)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                save()
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="btn number-pop__save"
+            data-variant="primary"
+            disabled={!valid}
+            onClick={save}
+          >
+            Guardar
+          </button>
         </div>
       )}
     </span>

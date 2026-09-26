@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { Program } from '@prysel/python'
-import { plainNote } from '@prysel/ui'
+import { Icon, IconButton, plainNote } from '@prysel/ui'
 import { describeEvent, variablesAt } from './player.ts'
 import { SPEEDS, type Player } from './usePlayer.ts'
 
@@ -9,9 +9,6 @@ import { SPEEDS, type Player } from './usePlayer.ts'
  * están las variables y lo que se imprimió. El diagrama lo enseña el lienzo (el cursor y los chips);
  * esto es el mando.
  */
-
-const button =
-  'px-2 py-1 text-[12px] text-ink-muted hover:text-ink disabled:opacity-40 disabled:hover:text-ink-muted'
 
 export function PlayerBar({
   program,
@@ -53,134 +50,138 @@ export function PlayerBar({
   const before = moments.findLast((moment) => moment.step < step)
   const after = moments.find((moment) => moment.step > step)
   const moment = here >= 0 ? moments[here] : undefined
+  /** Dónde cae un paso sobre la línea de tiempo, en tanto por ciento. */
+  const at = (index: number) => (last <= 0 ? 0 : (Math.max(index, 0) / last) * 100)
   return (
-    <section
-      aria-label="Reproducción paso a paso"
-      className="border-t border-border-card bg-surface px-3 py-2"
-    >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <div
-          role="group"
-          aria-label="Controles"
-          className="flex overflow-hidden rounded-md border border-border-card"
-        >
-          <button
-            type="button"
-            className={button}
+    <section aria-label="Reproducción paso a paso" className="player">
+      <div className="player__bar">
+        <div role="group" aria-label="Controles" className="player__controls">
+          <IconButton
+            icon="undo"
+            label="Al principio"
             disabled={atStart}
-            aria-label="Al principio"
             onClick={() => {
               player.seek(-1)
             }}
-          >
-            ⏮
-          </button>
-          <button
-            type="button"
-            className={button}
+          />
+          <IconButton
+            icon="chevron"
+            className="player__back"
+            label="Paso atrás (←)"
             disabled={atStart}
-            aria-label="Paso atrás"
-            title="Paso atrás (←)"
             onClick={player.previous}
-          >
-            ◀
-          </button>
+          />
           <button
             type="button"
-            className={button}
+            className="player__play"
             aria-label={player.playing ? 'Pausar' : 'Reproducir'}
             title="Reproducir o pausar (Espacio)"
             onClick={player.toggle}
           >
-            {player.playing ? '⏸' : '▶'}
+            {player.playing ? (
+              <span className="player__pause" aria-hidden />
+            ) : (
+              <Icon name="play" size={16} />
+            )}
           </button>
-          <button
-            type="button"
-            className={button}
+          <IconButton
+            icon="chevron"
+            className="player__forward"
+            label="Paso adelante (→)"
             disabled={atEnd}
-            aria-label="Paso adelante"
-            title="Paso adelante (→)"
             onClick={player.next}
-          >
-            ▶︎|
-          </button>
-          <button
-            type="button"
-            className={button}
+          />
+          <IconButton
+            icon="redo"
+            label="Al final"
             disabled={atEnd}
-            aria-label="Al final"
             onClick={() => {
               player.seek(last)
             }}
-          >
-            ⏭
-          </button>
+          />
         </div>
-        {lesson && moments.length > 0 && (
-          <div
-            role="group"
-            aria-label="Momentos de la lección"
-            className="flex items-center overflow-hidden rounded-md border border-border-card"
-          >
+
+        {/* La línea de tiempo: el progreso con el acento y, encima, un hito por cada momento de la lección. */}
+        <div className="player__timeline">
+          <input
+            type="range"
+            min={-1}
+            max={last}
+            value={step}
+            aria-label="Paso de la ejecución"
+            className="slider player__range"
+            style={{ '--pct': `${at(step)}%` } as React.CSSProperties}
+            onChange={(event) => {
+              player.seek(Number(event.target.value))
+            }}
+          />
+          {moments.map((m, index) => (
             <button
+              key={`${m.step}-${index}`}
               type="button"
-              className={button}
+              className="player__moment"
+              data-passed={m.step <= step ? '' : undefined}
+              data-current={index === here ? '' : undefined}
+              style={{ left: `${at(m.step)}%` }}
+              aria-label={`Ir al momento ${index + 1}${m.title ? `: ${m.title}` : ''}`}
+              title={m.title ?? plainNote(m.text).slice(0, 80)}
+              onClick={() => {
+                player.seek(m.step)
+              }}
+            />
+          ))}
+        </div>
+        <span className="player__count" aria-live="off">
+          {Math.max(step + 1, 0)} <span className="player__of">/ {last + 1}</span>
+        </span>
+
+        {lesson && moments.length > 0 && (
+          <div role="group" aria-label="Momentos de la lección" className="player__moments">
+            <IconButton
+              icon="chevron"
+              className="player__back"
+              label="Momento anterior"
               disabled={before === undefined && step < 0}
               onClick={() => {
                 player.seek(before?.step ?? -1)
               }}
-            >
-              ‹ Momento
-            </button>
-            <span className="px-1 text-[11px] tabular-nums text-ink-faint">
-              {here + 1} / {moments.length}
+            />
+            <span className="player__moment-count">
+              Momento {here + 1}
+              <span className="player__of"> / {moments.length}</span>
             </span>
-            <button
-              type="button"
-              className={button}
+            <IconButton
+              icon="chevron"
+              className="player__forward"
+              label="Momento siguiente"
               disabled={after === undefined}
               onClick={() => {
                 if (after) player.seek(after.step)
               }}
-            >
-              Momento ›
-            </button>
+            />
           </div>
         )}
-        <input
-          type="range"
-          min={-1}
-          max={last}
-          value={step}
-          aria-label="Paso de la ejecución"
-          className="min-w-24 flex-1 accent-[var(--accent)]"
-          onChange={(event) => {
-            player.seek(Number(event.target.value))
-          }}
-        />
-        <span className="text-[11px] tabular-nums text-ink-faint" aria-live="off">
-          {Math.max(step + 1, 0)} / {last + 1}
-        </span>
-        <label className="flex items-center gap-1 text-[11px] text-ink-faint">
-          Velocidad
-          <select
-            value={player.speed}
-            className="rounded border border-border-card bg-surface px-1 py-0.5 text-[11px] text-ink-muted"
-            onChange={(event) => {
-              player.setSpeed(Number(event.target.value))
-            }}
-          >
-            {SPEEDS.map((speed) => (
-              <option key={speed} value={speed}>
-                {speed}×
-              </option>
-            ))}
-          </select>
-        </label>
+
+        <div role="group" aria-label="Velocidad" className="segmented player__speed">
+          {SPEEDS.map((speed) => (
+            <button
+              key={speed}
+              type="button"
+              className="segmented__item"
+              aria-pressed={player.speed === speed}
+              onClick={() => {
+                player.setSpeed(speed)
+              }}
+            >
+              {speed}×
+            </button>
+          ))}
+        </div>
         {lesson && onToggleNarrate && (
           <button
             type="button"
-            className={`rounded-md border border-border-card px-2 py-1 text-[11px] ${narrate ? 'text-ink' : 'text-ink-muted hover:text-ink'}`}
+            className="btn player__voice"
+            data-variant={narrate ? 'primary' : 'secondary'}
             aria-pressed={narrate ?? false}
             title={
               narrate
@@ -189,19 +190,13 @@ export function PlayerBar({
             }
             onClick={onToggleNarrate}
           >
-            {narrate ? '🔊 Voz' : '🔈 Voz'}
+            {narrate ? 'Voz activada' : 'Voz'}
           </button>
         )}
-        <button
-          type="button"
-          className="rounded-md border border-border-card px-2 py-1 text-[11px] text-ink-muted hover:text-ink"
-          onClick={onClose}
-        >
-          Salir
-        </button>
+        <IconButton icon="x" label="Salir del paso a paso" onClick={onClose} />
       </div>
 
-      {extras && <div className="mt-1.5">{extras}</div>}
+      {extras && <div className="player__extras">{extras}</div>}
 
       {lesson && moment && (
         <p className="player__caption" aria-live="polite">
@@ -209,9 +204,9 @@ export function PlayerBar({
           {plainNote(moment.text)}
         </p>
       )}
-      <p className="mt-1.5 text-[12px] text-ink" aria-live="polite">
-        <span className="type-code">{state ? describeEvent(program, state) : ''}</span>
-        {state?.event && <span className="ml-2 text-ink-faint">línea {state.event.l}</span>}
+      <p className="player__now" aria-live="polite">
+        <span>{state ? describeEvent(program, state) : ''}</span>
+        {state?.event && <span className="player__line">línea {state.event.l}</span>}
       </p>
       {state?.error && (
         <p role="alert" className="mt-0.5 text-[12px] text-[var(--chip-error-fg)]">
@@ -220,31 +215,28 @@ export function PlayerBar({
       )}
 
       {(variables.length > 0 || stack.length > 0) && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5" aria-label="Variables">
+        <div className="player__vars" aria-label="Variables">
           {stack.length > 0 && (
-            <span className="text-[11px] text-ink-faint" title="Las llamadas que están abiertas">
+            <span className="player__stack" title="Las llamadas que están abiertas">
               {stack.map((frame) => frame.fn).join(' › ')}
             </span>
           )}
           {variables.map((variable) => (
             <span
               key={variable.name}
-              className={`type-code rounded border px-1.5 py-0.5 text-[11px] ${
-                variable.changed
-                  ? 'border-[var(--accent)] text-ink'
-                  : 'border-border-card text-ink-muted'
-              }`}
+              className="player__var"
+              data-changed={variable.changed ? '' : undefined}
             >
-              {variable.name} = {variable.text}
+              <span className="player__var-name">{variable.name}</span>
+              <span className="player__var-eq">=</span>
+              <span className="type-code">{variable.text}</span>
             </span>
           ))}
         </div>
       )}
 
       {state && state.output !== '' && (
-        <pre className="type-code mt-1.5 max-h-20 overflow-auto rounded border border-border-card px-2 py-1 text-[11px] text-ink-muted">
-          {state.output}
-        </pre>
+        <pre className="type-code player__output">{state.output}</pre>
       )}
 
       {lesson && lesson.unreached > 0 && (

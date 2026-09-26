@@ -46,15 +46,15 @@ function Card({
   return (
     <section
       aria-label={title}
-      className={`flex min-w-0 flex-col rounded-md border border-border-card bg-surface-raised ${
+      className={`insight-card flex min-w-0 flex-col ${
         wide ? 'min-w-[300px] flex-[2_1_300px]' : 'min-w-[220px] flex-[1_1_220px]'
       }`}
     >
-      <header className="flex items-baseline justify-between gap-2 border-b border-border-card px-2 py-1">
-        <h3 className="text-[11px] font-semibold tracking-wide text-ink-muted">{title}</h3>
-        {hint && <span className="text-[10px] text-ink-faint">{hint}</span>}
+      <header className="insight-card__head">
+        <h3 className="insight-card__title">{title}</h3>
+        {hint && <span className="insight-card__hint">{hint}</span>}
       </header>
-      <div className="min-h-0 flex-1 overflow-auto p-2">{children}</div>
+      <div className="min-h-0 flex-1 overflow-auto px-3 pt-1 pb-3">{children}</div>
     </section>
   )
 }
@@ -711,10 +711,10 @@ export function InsightDock({
   return (
     <aside
       aria-label="Nodos para entender"
-      className={`flex gap-2 overflow-auto bg-void p-2 ${
+      className={`insight-dock flex gap-3 overflow-auto p-3 ${
         side
-          ? 'order-first w-[380px] shrink-0 flex-col border-r border-border-card [&>section]:min-w-0 [&>section]:flex-none'
-          : 'max-h-[42%] flex-wrap border-t border-border-card'
+          ? 'order-first w-[380px] shrink-0 flex-col [&>section]:min-w-0 [&>section]:flex-none'
+          : 'max-h-[42%] flex-wrap'
       }`}
     >
       {ask && <PredictionCard ask={ask} expected={expected} answer={answer} onChange={onAnswer} />}
@@ -742,22 +742,14 @@ export function InsightToggles({
   onToggle: (id: InsightId) => void
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Nodos para entender"
-      className="flex flex-wrap items-center gap-1"
-    >
-      <span className="text-[11px] text-ink-faint">Entender:</span>
+    <div role="group" aria-label="Nodos para entender" className="toggles">
+      <span className="toggles__label">Entender</span>
       {(Object.keys(INSIGHT_LABELS) as InsightId[]).map((id) => (
         <button
           key={id}
           type="button"
           aria-pressed={ids.includes(id)}
-          className={`rounded border px-1.5 py-0.5 text-[11px] ${
-            ids.includes(id)
-              ? 'border-[var(--accent)] text-ink'
-              : 'border-border-card text-ink-muted hover:text-ink'
-          }`}
+          className="toggle-pill"
           onClick={() => {
             onToggle(id)
           }}

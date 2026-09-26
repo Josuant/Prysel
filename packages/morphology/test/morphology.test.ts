@@ -10,7 +10,8 @@ import {
   complexityScale,
   controlHeight,
   diamondBand,
-  diamondSize,
+  GATEWAY,
+  questionSize,
   docHeadroom,
   extraHeight,
   getKind,
@@ -77,37 +78,39 @@ describe('el rombo de una decisión (diagrama de flujo)', () => {
     expect(g.handles.alt).toEqual({ x: 320, y: 46 })
   })
 
-  it('la pregunta cabe en la franja del medio, con el rombo a la medida de lo que pregunta', () => {
-    const cases: [ControlModel, Density][] = [
-      [{ kind: 'condition', field: 'n', operator: '>', value: '5', operators: ['>'] }, 'normal'],
-      [
-        {
-          kind: 'condition',
-          field: 'temperatura_media',
-          operator: '>=',
-          value: 'umbral_maximo',
-          operators: ['>='],
-        },
-        'expanded',
-      ],
+  it('el rombo tiene su franja: lo que cabe a la altura de su centro', () => {
+    const g = buildShape('diamond', 320, 92)
+    expect(92 - g.inset.top - g.inset.bottom).toBe(diamondBand(92))
+    expect(320 - g.inset.left - g.inset.right).toBeGreaterThan(0)
+  })
+})
+
+describe('la decisión como diagrama de flujo: la pregunta y, debajo, la bifurcación', () => {
+  it('la pregunta cabe en su píldora, con sus campos y los signos a cada lado', () => {
+    const cases: ControlModel[] = [
+      { kind: 'condition', field: 'n', operator: '>', value: '5', operators: ['>'] },
+      {
+        kind: 'condition',
+        field: 'temperatura_media',
+        operator: '>=',
+        value: 'umbral_maximo',
+        operators: ['>='],
+      },
     ]
-    for (const [model, density] of cases) {
-      const { w, h } = diamondSize(model, density, '')
-      const { inset } = buildShape('diamond', w, h)
-      // La franja útil: lo que queda entre los lados del rombo a la altura de la pregunta.
-      expect(h - inset.top - inset.bottom).toBe(diamondBand(h))
+    for (const model of cases) {
+      const { w } = questionSize(model, 'normal', '')
       const fields =
         model.kind === 'condition' ? (model.field.length + model.value.length) * 7.8 + 46 : 0
-      expect(w - inset.left - inset.right).toBeGreaterThan(fields)
+      expect(w).toBeGreaterThan(fields + 60)
     }
   })
 
-  it('en compacto es una pregunta corta: una etiqueta dentro de un rombo más bajo', () => {
-    const normal = diamondSize(undefined, 'normal', '¿x > 1?')
-    const compact = diamondSize(undefined, 'compact', '¿x > 1?')
+  it('deja sitio debajo para el tramo de espina y el rombo de la bifurcación', () => {
+    const normal = questionSize(undefined, 'normal', '¿x > 1?')
+    const compact = questionSize(undefined, 'compact', '¿x > 1?')
+    expect(normal.h).toBeGreaterThan(GATEWAY.gap + GATEWAY.size)
     expect(compact.h).toBeLessThan(normal.h)
-    const { inset } = buildShape('diamond', compact.w, compact.h)
-    expect(compact.w - inset.left - inset.right).toBeGreaterThan('¿x > 1?'.length * 7)
+    expect(compact.w).toBeGreaterThan('¿x > 1?'.length * 7)
   })
 })
 

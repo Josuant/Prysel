@@ -12,7 +12,7 @@ El tema solo puede hacer tres cosas, y el generador las verifica:
 2. **Añadir tipografía**: una familia `sans` para la interfaz, junto a la `mono` del DS, que se queda para el código y los valores.
 3. **Cambiar el valor de un token del DS**, solo dentro de `overrides` y **siempre con una razón escrita** — un test exige que cada una esté justificada, y otro falla si el token no existe (protege contra erratas).
 
-Los 14 overrides actuales están en `tokens.theme.json`; en resumen: la escala de grises pasa de crema cálido a neutro frío, `ink-faint` se oscurece, `line` se reserva para bordes de controles reales, el acento violeta se ajusta para poder usarse como texto, los colores de estado se alinean con sus chips y la sombra se suaviza en dos capas.
+Los 14 overrides actuales están en `tokens.theme.json`; en resumen: el lienzo es papel (un blanco roto apenas cálido; en oscuro, un grafito), `ink-faint` se oscurece, `line` se reserva para bordes de controles reales, el acento violeta se ajusta para poder usarse como texto, los colores de estado se alinean con sus chips y la sombra se suaviza en dos capas.
 
 ## Reglas que cambian
 
@@ -26,8 +26,8 @@ Los 14 overrides actuales están en `tokens.theme.json`; en resumen: la escala d
 | El nodo es una representación que se lee                                  | El nodo **se manipula**: cada tipo declara su editor (`control`) y un test exige que todo lo que no sea un contenedor tenga uno.                                                                                                                                                                       |
 | Control fino, datos gruesos (`stroke-control` 1.5 px, `stroke-data` 4 px) | **Al revés**, y por legibilidad: el **control** es continuo y grueso (3 px) porque es el orden de ejecución, la columna vertebral; los **datos** son finos y punteados (2 px) porque son dependencias. En un algoritmo denso, lo que manda ha de pesar más. Ambos tokens son del tema, no del DS base. |
 | Todos los nodos tienen entrada y salida                                   | Un literal no tiene entrada; `return` y `raise` no tienen salida; la condición tiene dos salidas separadas de verdad.                                                                                                                                                                                  |
-| Un Node se dibuja siempre como tarjeta                                    | Leída hacia abajo (diagrama de flujo), la **condición es un rombo** (`diamond`) con la pregunta dentro: el «sí» sale por el vértice de abajo y el «no» por el de la derecha. Solo cambia la silueta en ese modo; su firma de tipo (`card-fork`) sigue siendo única.                                    |
-| Control y datos se dibujan a la vez                                       | En el diagrama de flujo **solo se dibuja la secuencia** (trazo fino continuo de 1,6 px en `ink-muted`, con punta, punto de unión y «sí»/«no» junto al vértice); los datos son chips, nunca cables. Los canales gruesos/punteados de arriba quedan para la lectura a lo ancho.                          |
+| Un Node se dibuja siempre como tarjeta                                    | Leída hacia abajo (diagrama de flujo), una **decisión es su pregunta** en una píldora (`¿ campo operador valor ?`) y, debajo, **un rombo pequeño** donde se parte el camino: el «sí» sale por su vértice de abajo y el «no» por el de la derecha. Su firma de tipo (`card-fork`) sigue siendo única.   |
+| Control y datos se dibujan a la vez                                       | En el diagrama de flujo **solo se dibuja la secuencia** (trazo de 2 px en `flow-line`, esquinas amplias, punta, punto de unión y «sí»/«no» en pastillas junto al vértice); los datos son chips, nunca cables. Los canales gruesos/punteados de arriba quedan para la lectura a lo ancho.               |
 
 ## Reglas que se conservan
 
@@ -43,3 +43,27 @@ Los 14 overrides actuales están en `tokens.theme.json`; en resumen: la escala d
 1. **`ink-faint` no tenía margen de contraste.** En el DS original daba 4.81:1 sobre `void` en tema claro, así que cualquier tinte encima lo rompía. Oscurecerlo es lo que permite componer insignias y campos.
 2. **Hacía falta separar `line` de «borde de tarjeta».** Un borde decorativo de tarjeta no necesita 3:1 (la tarjeta se identifica por su relleno y su contenido), pero el borde de un campo editable sí. Por eso ahora hay `line` (3:1, controles) y `border-card` (decorativo).
 3. **El DS no define cuerpos semánticos.** Los 18 editores (`text`, `number`, `table`, `condition`, `stats`…) son nuevos y deberían volver al DS como componentes propios.
+
+## Cuaderno 2D (tema v3)
+
+Pedido del usuario con cinco referencias: un editor de nodos que se lee como código en píldoras (Enso), un
+selector con iconos de color en cuadraditos suaves, un constructor de flujos con su barra y su paleta, un editor
+de prompts con palabras de color y un «proceso» con una línea que fluye entre hitos. El objetivo: un Jupyter
+Notebook en 2D, amable para quien empieza y con fondo para quien ya sabe. Lo que cambia, siempre con tokens
+(un test sigue prohibiendo colores literales en el CSS):
+
+| Pieza             | Cómo se ve ahora                                                                                                                                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lienzo            | Papel (`void` claro `#f4f3ef`, oscuro `#111215`) con una retícula de puntos que se intuye. En la extensión ocupa todo, sin marco.                                                                                                                           |
+| Pasos             | Leídos como cuaderno (`MorphNode flow`), una línea es una **píldora** y lo demás una **tarjeta** redondeada; se dibujan sin recorte (`ShapeGeometry.radius`), así llevan una **sombra suave de verdad** (`shadow-card`, `shadow-lift` al pasar por encima). |
+| Selección         | Aro del acento con un halo; la línea de su secuencia se enciende en violeta con un brillo suave.                                                                                                                                                            |
+| Tipo de un paso   | Un **icono de color en un cuadradito pastel** (insignia solo con icono), no una etiqueta de texto.                                                                                                                                                          |
+| Campos            | Son parte de la frase: **sin caja** hasta que se pasa por encima o se escribe; un hueco por rellenar es una casilla discontinua; lo escrito se colorea por lo que es (`syntax-number`, `syntax-string`, `syntax-keyword`).                                  |
+| Chips (variables) | **Palabras de color**: relleno pastel de su clase de valor (`value-*-bg`), texto en su tono fuerte (`value-*-fg`, ≥ 4.5:1, con test), un relieve abajo como una tecla; al pasar se levantan. La × de un chip en su casilla aparece al pasar.                |
+| Números           | Un chip de número se pulsa y abre una **tarjeta con bocadillo**: el valor grande, un deslizador (de 0 a la siguiente potencia de diez) y el valor exacto; nada se escribe hasta «Guardar».                                                                  |
+| Territorios       | Un velo muy suave del color de su familia y un borde que apenas se ve, sin pestaña de carpeta; su cabecera es una frase (`para [h] en [alturas]`).                                                                                                          |
+| Barra             | A la izquierda, qué se ve (archivo, función); a la derecha, **Ejecutar** (sólido, con la flecha para las variantes), el estado del motor en una píldora con su punto, y «Paso a paso» / «Lección» como secundarias; deshacer y rehacer solo con icono.      |
+| Sobre el lienzo   | La densidad arriba a la derecha, **acercar / alejar / encuadrar** abajo a la derecha y **Añadir paso** abajo a la izquierda.                                                                                                                                |
+| Añadir            | Una **paleta con buscador** (sin tildes ni mayúsculas, también por la palabra de Python) y, por entrada, su icono en un cuadradito de color y una frase que dice para qué sirve. Bajo cada paso, un **«+»** sobre la espina añade el siguiente ahí mismo.   |
+| Paso a paso       | Una tarjeta al pie con botones redondos, una línea de tiempo con un **rombo por cada momento** de la lección, la velocidad como selector y las variables como chips.                                                                                        |
+| Número de línea   | Una pista que aparece al pasar por un paso: en reposo no ensucia el diagrama.                                                                                                                                                                               |

@@ -4,10 +4,15 @@ import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
 import {
   AddNodeMenu,
+  Button,
   Canvas,
   type CanvasNode,
   type NodeMenuItem,
   FunctionMenu,
+  Icon,
+  IconButton,
+  SplitButton,
+  StatusPill,
   addPlace,
   toCanvasNodes,
   useProgramView,
@@ -670,101 +675,90 @@ export function App() {
 
   return (
     <div ref={rootRef} className="flex h-full flex-col">
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border-card px-3 py-2">
-        <span className="text-xs font-semibold tracking-widest text-ink-faint">PRYSEL</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-ink-muted" title={file ?? undefined}>
-          {file ?? 'Sin archivo Python'}
-        </span>
-        <span className="text-[11px] text-ink-faint" aria-live="polite">
+      <header className="appbar">
+        <div className="appbar__lead">
+          <span className="appbar__mark" aria-hidden>
+            P
+          </span>
+          <span className="appbar__file" title={file ?? undefined}>
+            <Icon name="file" size={14} />
+            <span className="appbar__file-name">
+              {file ? baseName(file) : 'Sin archivo Python'}
+            </span>
+          </span>
+          <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
+        </div>
+        <span className="sr-only" aria-live="polite">
           {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
         </span>
         {program && (
-          <RunControls
-            kernel={kernel}
-            problem={problem}
-            hasSelection={selected !== null}
-            onRunAll={() => {
-              run('all')
-            }}
-            onRunSelected={() => {
-              if (selected !== null) run([selected])
-            }}
-            onInterrupt={() => {
-              post({ type: 'interrupt' })
-            }}
-            onRestart={() => {
-              post({ type: 'restart' })
-            }}
-          />
-        )}
-        {program && (
-          <button
-            type="button"
-            className="rounded-md border border-border-card bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40"
-            disabled={version === null || recording?.status === 'running'}
-            title={
-              recording?.status === 'failed'
-                ? recording.message
-                : 'Reproduce el programa línea a línea'
-            }
-            onClick={() => {
-              if (version !== null) post({ type: 'trace', version })
-            }}
-          >
-            {recording?.status === 'running' ? 'Grabando…' : '▶ Paso a paso'}
-          </button>
-        )}
-        {program && file && (
-          <button
-            type="button"
-            className="rounded-md border border-border-card bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink"
-            title={
-              lesson
-                ? 'Abrir el guion de la lección'
-                : 'Crea el guion de la lección de este archivo (un .lesson.json junto a él)'
-            }
-            onClick={() => {
-              post({ type: 'newLesson' })
-            }}
-          >
-            {lesson ? `Lección: ${lesson.title}` : '＋ Lección'}
-          </button>
-        )}
-        <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
-        {program && <AddNodeMenu onAdd={add} where={addWhere} />}
-        {program && (
-          <div
-            role="group"
-            aria-label="Deshacer y rehacer lo cambiado en el lienzo"
-            className="flex overflow-hidden rounded-md border border-border-card"
-          >
-            <button
-              type="button"
-              className="bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40"
+          <div className="appbar__actions">
+            <RunControls
+              kernel={kernel}
+              problem={problem}
+              hasSelection={selected !== null}
+              onRunAll={() => {
+                run('all')
+              }}
+              onRunSelected={() => {
+                if (selected !== null) run([selected])
+              }}
+              onInterrupt={() => {
+                post({ type: 'interrupt' })
+              }}
+              onRestart={() => {
+                post({ type: 'restart' })
+              }}
+            />
+            <span className="appbar__sep" aria-hidden />
+            <Button
+              icon="step"
+              disabled={version === null || recording?.status === 'running'}
+              title={
+                recording?.status === 'failed'
+                  ? recording.message
+                  : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
+              }
+              onClick={() => {
+                if (version !== null) post({ type: 'trace', version })
+              }}
+            >
+              {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
+            </Button>
+            {file && (
+              <Button
+                icon="book"
+                title={
+                  lesson
+                    ? 'Abrir el guion de la lección'
+                    : 'Crea el guion de la lección de este archivo (un .lesson.json junto a él)'
+                }
+                onClick={() => {
+                  post({ type: 'newLesson' })
+                }}
+              >
+                {lesson ? lesson.title : 'Lección'}
+              </Button>
+            )}
+            <span className="appbar__sep" aria-hidden />
+            <IconButton
+              icon="undo"
+              label="Deshacer lo último que se cambió en el lienzo (Ctrl+Z)"
               disabled={history.undo === 0}
-              aria-label="Deshacer"
-              title="Deshacer lo último que se cambió en el lienzo (Ctrl+Z)"
               onClick={() => {
                 post({ type: 'undo' })
               }}
-            >
-              ↶
-            </button>
-            <button
-              type="button"
-              className="bg-surface px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40"
+            />
+            <IconButton
+              icon="redo"
+              label="Rehacer (Ctrl+Mayús+Z)"
               disabled={history.redo === 0}
-              aria-label="Rehacer"
-              title="Rehacer (Ctrl+Mayús+Z)"
               onClick={() => {
                 post({ type: 'redo' })
               }}
-            >
-              ↷
-            </button>
+            />
           </div>
         )}
-        <DensityControl value={density} onChange={changeDensity} />
       </header>
 
       {lessonError && (
@@ -787,7 +781,7 @@ export function App() {
       )}
 
       <div className={`flex min-h-0 flex-1 ${wide ? 'flex-row' : 'flex-col'}`}>
-        <main className="min-h-0 min-w-0 flex-1 p-3">
+        <main className="relative min-h-0 min-w-0 flex-1">
           {program && program.nodes.length > 0 ? (
             <ErrorBoundary label="No se pudo dibujar el lienzo" resetKey={program}>
               <Canvas
@@ -822,6 +816,7 @@ export function App() {
                 selected={selected}
                 onSelect={setSelected}
                 axis="vertical"
+                framed={false}
                 interactive
                 height="fill"
                 fitKey={view.viewKey}
@@ -830,10 +825,21 @@ export function App() {
                 showStatus={started}
                 ariaLabel={canvasLabel}
                 animate={!reducedMotion}
+                controls
               />
             </ErrorBoundary>
           ) : (
             <EmptyState />
+          )}
+          {program && (
+            <>
+              <div className="canvas-float" data-at="top-right">
+                <DensityControl value={density} onChange={changeDensity} />
+              </div>
+              <div className="canvas-float" data-at="bottom-left">
+                <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
+              </div>
+            </>
           )}
         </main>
 
@@ -942,7 +948,16 @@ export function App() {
   )
 }
 
-/** Los botones de ejecución y cómo está el motor. */
+/** Cómo se enseña cada estado del motor: una palabra y un tono. */
+const KERNEL_TONE: Record<KernelStatus, 'idle' | 'ready' | 'busy' | 'error'> = {
+  stopped: 'idle',
+  starting: 'busy',
+  idle: 'ready',
+  busy: 'busy',
+  dead: 'error',
+}
+
+/** Ejecutar (la acción principal, con sus variantes en la flecha) y cómo está el motor. */
 function RunControls({
   kernel,
   problem,
@@ -961,50 +976,43 @@ function RunControls({
   onRestart: () => void
 }) {
   const busy = kernel === 'busy' || kernel === 'starting'
-  const button =
-    'px-2 py-1 text-[11px] text-ink-muted hover:text-ink disabled:opacity-40 disabled:hover:text-ink-muted'
   return (
-    <div className="flex items-center gap-2">
-      <div
-        role="group"
-        aria-label="Ejecución"
-        className="flex overflow-hidden rounded-md border border-border-card bg-surface"
-      >
-        <button type="button" className={button} onClick={onRunAll} disabled={busy}>
-          ▶ Todo
-        </button>
-        <button
-          type="button"
-          className={button}
-          onClick={onRunSelected}
-          disabled={busy || !hasSelection}
-          title="Ejecuta el nodo seleccionado y lo que necesita (Mayús+Intro)"
-        >
-          ▶ Selección
-        </button>
-        <button type="button" className={button} onClick={onInterrupt} disabled={kernel !== 'busy'}>
-          ■ Parar
-        </button>
-        <button
-          type="button"
-          className={button}
-          onClick={onRestart}
-          disabled={kernel === 'stopped'}
-        >
-          ↻ Reiniciar
-        </button>
-      </div>
-      <span
-        className={`text-[11px] ${kernel === 'dead' ? 'text-[var(--chip-error-fg)]' : 'text-ink-faint'}`}
-        title={problem ?? undefined}
-        aria-live="polite"
-      >
-        {KERNEL_LABEL[kernel]}
-      </span>
-    </div>
+    <>
+      <StatusPill
+        tone={KERNEL_TONE[kernel]}
+        label={KERNEL_LABEL[kernel]}
+        {...(problem ? { title: problem } : {})}
+      />
+      <SplitButton
+        icon="play"
+        label="Ejecutar"
+        title="Ejecuta todo el programa"
+        disabled={busy}
+        onClick={onRunAll}
+        menuLabel="Más formas de ejecutar"
+        actions={[
+          { label: 'Ejecutar todo', icon: 'play', disabled: busy, onClick: onRunAll },
+          {
+            label: 'Ejecutar la selección',
+            icon: 'play',
+            hint: 'Mayús+Intro',
+            disabled: busy || !hasSelection,
+            onClick: onRunSelected,
+          },
+          { label: 'Detener', icon: 'stop', disabled: kernel !== 'busy', onClick: onInterrupt },
+          {
+            label: 'Reiniciar el motor',
+            icon: 'rotate',
+            disabled: kernel === 'stopped',
+            onClick: onRestart,
+          },
+        ]}
+      />
+    </>
   )
 }
 
+/** Cuánto detalle enseña el lienzo: compacto (la vista de pájaro), normal o expandido. */
 function DensityControl({
   value,
   onChange,
@@ -1013,27 +1021,28 @@ function DensityControl({
   onChange: (next: Density) => void
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Densidad del lienzo"
-      className="flex overflow-hidden rounded-md border border-border-card bg-surface"
-    >
+    <div role="group" aria-label="Densidad del lienzo" className="segmented segmented--float">
       {DENSITIES.map((d) => (
         <button
           key={d}
           type="button"
+          className="segmented__item"
           aria-pressed={d === value}
           aria-label={`Densidad ${DENSITY_LABELS[d]}`}
-          onClick={() => onChange(d)}
-          className={`px-2 py-1 text-[11px] ${
-            d === value ? 'bg-ink text-void' : 'text-ink-muted hover:text-ink'
-          }`}
+          onClick={() => {
+            onChange(d)
+          }}
         >
           {DENSITY_LABELS[d]}
         </button>
       ))}
     </div>
   )
+}
+
+/** El nombre del archivo, sin su carpeta. */
+function baseName(file: string): string {
+  return file.split(/[\\/]/).pop() ?? file
 }
 
 function EmptyState() {

@@ -8,6 +8,7 @@ import {
   type Node,
 } from '@xyflow/react'
 import {
+  GATEWAY,
   buildShape,
   getKind,
   shapeFor,
@@ -93,6 +94,11 @@ export interface PryselNodeData extends Record<string, unknown> {
   litSlots?: readonly string[] | undefined
   /** Se ensancha a mano (solo las funciones dibujadas como territorio). */
   onResize?: (id: string, size: { w: number; h: number }) => void
+  /**
+   * Añadir un paso justo después de este (el «+» que aparece bajo él): dónde se pulsó, en la pantalla, para
+   * abrir ahí lo que se puede crear.
+   */
+  onAddAfter?: (id: string, at: { x: number; y: number }) => void
   phase: MotionPhase
   onControlChange?: (id: string, next: ControlModel) => void
   onNodeEdit?: (id: string, edit: NodeEdit) => void
@@ -100,6 +106,14 @@ export interface PryselNodeData extends Record<string, unknown> {
 }
 
 export type PryselFlowNode = Node<PryselNodeData, 'prysel'>
+
+/** Tras estos no sigue nada en su bloque: no ofrecen añadir un paso debajo. */
+const JUMP_KINDS: ReadonlySet<string> = new Set([
+  'control.return',
+  'control.raise',
+  'control.break',
+  'control.continue',
+])
 
 /**
  * El carril de repetición de un bucle leído hacia abajo: desde el pie del cuerpo, en la espina (donde llegan
@@ -167,12 +181,16 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
    * abajo), y las variables van en chips, sin cables. Una decisión es un rombo.
    */
   const flow = !horizontal
+  /**
+   * Una decisión, leída como diagrama de flujo: la pregunta en una píldora y, debajo, el rombo donde se parte
+   * el camino («sí» por su vértice de abajo, «no» por el de la derecha).
+   */
   const diamond = flow && !container && node.kind === 'control.condition'
-  const geo = buildShape(
-    container ? territoryShape(spec) : diamond ? 'diamond' : shapeFor(spec, density),
-    size.w,
-    size.h,
-  )
+  const geo = buildShape(container ? territoryShape(spec) : shapeFor(spec, density), size.w, size.h)
+  /** Lo que ocupa la pregunta: todo el nodo menos el tramo de espina y el rombo de debajo. */
+  const cardSize = diamond ? { w: size.w, h: size.h - GATEWAY.gap - GATEWAY.size } : size
+  /** El centro del rombo de la bifurcación. */
+  const gate = { x: size.w / 2, y: size.h - GATEWAY.size / 2 }
 
   const handleSlots = useCallback((measured: MeasuredSlot[]) => {
     setSlots(measured)
@@ -349,20 +367,48 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
               position={Position.Right}
               isConnectable={false}
               className="note-handle"
+              style={{ left: gate.x + GATEWAY.size / 2, right: 'auto', top: gate.y }}
             />
           )}
         </>
       )}
       {axis === 'vertical' && node.line !== undefined && (
-        <span
-          className="flow-step"
-          aria-hidden
-          title={`Línea ${node.line}`}
-          // Junto a un rombo, en su esquina vacía: a su izquierda pasan los carriles.
-          {...(diamond ? { 'data-diamond': '' } : {})}
-        >
+        <span className="flow-step" aria-hidden title={`Línea ${node.line}`}>
           {node.line}
         </span>
+      )}
+      {/* Añadir el paso siguiente: un «+» sobre la espina, justo debajo (tras un salto no sigue nada). */}
+      {flow && data.onAddAfter && !diamond && !JUMP_KINDS.has(node.kind) && (
+        <button
+          type="button"
+          className="step-add nodrag"
+          style={{ left: spineX }}
+          aria-label={`Añadir un paso después de ${node.label}`}
+          title="Añadir un paso aquí"
+          onClick={(event) => {
+            event.stopPropagation()
+            data.onAddAfter?.(id, { x: event.clientX, y: event.clientY })
+          }}
+        >
+          <Icon name="plus" size={12} />
+        </button>
+      )}
+      {/* La bifurcación: un tramo de espina bajo la pregunta y el rombo donde se parte el camino. */}
+      {diamond && (
+        <svg
+          className="gateway"
+          width={size.w}
+          height={GATEWAY.gap + GATEWAY.size}
+          style={{ top: cardSize.h }}
+          aria-hidden
+        >
+          <path className="gateway__stub" d={`M ${gate.x} 0 V ${GATEWAY.gap}`} />
+          <path
+            className="gateway__shape"
+            transform={`translate(${gate.x - GATEWAY.size / 2} ${GATEWAY.gap})`}
+            d={buildShape('diamond', GATEWAY.size, GATEWAY.size).d}
+          />
+        </svg>
       )}
       {container && node.laps && (
         <div
@@ -680,7 +726,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
                 position={diamond ? Position.Bottom : orderOut}
                 className="order-port"
                 data-branch="yes"
-                style={diamond ? { left: '50%' } : acrossEdge(25)}
+                style={diamond ? { left: '50%', bottom: -14 } : acrossEdge(25)}
                 title="Al principio del camino verdadero"
                 isConnectable
               />
@@ -692,7 +738,11 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
                   position={orderOut}
                   className="order-port"
                   data-branch="no"
-                  style={diamond ? { top: '50%' } : acrossEdge(75)}
+                  style={
+                    diamond
+                      ? { left: gate.x + GATEWAY.size / 2 + 12, right: 'auto', top: gate.y }
+                      : acrossEdge(75)
+                  }
                   title="Al principio del camino falso (else)"
                   isConnectable
                 />
@@ -714,9 +764,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
           <Handle
             type="source"
             id="order-out"
-            position={diamond ? Position.Bottom : orderOut}
+            position={orderOut}
             className="order-port"
-            {...(diamond ? { style: { left: '88%' } } : {})}
             title="Lo que sigue: arrastra a un nodo para ponerlo detrás de este"
             isConnectable
           />
@@ -748,11 +797,12 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         {...(node.editable ? { editable: node.editable } : {})}
         {...(node.scope ? { suggestions: node.scope } : {})}
         density={density}
-        size={size}
+        size={cardSize}
         state={state}
         {...(modifier ? { modifier } : {})}
         container={container}
-        {...(diamond ? { diamond: true } : {})}
+        {...(diamond ? { question: true } : {})}
+        flow={flow}
         renameSignal={data.renameSignal ?? 0}
         showStatus={data.showStatus}
         // Los puertos los dibuja React Flow a partir de los Handle: aquí solo se miden.

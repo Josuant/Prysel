@@ -31,7 +31,15 @@ export {
   type SourceNode,
 } from './program.ts'
 export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'
-export { AddNodeMenu, type AddNodeMenuProps } from './AddNodeMenu.tsx'
+export { AddNodeMenu, findTemplates, type AddNodeMenuProps } from './AddNodeMenu.tsx'
+export {
+  Button,
+  IconButton,
+  SplitButton,
+  StatusPill,
+  type ButtonProps,
+  type MenuAction,
+} from './chrome.tsx'
 export { addPlace, checkConnection, type Link, type Verdict } from './connect.ts'
 export { CodePanel, type CodePanelProps } from './CodePanel.tsx'
 export type { NodeMenuItem } from './NodeMenu.tsx'

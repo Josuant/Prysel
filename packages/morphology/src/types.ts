@@ -110,6 +110,19 @@ export type IconId =
   | 'lock'
   | 'flag'
   | 'switch'
+  // La interfaz de la aplicación (barra, controles del lienzo, paleta): no son identidades de nodo.
+  | 'play'
+  | 'stop'
+  | 'rotate'
+  | 'undo'
+  | 'redo'
+  | 'minus'
+  | 'frame'
+  | 'search'
+  | 'file'
+  | 'book'
+  | 'step'
+  | 'grid'
 
 /**
  * El editor gráfico que el nodo muestra en su cuerpo. Es lo que hace que un nodo sea
@@ -196,6 +209,11 @@ export interface ShapeGeometry {
   headerBand?: number
   /** Cuánto se sale la geometría de w×h (capas traseras de una pila). */
   overflow: Insets
+  /**
+   * Si la silueta es un rectángulo redondeado (tarjeta, píldora, territorio), el radio de sus esquinas: se
+   * puede dibujar con `border-radius`, sin recorte, y así lleva una sombra de verdad.
+   */
+  radius?: number
 }
 
 export interface Metrics {

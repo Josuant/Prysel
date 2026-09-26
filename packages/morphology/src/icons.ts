@@ -58,6 +58,20 @@ export const ICONS: Record<IconId, string> = {
   // Una bandera de salida: por aquí empieza a correr el archivo.
   flag: 'M6 20.5v-17M6 4.5h12l-3 3.7 3 3.8H6',
   switch: 'M3.5 12h5M8.5 12l6-6.5h6M8.5 12h12M8.5 12l6 6.5h6',
+  // ── La interfaz de la aplicación ──
+  play: 'M8 5.8v12.4a.8.8 0 0 0 1.2.7l9.6-6.2a.8.8 0 0 0 0-1.4L9.2 5.1A.8.8 0 0 0 8 5.8Z',
+  stop: 'M7.5 6.5h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Z',
+  rotate: 'M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4',
+  undo: 'M9 7.5 4.5 12 9 16.5M4.5 12h10a5 5 0 0 1 0 10h-2',
+  redo: 'M15 7.5 19.5 12 15 16.5M19.5 12h-10a5 5 0 0 0 0 10h2',
+  minus: 'M5.5 12h13',
+  frame:
+    'M4.5 9V6.5a2 2 0 0 1 2-2H9M15 4.5h2.5a2 2 0 0 1 2 2V9M19.5 15v2.5a2 2 0 0 1-2 2H15M9 19.5H6.5a2 2 0 0 1-2-2V15',
+  search: `${circle(11, 11, 6)}M15.5 15.5l4 4`,
+  file: 'M13.5 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8.5zM13.5 3.5v5h5',
+  book: 'M5 5.5A2 2 0 0 1 7 3.5h12v14H7a2 2 0 0 0-2 2zM5 19.5a2 2 0 0 0 2 2h12v-4M9 7.5h6',
+  step: 'M6 5.5v13M10 6.2v11.6a.7.7 0 0 0 1.1.6l8.3-5.8a.7.7 0 0 0 0-1.2L11.1 5.6a.7.7 0 0 0-1.1.6Z',
+  grid: 'M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z',
 }
 
 export const ICON_IDS = Object.keys(ICONS) as IconId[]

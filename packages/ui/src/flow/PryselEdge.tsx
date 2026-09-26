@@ -93,6 +93,8 @@ export function PryselEdge({
         { x: targetX, y: targetY },
         {
           exit: flow.exit,
+          // Esquinas amplias: la secuencia se lee como una línea que fluye, no como un cable.
+          radius: 14,
           ...(flow.lane === undefined ? {} : { lane: flow.lane }),
           ...(flow.bend === undefined ? {} : { join: flow.bend }),
         },
@@ -213,12 +215,13 @@ export function PryselEdge({
           <div
             className="edge__tag type-badge"
             data-exit={flow.exit}
+            data-tag={flow.tag}
             data-emphasis={data?.emphasis}
             style={{
               transform:
                 flow.exit === 'right'
-                  ? `translate(${sourceX + 8}px, ${sourceY - 18}px)`
-                  : `translate(${sourceX + 7}px, ${sourceY + 3}px)`,
+                  ? `translate(${sourceX + 8}px, ${sourceY - 22}px)`
+                  : `translate(${sourceX + 8}px, ${sourceY + 4}px)`,
             }}
           >
             {flow.tag}

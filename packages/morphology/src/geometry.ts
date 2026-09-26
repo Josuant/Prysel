@@ -8,8 +8,8 @@ import type { Insets, ShapeGeometry, ShapeId } from './types.ts'
 
 const num = (v: number) => String(Math.round(v * 100) / 100)
 
-const R_CARD = 14
-const R_SPACE = 20
+const R_CARD = 16
+const R_SPACE = 22
 /** Profundidad de la punta de una flecha: fija, para que no crezca con el nodo. */
 const TIP = 14
 /** Alto de la pestaña de una función y de la barra de título de una ventana. */
@@ -65,7 +65,7 @@ const shape = (
 })
 
 const builders: Record<ShapeId, Builder> = {
-  card: (w, h) => shape(roundRect(w, h, R_CARD), w, h),
+  card: (w, h) => shape(roundRect(w, h, R_CARD), w, h, { radius: Math.min(R_CARD, w / 2, h / 2) }),
 
   /** Tarjeta con punta de flecha: el dato entra por la izquierda y sale transformado. */
   'card-chevron': (w, h) => {
@@ -237,7 +237,8 @@ const builders: Record<ShapeId, Builder> = {
     })
   },
 
-  pill: (w, h) => shape(roundRect(w, h, h / 2), w, h, { inset: inset(0, 12, 0, 12) }),
+  pill: (w, h) =>
+    shape(roundRect(w, h, h / 2), w, h, { inset: inset(0, 12, 0, 12), radius: Math.min(w, h) / 2 }),
 
   'pill-chevron': (w, h) => {
     const r = h / 2
@@ -257,7 +258,11 @@ const builders: Record<ShapeId, Builder> = {
   },
 
   /** Territorio: un contenedor que abarca otros nodos. */
-  frame: (w, h) => shape(roundRect(w, h, R_SPACE), w, h, { inset: inset(10, 16, 14, 16) }),
+  frame: (w, h) =>
+    shape(roundRect(w, h, R_SPACE), w, h, {
+      inset: inset(10, 16, 14, 16),
+      radius: Math.min(R_SPACE, w / 2, h / 2),
+    }),
 
   /** Dos carriles físicamente separados: la bifurcación es real. */
   'frame-fork': (w, h) =>

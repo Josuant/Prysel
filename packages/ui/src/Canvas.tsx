@@ -12,8 +12,8 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import {
-  diamondSize,
   extraHeight,
+  questionSize,
   isLineCard,
   lineHeight,
   lineWidth,
@@ -57,6 +57,7 @@ import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
 import { QuickAdd } from './QuickAdd.tsx'
 import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
+import { IconButton } from './chrome.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
 import { viewerSize, type ViewerContent } from './viewer.ts'
@@ -241,6 +242,13 @@ export interface CanvasProps {
   cursor?: string | null
   /** Etiqueta accesible del lienzo, leída por lectores de pantalla. */
   ariaLabel?: string
+  /**
+   * Con marco (borde y esquinas redondeadas): un lienzo dentro de una página. Sin él, ocupa su sitio de borde a
+   * borde, como el lienzo de una aplicación.
+   */
+  framed?: boolean
+  /** Enseña los controles flotantes del lienzo (acercar, alejar, encuadrar todo). */
+  controls?: boolean
   className?: string
 }
 
@@ -351,6 +359,8 @@ function CanvasInner({
   fitKey = '',
   cursor = null,
   ariaLabel,
+  framed = true,
+  controls = false,
   className,
 }: CanvasProps) {
   // Lo que el usuario hace sobre el diagrama (mover, seleccionar, recorrer) pertenece a «lo que
@@ -433,7 +443,9 @@ function CanvasInner({
   }>({ key: fitKey, sizes: {} })
   const resized = resizedState.key === fitKey ? resizedState.sizes : NO_SIZES
 
-  const { setViewport, getViewport, setCenter } = useReactFlow()
+  const { setViewport, getViewport, setCenter, zoomIn, zoomOut } = useReactFlow()
+  /** Sube cada vez que se pide encuadrar todo otra vez (el botón del lienzo): rehace el encuadre. */
+  const [refits, setRefits] = useState(0)
   /**
    * Cuánto mide de largo una fila del diagrama según el ancho del lienzo: en un panel estrecho se pliega
    * antes, para que el programa se lea a un zoom legible y crezca en alto (ver `fit.ts`).
@@ -656,8 +668,8 @@ function CanvasInner({
             : isChipKind(node)
               ? chipSize(node)
               : flow && isDecision(node)
-                ? // Leído como diagrama de flujo, una decisión es un rombo con su pregunta dentro.
-                  diamondSize(node.control, d, node.label, node.code)
+                ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
+                  questionSize(node.control, d, node.label, node.code)
                 : d === 'normal' && isLineCard(node.kind, node.control)
                   ? // Una operación o una llamada: una sola línea, con su nombre como chip.
                     {
@@ -1256,6 +1268,15 @@ function CanvasInner({
     [fitKey],
   )
 
+  /** El «+» bajo un paso: se ofrece lo que se puede crear justo después, ahí donde se pulsó. */
+  const onAddAfter = useCallback((id: string, at: { x: number; y: number }) => {
+    const frame = frameRef.current?.getBoundingClientRect()
+    if (!frame) return
+    setMenu(null)
+    setQuick(null)
+    setOrderAdd({ from: id, port: 'order-out', x: at.x - frame.left + 12, y: at.y - frame.top })
+  }, [])
+
   /** Las funciones que se ven, con dónde están ahora: sobre ellas se puede soltar un nodo. */
   const territories = useMemo(
     () =>
@@ -1419,6 +1440,7 @@ function CanvasInner({
               : null,
           ...(connectable ? { onAddChip, onClearChip } : {}),
           ...(container && interactive ? { onResize } : {}),
+          ...(flow && connectable ? { onAddAfter } : {}),
           phase: item.phase,
           ...(onControlChange ? { onControlChange: changeControl } : {}),
           ...(onAction ? { onNodeEdit } : {}),
@@ -1929,7 +1951,7 @@ function CanvasInner({
   )
 
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
-  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}`
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}`
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
    * no hace falta que la vista lo redescubra midiendo el DOM (que además llega tarde).
@@ -1993,7 +2015,7 @@ function CanvasInner({
     // El lienzo recoge el teclado (Supr, Mayús+F) cuando se ha hecho clic en él.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
     <div
-      className={['canvas stage rounded-lg border border-border-card', className]
+      className={['canvas stage', framed ? 'rounded-lg border border-border-card' : '', className]
         .filter(Boolean)
         .join(' ')}
       ref={frameRef}
@@ -2183,7 +2205,35 @@ function CanvasInner({
         // cubre todo el interior y se tragaría los clics de sus hijos. El orden lo decide el lienzo.
         elevateNodesOnSelect={false}
       >
-        {interactive && <Background variant={BackgroundVariant.Dots} gap={22} size={1.2} />}
+        {interactive && <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} />}
+        {interactive && controls && (
+          <Panel position="bottom-right" className="canvas-controls">
+            <IconButton
+              icon="plus"
+              label="Acercar"
+              onClick={() => {
+                void zoomIn({ duration: animate ? 180 : 0 })
+              }}
+            />
+            <IconButton
+              icon="minus"
+              label="Alejar"
+              onClick={() => {
+                void zoomOut({ duration: animate ? 180 : 0 })
+              }}
+            />
+            <span className="canvas-controls__sep" aria-hidden />
+            <IconButton
+              icon="frame"
+              label="Encuadrar todo"
+              onClick={() => {
+                // Vuelve a encuadrar como al principio: el lienzo deja de estar «tomado» por el usuario.
+                setTakenKey(null)
+                setRefits((n) => n + 1)
+              }}
+            />
+          </Panel>
+        )}
         {interactive && Object.keys(moved).length > 0 && (
           <Panel position="top-right">
             <button

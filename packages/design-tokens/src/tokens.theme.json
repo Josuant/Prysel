@@ -1,32 +1,32 @@
 {
-  "name": "Prysel — tema v2",
-  "version": 2,
+  "name": "Prysel — tema v3 (cuaderno 2D)",
+  "version": 3,
   "overrides": [
     {
       "name": "void",
       "value": {
-        "light": "#f5f6f8",
-        "dark": "#0e1014"
+        "light": "#f4f3ef",
+        "dark": "#111215"
       },
-      "reason": "El lienzo pasa de crema cálido a un gris neutro y frío: las insignias pastel y el acento violeta necesitan un fondo sin temperatura propia.",
+      "reason": "El lienzo vuelve a ser papel: un blanco roto apenas cálido, como el de un cuaderno (referencia del usuario: editores de nodos tipo Enso). Las tarjetas blancas y los chips pastel se despegan de él sin necesitar bordes.",
       "usage": "Fondo del canvas — el territorio donde el programa existe físicamente."
     },
     {
       "name": "surface",
       "value": {
         "light": "#ffffff",
-        "dark": "#161a21"
+        "dark": "#1b1c21"
       },
-      "reason": "Las tarjetas son blancas y limpias; el color de tipo vive en la insignia, no en el relleno.",
+      "reason": "Las tarjetas son blancas y limpias; en oscuro, un gris azulado apenas más claro que el lienzo, para que la sombra y no el borde las separe.",
       "usage": "Fondo de una tarjeta de nodo o panel, dibujada sobre void."
     },
     {
       "name": "surface-raised",
       "value": {
         "light": "#ffffff",
-        "dark": "#1c212a"
+        "dark": "#23252b"
       },
-      "reason": "En claro, una tarjeta elevada se distingue por su sombra, no por un blanco distinto.",
+      "reason": "En claro, una tarjeta elevada se distingue por su sombra, no por un blanco distinto; en oscuro sube un escalón de luz.",
       "usage": "Fondo de un nodo expandido o enfocado, y del panel de Magic Lens."
     },
     {
@@ -68,10 +68,10 @@
     {
       "name": "line-faint",
       "value": {
-        "light": "#dde1e7",
-        "dark": "#2a313c"
+        "light": "#e3e1db",
+        "dark": "#2c2e35"
       },
-      "reason": "Neutralizada junto con el resto de la escala de grises del tema.",
+      "reason": "Neutralizada hacia el papel del lienzo: las líneas casi invisibles no deben enfriarlo.",
       "usage": "Puertos y conectores en reposo — deliberadamente casi invisibles; nunca portador de texto o de estado."
     },
     {
@@ -122,10 +122,10 @@
     {
       "name": "shadow-raised",
       "value": {
-        "light": "0 4px 12px rgba(16, 20, 24, 0.08), 0 1px 3px rgba(16, 20, 24, 0.06)",
-        "dark": "0 6px 18px rgba(0, 0, 0, 0.5)"
+        "light": "0 2px 6px rgba(28, 25, 20, 0.06), 0 16px 36px -12px rgba(28, 25, 20, 0.2)",
+        "dark": "0 2px 6px rgba(0, 0, 0, 0.5), 0 18px 40px -14px rgba(0, 0, 0, 0.7)"
       },
-      "reason": "Sombra en dos capas, más suave y difusa, como la de las tarjetas de referencia.",
+      "reason": "Sombra en dos capas, suave y difusa, como la de las tarjetas flotantes de las referencias (menús, paneles, un chip que se levanta).",
       "usage": "Elevación de un nodo expandido o enfocado, y del panel de Magic Lens."
     }
   ],
@@ -134,42 +134,42 @@
       {
         "name": "border-card",
         "value": {
-          "light": "#e5e8ee",
-          "dark": "#262c36"
+          "light": "#ebe9e4",
+          "dark": "#2a2c33"
         },
-        "usage": "Borde decorativo de una tarjeta de nodo. Nunca es el único indicio de que algo es una tarjeta (siempre hay relleno, insignia y texto), por eso no necesita 3:1."
+        "usage": "Borde decorativo de una tarjeta: un pelo apenas visible. Nunca es el único indicio de que algo es una tarjeta (siempre hay relleno, sombra y texto), por eso no necesita 3:1."
       },
       {
         "name": "socket-number",
         "value": {
-          "light": "#0b7fa0",
-          "dark": "#4cc9ea"
+          "light": "#c0502f",
+          "dark": "#ff9d7e"
         },
-        "usage": "Puerto y cable que transportan número, en tono cian. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+        "usage": "Puerto y cable que transportan número, en tono coral (el de los chips de número). Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
       },
       {
         "name": "socket-text",
         "value": {
-          "light": "#0b7a5a",
-          "dark": "#4dd6a8"
+          "light": "#1f8350",
+          "dark": "#74d6a2"
         },
-        "usage": "Puerto y cable que transportan texto, en tono esmeralda. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+        "usage": "Puerto y cable que transportan texto, en tono verde (el de los chips de texto). Es una ayuda, no la única señal."
       },
       {
         "name": "socket-boolean",
         "value": {
-          "light": "#a86200",
-          "dark": "#f0b04a"
+          "light": "#7048d0",
+          "dark": "#bba7ff"
         },
-        "usage": "Puerto y cable que transportan verdadero / falso, en tono ámbar. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+        "usage": "Puerto y cable que transportan verdadero / falso, en tono violeta (el de los chips de verdadero/falso). Es una ayuda, no la única señal."
       },
       {
         "name": "socket-collection",
         "value": {
-          "light": "#7a49e0",
-          "dark": "#b7a2ff"
+          "light": "#2468b4",
+          "dark": "#82b9f3"
         },
-        "usage": "Puerto y cable que transportan colección (lista o diccionario), en tono púrpura. Es una ayuda, no la única señal: un puerto libre es un aro, uno con cable está relleno."
+        "usage": "Puerto y cable que transportan colección (lista o diccionario), en tono azul (el de los chips de colección). Es una ayuda, no la única señal."
       },
       {
         "name": "socket-any",
@@ -182,18 +182,18 @@
       {
         "name": "grid-dot",
         "value": {
-          "light": "#e0e4ea",
-          "dark": "#1d232c"
+          "light": "#dcd9d1",
+          "dark": "#23252b"
         },
-        "usage": "Puntos de la retícula del lienzo, sobre void."
+        "usage": "Los puntos de la retícula del lienzo: se intuyen, no se leen."
       },
       {
         "name": "field",
         "value": {
-          "light": "#f7f8fa",
-          "dark": "#11151b"
+          "light": "#f6f5f1",
+          "dark": "#17181c"
         },
-        "usage": "Fondo de un campo editable dentro de una tarjeta, sobre surface."
+        "usage": "Fondo de un campo editable al pasar el ratón o al escribir: un tinte del papel, no una caja."
       },
       {
         "name": "badge-value-bg",
@@ -426,6 +426,166 @@
           "dark": "#62cbda"
         },
         "usage": "Un resultado que quedó atrás: el texto o algo de lo que lee cambió después de ejecutarlo. No es un aviso ni un fallo: solo dice que puede no valer."
+      },
+      {
+        "name": "value-number-bg",
+        "value": {
+          "light": "#fde8df",
+          "dark": "#3a2019"
+        },
+        "usage": "Relleno pastel del chip de un número: una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-number-fg",
+        "value": {
+          "light": "#a43d1c",
+          "dark": "#ffab8f"
+        },
+        "usage": "Texto y relieve del chip de un número: ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "value-text-bg",
+        "value": {
+          "light": "#dff3e6",
+          "dark": "#132d1f"
+        },
+        "usage": "Relleno pastel del chip de un texto: una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-text-fg",
+        "value": {
+          "light": "#1b6a41",
+          "dark": "#82dcab"
+        },
+        "usage": "Texto y relieve del chip de un texto: ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "value-bool-bg",
+        "value": {
+          "light": "#eee8fd",
+          "dark": "#28213f"
+        },
+        "usage": "Relleno pastel del chip de un verdadero / falso: una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-bool-fg",
+        "value": {
+          "light": "#5a3cbd",
+          "dark": "#c3b3ff"
+        },
+        "usage": "Texto y relieve del chip de un verdadero / falso: ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "value-list-bg",
+        "value": {
+          "light": "#e0edfb",
+          "dark": "#15263a"
+        },
+        "usage": "Relleno pastel del chip de una colección (lista, tupla, diccionario): una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-list-fg",
+        "value": {
+          "light": "#1b5c93",
+          "dark": "#91c3f5"
+        },
+        "usage": "Texto y relieve del chip de una colección (lista, tupla, diccionario): ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "value-fn-bg",
+        "value": {
+          "light": "#fbf0d1",
+          "dark": "#302710"
+        },
+        "usage": "Relleno pastel del chip de una función: una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-fn-fg",
+        "value": {
+          "light": "#7a5400",
+          "dark": "#f0c86e"
+        },
+        "usage": "Texto y relieve del chip de una función: ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "value-param-bg",
+        "value": {
+          "light": "#ecebfd",
+          "dark": "#25224a"
+        },
+        "usage": "Relleno pastel del chip de un parámetro de función: una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-param-fg",
+        "value": {
+          "light": "#4b3fc4",
+          "dark": "#b9b0ff"
+        },
+        "usage": "Texto y relieve del chip de un parámetro de función: ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "value-iter-bg",
+        "value": {
+          "light": "#ffebde",
+          "dark": "#37230f"
+        },
+        "usage": "Relleno pastel del chip de la variable de un bucle: una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-iter-fg",
+        "value": {
+          "light": "#9e4508",
+          "dark": "#f6ad73"
+        },
+        "usage": "Texto y relieve del chip de la variable de un bucle: ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "value-any-bg",
+        "value": {
+          "light": "#eeede9",
+          "dark": "#27292f"
+        },
+        "usage": "Relleno pastel del chip de un valor de clase desconocida: una palabra de color dentro de la frase del nodo, como en un editor de prompts."
+      },
+      {
+        "name": "value-any-fg",
+        "value": {
+          "light": "#4a4d56",
+          "dark": "#bfc3cc"
+        },
+        "usage": "Texto y relieve del chip de un valor de clase desconocida: ≥ 4.5:1 sobre su propio relleno."
+      },
+      {
+        "name": "syntax-number",
+        "value": {
+          "light": "#b2461f",
+          "dark": "#ff9d7e"
+        },
+        "usage": "Un número escrito en un campo (`170`, `0.5`): coral, como sus chips. ≥ 4.5:1 sobre surface y field."
+      },
+      {
+        "name": "syntax-string",
+        "value": {
+          "light": "#1d7447",
+          "dark": "#82dcab"
+        },
+        "usage": "Un texto escrito en un campo (`\"Nota: \"`): verde, como sus chips. ≥ 4.5:1 sobre surface y field."
+      },
+      {
+        "name": "syntax-keyword",
+        "value": {
+          "light": "#6341c9",
+          "dark": "#c3b3ff"
+        },
+        "usage": "Una constante de Python escrita en un campo (`True`, `None`): violeta. ≥ 4.5:1 sobre surface y field."
+      },
+      {
+        "name": "flow-line",
+        "value": {
+          "light": "#bdb9af",
+          "dark": "#4a4d57"
+        },
+        "usage": "La línea de la secuencia en reposo: se sigue sin competir con las tarjetas. Solo se enciende (accent) con la selección o la reproducción."
       }
     ]
   },
@@ -433,8 +593,8 @@
     "tokens": [
       {
         "name": "radius-card",
-        "value": "14px",
-        "usage": "Esquinas de una tarjeta de nodo."
+        "value": "16px",
+        "usage": "Esquinas de una tarjeta de nodo: redondas y amables, como las de las referencias."
       },
       {
         "name": "radius-field",
@@ -443,8 +603,13 @@
       },
       {
         "name": "radius-space",
-        "value": "20px",
-        "usage": "Esquinas de un contenedor Space: más suaves que las de una tarjeta, porque abarca más superficie."
+        "value": "22px",
+        "usage": "Esquinas de un territorio (función, bucle): más suaves que las de una tarjeta, porque abarca más superficie."
+      },
+      {
+        "name": "radius-control",
+        "value": "10px",
+        "usage": "Esquinas de un botón o un campo de la interfaz (barra, paneles, menús)."
       }
     ]
   },
@@ -453,10 +618,18 @@
       {
         "name": "shadow-card",
         "value": {
-          "light": "0 1px 2px rgba(16, 20, 24, 0.05), 0 2px 6px rgba(16, 20, 24, 0.04)",
-          "dark": "0 1px 2px rgba(0, 0, 0, 0.4)"
+          "light": "0 1px 2px rgba(28, 25, 20, 0.05), 0 6px 16px -6px rgba(28, 25, 20, 0.12)",
+          "dark": "0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 22px -10px rgba(0, 0, 0, 0.65)"
         },
-        "usage": "La sombra mínima que despega una tarjeta del lienzo en reposo."
+        "usage": "La sombra que despega una tarjeta del lienzo en reposo: suave, sin borde que la acompañe."
+      },
+      {
+        "name": "shadow-lift",
+        "value": {
+          "light": "0 2px 4px rgba(28, 25, 20, 0.06), 0 12px 26px -10px rgba(28, 25, 20, 0.2)",
+          "dark": "0 2px 4px rgba(0, 0, 0, 0.5), 0 14px 30px -12px rgba(0, 0, 0, 0.75)"
+        },
+        "usage": "Una tarjeta bajo el puntero o arrastrándose: se levanta un poco más."
       }
     ]
   },

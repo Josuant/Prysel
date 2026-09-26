@@ -56,6 +56,18 @@ export interface SlotState {
   lit?: readonly string[]
 }
 
+/**
+ * Qué clase de literal hay escrito en un campo: un número, un texto entre comillas o una constante de Python.
+ * Se colorea como en un editor de código (y como sus chips), para que se lea de un vistazo qué es cada cosa.
+ */
+export function literalKind(text: string): 'number' | 'string' | 'keyword' | undefined {
+  const t = text.trim()
+  if (/^[-+]?(\d[\d_]*\.?\d*|\.\d+)([eE][-+]?\d+)?j?$/.test(t)) return 'number'
+  if (/^[rbfuRBFU]{0,2}(['"]).*\1$/s.test(t)) return 'string'
+  if (/^(True|False|None)$/.test(t)) return 'keyword'
+  return undefined
+}
+
 const NO_STATE: SlotState = { chips: {}, hot: null }
 export const SlotStateContext = createContext<SlotState>(NO_STATE)
 
@@ -171,6 +183,8 @@ export function TextInput({
       data-slot={slot?.id}
       data-slot-label={slot?.label}
       data-linked={linked ? '' : undefined}
+      data-literal={literalKind(editor.shown)}
+      data-empty={editor.shown.trim() === '' ? '' : undefined}
       {...state.attrs}
       title={
         state.chip

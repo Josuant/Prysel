@@ -253,6 +253,26 @@ describe.each(themes)('contraste — tema %s', (theme) => {
     expect(wcagContrast(c(`chip-${chip}-fg`), bg), `chip-${chip}`).toBeGreaterThanOrEqual(4.5)
   })
 
+  it.each(['number', 'text', 'bool', 'list', 'fn', 'param', 'iter', 'any'])(
+    'chip de valor %s: su texto ≥ 4.5:1 sobre su propio relleno pastel',
+    (value) => {
+      const bg = c(`value-${value}-bg`)
+      expect(wcagContrast(c(`value-${value}-fg`), bg), `value-${value}`).toBeGreaterThanOrEqual(4.5)
+    },
+  )
+
+  it.each(['syntax-number', 'syntax-string', 'syntax-keyword'])(
+    '%s ≥ 4.5:1 sobre surface y field: colorea lo escrito en un campo',
+    (syntax) => {
+      for (const ground of ['surface', 'field']) {
+        expect(
+          wcagContrast(c(syntax), c(ground)),
+          `${syntax} sobre ${ground}`,
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+    },
+  )
+
   it('el texto sigue siendo legible sobre una tarjeta de vidrio', () => {
     // El vidrio lleva una lámina de surface (opacity-veil) bajo el desenfoque.
     const veil = Number(set.families['opacity']?.find((t) => t.name === 'opacity-veil')?.value)
