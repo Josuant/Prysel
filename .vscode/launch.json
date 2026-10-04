@@ -2,11 +2,42 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Prysel — extensión (F5)",
+      // F5: compila y abre una ventana de VS Code con Prysel cargada desde packages/extension, sin depurador.
+      // (Con el depurador, en un equipo donde `localhost` resuelve a `::1` la ventana no llega a cargar ninguna
+      // extensión: ver scripts/dev-window.mjs).
+      "name": "Prysel — probar la extensión",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/packages/extension/scripts/dev-window.mjs",
+      "args": ["${execPath}", "${workspaceFolder}/examples/lecciones"],
+      "preLaunchTask": "prysel: build",
+      "console": "internalConsole",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      // Lo mismo, con un perfil de VS Code aparte (%LOCALAPPDATA%/prysel-dev): no depende del estado del perfil de
+      // siempre (p. ej., si los webviews fallan con «Could not register service worker: InvalidStateError»).
+      "name": "Prysel — probar la extensión (perfil aparte)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/packages/extension/scripts/dev-window.mjs",
+      "args": ["${execPath}", "${workspaceFolder}/examples/lecciones", "--isolated"],
+      "preLaunchTask": "prysel: build",
+      "console": "internalConsole",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      // Para depurar el código de la extensión con puntos de ruptura. Necesita que el depurador pueda conectarse
+      // por `localhost` a la ventana nueva.
+      "name": "Prysel — depurar la extensión",
       "type": "extensionHost",
       "request": "launch",
-      "args": ["--extensionDevelopmentPath=${workspaceFolder}/packages/extension"],
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/extension",
+        "${workspaceFolder}/examples/lecciones"
+      ],
       "outFiles": ["${workspaceFolder}/packages/extension/dist/**/*.js"],
+      "debugWebviews": false,
       "preLaunchTask": "prysel: build"
     }
   ]
