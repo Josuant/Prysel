@@ -310,6 +310,7 @@ export const SAMPLES: Record<NodeKindId, Sample> = {
   'space.for': { label: 'PARA cada fila de big' },
   'space.if': { label: 'SI importe > 1000' },
   'space.try': { label: 'INTENTAR load_sales' },
+  'space.section': { label: 'Probar: cada pájaro vuela' },
 }
 
 export interface Group {
@@ -378,7 +379,7 @@ export const GROUPS: Group[] = [
     title: 'Espacios',
     blurb:
       'Territorios que contienen nodos: trazo discontinuo y sin relleno, para que se vea el lienzo a través. La geometría es la lógica.',
-    kinds: ['space.for', 'space.if', 'space.try'],
+    kinds: ['space.for', 'space.if', 'space.try', 'space.section'],
   },
 ]
 

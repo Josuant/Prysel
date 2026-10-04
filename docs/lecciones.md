@@ -498,3 +498,25 @@ del código, es un bloqueo externo del entorno; queda por repetir esa vuelta cua
 
 Pendiente de la fase: exportar a HTML autónomo (el criterio de «hecho» de toda la fase en la hoja de ruta:
 «una lección se comparte como un solo archivo y se ve sin Python») — el proyecto grande, aparte.
+
+### Revisión: el algoritmo a la vista (etapas)
+
+Con el ejemplo del algoritmo genético, el diagrama enseñaba el programa como constantes y una llamada, y cada función como una columna de sentencias: el algoritmo no se veía. Ahora `flappy_ga.py` nombra sus fases con comentarios de sección (Población inicial · Evolución: Probar, Juzgar, Criar, Relevo · Resultado; y en `volar`: Preparar el vuelo · Volar: Decidir y moverse, La tubería avanza, Tubería superada, ¿Sigue vivo? · Aptitud). El lienzo las dibuja como **etapas** plegables (ver `spatial-grammar.md`).
+
+Qué cambia para una lección:
+
+- **Las anclas no cambian.** Los rótulos son comentarios, y las anclas se atan por el texto de las sentencias: el guion de `flappy_ga` sigue valiendo tal cual.
+- **Un momento abre la etapa de su ancla** y la cierra al pasar al siguiente, para que la nota apunte a la sentencia de la que habla. Una etapa que el usuario abrió o cerró a mano no se toca.
+- **El cursor del paso a paso** y las notas de lo que no se ve caen en la **etapa plegada** que lo tiene dentro, no en el bucle que la envuelve.
+- **Lo que deja una etapa plegada** enseña su valor en cada paso (con el pulso de llegada al cambiar). Se ve, por ejemplo, `altura` al mover el pájaro sin abrir la fase.
+- **La construcción progresiva** enciende una etapa en cuanto se ejecuta algo de lo que tiene dentro.
+- **La función principal** (`entrenar`) se ve desplegada en el programa, así que el paso a paso ya no salta a una vista aparte para ella. Sí entra en `volar` o en `Pajaro.decidir`, y vuelve al programa al salir.
+- **«Explicar un tema»** pide al modelo que nombre las fases del código que escribe con comentarios de sección, y **«Proponer etapas con IA»** las añade a un archivo que no las tiene, siempre revisadas por el usuario antes de escribirse.
+
+**Mover una nota a mano ya no reescribe el guion.** Antes se guardaba su posición volviendo a escribir el `.lesson.json` entero con `JSON.stringify`. Eso deshacía el formato de quien lo escribió y dejaba un archivo que `prettier --check` (y con él `pnpm verify`) rechazaba. Ahora `moveNoteIn` (`src/lesson.ts`) localiza en el texto la nota de ese momento y cambia **solo** su `offset`:
+
+- lo añade como una línea más con la sangría de las demás propiedades (o detrás, si la nota va en una sola línea);
+- lo reescribe en su sitio si ya estaba;
+- lo quita con su coma.
+
+El resto del archivo queda igual, byte a byte (también los saltos de línea de Windows).

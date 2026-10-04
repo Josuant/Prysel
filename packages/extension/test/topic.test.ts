@@ -38,6 +38,10 @@ describe('los textos que se le piden al modelo para el código', () => {
     for (const mod of SAFE_MODULES) expect(system).toContain(mod)
   })
 
+  it('pide nombrar las fases con comentarios de sección (las etapas del diagrama)', () => {
+    expect(buildCodeSystemPrompt()).toContain('`# Nombre: qué hace`')
+  })
+
   it('el pedido lleva el tema y, si lo hay, el nivel', () => {
     const conNivel = buildCodeUserPrompt({ topic: 'recursión', level: 'para quien empieza' })
     expect(conNivel).toContain('Tema: recursión')

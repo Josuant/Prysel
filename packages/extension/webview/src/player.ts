@@ -124,12 +124,17 @@ export function cursorNode(
   program: Program,
   state: TraceState,
   visible: ReadonlySet<string>,
+  /**
+   * Lo que el lienzo enseña en lugar de un nodo que no se ve (la etapa plegada que lo tiene dentro): se
+   * prueba antes que subir por los dueños, que no saben nada de etapas.
+   */
+  represent?: (id: string) => string | null,
 ): string | null {
   const event = state.event
   if (!event) return null
   const shown = (line: number): string | null => {
     const node = nodeAtLine(program, line)
-    return node ? nearestVisible(program, node, visible) : null
+    return node ? (represent?.(node.id) ?? nearestVisible(program, node, visible)) : null
   }
   const lines = [event.l, ...state.frames.map((frame) => frame.line).reverse()]
   for (const line of lines) {

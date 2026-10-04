@@ -3906,3 +3906,257 @@ button.fn-menu__crumb:hover {
   color: var(--ink-faint);
   font-size: 10.5px;
 }
+
+/*
+ * ── Etapas: el algoritmo a la vista ──
+ * Una fase del algoritmo con nombre. Plegada, una tarjeta de cuaderno: su número en un squircle del acento, su
+ * título y su subtítulo, lo que usa → lo que deja (chips) y las pastillas de sus subprocesos. Abierta, un marco
+ * ligero y sin relleno (no compite con el de un bucle o una función) con esa misma cabecera.
+ */
+.section-card {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  transition:
+    box-shadow 160ms ease,
+    opacity 220ms ease;
+}
+.react-flow__node:hover .section-card {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lift);
+}
+.flow-node[data-selected] > .section-card {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent),
+    var(--shadow-lift);
+}
+.section-card__head,
+.section-frame__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+.section__ordinal {
+  display: inline-grid;
+  min-width: 26px;
+  height: 26px;
+  box-sizing: border-box;
+  flex: none;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+/* En la cabecera de un bucle que encabeza una etapa, el número va entre su icono y su título. */
+.node__head .section__ordinal {
+  min-width: 22px;
+  height: 22px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+.section__title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.section__title[title]:hover {
+  text-decoration: underline dotted var(--ink-faint);
+}
+.section__toggle {
+  margin-left: auto;
+}
+.section__toggle[aria-expanded='true'] .icon {
+  transform: rotate(90deg);
+}
+.section-card__sub {
+  margin: -2px 0 0 36px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.section-card__flow,
+.section-card__foot {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  margin-left: 36px;
+  overflow: hidden;
+}
+.section-card__arrow {
+  padding: 0 3px;
+  color: var(--ink-faint);
+}
+.section-chip {
+  display: inline-flex;
+  max-width: 160px;
+  height: 22px;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  overflow: hidden;
+  border-radius: 7px;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Lo que usa viene de antes: un contorno discontinuo; lo que deja es suyo: la pastilla de un valor. */
+.section-chip[data-role='use'] {
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 40%, transparent);
+  color: var(--ink-muted);
+}
+.section-chip[data-role='leave'] {
+  border: 1px solid color-mix(in srgb, var(--value-any-fg) 20%, transparent);
+  background: var(--value-any-bg);
+  color: var(--value-any-fg);
+}
+.section-chip__value {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.section-chip[data-changed] {
+  animation: vchip-arrive 480ms ease-out;
+}
+.section-chip__more {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.section-glyph {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--ink-faint);
+}
+
+/* Los subprocesos: pastillas del color de las funciones que abren lo que se llama. */
+.subprocs {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+.subproc {
+  display: inline-flex;
+  height: 22px;
+  box-sizing: border-box;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--value-fn-fg) 26%, transparent);
+  border-radius: 999px;
+  background: var(--value-fn-bg);
+  color: var(--value-fn-fg);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+.subproc:hover:not(:disabled) {
+  box-shadow: 0 6px 12px -8px color-mix(in srgb, var(--value-fn-fg) 60%, transparent);
+  transform: translateY(-1px);
+}
+.subproc:disabled {
+  cursor: default;
+}
+.subproc:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.subproc__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Abierta: un marco discontinuo y sin relleno, con la cabecera de la etapa arriba. */
+.section-frame {
+  position: relative;
+  box-sizing: border-box;
+  border: 1.5px dashed color-mix(in srgb, var(--ink-faint) 55%, transparent);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
+.flow-node[data-selected] > .section-frame {
+  border-color: var(--accent);
+}
+.section-frame__head {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  left: 16px;
+}
+.section-frame__text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+.section-frame__sub {
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Construcción progresiva: una etapa a la que la ejecución aún no ha llegado se atenúa, como un paso. */
+.flow-node[data-section][data-modifier='pending'] > .section-card,
+.flow-node[data-section][data-modifier='pending'] > .section-frame {
+  opacity: var(--opacity-pending);
+}
+@media (prefers-reduced-motion: reduce) {
+  .section-card,
+  .subproc {
+    transition: none;
+  }
+  .section-chip[data-changed] {
+    animation: none;
+  }
+}
+
+/* El rótulo de una cajita («Parámetros»): discreto, como el de una celda de configuración. */
+.tray__title {
+  position: absolute;
+  top: 9px;
+  left: 12px;
+  color: var(--ink-faint);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Las migas intermedias (el camino por los subprocesos que se abrieron): van en la misma línea. */
+.fn-menu__step {
+  display: inline-flex;
+  align-items: center;
+}

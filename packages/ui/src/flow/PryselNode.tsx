@@ -26,6 +26,7 @@ import { FLOW_LANE, FLOW_RAIL, flowEntry, isLoopTerritory, territoryHeadroom } f
 import { TrayBox } from './ChipNode.tsx'
 import { LapsStrip } from './LapsStrip.tsx'
 import { LAPS_HEADROOM } from '../laps.ts'
+import { SectionCard, SectionFrame } from './SectionCard.tsx'
 import { TRAY, resultNames, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
 
@@ -103,6 +104,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   onControlChange?: (id: string, next: ControlModel) => void
   onNodeEdit?: (id: string, edit: NodeEdit) => void
   onEnter?: (id: string) => void
+  /** Abrir un subproceso (la función, la clase o el método al que llama) desde su pastilla. */
+  onOpen?: (id: string) => void
 }
 
 export type PryselFlowNode = Node<PryselNodeData, 'prysel'>
@@ -304,6 +307,112 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
 
   /** Los campos que enseñan su nombre: los que reciben un cable, y (al arrastrar uno) donde valdría soltarlo. */
   const named = [...connected, ...open.filter((slot) => eligible?.includes(slot.id))]
+
+  // Una etapa (o un bucle que encabeza una, plegado): su tarjeta o su marco, no una tarjeta de sentencia.
+  const stage = node.section
+  if (stage && (node.kind === 'space.section' || !container)) {
+    const retitle = data.onNodeEdit
+      ? (to: string) => {
+          data.onNodeEdit?.(id, { type: 'rename', to })
+        }
+      : undefined
+    const toggle = data.onEnter
+      ? () => {
+          data.onEnter?.(id)
+        }
+      : undefined
+    return (
+      <div
+        className="flow-node"
+        data-phase={phase}
+        data-section=""
+        data-selected={selected ? '' : undefined}
+        data-add-target={data.addTarget ? '' : undefined}
+        data-cursor={data.cursor ? '' : undefined}
+        data-hinted={data.hinted ? '' : undefined}
+        data-modifier={modifier}
+      >
+        <Handle
+          type="source"
+          id="note-out"
+          position={Position.Right}
+          isConnectable={false}
+          className="note-handle"
+        />
+        <Handle
+          type="source"
+          id="aux-out"
+          position={Position.Left}
+          isConnectable={false}
+          className="note-handle"
+        />
+        {axis === 'vertical' && (
+          <>
+            <Handle
+              type="target"
+              id="step-in"
+              position={Position.Top}
+              isConnectable={false}
+              className="note-handle"
+              {...(spineStyle ? { style: spineStyle } : {})}
+            />
+            <Handle
+              type="source"
+              id="step-out"
+              position={Position.Bottom}
+              isConnectable={false}
+              className="note-handle"
+              {...(spineStyle ? { style: spineStyle } : {})}
+            />
+          </>
+        )}
+        {flow && data.onAddAfter && (
+          <button
+            type="button"
+            className="step-add nodrag"
+            style={{ left: spineX }}
+            aria-label={`Añadir un paso después de la etapa ${stage.title}`}
+            title="Añadir un paso al final de esta etapa"
+            onClick={(event) => {
+              event.stopPropagation()
+              data.onAddAfter?.(id, { x: event.clientX, y: event.clientY })
+            }}
+          >
+            <Icon name="plus" size={12} />
+          </button>
+        )}
+        {data.drop && (
+          <div className="drop-hint" data-drop={data.drop} aria-hidden>
+            <span className="drop-hint__label type-badge">
+              {data.drop === 'into'
+                ? `Suelta para meterlo en «${stage.title}»`
+                : `Suelta fuera para sacarlo de «${stage.title}»`}
+            </span>
+          </div>
+        )}
+        {container ? (
+          <SectionFrame
+            info={stage}
+            note={node.note}
+            size={size}
+            signal={data.renameSignal ?? 0}
+            onToggle={toggle}
+            onRetitle={retitle}
+          />
+        ) : (
+          <SectionCard
+            info={stage}
+            note={node.note}
+            size={size}
+            signal={data.renameSignal ?? 0}
+            onToggle={toggle}
+            onOpen={data.onOpen}
+            onRetitle={retitle}
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div
@@ -787,6 +896,10 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       <MorphNode
         kind={node.kind}
         label={node.label}
+        {...(stage ? { ordinal: stage.ordinal } : {})}
+        {...(node.subprocesses && node.subprocesses.length > 0
+          ? { opens: node.subprocesses, ...(data.onOpen ? { onOpen: data.onOpen } : {}) }
+          : {})}
         code={node.code}
         meta={node.meta}
         note={node.note}
@@ -847,7 +960,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         {...(data.onControlChange
           ? { onControlChange: (next: ControlModel) => data.onControlChange?.(id, next) }
           : {})}
-        {...(node.openable && data.onEnter
+        // Una llamada con pastillas ya lleva a su función desde ellas: el chevron repetiría lo mismo.
+        {...(node.openable && data.onEnter && !(node.opens && node.subprocesses?.length)
           ? {
               onToggleDensity: () => data.onEnter?.(id),
               // Una llamada lleva a la función que llama; una función, a plegarse o abrirse.

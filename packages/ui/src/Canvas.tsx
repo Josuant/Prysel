@@ -14,6 +14,8 @@ import {
 import {
   extraHeight,
   questionSize,
+  sectionCardSize,
+  opensWidth,
   isLineCard,
   lineHeight,
   lineWidth,
@@ -95,6 +97,7 @@ import {
   type Link,
 } from './connect.ts'
 import type { NodeEdit } from './MorphNode.tsx'
+import { resolveSectionAction, type SectionInfo, type Subprocess } from './program.ts'
 import '@xyflow/react/dist/base.css'
 
 /**
@@ -166,6 +169,13 @@ export interface CanvasNode {
   valueType?: ValueType
   /** Es un `return` de esta función: su salida va al puerto de retorno de la función. */
   returns?: string
+  /**
+   * Es una **etapa** (o un bucle que encabeza una): su número en el esquema, su título y lo que dice de
+   * ella plegada. Ver `withSections`.
+   */
+  section?: SectionInfo
+  /** Las funciones, clases y métodos del archivo a los que llama: pastillas que los abren. */
+  subprocesses?: readonly Subprocess[]
 }
 
 export interface CanvasProps {
@@ -186,6 +196,8 @@ export interface CanvasProps {
   onControlChange?: (id: string, next: ControlModel) => void
   /** Lo que el usuario le hace a un nodo: reescribirlo como código, eliminarlo, duplicarlo, renombrarlo. */
   onAction?: (action: NodeAction) => void
+  /** Abrir un subproceso (la función, la clase o el método al que llama un nodo) desde su pastilla. */
+  onOpen?: (id: string) => void
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -254,6 +266,16 @@ export interface CanvasProps {
 
 /** Una decisión: leída como diagrama de flujo, un rombo con un camino «sí» y uno «no». */
 const isDecision = (node: Pick<CanvasNode, 'kind'>) => node.kind === 'control.condition'
+
+/** Los nombres de los subprocesos de un nodo que no es un territorio (en un territorio van en su cabecera). */
+const subprocessesOf = (node: Pick<CanvasNode, 'subprocesses'>): string[] =>
+  (node.subprocesses ?? []).map((sub) => sub.name)
+
+/** Un nodo con subprocesos lleva sus pastillas en la cabecera: crece lo que ocupan. */
+const widen = (size: { w: number; h: number }, node: Pick<CanvasNode, 'subprocesses'>) => {
+  const extra = opensWidth(subprocessesOf(node))
+  return extra === 0 ? size : { w: Math.min(size.w + extra, 720), h: size.h }
+}
 
 /** Una conexión de la secuencia: lo que sigue a un paso, o uno de los caminos de una decisión. */
 const isStep = (edge: SemanticEdge) => edge.relation === 'sequence' || edge.relation === 'branch'
@@ -336,7 +358,8 @@ function CanvasInner({
   modifierOf,
   onNoteMove,
   onControlChange,
-  onAction,
+  onAction: sentAction,
+  onOpen,
   addTarget,
   palette,
   addToModule = true,
@@ -363,6 +386,26 @@ function CanvasInner({
   controls = false,
   className,
 }: CanvasProps) {
+  /** Las etapas que se ven: lo que se les pide se traduce a su bloque real (ver `resolveSectionAction`). */
+  const sectionInfo = useMemo(
+    () =>
+      new Map(
+        allNodes.flatMap((node) =>
+          node.kind === 'space.section' && node.section ? [[node.id, node.section] as const] : [],
+        ),
+      ),
+    [allNodes],
+  )
+  const onAction = useMemo(
+    () =>
+      sentAction
+        ? (action: NodeAction) => {
+            const resolved = resolveSectionAction(action, (id) => sectionInfo.get(id))
+            if (resolved) sentAction(resolved)
+          }
+        : undefined,
+    [sentAction, sectionInfo],
+  )
   // Lo que el usuario hace sobre el diagrama (mover, seleccionar, recorrer) pertenece a «lo que
   // se está viendo»: al cambiar `fitKey` se descarta, sin efectos, porque se compara la clave.
   /** Posiciones que el usuario ha movido a mano: mandan sobre las que propone la gramática. */
@@ -650,6 +693,8 @@ function CanvasInner({
     scopes,
     spines,
   } = useMemo(() => {
+    /** Lo que se dibuja: un ámbito con algo de esto dentro está abierto (si no, está plegado). */
+    const present = new Set(plan.flowNodes.map((node) => node.id))
     const graph: SemanticGraph = {
       nodes: plan.flowNodes.map((node) => {
         const spec = getKind(node.kind)
@@ -667,39 +712,57 @@ function CanvasInner({
             ? viewerSize(node.viewer)
             : isChipKind(node)
               ? chipSize(node)
-              : flow && isDecision(node)
-                ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
-                  questionSize(node.control, d, node.label, node.code)
-                : d === 'normal' && isLineCard(node.kind, node.control)
-                  ? // Una operación o una llamada: una sola línea, con su nombre como chip.
-                    {
-                      w: lineWidth(
-                        node.control,
-                        // Cada pastilla mide también lo que se observó de su valor (`200×2`).
-                        resultNames(node, d).map((name) => {
-                          const short = node.observed?.[name]?.short
-                          return short ? `${name} ${short}` : name
-                        }),
-                        linked[node.id],
-                        node.openable ? 26 : 0,
-                      ),
-                      h: lineHeight(node.note),
-                    }
-                  : d === 'normal'
-                    ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+              : node.section && !node.contains?.some((id) => present.has(id))
+                ? // Plegada, una etapa es su tarjeta; abierta, el marco la hace crecer con lo que tiene dentro.
+                  sectionCardSize({
+                    title: node.section.title,
+                    subtitle: node.section.subtitle,
+                    uses: node.section.uses,
+                    leaves: node.section.leaves.map((leaf) => leaf.name),
+                    callees: node.section.opens.map((open) => open.name),
+                    glyphs: node.section.glyphs.length,
+                  })
+                : flow && isDecision(node)
+                  ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
+                    widen(questionSize(node.control, d, node.label, node.code), node)
+                  : d === 'normal' && isLineCard(node.kind, node.control)
+                    ? // Una operación o una llamada: una sola línea, con su nombre como chip.
                       {
-                        w: slimWidth(base.w, node.control),
-                        h: slimHeight(
+                        w: lineWidth(
                           node.control,
+                          // Cada pastilla mide también lo que se observó de su valor (`200×2`).
+                          resultNames(node, d).map((name) => {
+                            const short = node.observed?.[name]?.short
+                            return short ? `${name} ${short}` : name
+                          }),
                           linked[node.id],
-                          node.note,
-                          node.code !== undefined,
+                          // Lo que abre (el chevron de una llamada, o las pastillas de sus subprocesos).
+                          subprocessesOf(node).length > 0
+                            ? opensWidth(subprocessesOf(node))
+                            : node.openable
+                              ? 26
+                              : 0,
                         ),
+                        h: lineHeight(node.note),
                       }
-                    : {
-                        w: base.w,
-                        h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
-                      },
+                    : d === 'normal'
+                      ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+                        widen(
+                          {
+                            w: slimWidth(base.w, node.control),
+                            h: slimHeight(
+                              node.control,
+                              linked[node.id],
+                              node.note,
+                              node.code !== undefined,
+                            ),
+                          },
+                          node,
+                        )
+                      : {
+                          w: base.w,
+                          h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
+                        },
           // La documentación, el editor de un bucle y la cajita de chips viven en la cabecera de un territorio.
           ...(head > 0 ? { headroom: head } : {}),
           ...(flowFoot(node, flow) > 0 ? { footroom: flowFoot(node, flow) } : {}),
@@ -903,12 +966,16 @@ function CanvasInner({
   /** Lo que se le hace a un nodo desde su cabecera: abrir el editor de código, o escribirlo en el archivo. */
   const onNodeEdit = useCallback(
     (id: string, edit: NodeEdit) => {
-      if (edit.type === 'open-code') setCodeFor({ key: fitKey, id })
+      // El título de una etapa (o de un bucle que encabeza una) es su rótulo: se reescribe el comentario.
+      const section = byId.get(id)?.section
+      if (edit.type === 'rename' && section) {
+        onAction?.({ type: 'retitle', id: section.id, title: edit.to })
+      } else if (edit.type === 'open-code') setCodeFor({ key: fitKey, id })
       else if (edit.type === 'rename')
         onAction?.({ type: 'rename', id, to: edit.to, ...(edit.from ? { from: edit.from } : {}) })
       else onAction?.({ type: edit.type, id })
     },
-    [fitKey, onAction],
+    [fitKey, onAction, byId],
   )
   const codeNode = codeFor?.key === fitKey ? byId.get(codeFor.id) : undefined
 
@@ -939,6 +1006,10 @@ function CanvasInner({
   /** Un cable de orden soltado sobre un nodo: ese nodo pasa a ejecutarse donde dice el puerto de origen. */
   const orderTo = useCallback(
     (from: string, port: OrderPort, to: string) => {
+      if (byId.get(to)?.kind === 'space.section') {
+        setNotice('Una etapa no se mueve con un cable de orden: mueve sus sentencias.')
+        return
+      }
       const verdict = checkOrder(byId, { from, port, to })
       if (verdict.ok) onAction?.(verdict.action)
       else setNotice(verdict.reason)
@@ -1035,6 +1106,36 @@ function CanvasInner({
           ]
         : []
     }
+    // Una etapa no es una sentencia: se renombra, se pliega o se abre, y se quita (su código se queda).
+    if (node.kind === 'space.section') {
+      const section = node.section
+      const own: NodeMenuItem[] = []
+      if (onAction && section) {
+        own.push({
+          label: 'Renombrar la etapa',
+          onSelect: () => {
+            setRenaming((previous) => ({ id, n: previous.n + 1 }))
+          },
+        })
+      }
+      if (onEnter) {
+        own.push({
+          label: scopes[id] ? 'Plegar la etapa' : 'Abrir la etapa',
+          onSelect: () => {
+            onEnter(id)
+          },
+        })
+      }
+      if (onAction && section) {
+        own.push({
+          label: 'Quitar la etapa (el código se queda)',
+          onSelect: () => {
+            onAction({ type: 'unsection', id: section.id })
+          },
+        })
+      }
+      return own
+    }
     const items: NodeMenuItem[] = []
     if (onRun) {
       items.push({
@@ -1048,9 +1149,19 @@ function CanvasInner({
     items.push(...(extraMenu?.(id) ?? []))
     if (node.renamable) {
       items.push({
-        label: 'Renombrar',
+        label: node.section ? 'Renombrar la etapa' : 'Renombrar',
         onSelect: () => {
           setRenaming((previous) => ({ id, n: previous.n + 1 }))
+        },
+      })
+    }
+    // Un bucle que encabeza una etapa: la etapa se puede quitar (el bucle se queda).
+    const merged = node.section
+    if (merged && onAction) {
+      items.push({
+        label: 'Quitar la etapa (el código se queda)',
+        onSelect: () => {
+          onAction({ type: 'unsection', id: merged.id })
         },
       })
     }
@@ -1069,6 +1180,15 @@ function CanvasInner({
         label: 'Subir a las variables del contexto',
         onSelect: () => {
           onAction?.({ type: 'move', id, before })
+        },
+      })
+    }
+    // Partir su bloque en etapas: esta sentencia empieza una (el rótulo se escribe encima).
+    if (onAction && flow && node.line !== undefined && !merged) {
+      items.push({
+        label: 'Empezar una etapa aquí',
+        onSelect: () => {
+          onAction({ type: 'section', id, title: 'Nueva etapa', first: 'Primera etapa' })
         },
       })
     }
@@ -1181,7 +1301,13 @@ function CanvasInner({
     } else if (selectedId !== null && byId.get(selectedId)?.viewer) {
       event.preventDefault()
       onUnpin?.(selectedId)
-    } else if (selectedId !== null && byId.has(selectedId) && scopes[selectedId] === undefined) {
+    } else if (
+      selectedId !== null &&
+      byId.has(selectedId) &&
+      scopes[selectedId] === undefined &&
+      // Una etapa no se borra con una tecla: su menú la quita (y su código se queda).
+      byId.get(selectedId)?.kind !== 'space.section'
+    ) {
       // Un territorio (una función, un bucle) lleva mucho dentro: eliminarlo pide el botón, no una tecla.
       event.preventDefault()
       onAction?.({ type: 'delete', id: selectedId })
@@ -1445,6 +1571,7 @@ function CanvasInner({
           ...(onControlChange ? { onControlChange: changeControl } : {}),
           ...(onAction ? { onNodeEdit } : {}),
           ...(onEnter ? { onEnter } : {}),
+          ...(onOpen ? { onOpen } : {}),
         },
       },
     ]

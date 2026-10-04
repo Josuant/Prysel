@@ -72,6 +72,8 @@ export const ICONS: Record<IconId, string> = {
   book: 'M5 5.5A2 2 0 0 1 7 3.5h12v14H7a2 2 0 0 0-2 2zM5 19.5a2 2 0 0 0 2 2h12v-4M9 7.5h6',
   step: 'M6 5.5v13M10 6.2v11.6a.7.7 0 0 0 1.1.6l8.3-5.8a.7.7 0 0 0 0-1.2L11.1 5.6a.7.7 0 0 0-1.1.6Z',
   grid: 'M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z',
+  section: 'M4 19.5h5v-5h5v-5h5v-5M4 19.5h15.5',
+  open: 'M8 16 16.5 7.5M10 7.5h6.5V14',
 }
 
 export const ICON_IDS = Object.keys(ICONS) as IconId[]

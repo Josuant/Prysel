@@ -325,8 +325,9 @@ export function lineWidth(
       (hidden > 0 ? 26 : 0) +
       10
   }
-  // Varias pastillas abren la línea con más sitio: sin él, sus campos se aprietan hasta no leerse.
-  const cap = names.length > 1 ? 800 : 560
+  // Varias pastillas abren la línea con más sitio: sin él, sus campos se aprietan hasta no leerse. Lo que va
+  // aparte (el chevron, las pastillas de los subprocesos) no le quita sitio a los campos.
+  const cap = (names.length > 1 ? 800 : 560) + extra
   return Math.min(cap, Math.max(180, 30 + icon + gap + chip + title + inner + extra))
 }
 
@@ -452,6 +453,109 @@ export function extraHeight(
     Math.max(0, controlHeight(model, density, linked) - ROOM[density]) + noteHeight(note, density)
   )
 }
+
+/**
+ * Una **etapa**: la tarjeta de una fase del algoritmo cuando está plegada, y su cabecera cuando está abierta.
+ * La tarjeta lleva su número y su título; debajo, el subtítulo; luego lo que usa de antes → lo que deja
+ * para después (como chips) y, en otra fila, los subprocesos a los que llama y lo que esconde (↻, ◇).
+ */
+export const SECTION = {
+  pad: 12,
+  badge: 26,
+  gap: 6,
+  head: 26,
+  sub: 17,
+  row: 24,
+  min: 260,
+  max: 440,
+  /** Cuántos chips caben a cada lado de la flecha; el resto se cuenta («+2»). */
+  uses: 3,
+  leaves: 4,
+} as const
+
+/** Lo que mide un chip o una pastilla con ese nombre en una tarjeta de etapa. */
+export const sectionChipWidth = (name: string) => Math.ceil(name.length * 6.8 + 22)
+
+/**
+ * Cómo van los chips de una tarjeta de etapa de ese ancho: en una fila (lo que usa → lo que deja) si caben,
+ * o en dos (lo que usa arriba; → lo que deja, debajo). En cada fila se enseñan los que caben y el resto se
+ * cuenta («+2»).
+ */
+export function sectionFlowFit(
+  uses: readonly string[],
+  leaves: readonly string[],
+  width: number,
+): { rows: 0 | 1 | 2; uses: number; leaves: number } {
+  if (uses.length + leaves.length === 0) return { rows: 0, uses: 0, leaves: 0 }
+  const room = width - (SECTION.pad + SECTION.badge + 10) - SECTION.pad
+  const cost = (names: readonly string[], n: number) =>
+    names.slice(0, n).reduce((sum, name) => sum + Math.min(160, sectionChipWidth(name)) + 4, 0) +
+    (n < names.length ? 30 : 0)
+  const u = Math.min(uses.length, SECTION.uses)
+  const l = Math.min(leaves.length, SECTION.leaves)
+  const arrow = u > 0 && l > 0 ? 22 : 0
+  if (cost(uses, u) + arrow + cost(leaves, l) <= room) return { rows: 1, uses: u, leaves: l }
+  let fu = u
+  let fl = l
+  while (fu > 1 && cost(uses, fu) > room) fu--
+  while (fl > 1 && cost(leaves, fl) + 22 > room) fl--
+  return { rows: u > 0 && l > 0 ? 2 : 1, uses: fu, leaves: fl }
+}
+
+export function sectionCardSize(card: {
+  title: string
+  subtitle?: string | undefined
+  uses: readonly string[]
+  leaves: readonly string[]
+  callees: readonly string[]
+  /** Cuántos glifos de lo que esconde (bucle, decisión, salida) lleva. */
+  glyphs: number
+}): { w: number; h: number } {
+  const indent = SECTION.pad + SECTION.badge + 10
+  const chips = (names: readonly string[], max: number) =>
+    names.slice(0, max).reduce((sum, name) => sum + sectionChipWidth(name) + 4, 0) +
+    (names.length > max ? 30 : 0)
+  const flow = card.uses.length + card.leaves.length > 0
+  const rows = [
+    indent + Math.ceil(card.title.length * 8.2) + 10 + 20 + SECTION.pad,
+    card.subtitle ? indent + Math.min(64, card.subtitle.length) * 6.6 + SECTION.pad : 0,
+    flow
+      ? indent +
+        chips(card.uses, SECTION.uses) +
+        22 +
+        chips(card.leaves, SECTION.leaves) +
+        SECTION.pad
+      : 0,
+    card.callees.length + card.glyphs > 0
+      ? indent +
+        card.callees.reduce((sum, name) => sum + sectionChipWidth(name) + 16 + 4, 0) +
+        card.glyphs * 22 +
+        SECTION.pad
+      : 0,
+  ]
+  const w = snap(clamp(Math.max(...rows), SECTION.min, SECTION.max))
+  const fit = sectionFlowFit(card.uses, card.leaves, w)
+  const h =
+    SECTION.pad * 2 +
+    SECTION.head +
+    (card.subtitle ? SECTION.sub : 0) +
+    fit.rows * (SECTION.gap + SECTION.row) +
+    (card.callees.length + card.glyphs > 0 ? SECTION.gap + SECTION.row : 0)
+  return { w, h: snap(h) }
+}
+
+/**
+ * Lo que ocupan en una fila las pastillas de los subprocesos de un nodo (`↗ volar`): su icono, su nombre y el
+ * hueco entre ellas.
+ */
+export const opensWidth = (names: readonly string[]) =>
+  names.length === 0 ? 0 : names.reduce((sum, name) => sum + sectionChipWidth(name) + 20, 0) + 6
+
+/**
+ * Lo que pide la cabecera de una etapa abierta sobre la de cualquier territorio (`SCOPE_FRAME.top`, donde ya
+ * caben su número y su título): un poco más si lleva subtítulo debajo.
+ */
+export const sectionHeadroom = (subtitle?: string) => (subtitle ? 10 : 0)
 
 /**
  * El rombo de una bifurcación, leído como diagrama de flujo: pequeño, debajo de la pregunta, justo donde el

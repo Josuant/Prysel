@@ -36,6 +36,14 @@ import {
   type Semantics,
   type SemanticContext,
 } from './semantics.ts'
+import { linkCallees } from './callees.ts'
+import {
+  blockHeadings,
+  openSection,
+  type BlockItem,
+  type Heading,
+  type ProgramSection,
+} from './sections.ts'
 import {
   calleeName,
   field,
@@ -76,6 +84,12 @@ export interface ProgramNode {
   control?: ControlModel
   /** Si el nodo llama a una función definida en el archivo: el id de esa definición. */
   calls?: string
+  /**
+   * Todas las funciones, clases y métodos del archivo a los que llama su texto (en una compuesta, su
+   * cabecera), en orden: también dentro de una comprensión, anidadas o por un objeto (`pajaro.decidir`).
+   * Son sus subprocesos: lo que se puede abrir desde él (ver `callees.ts`).
+   */
+  callees?: string[]
   /**
    * De dónde sale cada campo del editor en el texto, por nombre. Es lo que hace el editor
    * escribible: solo aparecen los campos que se pueden reescribir sin descolocar nada.
@@ -133,6 +147,11 @@ export interface Program {
   edges: SemanticEdge[]
   /** Construcciones que el análisis no entiende, con su motivo. */
   unsupported: { line: number; type: string }[]
+  /**
+   * Las etapas: los tramos de un bloque que abre un comentario de sección (ver `sections.ts`). No son
+   * sentencias: agrupan las que ya están en `nodes`, sin cambiar nada de ellas.
+   */
+  sections?: ProgramSection[]
 }
 
 /** Llamadas que tocan el mundo exterior: son un efecto, no una transformación. */
@@ -253,6 +272,7 @@ class Builder {
   readonly nodes: ProgramNode[] = []
   readonly edges: SemanticEdge[] = []
   readonly unsupported: Program['unsupported'] = []
+  readonly sections: ProgramSection[] = []
   /** Qué nodo define cada nombre y, si es un parámetro, por qué puerto de la función sale. */
   private readonly scope = new Map<string, { id: string; port?: string }>()
   /** Los nombres visibles ahora, ya calculados: los nodos consecutivos comparten la misma lista. */
@@ -579,18 +599,35 @@ function commentText(node: TsNode): string | null {
  * cuerpo. Los de la línea de la cabecera son de la sentencia; los de después de esa línea
  * preceden a lo primero que hay dentro (en una función, en cambio, todos son su explicación).
  */
-function ownComments(statement: TsNode): { header: string[]; after: string[] } {
+function ownComments(statement: TsNode): { header: string[]; after: BlockItem[] } {
   const header: string[] = []
-  const after: string[] = []
+  const after: BlockItem[] = []
   for (const child of statement.namedChildren) {
     if (child?.type !== 'comment') continue
     const text = commentText(child)
     if (text === null) continue
     if (child.startPosition.row === statement.startPosition.row) header.push(text)
-    else after.push(text)
+    else after.push(commentItem(child))
   }
   return { header, after }
 }
+
+/** Un comentario con su sitio: lo que necesita la búsqueda de rótulos de etapa. */
+function commentItem(node: TsNode): BlockItem {
+  return {
+    kind: 'comment',
+    row: node.startPosition.row,
+    endRow: node.endPosition.row,
+    col: node.startPosition.column,
+    start: node.startIndex,
+    end: node.endIndex,
+    raw: commentText(node) === null ? null : node.text,
+  }
+}
+
+/** Los textos de unos comentarios (sin la almohadilla), para una nota. */
+const textsOf = (items: readonly BlockItem[]): string[] =>
+  items.flatMap((item) => (item.raw ? [item.raw.replace(/^#+\s?/, '').trimEnd()] : []))
 
 /** Un docstring sin comillas y sin la sangría que le da el código que lo rodea. */
 export function cleanDoc(raw: string): string {
@@ -622,11 +659,15 @@ export function buildProgram(tree: Tree, source?: string): Program {
     skip: new Set(doc ? [doc.at] : []),
     leading: doc ? [doc.text] : [],
   })
+  // Las llamadas se resuelven con todo el archivo visto: una función puede estar definida más abajo.
+  linkCallees(tree.rootNode, builder.nodes)
   return {
     source: text,
     nodes: builder.nodes,
     edges: builder.edges,
     unsupported: builder.unsupported,
+    // Las de dentro se cierran antes que las de fuera: en el orden del archivo se leen mejor.
+    sections: [...builder.sections].sort((a, b) => a.line - b.line),
   }
 }
 
@@ -637,6 +678,17 @@ interface BlockOptions {
   skip?: ReadonlySet<number>
   /** Comentarios que ya esperan a la primera sentencia. */
   leading?: string[]
+  /**
+   * Comentarios de la cabecera de una sentencia compuesta que tree-sitter cuelga de ella y no del bloque
+   * (los que van entre `for …:` y la primera sentencia), con su sitio: pueden ser el rótulo de una etapa.
+   */
+  leadingAt?: BlockItem[]
+  /**
+   * En una función, esos comentarios son su explicación (van en su nodo, no en la primera sentencia): los
+   * que no abren una etapa no se tocan aquí, y los que sí se apuntan en este conjunto (por dónde empiezan)
+   * para que la función no los repita.
+   */
+  headingsFrom?: Set<number>
 }
 
 /**
@@ -655,12 +707,37 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
   /** Cuántas sentencias tiene el bloque: cuentan también las que no son nodos (un docstring, un `pass`). */
   let statements = 0
 
+  // Las etapas del bloque: los comentarios de sección que abren cada una (ver `sections.ts`). Si el bloque
+  // no tiene, no cambia nada: cada comentario sigue siendo la nota de su sentencia.
+  const headingOf = new Map<number, Heading>()
+  for (const heading of blockHeadings(blockItems(block, options))) {
+    for (const start of heading.comments) headingOf.set(start, heading)
+  }
+  /** El rótulo que espera a la sentencia con la que empieza su etapa. */
+  let upcoming: Heading | null = null
+  /** La etapa abierta: lo que venga detrás es suyo hasta el siguiente rótulo. */
+  let section: ProgramSection | null = null
+  const sections: ProgramSection[] = []
+  for (const comment of options.leadingAt ?? []) {
+    const heading = headingOf.get(comment.start)
+    if (heading) {
+      options.headingsFrom?.add(comment.start)
+      if (heading.start === comment.start) upcoming = heading
+    } else if (!options.headingsFrom) pending.push(...textsOf([comment]))
+  }
+
   for (const statement of block.namedChildren) {
     if (!statement) continue
     if (statement.type !== 'comment') statements++
     if (options.skip?.has(statement.startIndex)) continue
 
     if (statement.type === 'comment') {
+      // Un rótulo de etapa no es la nota de nadie: es el título de lo que viene.
+      const heading = headingOf.get(statement.startIndex)
+      if (heading) {
+        if (heading.start === statement.startIndex) upcoming = heading
+        continue
+      }
       const text = commentText(statement)
       if (text === null) continue
       if (last && statement.startPosition.row === last.row) builder.annotate(last.id, text)
@@ -700,6 +777,11 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
     }
     produced.push(id)
     last = { id, row: statement.endPosition.row }
+    if (upcoming) {
+      section = openSection(upcoming, options.owner, id)
+      sections.push(section)
+      upcoming = null
+    } else section?.members.push(id)
 
     // El orden: cada sentencia a continuación de la anterior. Una definición no se ejecuta aquí (solo
     // dice qué es la función), y tras un `return`, `raise`, `break` o `continue` no sigue nada.
@@ -717,14 +799,45 @@ function visitBlock(builder: Builder, block: TsNode, options: BlockOptions = {})
       const clauseId = visitClause(builder, orElse, options.owner, 'loop')
       builder.link(id, clauseId, 'sequence')
       flow = [clauseId]
+      // Va con su bucle: si el bucle es de una etapa, su `else` también.
+      section?.members.push(clauseId)
     }
   }
   if (last && pending.length > 0) builder.annotate(last.id, pending.join('\n'))
+  // Un rótulo sin nada detrás (solo un `pass`) no abre ninguna etapa, pero no se pierde.
+  if (last && upcoming) builder.annotate(last.id, upcoming.text)
   for (const id of produced) {
     const node = builder.nodes.find((n) => n.id === id)
     if (node?.range) node.range.block = statements
   }
+  for (const found of sections) {
+    const tail = builder.nodes.find((n) => n.id === found.members[found.members.length - 1])
+    found.lineEnd = tail?.lineEnd ?? tail?.line ?? found.line
+  }
+  builder.sections.push(...sections)
   return produced
+}
+
+/** Lo que hay en un bloque, con su sitio: lo que mira la búsqueda de rótulos de etapa. */
+function blockItems(block: TsNode, options: BlockOptions): BlockItem[] {
+  return [
+    ...(options.leadingAt ?? []),
+    ...block.namedChildren.flatMap((child): BlockItem[] => {
+      if (!child) return []
+      if (child.type === 'comment') return [commentItem(child)]
+      return [
+        {
+          kind: 'statement',
+          row: child.startPosition.row,
+          endRow: child.endPosition.row,
+          col: child.startPosition.column,
+          start: child.startIndex,
+          end: child.endIndex,
+          ...(options.skip?.has(child.startIndex) ? { skip: true } : {}),
+        },
+      ]
+    }),
+  ]
 }
 
 /** Las cláusulas de un `try`, además de su cuerpo. */
@@ -760,7 +873,7 @@ function entryPoint(
   builder.annotate(id, own.header.join('\n'))
   const body = field(statement, 'consequence')
   const before = builder.nodes.length
-  const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+  const inside = body ? visitBlock(builder, body, { leadingAt: own.after, owner: id }) : []
   if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
   contain(builder, id, before)
   return id
@@ -1050,7 +1163,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const orElse = field(statement, 'alternative')
       if (orElse) builder.loopElse.set(id, orElse)
       builder.loops.push(id)
-      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      const inside = body ? visitBlock(builder, body, { leadingAt: own.after, owner: id }) : []
       builder.loops.pop()
       if (inside.length > 0) {
         const first = inside[0]
@@ -1093,7 +1206,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const orElse = field(statement, 'alternative')
       if (orElse) builder.loopElse.set(id, orElse)
       builder.loops.push(id)
-      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      const inside = body ? visitBlock(builder, body, { leadingAt: own.after, owner: id }) : []
       builder.loops.pop()
       const last = inside[inside.length - 1]
       if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
@@ -1163,7 +1276,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       const own = ownComments(statement)
       builder.annotate(
         id,
-        [[...own.header, ...own.after].join('\n'), doc?.text ?? '']
+        [[...own.header, ...textsOf(own.after)].join('\n'), doc?.text ?? '']
           .filter((part) => part.trim())
           .join('\n\n'),
       )
@@ -1231,7 +1344,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       builder.annotate(id, own.header.join('\n'))
       const body = field(statement, 'body')
       const before = builder.nodes.length
-      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      const inside = body ? visitBlock(builder, body, { leadingAt: own.after, owner: id }) : []
       if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
       contain(builder, id, before)
       return id
@@ -1245,7 +1358,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       builder.annotate(id, own.header.join('\n'))
       const body = field(statement, 'body')
       const before = builder.nodes.length
-      const inside = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      const inside = body ? visitBlock(builder, body, { leadingAt: own.after, owner: id }) : []
       if (inside[0]) builder.link(id, inside[0], 'transform', undefined, undefined, 'control')
       // Las cláusulas se leen en el orden del archivo: la última sentencia del intento, y cada una tras la anterior.
       let previous = inside[inside.length - 1]
@@ -1317,7 +1430,7 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       builder.annotate(id, own.header.join('\n'))
 
       const body = field(statement, 'consequence')
-      const yes = body ? visitBlock(builder, body, { leading: own.after, owner: id }) : []
+      const yes = body ? visitBlock(builder, body, { leadingAt: own.after, owner: id }) : []
       if (yes[0]) builder.link(id, yes[0], 'branch', undefined, 'verdadero')
 
       // Por dónde sigue la ejecución al acabar: el final de cada camino que no salta, y la propia
@@ -1428,16 +1541,28 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       // Es su explicación, así que va en su nodo; el docstring no es una sentencia más del cuerpo.
       const doc = docstringOf(body)
       const own = ownComments(statement)
-      builder.annotate(
-        id,
-        [[...own.header, ...own.after].join('\n'), doc?.text ?? '']
-          .filter((part) => part.trim())
-          .join('\n\n'),
-      )
       // Todo lo que nace dentro del `def` es suyo, a cualquier profundidad: las ramas de un
       // `if` o el cuerpo de un bucle también están indentados dentro de la función.
       const before = builder.nodes.length
-      if (body) visitBlock(builder, body, { skip: new Set(doc ? [doc.at] : []), owner: id })
+      // Sin docstring, el comentario de justo debajo de la firma puede ser el rótulo de la primera etapa
+      // (si el cuerpo tiene más): entonces es de la etapa, no la explicación de la función.
+      const headings = new Set<number>()
+      if (body) {
+        visitBlock(builder, body, {
+          skip: new Set(doc ? [doc.at] : []),
+          owner: id,
+          ...(doc ? {} : { leadingAt: own.after, headingsFrom: headings }),
+        })
+      }
+      builder.annotate(
+        id,
+        [
+          [...own.header, ...textsOf(own.after.filter((c) => !headings.has(c.start)))].join('\n'),
+          doc?.text ?? '',
+        ]
+          .filter((part) => part.trim())
+          .join('\n\n'),
+      )
       const inside = builder.nodes.slice(before).map((n) => n.id)
       builder.loops.push(...outerLoops)
       restore()

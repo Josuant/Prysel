@@ -163,3 +163,14 @@ Es el bucle de entrenamiento como nodo propio sin un nodo nuevo: cualquier `for`
 | 1474 px                        | 0,89         | 0,89 (igual) |
 
 **Límite:** en 374 px una tarjeta de una línea de las más anchas (500–800 px con varios resultados o muchos argumentos) sigue quedando a ≈ 0,4: el diagrama se lee, pero con letra pequeña; más no cabe sin recortar el contenido. Para leer de cerca, el panel se puede ensanchar o pasar a densidad expandida.
+
+## Paso 10: las celdas son etapas
+
+La celda que preveía la tabla de arriba (`# %%`) ya existe, y va más allá del archivo entero. Un **comentario de sección** abre una **etapa**: un tramo de sentencias de cualquier bloque (el programa, una función, el cuerpo de un bucle) con su título. Puede ser una celda (`# %% Cargar los datos`), un rótulo con adornos (`# ── Modelo ──`) o, si el bloque tiene al menos dos, un comentario tras una línea en blanco.
+
+- **Plegada**, es una tarjeta que se lee sin abrirla: lo que usa → lo que deja, con el valor de lo que deja si ya se ejecutó, y las pastillas de las funciones a las que llama.
+- **Abierta**, es un marco con su diagrama de flujo dentro.
+
+Es la unidad que le faltaba al cuaderno 2D: un algoritmo largo se lee por sus fases, como un notebook se lee por sus celdas con título. La constante de un programa también encontró su sitio: va a la cajita **«Parámetros»**, como la celda de configuración de un notebook, con su deslizador. Detalle y medidas en `spatial-grammar.md` («Etapas: el algoritmo a la vista»).
+
+**Aún no:** «ejecutar solo esta celda». Hoy se ejecuta el archivo o una sentencia de primer nivel. Una etapa del programa se podría ejecutar como el tramo de sentencias que es, con las marcas de desactualizado que ya existen.

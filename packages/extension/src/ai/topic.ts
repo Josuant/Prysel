@@ -107,6 +107,10 @@ export function buildCodeSystemPrompt(): string {
     '5. El programa tiene que TERMINAR solo (nada de bucles sin condición de salida) e imprimir con',
     '   `print(...)` lo que haga falta para ver que hizo su trabajo.',
     '6. Que el tema se note en el código: nombres de variables y funciones que hablen de él, no `a`, `b`, `f`.',
+    '7. Si una función (o el programa) hace el trabajo en fases (preparar, repetir, decidir, resumir…),',
+    '   empieza cada fase con un comentario de sección tras una línea en blanco, `# Nombre: qué hace`, y',
+    '   pon al menos dos en ese bloque: Prysel dibuja cada fase como una etapa que se abre. No comentes',
+    '   cada línea.',
   ].join('\n')
 }
 
@@ -115,8 +119,8 @@ export function buildCodeUserPrompt(options: TopicOptions): string {
     `Tema: ${options.topic}`,
     options.level ? `Nivel: ${options.level}` : null,
     '',
-    'Escribe el programa que mejor lo explique con su propia ejecución (no hace falta que comentes el',
-    'código: la explicación va aparte, sobre lo que de verdad pasó al ejecutarlo).',
+    'Escribe el programa que mejor lo explique con su propia ejecución (no hace falta que comentes cada',
+    'línea: la explicación va aparte, sobre lo que de verdad pasó al ejecutarlo; basta con nombrar sus fases).',
   ]
     .filter((line): line is string => line !== null)
     .join('\n')

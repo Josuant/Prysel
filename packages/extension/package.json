@@ -21,6 +21,7 @@
     "onCommand:prysel.newLesson",
     "onCommand:prysel.explainFile",
     "onCommand:prysel.explainTopic",
+    "onCommand:prysel.proposeSections",
     "onCommand:prysel.setAnthropicKey",
     "onCommand:prysel.clearAnthropicKey",
     "onCommand:prysel.showAiProvider"
@@ -61,6 +62,11 @@
       {
         "command": "prysel.explainTopic",
         "title": "Explicar un tema con IA (genera un programa nuevo y su lección)",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.proposeSections",
+        "title": "Proponer etapas con IA (comentarios de sección que parten los bloques largos)",
         "category": "Prysel"
       },
       {

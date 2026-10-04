@@ -384,6 +384,63 @@ Los bucles cierran el círculo con su **carril de vuelta**: sale del pie del cue
 
 Medido con los programas sintéticos (`generateProgram({ order: true })`, 12–200 pasos): ningún nodo se pisa, ninguna conexión sube (`against = 0`), una sola columna, y no cruza más conexiones que la lectura a lo ancho. Tests en `packages/spatial/test/flowchart.test.ts`.
 
+## Etapas: el algoritmo a la vista
+
+Un diagrama de flujo sentencia a sentencia no cuenta un algoritmo largo. Con el algoritmo genético de `examples/lecciones/flappy_ga.py`, el programa enseñaba 14 constantes en una columna y una llamada, `entrenar()`; y `entrenar`, 25 sentencias sin ninguna fase a la vista. Un algoritmo se entiende por sus **fases** («probar», «juzgar», «criar», «relevo»). Por eso el diagrama tiene un nivel entre la función y la sentencia: la **etapa**.
+
+**De dónde salen.** Salen del propio código: de los comentarios de sección (`packages/python/src/sections.ts`), igual que los títulos de un párrafo.
+
+- **Explícito**: una celda (`# %% Título`, como las de VS Code y Jupytext) o un rótulo con adornos (`# ── Título ──`). Basta uno.
+- **Implícito**: un comentario al principio del bloque o tras una línea en blanco, siempre que el bloque tenga **al menos dos**. Un comentario suelto sigue siendo la nota de su sentencia.
+- **Qué abarca**: una etapa va desde su rótulo hasta el siguiente o hasta el final del bloque. Lo que hay antes del primer rótulo no es de ninguna.
+- **Título**: el rótulo se lee sin almohadilla, adornos ni numeración. `Probar: cada pájaro vuela` da el título «Probar» y el subtítulo «cada pájaro vuela».
+- **El rótulo ya no es nota**: no se repite como nota de la primera sentencia, ni forma parte de su `lead` (borrar esa sentencia no borra la etapa).
+
+El analizador las devuelve aparte (`Program.sections`) y no toca `Program.nodes`: las ediciones, la ejecución y las anclas de las lecciones siguen igual. Si el código no tiene etapas, **la IA las propone** (`prysel.proposeSections`, botón «Etapas» del lienzo, `src/ai/sections.ts`):
+
+- valida cada ancla, con al menos dos por bloque, y repara lo que falle;
+- entrega lo propuesto como una edición que el usuario revisa en la vista previa de refactorización de VS Code, antes de que se escriba;
+- lo que queda escrito son comentarios de sección normales.
+
+**Cómo se ven** (`withSections` en `packages/ui/src/program.ts`). Cada etapa es un territorio `space.section`:
+
+- **Plegada**, una tarjeta con:
+  - su número en el esquema (`2.3`), su título y su subtítulo;
+  - lo que **usa** de antes → lo que **deja** para después, como chips (con su valor si ya se ejecutó);
+  - las pastillas de los subprocesos a los que llama;
+  - unos glifos de lo que esconde (↻ bucle, ◇ decisión, algo que se imprime).
+- **Abierta**, un marco discontinuo y sin relleno con esa cabecera. Dentro va el diagrama de flujo de siempre, y la secuencia entra por su marco (`enterSections`), como en un `with`.
+- **Fusionada**: una etapa cuyo único miembro es un territorio (un bucle) no dibuja un marco dentro de otro. Su título y su número encabezan el bucle («↻ 2 Evolución» sobre `para generacion en …`).
+- **El `owner` no cambia**: cada sentencia conserva el de siempre (del que dependen las cajitas de chips y las ramas). El marco sale de `contains`, que recoge también lo que cuelga por `owner` (los caminos de una decisión no declaran `contains`).
+- **Renombrar** una etapa reescribe su rótulo (`NodeAction.retitle`). «Empezar una etapa aquí» escribe los rótulos que hagan falta (`section`), y «Quitar la etapa» borra solo el comentario (`unsection`).
+- **Lo pedido sobre una etapa** («detrás de», «dentro de», «antes de») se traduce a su bloque real (`resolveSectionAction`). A una etapa no se le borra ni se le mueve nada con una tecla.
+
+**Cuánto se ve.** Cada densidad es una decisión de «cuánto quiero ver»:
+
+- **compacto** pliega todo;
+- **normal** pliega las **etapas hoja** (las que no tienen otra dentro), así que se ve el esquema entero y cada fase se abre donde está;
+- **expandido** lo abre todo.
+
+El usuario puede darle la vuelta a cualquiera. Un momento de una lección abre la etapa donde está su ancla y la vuelve a cerrar al pasar al siguiente (`reveal`). El cursor del paso a paso y las notas caen en la etapa plegada que tiene dentro su sentencia (`representative`).
+
+**Subprocesos.** El analizador apunta en cada sentencia todas las funciones, clases y métodos del archivo a los que llama su texto (`ProgramNode.callees`, `packages/python/src/callees.ts`):
+
+- también dentro de una comprensión (`[volar(g) for g in poblacion]`), anidadas (`mutar(cruzar(…))`, en el orden en que se ejecutan) o por un objeto (`pajaro.decidir(…)`, con un tipado mínimo: `p = Pajaro(…)` y `self`);
+- se resuelven con el archivo entero ya visto, así que valen para una función definida más abajo;
+- el lienzo las dibuja como pastillas «↗ volar» que la abren (y los métodos se pueden abrir, `methodsOf`). Las migas guardan el camino recorrido: Programa › volar › Pajaro.decidir.
+
+**El programa desplegado.** La función que el programa llama una sola vez desde su punto de entrada se dibuja **en el sitio de la llamada** (`inlineCalls`). Las constantes del módulo (`GRAVEDAD`, `TAMANO_POBLACION`) van a la cajita **«Parámetros»**, estén donde estén. Así lo primero que se ve de `flappy_ga` es el algoritmo: 1 Población inicial → 2 Evolución (2.1 Probar · 2.2 Juzgar · 2.3 Criar · 2.4 Relevo) → 3 Resultado.
+
+**Medido** en densidad normal (`packages/extension/test/sections-view.test.ts`):
+
+| Vista      | Antes                                  | Ahora                  |
+| ---------- | -------------------------------------- | ---------------------- |
+| programa   | 16 nodos (14 constantes, ninguna fase) | 11 (el esquema entero) |
+| `entrenar` | 25                                     | 8                      |
+| `volar`    | 20                                     | 8                      |
+
+Compacto se queda en 4 en cada vista, y expandido lo enseña todo (33, 30 y 23).
+
 ## Profundidad por abstracción
 
 `collapse(graph, groups)` sustituye un grupo de nodos por uno solo que los encapsula y recablea las conexiones que cruzaban su borde. Un `def` se convierte en un nodo en el que se puede entrar.
@@ -442,11 +499,16 @@ Enseñar la definición de una función _y_ la llamada que la usa, en el mismo p
 - **Programa**: el flujo del archivo. Una función **usada** (algo de fuera de su cuerpo depende de ella) no se dibuja: ya está en la llamada, cuyo chevron lleva a ella. Una función **sin usar** sí se dibuja, porque si no, no se vería en ningún sitio (típicamente el punto de entrada, `_main`).
 - **Una función**: un lienzo limpio con su contenido, envuelto por el territorio de la propia función (es donde están sus parámetros: ver «Conectar»). Se llega desde el menú **Funciones** (lista con firma, número de llamadas y tamaño) o desde el chevron de una llamada; una ruta «Programa › suma(a, b)» lleva de vuelta.
 
-Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo seleccionado y lo recorrido (`fitKey`) y se reencuadra. Compacto sigue plegando las funciones sin usar que se dibujan. La lógica es común a la extensión y la galería (`useProgramView`).
+Cada vista es «otro diagrama»: al cambiar, el lienzo olvida lo movido, lo seleccionado y lo recorrido (`fitKey`) y se reencuadra. Compacto sigue plegando las funciones sin usar que se dibujan. La lógica es común a la extensión y la galería (`useProgramView`, y su parte sin estado, `viewOf`).
+
+Dos excepciones, leído como diagrama de flujo (ver «Etapas»):
+
+- La función **principal** (la que el programa llama una sola vez desde su punto de entrada) se dibuja desplegada en el sitio de su llamada.
+- Cualquier llamada, también dentro de una expresión, lleva una **pastilla** que abre su función (o su método). El paso a paso entra en una función solo si no está desplegada donde se mira (`homeOf`).
 
 ## Compacto: la vista de pájaro
 
-**Compacto pliega todas las funciones**: cada `def` pasa a ser un nodo con lo que recibe y lo que devuelve, sin su lógica interna, para que la arquitectura quepa en una mirada. Normal y expandido las abren como territorios. Se puede dar la vuelta a cualquier función con su chevron; cambiar de densidad vuelve a lo de serie. Al replegar, las conexiones que apuntaban a un campo interno entran por el borde de la función (un puerto pertenece al nodo plegado, no al grupo).
+**Compacto pliega todo**: cada `def`, cada bucle y cada etapa pasan a ser un nodo, sin su lógica interna, para que la arquitectura quepa en una mirada. Normal pliega solo las etapas hoja (el esquema del algoritmo), y expandido lo abre todo. Se puede dar la vuelta a cualquier ámbito con su chevron; cambiar de densidad vuelve a lo de serie. Al replegar, las conexiones que apuntaban a un campo interno entran por el borde de la función (un puerto pertenece al nodo plegado, no al grupo).
 
 ## Lo que falta
 

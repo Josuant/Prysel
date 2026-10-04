@@ -86,6 +86,8 @@ export function lessonNotes(
   visible: ReadonlySet<string>,
   /** Las funciones que el diagrama enseña como chip (su definición no es un nodo que se vea). */
   functions: ReadonlySet<string> = new Set(),
+  /** Lo que el lienzo enseña en lugar de un nodo que no se ve (la etapa plegada que lo tiene dentro). */
+  represent?: (id: string) => string | null,
 ): { nodes: CanvasNode[]; links: SemanticEdge[] } {
   const nodes: CanvasNode[] = []
   const links: SemanticEdge[] = []
@@ -97,7 +99,8 @@ export function lessonNotes(
     // La definición de una función se enseña como su chip; lo de dentro, como la llamada que la abre.
     const anchor = !target
       ? null
-      : (nearestVisible(program, target, visible) ??
+      : (represent?.(target.id) ??
+        nearestVisible(program, target, visible) ??
         (functions.has(target.id) ? `${FUNCTION_CHIP}${target.id}` : null) ??
         visibleCaller(program, target, visible))
     if (anchor === null) continue

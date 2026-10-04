@@ -123,6 +123,9 @@ export type IconId =
   | 'book'
   | 'step'
   | 'grid'
+  // Las etapas de un algoritmo (una escalera) y abrir un subproceso (una flecha que sale).
+  | 'section'
+  | 'open'
 
 /**
  * El editor gráfico que el nodo muestra en su cuerpo. Es lo que hace que un nodo sea

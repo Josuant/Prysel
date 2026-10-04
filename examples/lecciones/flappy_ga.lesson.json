@@ -56,7 +56,8 @@
       "at": { "text": "if -1 < tuberia_x - X_PAJARO < 1 and abs(altura - hueco_y) > HUECO / 2:" },
       "note": {
         "text": "El pájaro está siempre en `X_PAJARO`; cuando la tubería llega justo ahí, si su altura no cae dentro del hueco (`HUECO`), muere. **La tubería se mueve; el pájaro no.**",
-        "style": "warning"
+        "style": "warning",
+        "offset": { "x": -15, "y": 10 }
       }
     },
     {
@@ -113,7 +114,8 @@
       },
       "note": {
         "text": "La media cuenta a **toda la población**, no solo al mejor: por eso puede subir aunque el mejor no cambie.",
-        "style": "definition"
+        "style": "definition",
+        "offset": { "x": 8, "y": 2 }
       }
     },
     {

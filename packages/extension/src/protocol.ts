@@ -134,6 +134,11 @@ export interface NewLessonMessage {
   type: 'newLesson'
 }
 
+/** Pedir a la IA las etapas (comentarios de sección) de los bloques largos que no las tienen. */
+export interface ProposeSectionsMessage {
+  type: 'proposeSections'
+}
+
 /** Deshacer o rehacer el último cambio hecho desde el lienzo. */
 export interface UndoMessage {
   type: 'undo' | 'redo'
@@ -158,6 +163,7 @@ export type HostMessage =
   | RestartMessage
   | TraceMessage
   | NewLessonMessage
+  | ProposeSectionsMessage
   | UndoMessage
   | NoteMoveMessage
 
@@ -278,6 +284,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return Number.isInteger(version) ? { type: 'trace', version: version as number } : null
   }
   if (type === 'newLesson') return { type: 'newLesson' }
+  if (type === 'proposeSections') return { type: 'proposeSections' }
   if (type === 'interrupt') return { type: 'interrupt' }
   if (type === 'restart') return { type: 'restart' }
   if (type === 'undo' || type === 'redo') return { type }

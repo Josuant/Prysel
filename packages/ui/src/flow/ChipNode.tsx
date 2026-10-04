@@ -578,6 +578,11 @@ export function TrayBox({
 }) {
   return (
     <div className="tray" role="group" aria-label={label} style={{ width: tray.w, height: tray.h }}>
+      {tray.title && (
+        <span className="tray__title type-badge" aria-hidden>
+          {tray.title}
+        </span>
+      )}
       {tray.add && (
         <button
           type="button"

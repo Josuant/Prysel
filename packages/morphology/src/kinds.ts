@@ -574,6 +574,21 @@ export const NODE_KINDS = [
     ports: { in: true, out: true },
     why: 'Un carril principal y, debajo, uno de recuperación que solo se resalta cuando algo falla.',
   },
+  {
+    ...base,
+    id: 'space.section',
+    name: 'Etapa',
+    python: '# Probar: cada pájaro vuela',
+    role: 'container',
+    badge: 'neutral',
+    icon: 'section',
+    shape: 'card-tab',
+    stroke: 'dashed',
+    fill: 'none',
+    control: 'none',
+    ports: { in: true, out: true },
+    why: 'Una pestaña de cuaderno sin relleno: reúne bajo su título las sentencias de una fase del algoritmo. No es código: la abre un comentario de sección.',
+  },
 ] as const satisfies readonly NodeKindSpec[]
 
 export type NodeKindId = (typeof NODE_KINDS)[number]['id']
@@ -592,6 +607,7 @@ export const TERRITORY_KINDS: ReadonlySet<string> = new Set([
   'control.match',
   'control.case',
   'abstraction.class',
+  'space.section',
 ])
 
 /** ¿Es un tipo que se dibuja como territorio cuando tiene algo dentro? (Las funciones también, aparte.) */

@@ -3,10 +3,11 @@ import { createRequire } from 'node:module'
 import { basename, dirname, join } from 'node:path'
 import * as vscode from 'vscode'
 import { buildProgram, createPythonParser, type PythonParser } from '@prysel/python'
-import { validEdits, type TextEdit } from '@prysel/python/edits'
+import { sectionInserts, validEdits, type TextEdit } from '@prysel/python/edits'
 import { anthropicProvider, DEFAULT_ANTHROPIC_MODEL } from './ai/anthropic.ts'
 import { cacheKeyOf, type CachedTopic } from './ai/cache.ts'
 import { generateLesson } from './ai/generate.ts'
+import { proposeSections, sectionBlocks } from './ai/sections.ts'
 import type { AiProvider } from './ai/provider.ts'
 import {
   generateTopic,
@@ -343,6 +344,76 @@ async function explainFile(context: vscode.ExtensionContext, doc: vscode.TextDoc
       )
     },
   )
+}
+
+/**
+ * La IA propone las **etapas** de los bloques largos que no las tienen (dónde empieza cada fase y cómo se
+ * llama). Lo que propone no se escribe solo: llega como una edición que el usuario revisa en la vista
+ * previa de refactorización de VS Code y acepta o descarta. El código sale de la máquina: se avisa antes.
+ */
+async function proposeFileSections(context: vscode.ExtensionContext, doc: vscode.TextDocument) {
+  let program
+  try {
+    program = await analyse(doc)
+  } catch (error) {
+    void vscode.window.showErrorMessage(
+      `Prysel: no se pudo analizar el archivo. ${messageOf(error)}`,
+    )
+    return
+  }
+  if (sectionBlocks(program).length === 0) {
+    void vscode.window.showInformationMessage(
+      'Prysel: no hay bloques largos sin etapas. Cada bloque de más de tres sentencias ya tiene las suyas.',
+    )
+    return
+  }
+  const provider = await pickProvider(context)
+  if (!provider) {
+    void vscode.window.showInformationMessage(
+      'Prysel: no hay ningún proveedor de IA disponible. Instala una extensión de chat (como Copilot) ' +
+        'o configura una clave con «Prysel: Configurar la clave de Anthropic».',
+    )
+    return
+  }
+  const proceed = await vscode.window.showWarningMessage(
+    `Prysel enviará el código de «${basename(doc.fileName)}» a ${provider.id} para proponer sus etapas. ` +
+      'Podrás revisar cada comentario antes de que se escriba. ¿Continuar?',
+    { modal: true },
+    'Continuar',
+  )
+  if (proceed !== 'Continuar') return
+  const version = doc.version
+  const result = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Prysel: proponiendo etapas con ${provider.id}…`,
+    },
+    () => proposeSections(program, provider, 'es'),
+  )
+  if (!result.ok) {
+    void vscode.window.showErrorMessage(
+      `Prysel: las etapas no pasaron la validación tras ${result.attempts} intento(s). ${result.error}`,
+    )
+    return
+  }
+  if (doc.version !== version) {
+    void vscode.window.showWarningMessage(
+      'Prysel: el archivo cambió mientras se proponían las etapas. Vuelve a pedirlas.',
+    )
+    return
+  }
+  const edit = new vscode.WorkspaceEdit()
+  for (const insert of sectionInserts(program, result.sections)) {
+    const title = result.sections.find((section) =>
+      insert.text.includes(`# ${section.title}`),
+    )?.title
+    edit.insert(doc.uri, doc.positionAt(insert.start), insert.text, {
+      needsConfirmation: true,
+      label: 'Etapa propuesta por la IA',
+      ...(title ? { description: title } : {}),
+    })
+  }
+  await vscode.workspace.applyEdit(edit, { isRefactoring: true })
 }
 
 /** Un nombre de archivo sencillo a partir del tema: minúsculas, guiones bajos, sin acentos ni símbolos. */
@@ -770,6 +841,10 @@ function wireWebview(webview: vscode.Webview) {
       void vscode.commands.executeCommand('prysel.newLesson')
       return
     }
+    if (parsed.type === 'proposeSections') {
+      void vscode.commands.executeCommand('prysel.proposeSections')
+      return
+    }
     if (parsed.type === 'undo' || parsed.type === 'redo') {
       void stepHistory(parsed.type)
       return
@@ -954,6 +1029,22 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
       } catch (error) {
         void vscode.window.showErrorMessage(
           `Prysel: no se pudo generar la lección. ${messageOf(error)}`,
+        )
+      }
+    }),
+    vscode.commands.registerCommand('prysel.proposeSections', async () => {
+      const doc = targetDocument()
+      if (!doc || doc.languageId !== 'python') {
+        void vscode.window.showInformationMessage(
+          'Prysel: abre un archivo de Python para proponer sus etapas con IA.',
+        )
+        return
+      }
+      try {
+        await proposeFileSections(context, doc)
+      } catch (error) {
+        void vscode.window.showErrorMessage(
+          `Prysel: no se pudieron proponer las etapas. ${messageOf(error)}`,
         )
       }
     }),

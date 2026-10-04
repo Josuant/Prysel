@@ -58,7 +58,13 @@ const isConstantOperation = (node: Pick<CanvasNode, 'kind' | 'control'>): boolea
  * casos, y una variable se inicializa dentro de uno de ellos.
  */
 export const isContextKind = (kind: string): boolean =>
-  kind !== 'control.match' && (kind === 'abstraction.collapsed' || isTerritoryKind(kind))
+  kind !== 'control.match' &&
+  // Una etapa agrupa sentencias de un bloque, pero no es un ámbito de Python: sus variables son las del bloque.
+  kind !== 'space.section' &&
+  (kind === 'abstraction.collapsed' || isTerritoryKind(kind))
+
+/** Un nombre de constante (`GRAVEDAD`, `TAMANO_POBLACION`): por convención, un ajuste del programa. */
+export const isConstantName = (name: string): boolean => /^[\p{Lu}_][\p{Lu}\p{N}_]*$/u.test(name)
 
 /** Un chip que representa una función del programa: se arrastra a una llamada. */
 export interface FunctionChip {
@@ -216,6 +222,8 @@ export const TRAY = {
   below: 10,
   /** Hueco a la izquierda de una cajita en columna, para el número de línea de cada chip. */
   number: 26,
+  /** El rótulo de una cajita que lo lleva («Parámetros»). */
+  title: 24,
 } as const
 
 const CHAR = 7.4
@@ -304,6 +312,8 @@ export interface TrayLayout {
   chips: Placed[]
   /** Dónde va el botón de añadir, si lo hay. */
   add?: { x: number; y: number; w: number; label: boolean }
+  /** Su rótulo, arriba: «Parámetros» en la del programa cuando lleva sus constantes. */
+  title?: string
 }
 
 /**
@@ -315,6 +325,8 @@ export function trayLayout(
   canAdd: boolean,
   /** Un chip por fila, con hueco para su número de línea: lo que se lee hacia abajo, en orden. */
   column = false,
+  /** Un rótulo arriba de la cajita. */
+  title?: string,
 ): TrayLayout | null {
   if (items.length === 0 && !canAdd) return null
   const label = items.length === 0
@@ -322,15 +334,17 @@ export function trayLayout(
   const all = canAdd ? [...items, { id: '+', w: addW, h: CHIP_H }] : [...items]
   const packed = packChips(all, column ? 1 : TRAY.maxW)
   const left = TRAY.pad + (column ? TRAY.number : 0)
+  const top = TRAY.pad + (title ? TRAY.title : 0)
   const chips = packed.placed
     .filter((p) => p.id !== '+')
-    .map((p) => ({ ...p, x: p.x + left, y: p.y + TRAY.pad }))
+    .map((p) => ({ ...p, x: p.x + left, y: p.y + top }))
   const plus = packed.placed.find((p) => p.id === '+')
   return {
-    w: packed.w + left + TRAY.pad,
-    h: packed.h + TRAY.pad * 2,
+    w: Math.max(packed.w + left + TRAY.pad, title ? title.length * 7 + TRAY.pad * 2 + 8 : 0),
+    h: packed.h + TRAY.pad + top,
     chips,
-    ...(plus ? { add: { x: plus.x + left, y: plus.y + TRAY.pad, w: addW, label } } : {}),
+    ...(plus ? { add: { x: plus.x + left, y: plus.y + top, w: addW, label } } : {}),
+    ...(title ? { title } : {}),
   }
 }
 
@@ -397,6 +411,12 @@ export function dockChips(nodes: readonly CanvasNode[]): Map<string, string> {
   const docked = new Map<string, string>()
   for (const chip of chips) {
     const owner = chip.owner ?? MODULE
+    // Una constante del programa (`GRAVEDAD = 0.7`) es uno de sus **parámetros**: va a la cajita del
+    // programa esté donde esté, aunque antes se haya hecho algo (`random.seed(88)`).
+    if (owner === MODULE && isConstantName(chip.label)) {
+      docked.set(chip.id, MODULE)
+      continue
+    }
     if (!leading.get(owner)?.has(chip.id)) continue
     if (owner === MODULE) {
       docked.set(chip.id, MODULE)
@@ -575,14 +595,27 @@ export function planChips(
       .filter((fn) => fn.scope === undefined)
       .map((fn) => ({ id: `fn:${fn.id}`, ...functionChipSize(fn), line: fn.line })),
   ]
-  // En columna, todo va en el orden del código (variables y funciones mezcladas), como los pasos.
+  // En columna, todo va en el orden del código (variables y funciones mezcladas), como los pasos; las
+  // constantes, antes: son los parámetros del programa, lo primero que se mira (y se toca) de él.
+  const constants = new Set(
+    (chipsOf.get(MODULE) ?? []).filter((chip) => isConstantName(chip.label)).map((chip) => chip.id),
+  )
   if (options.column === true) {
-    moduleItems.sort((a, b) => (a.line ?? Infinity) - (b.line ?? Infinity))
+    moduleItems.sort(
+      (a, b) =>
+        Number(constants.has(b.id)) - Number(constants.has(a.id)) ||
+        (a.line ?? Infinity) - (b.line ?? Infinity),
+    )
   }
   const moduleTray = trayLayout(
     moduleItems,
     options.canAdd && options.addToModule !== false,
     options.column === true,
+    constants.size === 0
+      ? undefined
+      : moduleItems.length > constants.size
+        ? 'Parámetros y funciones'
+        : 'Parámetros',
   )
   if (moduleTray) trays.set(MODULE, moduleTray)
 

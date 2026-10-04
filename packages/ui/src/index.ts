@@ -20,15 +20,28 @@ export {
   type MotionPhase,
 } from './motion.ts'
 export {
+  enterSections,
   foldScopes,
   functionsOf,
+  inlineCalls,
+  isSection,
+  leafSections,
+  methodsOf,
   programView,
+  representativeIn,
+  resolveSectionAction,
   toCanvasNodes,
   useProgramView,
+  viewOf,
+  withSections,
   type FoldedView,
   type FunctionInfo,
   type ProgramView,
+  type SectionGlyph,
+  type SectionInfo,
   type SourceNode,
+  type SourceSection,
+  type Subprocess,
 } from './program.ts'
 export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'
 export { AddNodeMenu, findTemplates, type AddNodeMenuProps } from './AddNodeMenu.tsx'

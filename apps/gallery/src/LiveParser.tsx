@@ -43,6 +43,7 @@ def _main():
 `
 
 const NO_EDGES: SemanticEdge[] = []
+const NO_SECTIONS: NonNullable<Program['sections']> = []
 
 export function LiveParser() {
   // `?code=` (texto en Base64) sustituye al ejemplo: permite enlazar o capturar un programa concreto.
@@ -138,7 +139,10 @@ export function LiveParser() {
   // Compacto pliega las funciones (vista de pájaro: qué recibe y qué devuelve cada una);
   // normal y expandido las abren como territorios que envuelven su cuerpo.
   const canvasNodes = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
-  const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density, { flow: true })
+  const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density, {
+    flow: true,
+    sections: program?.sections ?? NO_SECTIONS,
+  })
   const nodes = view.nodes
   // `?fn=nombre` abre esa función al cargar: para capturar la vista de una función sin pasar por el menú.
   const askedFunction = useRef(new URLSearchParams(location.search).get('fn'))
@@ -229,6 +233,7 @@ export function LiveParser() {
             {...(canvasHeight === 460 ? {} : { fitMode: 'contain' as const })}
             interactive
             onEnter={view.enter}
+            onOpen={view.descend}
             onControlChange={changeControl}
             onAction={act}
             addTarget={'into' in place ? place.into : null}

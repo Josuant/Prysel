@@ -210,3 +210,12 @@ export type NodeAction =
       /** Con `into` una decisión: a cuál de sus dos caminos (`yes` el verdadero, `no` el `else`), al principio. */
       branch?: 'yes' | 'no'
     }
+  /** Renombrar una etapa: se reescribe el texto de su rótulo (el comentario de sección), nada más. */
+  | { type: 'retitle'; id: string; title: string }
+  /**
+   * Empezar una etapa en esta sentencia: se escribe su rótulo encima. Si el bloque aún no tiene etapas,
+   * se escribe también uno al principio del bloque (`first`), para que las dos partes tengan nombre.
+   */
+  | { type: 'section'; id: string; title: string; first?: string }
+  /** Quitar una etapa: se borra su rótulo, y sus sentencias se quedan donde están. */
+  | { type: 'unsection'; id: string }

@@ -45,23 +45,35 @@ class Pajaro:
 
 def volar(genoma):
     """Un vuelo entero con un genoma: cuántos pasos sobrevive y cuántas tuberías consigue pasar."""
+    # Preparar el vuelo: el pájaro y la primera tubería
     pajaro = Pajaro(genoma)
     tuberia_x = 15.0
     hueco_y = random.uniform(HUECO / 2 + 2, ALTO - HUECO / 2 - 2)
+
+    # Volar: un paso cada vez, hasta chocar o agotar el tiempo
     for tick in range(1, MAX_TICKS + 1):
+        # Decidir y moverse: el cerebro elige, la física manda
         distancia = tuberia_x - X_PAJARO
         aletea = pajaro.decidir(distancia, hueco_y)
         pajaro.mover(aletea)
         altura = pajaro.altura
+
+        # La tubería avanza: si llega al pájaro fuera del hueco, choca
         tuberia_x -= VELOCIDAD_TUBERIA
         if -1 < tuberia_x - X_PAJARO < 1 and abs(altura - hueco_y) > HUECO / 2:
             pajaro.vivo = False
+
+        # Tubería superada: aparece otra y suma un punto
         if tuberia_x < X_PAJARO:
             tuberia_x = 15.0
             hueco_y = random.uniform(HUECO / 2 + 2, ALTO - HUECO / 2 - 2)
             pajaro.tuberias_superadas += 1
+
+        # ¿Sigue vivo? Si no, el vuelo acaba aquí
         if not pajaro.vivo:
             break
+
+    # Aptitud: lo que aguantó, más un premio por cada tubería
     aptitud = tick + pajaro.tuberias_superadas * BONO_POR_TUBERIA
     return aptitud, pajaro.tuberias_superadas
 
@@ -87,14 +99,19 @@ ELITE = 2
 
 def entrenar():
     """La evolución: cada generación vuela, se juzga y da hijos a partir de las mejores."""
+    # Población inicial: genomas al azar, nadie sabe volar todavía
     poblacion = [genoma_aleatorio() for _ in range(TAMANO_POBLACION)]
     mejor_aptitud_historica = 0
     mejor_genoma_historico = poblacion[0]
 
+    # Evolución: cada generación se prueba, se juzga y tiene hijos
     for generacion in range(1, GENERACIONES + 1):
+        # Probar: cada pájaro vuela con su genoma y se mide su aptitud
         resultados = [volar(genoma) for genoma in poblacion]
         aptitudes = [aptitud for aptitud, _ in resultados]
         aptitud_media = sum(aptitudes) / TAMANO_POBLACION
+
+        # Juzgar: el mejor de esta generación, y si bate el récord
         orden = sorted(range(TAMANO_POBLACION), key=lambda i: aptitudes[i], reverse=True)
         mejor_indice = orden[0]
         mejor_aptitud = aptitudes[mejor_indice]
@@ -103,6 +120,8 @@ def entrenar():
             mejor_aptitud_historica = mejor_aptitud
             mejor_genoma_historico = mejor_genoma
         print(f"Generación {generacion}: mejor aptitud = {mejor_aptitud}, media = {aptitud_media:.1f}")
+
+        # Criar: la élite son los padres; cada hijo es un cruce con alguna mutación
         padres = [poblacion[i] for i in orden[:ELITE]]
         nueva_poblacion = list(padres)
         while len(nueva_poblacion) < TAMANO_POBLACION:
@@ -110,8 +129,11 @@ def entrenar():
             padre = random.choice(padres)
             hija = mutar(cruzar(madre, padre))
             nueva_poblacion.append(hija)
+
+        # Relevo: la nueva generación sustituye a la vieja
         poblacion = nueva_poblacion
 
+    # Resultado: el mejor genoma de toda la evolución
     print(f"Mejor genoma: {mejor_genoma_historico}, aptitud {mejor_aptitud_historica}")
 
 

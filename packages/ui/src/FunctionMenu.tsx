@@ -10,9 +10,15 @@ import type { FunctionInfo } from './program.ts'
 
 export interface FunctionMenuProps {
   functions: FunctionInfo[]
+  /** Los métodos de las clases: se abren igual, y se listan tras las funciones. */
+  methods?: FunctionInfo[]
   /** La función que se está viendo, o `null` si es el programa. */
   focus: FunctionInfo | null
+  /** Por dónde se llegó a ella desde el programa (abriendo subprocesos): las migas de en medio. */
+  trail?: FunctionInfo[]
   onOpen: (id: string | null) => void
+  /** Volver a una función del camino (sin perder el resto del camino hasta ella). */
+  onCrumb?: (id: string) => void
 }
 
 const usage = (fn: FunctionInfo) =>
@@ -22,7 +28,15 @@ const usage = (fn: FunctionInfo) =>
       ? 'usada'
       : 'sin usar'
 
-export function FunctionMenu({ functions, focus, onOpen }: FunctionMenuProps) {
+export function FunctionMenu({
+  functions,
+  methods = [],
+  focus,
+  trail = [],
+  onOpen,
+  onCrumb,
+}: FunctionMenuProps) {
+  const listed = [...functions, ...methods]
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -47,7 +61,7 @@ export function FunctionMenu({ functions, focus, onOpen }: FunctionMenuProps) {
     }
   }, [open])
 
-  if (functions.length === 0) return null
+  if (listed.length === 0) return null
 
   return (
     <div className="fn-menu" ref={root}>
@@ -62,6 +76,24 @@ export function FunctionMenu({ functions, focus, onOpen }: FunctionMenuProps) {
         >
           Programa
         </button>
+        {focus &&
+          trail.map((fn) => (
+            <span key={fn.id} className="fn-menu__step">
+              <span className="fn-menu__sep" aria-hidden>
+                ›
+              </span>
+              <button
+                type="button"
+                className="fn-menu__crumb"
+                onClick={() => {
+                  if (onCrumb) onCrumb(fn.id)
+                  else onOpen(fn.id)
+                }}
+              >
+                {fn.name}
+              </button>
+            </span>
+          ))}
         {focus && (
           <>
             <span className="fn-menu__sep" aria-hidden>
@@ -88,7 +120,7 @@ export function FunctionMenu({ functions, focus, onOpen }: FunctionMenuProps) {
       >
         <Icon name="folder" size={13} />
         Funciones
-        <span className="fn-menu__count">{functions.length}</span>
+        <span className="fn-menu__count">{listed.length}</span>
       </button>
 
       {focus?.doc && (
@@ -99,7 +131,7 @@ export function FunctionMenu({ functions, focus, onOpen }: FunctionMenuProps) {
 
       {open && (
         <ul className="fn-menu__list" id={listId} role="listbox" aria-label="Funciones del archivo">
-          {functions.map((fn) => (
+          {listed.map((fn) => (
             <li key={fn.id} role="presentation">
               <button
                 type="button"

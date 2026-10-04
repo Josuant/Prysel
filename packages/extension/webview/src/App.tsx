@@ -24,6 +24,7 @@ import { parseWebviewMessage, type Theme } from '../../src/protocol.ts'
 import { topLevelOf } from '../../src/plan.ts'
 import { indexOf, type Trace, type TraceIndex } from '../../src/trace.ts'
 import type { Lesson } from '../../src/lesson.ts'
+import { sectionBlocks } from '../../src/ai/sections.ts'
 import {
   chipHint,
   describeSummary,
@@ -102,6 +103,7 @@ interface Recording {
 }
 
 const NO_EDGES: SemanticEdge[] = []
+const NO_SECTIONS: NonNullable<Program['sections']> = []
 const NO_RUNS: Record<string, RunView> = {}
 
 /** El estado visual de un nodo según cómo está su sentencia: al día, desactualizada, ejecutándose o con error. */
@@ -525,7 +527,11 @@ export function App() {
   // El programa enseña cada función una vez (como su llamada); una función se ve aparte.
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
   // El lienzo se lee hacia abajo, como diagrama de flujo (ver `axis` más abajo).
-  const view = useProgramView(source, program?.edges ?? NO_EDGES, density, { flow: true })
+  // Con sus etapas: las fases con nombre del algoritmo, plegadas en normal hasta que se abren.
+  const view = useProgramView(source, program?.edges ?? NO_EDGES, density, {
+    flow: true,
+    sections: program?.sections ?? NO_SECTIONS,
+  })
   // Durante la reproducción, si el paso ocurre dentro de una función o un método que no se está viendo, el
   // lienzo entra en él solo: si no, solo se vería la llamada que lo abrió, nunca la línea que se ejecuta.
   // Al salir de la reproducción, se vuelve a lo que se estaba viendo antes de que empezara a seguir sola.
@@ -533,6 +539,7 @@ export function App() {
   const wasFollowing = useRef(false)
   const focusId = view.focus?.id ?? null
   const openView = view.open
+  const homeOf = view.homeOf
   useEffect(() => {
     if (!program || !replay || !player.state?.event) {
       if (wasFollowing.current) {
@@ -546,10 +553,14 @@ export function App() {
       priorFocus.current = focusId
     }
     const node = nodeAtLine(program, player.state.event.l)
-    const wanted = node ? (enclosingFunctionNode(program, node)?.id ?? null) : null
+    const fn = node ? enclosingFunctionNode(program, node) : null
+    // Una función desplegada en el programa (la principal) se sigue viendo ahí, no aparte.
+    const wanted = fn ? homeOf(fn.id) : null
     if (wanted !== focusId) openView(wanted)
-  }, [program, replay, player.state, focusId, openView])
+  }, [program, replay, player.state, focusId, openView, homeOf])
   const unsupported = program?.unsupported ?? []
+  /** Cuántos bloques largos no tienen etapas: la IA puede proponérselas. */
+  const longBlocks = useMemo(() => (program ? sectionBlocks(program).length : 0), [program])
   /** Los visores fijados: ventanas con el valor que dejó su sentencia, colgando de ella. */
   const viewers = useMemo(() => {
     const visible = new Set(view.nodes.map((node) => node.id))
@@ -569,9 +580,14 @@ export function App() {
   const cursor = useMemo(
     () =>
       program && replay && player.state
-        ? cursorNode(program, player.state, new Set(view.nodes.map((node) => node.id)))
+        ? cursorNode(
+            program,
+            player.state,
+            new Set(view.nodes.map((node) => node.id)),
+            view.representative,
+          )
         : null,
-    [program, replay, player.state, view.nodes],
+    [program, replay, player.state, view.nodes, view.representative],
   )
   /** Construcción progresiva: lo que la reproducción ya tocó. Sin reproducción, todo se ve a todo color. */
   const reached = useMemo(
@@ -579,9 +595,25 @@ export function App() {
     [program, replay, player.step],
   )
   const modifierOf = useCallback(
-    (id: string) => (reached && !reached.has(id) ? ('pending' as const) : undefined),
-    [reached],
+    (id: string) => {
+      if (!reached || reached.has(id)) return undefined
+      // Una etapa no es una sentencia: se enciende en cuanto la ejecución toca algo de lo que tiene dentro.
+      const shown = view.nodes.find((node) => node.id === id)
+      if (shown?.kind === 'space.section' && shown.contains?.some((inner) => reached.has(inner))) {
+        return undefined
+      }
+      return 'pending' as const
+    },
+    [reached, view.nodes],
   )
+  // Un momento de la lección abre la etapa donde está la sentencia de la que habla (y la cierra al pasar).
+  const momentNode = moment
+    ? (resolved.find((entry) => entry.beat.id === moment.beat.id)?.node ?? null)
+    : null
+  const reveal = view.reveal
+  useEffect(() => {
+    reveal(replay && momentNode ? [momentNode] : [])
+  }, [replay, momentNode, reveal])
   /** Las notas de la lección, con su flecha: todas sobre el diagrama, o las del momento si se reproduce. */
   const notes = useMemo(
     () =>
@@ -592,9 +624,19 @@ export function App() {
             replay ? player.step : null,
             new Set(view.nodes.map((node) => node.id)),
             new Set(view.functions.map((fn) => fn.id)),
+            view.representative,
           )
         : { nodes: [], links: [] },
-    [program, lesson, resolved, replay, player.step, view.nodes, view.functions],
+    [
+      program,
+      lesson,
+      resolved,
+      replay,
+      player.step,
+      view.nodes,
+      view.functions,
+      view.representative,
+    ],
   )
   const canvasNodes = useMemo(
     () => [...view.nodes, ...viewers.nodes, ...notes.nodes],
@@ -651,8 +693,14 @@ export function App() {
     submit((current) => actionEdits(current, action))
   }
   /** Dónde va lo que se añade: dentro del territorio seleccionado, tras otro nodo, o al final de lo que se ve. */
+  // Con una etapa elegida, lo nuevo va al final de la etapa (tras su última sentencia).
+  const selectedShown = view.nodes.find((node) => node.id === selected)
+  const anchorId =
+    selectedShown?.kind === 'space.section'
+      ? selectedShown.section?.members[selectedShown.section.members.length - 1]
+      : selected
   const { where: addWhere, place } = addPlace(
-    program?.nodes.find((n) => n.id === selected),
+    program?.nodes.find((n) => n.id === anchorId),
     view.focus,
   )
   /** Las funciones del programa, como chips que se arrastran a una llamada. */
@@ -686,7 +734,14 @@ export function App() {
               {file ? baseName(file) : 'Sin archivo Python'}
             </span>
           </span>
-          <FunctionMenu functions={view.functions} focus={view.focus} onOpen={view.open} />
+          <FunctionMenu
+            functions={view.functions}
+            methods={view.methods}
+            focus={view.focus}
+            trail={view.trail}
+            onOpen={view.open}
+            onCrumb={view.descend}
+          />
         </div>
         <span className="sr-only" aria-live="polite">
           {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
@@ -740,6 +795,18 @@ export function App() {
                 {lesson ? lesson.title : 'Lección'}
               </Button>
             )}
+            {/* Solo si hay bloques largos sin etapas: la IA propone sus comentarios de sección. */}
+            {file && longBlocks > 0 && (
+              <Button
+                icon="section"
+                title={`${longBlocks === 1 ? 'Hay un bloque largo' : `Hay ${longBlocks} bloques largos`} sin etapas: la IA propone sus comentarios de sección, y los revisas antes de que se escriban`}
+                onClick={() => {
+                  post({ type: 'proposeSections' })
+                }}
+              >
+                Etapas
+              </Button>
+            )}
             <span className="appbar__sep" aria-hidden />
             <IconButton
               icon="undo"
@@ -789,6 +856,7 @@ export function App() {
                 edges={canvasEdges}
                 density={density}
                 onEnter={view.enter}
+                onOpen={view.descend}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {

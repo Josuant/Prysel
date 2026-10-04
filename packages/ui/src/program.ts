@@ -4,6 +4,7 @@ import {
   valueTypeOf,
   type ControlModel,
   type Density,
+  type NodeAction,
   type NodeKindId,
 } from '@prysel/morphology'
 import {
@@ -57,9 +58,68 @@ export interface SourceNode {
   /** Dónde está en el archivo: aquí solo importa qué sentencia lo posee (la función, el bucle o la decisión que lo envuelve). */
   range?: { owner?: string }
   calls?: string
+  /** Las funciones, clases y métodos del archivo a los que llama (sus subprocesos), en orden. */
+  callees?: string[]
   note?: string
   /** En una decisión: el `elif` en el que sigue su camino falso. */
   continues?: string
+}
+
+/**
+ * Una etapa tal como la da el analizador: un tramo de sentencias de un bloque que abre un comentario de
+ * sección (`# Probar: cada pájaro vuela`). No es una sentencia: agrupa las que ya son nodos.
+ */
+export interface SourceSection {
+  id: string
+  title: string
+  subtitle?: string
+  note?: string
+  /** La sentencia dueña del bloque; sin ella, es del programa. */
+  owner?: string
+  /** Las sentencias directas del bloque que abarca, en orden. */
+  members: readonly string[]
+  line: number
+  lineEnd: number
+}
+
+/** Lo que esconde una etapa plegada: un bucle, una decisión o algo que se imprime o se enseña. */
+export type SectionGlyph = 'loop' | 'branch' | 'output'
+
+/** Un subproceso: una función, una clase o un método del archivo al que llama un nodo. */
+export interface Subprocess {
+  id: string
+  /** Como se lee: `volar`, `Pajaro`, `Pajaro.decidir`. */
+  name: string
+}
+
+/** Lo que el lienzo sabe de una etapa: su número, su título y lo que dice de ella plegada. */
+export interface SectionInfo {
+  /** El id de la etapa (en un bucle que la encabeza, el de la etapa, no el del bucle). */
+  id: string
+  /** Su número en el esquema: `2`, `2.3`. */
+  ordinal: string
+  title: string
+  subtitle?: string
+  /** Lo que lee de antes de ella (sin las constantes del programa). */
+  uses: readonly string[]
+  /**
+   * Lo que deja para después, qué nodo lo define y, si se ha ejecutado, lo que valía (lo que ese nodo
+   * observó): así la tarjeta plegada enseña el resultado de la fase sin abrirla.
+   */
+  leaves: readonly {
+    name: string
+    from: string
+    value?: { short?: string; long: string; changed?: boolean }
+  }[]
+  /** Sus sentencias directas, en orden: lo que se pone «detrás de la etapa» va tras la última. */
+  members: readonly string[]
+  /** Los subprocesos a los que llama lo que tiene dentro. */
+  opens: readonly Subprocess[]
+  glyphs: readonly SectionGlyph[]
+  /** Cuántas sentencias agrupa, contando lo de dentro. */
+  size: number
+  /** La etapa es un solo territorio (un bucle): no se dibuja aparte, lo encabeza. */
+  merged?: boolean
 }
 
 /**
@@ -73,6 +133,17 @@ const IDENTIFIER = /^[\p{L}_][\p{L}\p{N}_]*$/u
 export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
   // Los nombres que un nodo define, con su línea: las variables que están al alcance de lo que viene después.
   const defined = nodes.filter((n) => n.names?.[n.label] !== undefined && IDENTIFIER.test(n.label))
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  /** Cómo se lee un subproceso: un método lleva delante su clase (`Pajaro.decidir`). */
+  const subprocess = (id: string): Subprocess | null => {
+    const target = byId.get(id)
+    if (!target) return null
+    const owner = target.range?.owner === undefined ? undefined : byId.get(target.range.owner)
+    return {
+      id,
+      name: owner?.kind === 'abstraction.class' ? `${owner.label}.${target.label}` : target.label,
+    }
+  }
   return nodes.map((node) => ({
     id: node.id,
     kind: node.kind,
@@ -125,7 +196,264 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
     ...(node.continues ? { continues: node.continues } : {}),
     // Una llamada a una función del archivo lleva a ella.
     ...(node.calls ? { opens: node.calls, openable: true } : {}),
+    // Y todas las que hace (también dentro de una comprensión o por un objeto) son subprocesos que se abren.
+    ...(node.callees && node.callees.length > 0
+      ? {
+          subprocesses: node.callees.flatMap((id) => {
+            const found = id === node.id ? null : subprocess(id)
+            return found ? [found] : []
+          }),
+        }
+      : {}),
   }))
+}
+
+/** Un nombre de constante (`TAMANO_POBLACION`): un ajuste del programa, no un dato de una etapa. */
+const CONSTANT = /^[\p{Lu}_][\p{Lu}\p{N}_]*$/u
+
+/** El nombre del valor que viaja por una conexión de datos: lo que define su origen, o su parámetro. */
+function valueName(edge: SemanticEdge, byId: ReadonlyMap<string, CanvasNode>): string | undefined {
+  const port = edge.fromPort
+  if (port?.startsWith('param:')) return port.slice('param:'.length)
+  if (port?.startsWith('result:')) return port.slice('result:'.length)
+  return byId.get(edge.from)?.provides
+}
+
+/**
+ * Las **etapas** en el lienzo. Cada una pasa a ser un territorio (`space.section`) que envuelve sus
+ * sentencias y lo que hay dentro de ellas, con su número en el esquema (`2.3`) y lo que dice de sí misma
+ * plegada: lo que usa de antes, lo que deja para después, a qué subprocesos llama y qué esconde.
+ *
+ * - El `owner` de cada nodo **no cambia** (sigue siendo su bloque de verdad: las cajitas de chips y las
+ *   ramas del diagrama de flujo dependen de él). El marco sale de `contains`, y la etapa se añade al
+ *   `contains` de lo que la envuelve para que la gramática la coloque dentro.
+ * - Una etapa cuyo único miembro es un territorio (un bucle) no dibuja un marco dentro de otro: su título
+ *   encabeza ese territorio (`merged`).
+ */
+export function withSections(
+  nodes: CanvasNode[],
+  edges: readonly SemanticEdge[],
+  sections: readonly SourceSection[],
+): CanvasNode[] {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const valid = [...sections]
+    .filter((s) => s.members.length > 0 && s.members.every((id) => byId.has(id)))
+    .sort((a, b) => a.line - b.line)
+  if (valid.length === 0) return nodes
+
+  // Lo que cuelga de cada sentencia: lo que declara que contiene (un bucle, una función) y lo que la tiene
+  // por dueña (los caminos de una decisión, que no declaran `contains`).
+  const owned = new Map<string, string[]>()
+  for (const node of nodes) {
+    if (node.owner !== undefined) owned.set(node.owner, [...(owned.get(node.owner) ?? []), node.id])
+  }
+  const deepOf = (ids: readonly string[]): Set<string> => {
+    const found = new Set<string>()
+    const walk = (id: string) => {
+      if (found.has(id)) return
+      found.add(id)
+      for (const child of byId.get(id)?.contains ?? []) walk(child)
+      for (const child of owned.get(id) ?? []) walk(child)
+    }
+    for (const id of ids) walk(id)
+    return found
+  }
+  const inside = new Map(valid.map((s) => [s.id, deepOf(s.members)]))
+
+  // El número de cada una: su puesto entre las de su bloque, detrás del de la etapa que envuelve el bloque.
+  const ordinal = new Map<string, string>()
+  const count = new Map<string, number>()
+  for (const s of valid) {
+    const block = s.owner ?? ''
+    const index = (count.get(block) ?? 0) + 1
+    count.set(block, index)
+    const parent =
+      s.owner === undefined
+        ? undefined
+        : valid
+            .filter((other) => other !== s && inside.get(other.id)?.has(s.owner ?? ''))
+            .sort((a, b) => (inside.get(a.id)?.size ?? 0) - (inside.get(b.id)?.size ?? 0))[0]
+    const prefix = parent ? ordinal.get(parent.id) : undefined
+    ordinal.set(s.id, prefix ? `${prefix}.${index}` : String(index))
+  }
+
+  const dataEdges = edges.filter((edge) => channelOf(edge) === 'data')
+  const infoOf = (s: SourceSection, merged: boolean): SectionInfo => {
+    const own = inside.get(s.id) ?? new Set<string>()
+    // Ni los ajustes del programa (constantes), ni las funciones (van en las pastillas), ni los módulos.
+    const skip = (edge: SemanticEdge, name: string | undefined): name is undefined => {
+      const kind = byId.get(edge.from)?.kind ?? 'opaque.code'
+      return (
+        name === undefined ||
+        CONSTANT.test(name) ||
+        kind === 'external.import' ||
+        // Un parámetro sí es un dato (`genoma`): lo que no cuenta es el nombre de la función.
+        (getKind(kind).role === 'abstraction' && !edge.fromPort?.startsWith('param:'))
+      )
+    }
+    const uses: string[] = []
+    const leaves: { name: string; from: string }[] = []
+    for (const edge of dataEdges) {
+      const name = valueName(edge, byId)
+      if (skip(edge, name)) continue
+      if (own.has(edge.to) && !own.has(edge.from) && !uses.includes(name)) uses.push(name)
+      if (own.has(edge.from) && !own.has(edge.to) && !leaves.some((leaf) => leaf.name === name)) {
+        leaves.push({ name, from: edge.from })
+      }
+    }
+    // Lo que se reasigna para la vuelta siguiente (`poblacion = nueva`) no lo lee nadie después en el
+    // texto: si no deja otra cosa, deja lo que definen sus sentencias.
+    if (leaves.length === 0) {
+      for (const id of s.members) {
+        const node = byId.get(id)
+        for (const name of node?.results ?? (node?.provides ? [node.provides] : [])) {
+          if (!CONSTANT.test(name)) leaves.push({ name, from: id })
+        }
+      }
+    }
+    const opens: Subprocess[] = []
+    const glyphs = new Set<SectionGlyph>()
+    for (const id of own) {
+      const node = byId.get(id)
+      if (!node) continue
+      for (const sub of node.subprocesses ?? []) {
+        if (!opens.some((o) => o.id === sub.id)) opens.push(sub)
+      }
+      if (node.kind === 'control.loop') glyphs.add('loop')
+      if (node.kind === 'control.condition') glyphs.add('branch')
+      if (node.kind === 'effect.io' || node.kind === 'output.display') glyphs.add('output')
+    }
+    return {
+      id: s.id,
+      ordinal: ordinal.get(s.id) ?? '',
+      title: s.title,
+      ...(s.subtitle ? { subtitle: s.subtitle } : {}),
+      uses,
+      leaves: leaves.map((leaf) => {
+        const value = byId.get(leaf.from)?.observed?.[leaf.name]
+        return value ? { ...leaf, value } : leaf
+      }),
+      members: s.members,
+      opens,
+      glyphs: (['loop', 'branch', 'output'] as const).filter((g) => glyphs.has(g)),
+      size: own.size,
+      ...(merged ? { merged: true } : {}),
+    }
+  }
+
+  const patched = new Map<string, CanvasNode>()
+  const created = new Map<string, CanvasNode[]>()
+  for (const s of valid) {
+    const only = s.members.length === 1 ? byId.get(s.members[0] ?? '') : undefined
+    if (only && isTerritory(only)) {
+      // Un bucle que es toda la etapa: lleva su título y su número en su propia cabecera.
+      const base = patched.get(only.id) ?? only
+      const note = [s.subtitle, s.note, base.note].filter(Boolean).join('\n\n')
+      patched.set(only.id, {
+        ...base,
+        label: s.title,
+        renamable: true,
+        section: infoOf(s, true),
+        ...(note ? { note } : {}),
+      })
+      continue
+    }
+    const first = s.members[0] ?? ''
+    const node: CanvasNode = {
+      id: s.id,
+      kind: 'space.section',
+      label: s.title,
+      line: s.line,
+      meta: s.lineEnd > s.line ? `líneas ${s.line}–${s.lineEnd}` : `línea ${s.line}`,
+      contains: [...(inside.get(s.id) ?? [])],
+      ...(s.owner === undefined ? {} : { owner: s.owner }),
+      ...(s.note ? { note: s.note } : {}),
+      renamable: true,
+      section: infoOf(s, false),
+    }
+    created.set(first, [...(created.get(first) ?? []), node])
+  }
+
+  // Lo que envuelve a una etapa (su bloque, lo de fuera, otra etapa) la lleva en su `contains`.
+  const all = [
+    ...nodes.map((node) => patched.get(node.id) ?? node),
+    ...[...created.values()].flat(),
+  ]
+  const containsOf = new Map(all.map((node) => [node.id, node.contains]))
+  for (const group of created.values()) {
+    for (const node of group) {
+      const first = node.contains?.[0]
+      if (first === undefined) continue
+      for (const other of all) {
+        if (other.id === node.id) continue
+        const list = containsOf.get(other.id)
+        if (list?.includes(first) && !list.includes(node.id)) {
+          containsOf.set(other.id, [...list, node.id])
+        }
+      }
+    }
+  }
+  const settle = (node: CanvasNode): CanvasNode => {
+    const contains = containsOf.get(node.id)
+    return contains === node.contains || contains === undefined ? node : { ...node, contains }
+  }
+
+  // En el orden del programa: cada etapa justo antes de su primera sentencia (y la de fuera, antes).
+  return nodes.flatMap((node) => [
+    ...(created.get(node.id) ?? []).map(settle),
+    settle(patched.get(node.id) ?? node),
+  ])
+}
+
+/** ¿Es una etapa dibujada aparte (no una que encabeza un bucle)? */
+export const isSection = (node: Pick<CanvasNode, 'kind'>): boolean => node.kind === 'space.section'
+
+/**
+ * Una etapa no es una sentencia: lo que el lienzo pide «detrás de», «dentro de» o «antes de» una etapa se
+ * traduce a su bloque real (tras su última sentencia, antes de la primera). Lo que se le haría a una
+ * sentencia (borrarla, duplicarla, moverla, reescribirla) no se le hace a una etapa: `null`.
+ */
+export function resolveSectionAction(
+  action: NodeAction,
+  sectionOf: (id: string) => SectionInfo | undefined,
+): NodeAction | null {
+  const find = (id: string | undefined) => (id === undefined ? undefined : sectionOf(id))
+  const first = (s: SectionInfo) => s.members[0] ?? ''
+  const last = (s: SectionInfo) => s.members[s.members.length - 1] ?? ''
+  switch (action.type) {
+    case 'add': {
+      const target = find(action.into) ?? find(action.after)
+      if (!target) return action
+      return {
+        type: 'add',
+        template: action.template,
+        after: last(target),
+        ...(action.connect ? { connect: action.connect } : {}),
+      }
+    }
+    case 'move': {
+      if (find(action.id)) return null
+      const into = find(action.into)
+      const after = find(action.after)
+      const before = find(action.before)
+      if (into) {
+        return action.start
+          ? { type: 'move', id: action.id, before: first(into) }
+          : { type: 'move', id: action.id, after: last(into) }
+      }
+      if (after) return { type: 'move', id: action.id, after: last(after) }
+      if (before) return { type: 'move', id: action.id, before: first(before) }
+      return action
+    }
+    case 'code':
+    case 'delete':
+    case 'duplicate':
+    case 'rename':
+    case 'callee':
+      return find(action.id) ? null : action
+    default:
+      return action
+  }
 }
 
 /** Una función con cuerpo: es la que aparece en el menú «Funciones» y la que se ve aparte. */
@@ -202,11 +530,48 @@ export function functionsOf(nodes: CanvasNode[], edges: SemanticEdge[]): Functio
         signature: `(${names.join(', ')})`,
         params: names,
         ...(node.line === undefined ? {} : { line: node.line }),
-        calls: nodes.filter((other) => other.opens === node.id).length,
+        calls: callsTo(nodes, node.id),
         used: edges.some((edge) => edge.from === node.id && !body.has(edge.to)),
         size: body.size,
         ...(node.note ? { doc: node.note } : {}),
         ...(scope === undefined ? {} : { scope }),
+      }
+    })
+}
+
+/** Cuántos nodos llaman a una definición: como sentencia (`opens`) o metida en una expresión (`subprocesses`). */
+const callsTo = (nodes: readonly CanvasNode[], id: string) =>
+  nodes.filter((other) => other.opens === id || other.subprocesses?.some((s) => s.id === id)).length
+
+/**
+ * Los métodos de las clases del archivo. No se ofrecen como chips (se llaman por un objeto), pero se pueden
+ * abrir como una función: desde la pastilla de una llamada (`pajaro.decidir`) o desde el menú.
+ */
+export function methodsOf(nodes: CanvasNode[]): FunctionInfo[] {
+  const classes = new Map(
+    nodes.filter((n) => n.kind === 'abstraction.class').map((n) => [n.id, n] as const),
+  )
+  return nodes
+    .filter((node) => isFunction(node) && classes.has(node.owner ?? ''))
+    .map((node) => {
+      const owner = classes.get(node.owner ?? '')
+      const names =
+        node.control?.kind === 'signature'
+          ? node.control.params
+              .map((p) => p.name)
+              .filter((name) => name !== 'self' && name !== 'cls')
+          : []
+      return {
+        id: node.id,
+        name: `${owner?.label ?? ''}.${node.label}`,
+        signature: `(${names.join(', ')})`,
+        params: names,
+        ...(node.line === undefined ? {} : { line: node.line }),
+        calls: callsTo(nodes, node.id),
+        used: true,
+        size: node.contains?.length ?? 0,
+        ...(node.note ? { doc: node.note } : {}),
+        ...(owner ? { scope: owner.id } : {}),
       }
     })
 }
@@ -226,7 +591,15 @@ export function programView(
   edges: SemanticEdge[],
   focus: string | null,
 ): FoldedView {
-  const used = functionsOf(nodes, edges).filter((f) => f.used && f.id !== focus)
+  // Lo que envuelve a lo enfocado (la clase de un método) no se esconde: se estaría escondiendo lo que se mira.
+  const around = new Set(
+    focus === null
+      ? []
+      : nodes.filter((node) => node.contains?.includes(focus)).map((node) => node.id),
+  )
+  const used = functionsOf(nodes, edges).filter(
+    (f) => f.used && f.id !== focus && !around.has(f.id),
+  )
   const hidden = new Set<string>()
   for (const fn of used) {
     hidden.add(fn.id)
@@ -245,6 +618,157 @@ export function programView(
     nodes: nodes.filter((node) => visible(node.id)),
     edges: edges.filter((edge) => visible(edge.from) && visible(edge.to)),
   }
+}
+
+/**
+ * **El programa desplegado.** Un script suele ser un puñado de constantes y una llamada (`entrenar()`), y
+ * el algoritmo está dentro de la función. Si el programa la llama una sola vez, desde su punto de entrada
+ * (o desde el propio archivo), se dibuja **su territorio en el sitio de la llamada**: así lo primero que se ve
+ * es el algoritmo. La función sigue apareciendo una sola vez (ahí), y se puede abrir aparte como siempre.
+ *
+ * Solo una llamada que es toda la sentencia (`entrenar()`): una que guarda su resultado (`x = f()`) perdería
+ * la asignación.
+ */
+export function inlineCalls(
+  nodes: readonly CanvasNode[],
+  edges: readonly SemanticEdge[],
+  shown: FoldedView,
+  functions: readonly FunctionInfo[],
+): FoldedView & { inlined: ReadonlySet<string> } {
+  const byId = new Map(nodes.map((node) => [node.id, node]))
+  const visible = new Set(shown.nodes.map((node) => node.id))
+  const entries = shown.nodes.filter((node) => node.kind === 'control.entrypoint')
+  const calls = shown.nodes.filter((node) => {
+    if (node.opens === undefined || node.provides !== undefined || node.results) return false
+    const fn = functions.find((f) => f.id === node.opens)
+    if (!fn || fn.calls !== 1 || visible.has(fn.id)) return false
+    return entries.length > 0
+      ? entries.some((entry) => entry.id === node.owner)
+      : node.owner === undefined
+  })
+  if (calls.length === 0) return { ...shown, inlined: NONE }
+
+  const swap = new Map<string, string>()
+  const owners = new Map<string, string | undefined>()
+  const extra = new Map<string, string[]>()
+  for (const call of calls) {
+    const fn = byId.get(call.opens ?? '')
+    if (!fn) continue
+    swap.set(call.id, fn.id)
+    owners.set(fn.id, call.owner)
+    const body = [fn.id, ...(fn.contains ?? [])]
+    for (const id of body) visible.add(id)
+    visible.delete(call.id)
+    // Lo que envolvía a la llamada (el punto de entrada) envuelve ahora a la función y su cuerpo.
+    for (const node of shown.nodes) {
+      if (node.contains?.includes(call.id))
+        extra.set(node.id, [...(extra.get(node.id) ?? []), ...body])
+    }
+  }
+  const inlined = new Set(swap.values())
+  const seen = new Set<string>()
+  return {
+    nodes: nodes.flatMap((node) => {
+      if (!visible.has(node.id)) return []
+      const more = extra.get(node.id)
+      const owned = owners.has(node.id)
+      if (!more && !owned) return [node]
+      const copy: CanvasNode = { ...node }
+      if (owned) {
+        // La función pasa a ser de quien era la llamada (el punto de entrada, o el programa).
+        const owner = owners.get(node.id)
+        if (owner === undefined) delete copy.owner
+        else copy.owner = owner
+      }
+      if (more) copy.contains = [...(node.contains ?? []), ...more]
+      return [copy]
+    }),
+    edges: edges.flatMap((edge) => {
+      const from = swap.get(edge.from) ?? edge.from
+      const to = swap.get(edge.to) ?? edge.to
+      if (from === to || !visible.has(from) || !visible.has(to)) return []
+      const key = `${from}|${to}|${edge.relation}|${edge.fromPort ?? ''}|${edge.toPort ?? ''}|${edge.label ?? ''}`
+      if (seen.has(key)) return []
+      seen.add(key)
+      return [from === edge.from && to === edge.to ? edge : { ...edge, from, to }]
+    }),
+    inlined,
+  }
+}
+
+/**
+ * En una etapa abierta, la secuencia entra por su marco (como en un `with`), no por encima de su título
+ * hasta su primera sentencia: lo que llega a su primera sentencia desde fuera llega a la etapa. Lo que sale
+ * sale de donde sale de verdad (el final de un camino, el «no» de una decisión). Una etapa plegada ya lo
+ * tiene resuelto: el colapso lleva al borde todo lo que lo cruza.
+ */
+export function enterSections(view: FoldedView, folded: ReadonlySet<string>): FoldedView {
+  const open = view.nodes.filter((node) => isSection(node) && !folded.has(node.id))
+  if (open.length === 0) return view
+  const entry = new Map<string, { id: string; inside: ReadonlySet<string> }[]>()
+  for (const section of open) {
+    const first = section.contains?.[0]
+    if (first === undefined) continue
+    entry.set(first, [
+      ...(entry.get(first) ?? []),
+      { id: section.id, inside: new Set(section.contains) },
+    ])
+  }
+  let changed = false
+  const seen = new Set<string>()
+  const edges = view.edges.flatMap((edge) => {
+    let to = edge.to
+    // La secuencia, las ramas y la entrada de un territorio (un bucle, un `with`) a su primera sentencia.
+    const entering =
+      edge.relation === 'sequence' ||
+      edge.relation === 'branch' ||
+      (edge.relation === 'transform' && channelOf(edge) === 'control')
+    if (entering) {
+      // La de más fuera que empiece aquí y no contenga el origen.
+      const around = (entry.get(to) ?? []).filter((s) => !s.inside.has(edge.from))
+      const outer = around.sort((a, b) => b.inside.size - a.inside.size)[0]
+      if (outer) to = outer.id
+    }
+    if (to === edge.to) return [edge]
+    changed = true
+    const key = `${edge.from}|${to}|${edge.relation}|${edge.label ?? ''}`
+    if (seen.has(key)) return []
+    seen.add(key)
+    // Llega a la etapa, no a un campo de su primera sentencia.
+    const next: SemanticEdge = { ...edge, to }
+    delete next.toPort
+    return [next]
+  })
+  return changed ? { nodes: view.nodes, edges } : view
+}
+
+/**
+ * Las etapas **hoja**: las que no tienen otra etapa dentro (también un bucle que encabeza una). Son las que
+ * normal enseña plegadas: el esquema se ve entero y cada fase se abre donde está.
+ */
+export function leafSections(nodes: readonly CanvasNode[]): ReadonlySet<string> {
+  const sections = nodes.filter((node) => node.section !== undefined)
+  return new Set(
+    sections
+      .filter(
+        (node) => !sections.some((other) => other !== node && node.contains?.includes(other.id)),
+      )
+      .map((node) => node.id),
+  )
+}
+
+/**
+ * Lo que representa en el lienzo a un nodo que no se ve: el contenedor visible más pequeño que lo tiene
+ * dentro (la etapa plegada, la función plegada). El propio nodo si se ve; `null` si nada lo representa.
+ */
+export function representativeIn(nodes: readonly CanvasNode[], id: string): string | null {
+  let best: CanvasNode | null = null
+  for (const node of nodes) {
+    if (node.id === id) return id
+    if (!node.contains?.includes(id)) continue
+    if (!best || (node.contains.length ?? 0) < (best.contains?.length ?? 0)) best = node
+  }
+  return best?.id ?? null
 }
 
 /**
@@ -376,62 +900,152 @@ const PROGRAM = 'programa'
 export interface ProgramView extends FoldedView {
   /** Todas las funciones del archivo: es lo que lista el menú. */
   functions: FunctionInfo[]
-  /** La función que se está viendo, o `null` si es el programa. */
+  /** Los métodos de sus clases: se pueden abrir, aunque no se ofrezcan como chips. */
+  methods: FunctionInfo[]
+  /** La función (o el método) que se está viendo, o `null` si es el programa. */
   focus: FunctionInfo | null
-  /** Ir a una función (o volver al programa con `null`). */
+  /** Las funciones por las que se llegó a la que se ve, desde el programa (las migas). */
+  trail: FunctionInfo[]
+  /** Ir a una función (o volver al programa con `null`): empieza un camino nuevo. */
   open: (id: string | null) => void
-  /** Lo que hace el chevron de un nodo: una llamada abre su función; una función se pliega o se abre. */
+  /** Abrir un subproceso desde lo que se ve: el camino sigue (Programa › volar › Pajaro.decidir). */
+  descend: (id: string) => void
+  /** Lo que hace el chevron de un nodo: una llamada abre su función; una función, un bucle o una etapa se pliega o se abre. */
   enter: (id: string) => void
+  /**
+   * Abre lo que envuelve a estos nodos si está plegado de serie (una etapa, sobre todo): es lo que hace un
+   * momento de la lección con la sentencia de la que habla. Lo que abrió la llamada anterior se vuelve a
+   * cerrar; lo que el usuario abrió o cerró a mano, no se toca.
+   */
+  reveal: (ids: readonly string[]) => void
+  /** El nodo que se ve en lugar de uno que no se ve (la etapa plegada que lo tiene dentro), o `null`. */
+  representative: (id: string) => string | null
+  /** Qué vista enseña el cuerpo de una función: la del programa (`null`) si está desplegada ahí. */
+  homeOf: (id: string) => string | null
   /** Cuántos ámbitos hay plegados ahora. */
   folded: number
   /** Cambia con lo que se ve: es la señal para que el lienzo se reencuadre. */
   viewKey: string
 }
 
+const NO_SECTIONS: readonly SourceSection[] = []
+
 /**
- * Qué se ve y cómo. **Compacto pliega todas las funciones**: es la vista de pájaro, y su razón de
- * ser es que el programa quepa en una mirada. Normal y expandido las abren. El usuario puede
- * darle la vuelta a cualquiera; cambiar de densidad vuelve a lo de serie, porque es una decisión
- * de «cuánto quiero ver» y no de una función concreta.
+ * Lo que se ve, de una vez y sin estado (el hook solo guarda lo que el usuario plegó o abrió): el programa o la
+ * función enfocada, con la principal desplegada en el programa; lo plegado según la densidad (compacto, todo;
+ * normal, las etapas hoja; expandido, nada) y lo que el usuario o un momento de la lección dieron la vuelta.
+ */
+export function viewOf(
+  all: CanvasNode[],
+  edges: SemanticEdge[],
+  functions: readonly FunctionInfo[],
+  options: {
+    focus: string | null
+    flow: boolean
+    density: Density
+    /** Lo que el usuario dio la vuelta (abrió o plegó a mano). */
+    flipped?: ReadonlySet<string>
+    /** Lo que se abrió para enseñar algo (un momento de la lección). */
+    revealed?: ReadonlySet<string>
+  },
+): {
+  base: FoldedView
+  folded: ReadonlySet<string>
+  view: FoldedView
+  byDefault: (id: string) => boolean
+} {
+  const { focus, flow, density } = options
+  const shown = programView(all, edges, focus)
+  const base = focus === null && flow ? inlineCalls(all, edges, shown, functions) : shown
+  // La función que se está viendo nunca se pliega: sería quedarse sin ver lo que se pidió ver.
+  const scopes = base.nodes.filter((node) => isFoldable(node) && node.id !== focus)
+  const leaves = leafSections(base.nodes)
+  const byDefault = (id: string) =>
+    density === 'compact' ? true : density === 'normal' ? leaves.has(id) : false
+  const folded = new Set(
+    scopes
+      .map((node) => node.id)
+      .filter(
+        (id) =>
+          (byDefault(id) && !(options.revealed?.has(id) ?? false)) !==
+          (options.flipped?.has(id) ?? false),
+      ),
+  )
+  const collapsed = foldScopes(base.nodes, base.edges, folded)
+  const returns = foldReturns(collapsed.nodes, collapsed.edges, { hide: !flow })
+  return { base, folded, view: flow ? enterSections(returns, folded) : returns, byDefault }
+}
+
+/**
+ * Qué se ve y cómo. Cada densidad es una decisión de «cuánto quiero ver»:
+ * - **Compacto** pliega todo (funciones, bucles, etapas): la vista de pájaro, que el programa quepa en una mirada.
+ * - **Normal** pliega las **etapas hoja**: se ve el esquema del algoritmo, y cada fase se abre donde está.
+ * - **Expandido** lo abre todo.
+ *
+ * El usuario puede darle la vuelta a cualquiera; cambiar de densidad vuelve a lo de serie.
  */
 export function useProgramView(
   nodes: CanvasNode[],
   edges: SemanticEdge[],
   density: Density,
-  /** Se dibuja como diagrama de flujo (leído hacia abajo): los `return` se quedan como pasos. */
-  options: { flow?: boolean } = {},
+  options: {
+    /** Se dibuja como diagrama de flujo (leído hacia abajo): los `return` se quedan como pasos. */
+    flow?: boolean
+    /** Las etapas del programa (solo en el diagrama de flujo). */
+    sections?: readonly SourceSection[]
+  } = {},
 ): ProgramView {
   const flow = options.flow === true
-  const mode = density === 'compact' ? 'compact' : 'open'
+  const sections = flow ? (options.sections ?? NO_SECTIONS) : NO_SECTIONS
+  const mode = density
   const [focusId, setFocusId] = useState<string | null>(null)
+  const [trailIds, setTrailIds] = useState<readonly string[]>([])
   const [state, setState] = useState<{ mode: string; flipped: ReadonlySet<string> }>({
     mode,
     flipped: NONE,
   })
+  const [revealed, setRevealed] = useState<ReadonlySet<string>>(NONE)
   const flipped = state.mode === mode ? state.flipped : NONE
 
-  const functions = useMemo(() => functionsOf(nodes, edges), [nodes, edges])
+  const all = useMemo(() => withSections(nodes, edges, sections), [nodes, edges, sections])
+  const functions = useMemo(() => functionsOf(all, edges), [all, edges])
+  const methods = useMemo(() => methodsOf(all), [all])
   // Si la función enfocada desaparece (se borró del código), se vuelve al programa.
   const focus = useMemo(
-    () => functions.find((fn) => fn.id === focusId) ?? null,
-    [functions, focusId],
+    () =>
+      functions.find((fn) => fn.id === focusId) ?? methods.find((fn) => fn.id === focusId) ?? null,
+    [functions, methods, focusId],
+  )
+  const trail = useMemo(
+    () =>
+      trailIds.flatMap((id) => {
+        const fn = functions.find((f) => f.id === id) ?? methods.find((f) => f.id === id)
+        return fn ? [fn] : []
+      }),
+    [trailIds, functions, methods],
   )
 
-  const base = useMemo(() => programView(nodes, edges, focus?.id ?? null), [nodes, edges, focus])
-  // La función que se está viendo nunca se pliega: sería quedarse sin ver lo que se pidió ver.
-  const scopes = useMemo(
+  /** Lo que el programa despliega en su sitio (su función principal): se calcula aunque se vea otra cosa. */
+  const programInlined = useMemo(
+    () => (flow ? inlineCalls(all, edges, programView(all, edges, null), functions).inlined : NONE),
+    [flow, all, edges, functions],
+  )
+  const {
+    base,
+    folded: foldedSet,
+    view,
+    byDefault,
+  } = useMemo(
     () =>
-      base.nodes.filter((node) => isFoldable(node) && node.id !== focus?.id).map((node) => node.id),
-    [base, focus],
+      viewOf(all, edges, functions, {
+        focus: focus?.id ?? null,
+        flow,
+        density: mode,
+        flipped,
+        revealed,
+      }),
+    [all, edges, functions, focus, flow, mode, flipped, revealed],
   )
-  const foldedSet = useMemo(
-    () => new Set(scopes.filter((id) => (mode === 'compact') !== flipped.has(id))),
-    [scopes, mode, flipped],
-  )
-  const view = useMemo(() => {
-    const folded = foldScopes(base.nodes, base.edges, foldedSet)
-    return foldReturns(folded.nodes, folded.edges, { hide: !flow })
-  }, [base, foldedSet, flow])
 
   const toggle = useCallback(
     (id: string) => {
@@ -446,21 +1060,63 @@ export function useProgramView(
     [mode],
   )
 
+  const open = useCallback((id: string | null) => {
+    setTrailIds([])
+    setFocusId(id)
+  }, [])
+  const descend = useCallback(
+    (id: string) => {
+      if (id === focusId) return
+      setTrailIds((previous) => {
+        // Volver a una función del camino es recortarlo hasta ella.
+        const at = previous.indexOf(id)
+        if (at >= 0) return previous.slice(0, at)
+        return focusId === null ? [] : [...previous, focusId]
+      })
+      setFocusId(id)
+    },
+    [focusId],
+  )
+
   const enter = useCallback(
     (id: string) => {
-      const target = nodes.find((node) => node.id === id)
-      if (target?.opens) setFocusId(target.opens)
+      const target = all.find((node) => node.id === id)
+      if (target?.opens && !target.contains?.length) descend(target.opens)
       else toggle(id)
     },
-    [nodes, toggle],
+    [all, descend, toggle],
   )
+
+  const reveal = useCallback(
+    (ids: readonly string[]) => {
+      const opened = new Set<string>()
+      for (const node of base.nodes) {
+        if (!byDefault(node.id) || !isFoldable(node)) continue
+        if (ids.some((id) => node.contains?.includes(id))) opened.add(node.id)
+      }
+      setRevealed((previous) =>
+        previous.size === opened.size && [...opened].every((id) => previous.has(id))
+          ? previous
+          : opened,
+      )
+    },
+    [base, byDefault],
+  )
+  const representative = useCallback((id: string) => representativeIn(view.nodes, id), [view])
+  const homeOf = useCallback((id: string) => (programInlined.has(id) ? null : id), [programInlined])
 
   return {
     ...view,
     functions,
+    methods,
     focus,
-    open: setFocusId,
+    trail,
+    open,
+    descend,
     enter,
+    reveal,
+    representative,
+    homeOf,
     folded: foldedSet.size,
     viewKey: focus?.id ?? PROGRAM,
   }

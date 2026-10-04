@@ -31,6 +31,8 @@ import type { ChipSlot } from './chips.ts'
 import type { StepInfo } from './steps.ts'
 import { SlotStateContext, type SlotState } from './fields.tsx'
 import { Icon } from './Icon.tsx'
+import { Subprocesses } from './flow/SectionCard.tsx'
+import type { Subprocess } from './program.ts'
 
 /** Medio píxel de margen para que el trazo de 1px caiga nítido sobre la rejilla. */
 const HAIRLINE = 0.75
@@ -148,6 +150,11 @@ export interface MorphNodeProps {
   onToggleDensity?: () => void
   /** Qué hace el chevron, para lectores de pantalla: «Abrir la función», «Plegar suma». */
   toggleLabel?: string
+  /** Es la cabecera de una etapa (un bucle que la encabeza): su número en el esquema, antes del título. */
+  ordinal?: string
+  /** Los subprocesos a los que llama (funciones, clases, métodos del archivo): pastillas que los abren. */
+  opens?: readonly Subprocess[]
+  onOpen?: (id: string) => void
   /** Contenido de un contenedor Space. */
   children?: ReactNode
   className?: string
@@ -209,7 +216,13 @@ function Title({
 }
 
 /** El cuadro de renombrar. Selecciona el nombre entero **una sola vez**, al abrirse: escribir lo sustituye. */
-function RenameBox({ label, onDone }: { label: string; onDone: (to: string | null) => void }) {
+export function RenameBox({
+  label,
+  onDone,
+}: {
+  label: string
+  onDone: (to: string | null) => void
+}) {
   const [draft, setDraft] = useState(label)
   const box = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -330,6 +343,9 @@ export function MorphNode({
   onSlotsMeasured,
   onToggleDensity,
   toggleLabel,
+  ordinal,
+  opens,
+  onOpen,
   children,
   className,
   style,
@@ -575,6 +591,7 @@ export function MorphNode({
               <span className="node__ask" aria-hidden>
                 ?
               </span>
+              {opens && <Subprocesses opens={opens} onOpen={onOpen} />}
               {showStatus && state !== 'dormant' && <StatusChip state={state} showLabel={false} />}
             </div>
           ) : lined && control ? (
@@ -606,6 +623,7 @@ export function MorphNode({
                     {...(linkedSlots ? { linked: linkedSlots } : {})}
                   />
                 </div>
+                {opens && <Subprocesses opens={opens} onOpen={onOpen} />}
                 {showStatus && state !== 'dormant' && (
                   <StatusChip state={state} showLabel={false} />
                 )}
@@ -635,6 +653,11 @@ export function MorphNode({
                   label={spec.name}
                   iconOnly={slim || flow}
                 />
+                {ordinal && (
+                  <span className="section__ordinal" aria-hidden>
+                    {ordinal}
+                  </span>
+                )}
                 {/* Lo que asigna el nodo es una pastilla: se lleva a una casilla como cualquier chip. */}
                 {slim && results.length > 0
                   ? resultChips
@@ -650,6 +673,7 @@ export function MorphNode({
                 {container && code && kind === 'abstraction.collapsed' && (
                   <code className="node__signature type-code">{signatureOf(code)}</code>
                 )}
+                {opens && <Subprocesses opens={opens} onOpen={onOpen} />}
                 {/* El estado solo se enseña cuando pasa algo: en reposo no dice nada. */}
                 {slim && showStatus && state !== 'dormant' && (
                   <StatusChip state={state} showLabel={false} />

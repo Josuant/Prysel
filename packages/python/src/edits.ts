@@ -975,5 +975,145 @@ export function actionEdits(program: Program, action: NodeAction): Change {
       return disconnectNode(program, action.id, action.slot)
     case 'reconnect':
       return reconnectNodes(program, action)
+    case 'retitle':
+      return retitleSection(program, action.id, action.title)
+    case 'section':
+      return startSection(program, action.id, action.title, action.first)
+    case 'unsection':
+      return removeSection(program, action.id)
   }
+}
+
+// ───────────────────────── etapas ─────────────────────────
+
+/** Un rótulo va en una sola línea: los saltos y los espacios de más se quedan en uno. */
+const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
+
+const sectionById = (program: Program, id: string) =>
+  program.sections?.find((section) => section.id === id)
+
+/**
+ * Renombra una etapa: reescribe solo el texto de su rótulo. La almohadilla, la celda (`%%`), los adornos
+ * (`── … ──`) y la numeración se quedan como estaban.
+ */
+export function retitleSection(program: Program, id: string, title: string): Change {
+  const section = sectionById(program, id)
+  const clean = oneLine(title)
+  if (!section || !clean || clean === section.text) return { edits: [] }
+  return { edits: [{ start: section.textAt.start, end: section.textAt.end, text: clean }] }
+}
+
+/** Quita una etapa: borra las líneas de su rótulo. Sus sentencias se quedan donde están. */
+export function removeSection(program: Program, id: string): Change {
+  const section = sectionById(program, id)
+  if (!section) return { edits: [] }
+  const text = program.source
+  const begin = lineStart(text, section.heading.start)
+  const eol = lineEnd(text, section.heading.end)
+  const newline = text.startsWith('\r\n', eol) ? 2 : text[eol] === '\n' ? 1 : 0
+  return { edits: [{ start: begin, end: eol + newline, text: '' }] }
+}
+
+/**
+ * Las sentencias del mismo bloque que un nodo, en orden: mismo dueño, misma sangría y, en una decisión,
+ * el mismo camino (el «sí» acaba en `yesEnd`; lo de después es su `else`). Las cláusulas no cuentan.
+ */
+function blockSiblings(program: Program, node: ProgramNode): ProgramNode[] {
+  const owner = node.range?.owner
+  const yesEnd = owner === undefined ? undefined : nodeById(program, owner)?.range?.yesEnd
+  const side = (n: ProgramNode) => yesEnd === undefined || (n.range?.start ?? 0) < yesEnd
+  return program.nodes
+    .filter(
+      (n) =>
+        n.range !== undefined &&
+        n.range.owner === owner &&
+        n.range.block !== 99 &&
+        n.range.indent === node.range?.indent &&
+        side(n) === side(node),
+    )
+    .sort((a, b) => (a.range?.start ?? 0) - (b.range?.start ?? 0))
+}
+
+/** Dónde empiezan las líneas de comentario pegadas encima de la línea que empieza en `at` (o `at`). */
+function commentsAbove(text: string, at: number): number {
+  let begin = at
+  for (;;) {
+    if (begin === 0) return begin
+    const previous = lineStart(text, begin - 1)
+    if (!/^[ \t]*#/.test(text.slice(previous, begin))) return begin
+    begin = previous
+  }
+}
+
+/** La línea de encima de la que empieza en `at`, o `null` al principio del archivo. */
+function lineAbove(text: string, at: number): string | null {
+  if (at === 0) return null
+  const previous = lineStart(text, at - 1)
+  return text.slice(previous, lineEnd(text, previous))
+}
+
+/**
+ * El rótulo de una etapa encima de una sentencia (y de los comentarios que lleva pegados): con su misma
+ * sangría y una línea en blanco antes, salvo al principio de su bloque o tras otra línea en blanco.
+ */
+function headingEdit(program: Program, node: ProgramNode, title: string): TextEdit | null {
+  const range = node.range
+  if (!range) return null
+  const text = program.source
+  const eol = eolOf(text)
+  const begin = commentsAbove(text, lineStart(text, range.start))
+  const above = lineAbove(text, begin)
+  const gap = above !== null && above.trim() !== '' && !above.trimEnd().endsWith(':') ? eol : ''
+  return { start: begin, end: begin, text: `${gap}${' '.repeat(range.indent)}# ${title}${eol}` }
+}
+
+/**
+ * Los rótulos de varias etapas nuevas de una vez (lo que propone la IA): uno encima de cada sentencia que
+ * empieza una. Quien los propone se encarga de que cada bloque tenga al menos dos.
+ */
+export function sectionInserts(
+  program: Program,
+  proposals: readonly { id: string; title: string }[],
+): TextEdit[] {
+  const edits: TextEdit[] = []
+  for (const proposal of proposals) {
+    const node = nodeById(program, proposal.id)
+    const title = oneLine(proposal.title)
+    if (!node || !title) continue
+    const edit = headingEdit(program, node, title)
+    if (edit && !edits.some((other) => other.start === edit.start)) edits.push(edit)
+  }
+  return edits.sort((a, b) => a.start - b.start)
+}
+
+/**
+ * Empieza una etapa en una sentencia: escribe su rótulo encima. Si el bloque aún no tenía etapas, un solo
+ * comentario no contaría como tal: se escribe también uno al principio del bloque (`first`), salvo que su
+ * primera sentencia ya lleve un comentario encima (que pasa a ser su rótulo).
+ */
+export function startSection(program: Program, id: string, title: string, first?: string): Change {
+  const node = nodeById(program, id)
+  const clean = oneLine(title)
+  if (!node?.range || node.range.block === 99 || !clean) return { edits: [] }
+  const siblings = blockSiblings(program, node)
+  const opened = (program.sections ?? []).filter((section) =>
+    siblings.some((sibling) => section.members[0] === sibling.id),
+  )
+  if (opened.some((section) => section.members[0] === id)) return { edits: [] }
+  const edits: TextEdit[] = []
+  const head = siblings[0]
+  if (opened.length === 0) {
+    // Partir el bloque por su primera sentencia no parte nada.
+    if (!head?.range || head.id === id) return { edits: [] }
+    const text = program.source
+    const topped =
+      commentsAbove(text, lineStart(text, head.range.start)) < lineStart(text, head.range.start)
+    if (!topped) {
+      const edit = headingEdit(program, head, oneLine(first ?? 'Primera etapa'))
+      if (edit) edits.push(edit)
+    }
+  }
+  const edit = headingEdit(program, node, clean)
+  if (edit) edits.push(edit)
+  return { edits }
 }

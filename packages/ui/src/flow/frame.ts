@@ -4,6 +4,7 @@ import {
   LOOP_HEADROOM,
   docHeadroom,
   isTerritoryKind,
+  sectionHeadroom,
 } from '@prysel/morphology'
 
 /**
@@ -46,8 +47,12 @@ export function territoryHeadroom(node: {
   contains?: readonly string[] | undefined
   /** Un bucle que ya dio vueltas lleva su franja de vueltas en la cabecera. */
   laps?: unknown
+  /** Una etapa: su cabecera es su número, su título y su subtítulo. */
+  section?: { subtitle?: string | undefined } | undefined
 }): number {
   if ((node.contains?.length ?? 0) === 0) return 0
+  // Una etapa no lleva documentación ni editor: solo su rótulo.
+  if (node.kind === 'space.section') return sectionHeadroom(node.section?.subtitle)
   return (
     (node.note ? docHeadroom(node.note) : 0) +
     (isTerritory(node) && HEADER_EDITOR_KINDS.has(node.kind) && node.control ? LOOP_HEADROOM : 0) +

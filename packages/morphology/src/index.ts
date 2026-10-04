@@ -50,4 +50,10 @@ export {
   noteHeight,
   nodeSize,
   shapeFor,
+  SECTION,
+  opensWidth,
+  sectionCardSize,
+  sectionChipWidth,
+  sectionFlowFit,
+  sectionHeadroom,
 } from './sizing.ts'

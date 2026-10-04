@@ -160,15 +160,17 @@ export const LESSON_LIMITS = {
 }
 
 /**
- * El guion con una nota puesta a mano en otro sitio (o devuelta al suyo, con `offset` nulo). Trabaja sobre
- * el JSON tal como está en el archivo (no sobre el guion ya validado), así no se pierde nada que el
- * guion lleve y esta versión no conozca. `null` si el texto no es un guion con ese momento.
+ * El guion con una nota puesta a mano en otro sitio (o devuelta al suyo, con `offset` nulo). Toca **solo** la
+ * posición de esa nota, sobre el texto tal como está en el archivo: el guion lo escribe una persona, y mover
+ * una nota no puede reescribirle el formato (ni perder nada que esta versión no conozca). `null` si el texto no
+ * es un guion con ese momento.
  */
 export function moveNoteIn(
   raw: string,
   beatId: string,
   offset: { x: number; y: number } | null,
 ): string | null {
+  // Primero, que sea un guion de verdad; después se busca dónde está cada trozo en el texto.
   let value: unknown
   try {
     value = JSON.parse(raw)
@@ -176,14 +178,120 @@ export function moveNoteIn(
     return null
   }
   if (!isRecord(value) || !Array.isArray(value['beats'])) return null
-  const beat = (value['beats'] as unknown[]).find(
-    (entry) => isRecord(entry) && entry['id'] === beatId,
-  )
-  if (!isRecord(beat) || !isRecord(beat['note'])) return null
-  const note = beat['note']
-  if (offset === null) delete note['offset']
-  else note['offset'] = { x: Math.round(offset.x), y: Math.round(offset.y) }
-  return `${JSON.stringify(value, null, 2)}\n`
+  const root = locate(raw)
+  const beats = root?.kind === 'object' ? entryOf(root, 'beats') : undefined
+  if (beats?.kind !== 'array') return null
+  const beat = beats.items.find((item) => {
+    const id = item.kind === 'object' ? entryOf(item, 'id') : undefined
+    return id?.kind === 'scalar' && id.value === beatId
+  })
+  const note = beat?.kind === 'object' ? entryOf(beat, 'note') : undefined
+  if (note?.kind !== 'object') return null
+
+  const index = note.entries.findIndex((entry) => entry.key === 'offset')
+  const current = note.entries[index]
+  if (offset === null) {
+    if (!current) return raw
+    // Con la coma que la separa: la de antes si la hay; si es la primera, la de después.
+    const previous = note.entries[index - 1]
+    const next = note.entries[index + 1]
+    const [from, to] = previous
+      ? [previous.value.end, current.value.end]
+      : next
+        ? [current.at, next.at]
+        : [note.start + 1, note.end - 1]
+    return raw.slice(0, from) + raw.slice(to)
+  }
+  const text = `{ "x": ${Math.round(offset.x)}, "y": ${Math.round(offset.y)} }`
+  if (current) return raw.slice(0, current.value.start) + text + raw.slice(current.value.end)
+  const last = note.entries[note.entries.length - 1]
+  if (!last) return `${raw.slice(0, note.start + 1)}"offset": ${text}${raw.slice(note.end - 1)}`
+  // Como las demás propiedades de la nota: en su línea y con su sangría si van una por línea; si no, detrás.
+  const lineStart = raw.lastIndexOf('\n', last.at - 1) + 1
+  const indent = raw.slice(lineStart, last.at)
+  const ownLine = /^[ \t]*$/.test(indent) && raw.slice(note.start, last.at).includes('\n')
+  const glue = ownLine ? `,${raw.includes('\r\n') ? '\r\n' : '\n'}${indent}` : ', '
+  return `${raw.slice(0, last.value.end)}${glue}"offset": ${text}${raw.slice(last.value.end)}`
+}
+
+/** Un valor de un JSON con su sitio en el texto: lo que hace falta para tocar un trozo y dejar el resto igual. */
+type Located =
+  | {
+      kind: 'object'
+      start: number
+      end: number
+      /** Cada propiedad: su nombre, dónde empieza (su comilla) y su valor. */
+      entries: { key: string; at: number; value: Located }[]
+    }
+  | { kind: 'array'; start: number; end: number; items: Located[] }
+  | { kind: 'scalar'; start: number; end: number; value: unknown }
+
+const entryOf = (object: Extract<Located, { kind: 'object' }>, key: string) =>
+  object.entries.find((entry) => entry.key === key)?.value
+
+const SCALAR = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y
+
+/** Recorre un JSON (ya sabido válido) y devuelve cada valor con dónde empieza y acaba en el texto. */
+function locate(raw: string): Located | null {
+  let i = 0
+  const space = () => {
+    while (i < raw.length && ' \t\r\n'.includes(raw[i] ?? '')) i++
+  }
+  const string = (): string => {
+    const start = i
+    i++
+    while (i < raw.length && raw[i] !== '"') i += raw[i] === '\\' ? 2 : 1
+    i++
+    return JSON.parse(raw.slice(start, i)) as string
+  }
+  const value = (): Located => {
+    space()
+    const start = i
+    if (raw[i] === '{') {
+      i++
+      const entries: { key: string; at: number; value: Located }[] = []
+      space()
+      while (raw[i] !== '}') {
+        space()
+        const at = i
+        const key = string()
+        space()
+        i++ // los dos puntos
+        entries.push({ key, at, value: value() })
+        space()
+        if (raw[i] === ',') i++
+      }
+      i++
+      return { kind: 'object', start, end: i, entries }
+    }
+    if (raw[i] === '[') {
+      i++
+      const items: Located[] = []
+      space()
+      while (raw[i] !== ']') {
+        items.push(value())
+        space()
+        if (raw[i] === ',') i++
+        space()
+      }
+      i++
+      return { kind: 'array', start, end: i, items }
+    }
+    if (raw[i] === '"') {
+      const text = string()
+      return { kind: 'scalar', start, end: i, value: text }
+    }
+    SCALAR.lastIndex = i
+    const match = SCALAR.exec(raw)
+    if (!match) throw new Error(`JSON inesperado en ${i}`)
+    i += match[0].length
+    return { kind: 'scalar', start, end: i, value: JSON.parse(match[0]) as unknown }
+  }
+  try {
+    return value()
+  } catch {
+    return null
+  }
 }
 
 export type LessonResult = { ok: true; lesson: Lesson } | { ok: false; error: string }
