@@ -3535,6 +3535,219 @@ button.fn-menu__crumb:hover {
   transform: translateX(-50%);
 }
 
+/* La pestaña «Consultas»: lo que se le pregunta a cada modelo y lo que contesta. Tapa el diagrama (que
+   sigue ahí debajo) con una lista: cada consulta, una fila que se abre. */
+.appbar__tabs {
+  flex: none;
+  margin-left: 6px;
+}
+.appbar__tabs .segmented__item {
+  white-space: nowrap;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+}
+.calls-layer {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  overflow: auto;
+  background: var(--void);
+}
+.calls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 14px 16px 24px;
+  color: var(--ink);
+  font-size: 12px;
+}
+.calls__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.calls__bar .segmented__item {
+  white-space: nowrap;
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+}
+.calls__hint {
+  flex: 1;
+  min-width: 160px;
+  color: var(--ink-faint);
+}
+.calls__empty {
+  margin: 40px auto;
+  max-width: 420px;
+  color: var(--ink-muted);
+  line-height: 20px;
+  text-align: center;
+}
+.calls__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.calls__item {
+  overflow: hidden;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+.calls__item[data-open] {
+  border-color: var(--accent);
+}
+.calls__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.calls__row:hover {
+  background: var(--field);
+}
+.calls__time,
+.calls__model,
+.calls__status {
+  flex: none;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.calls__kind {
+  flex: none;
+  min-width: 34px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--field);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+.calls__kind[data-kind='jev'] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.calls__gist {
+  overflow: hidden;
+  flex: 1;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.calls__status[data-status='running'] {
+  color: var(--accent);
+  animation: node-breathe 1.4s ease-in-out infinite;
+}
+.calls__status[data-status='failed'] {
+  color: var(--state-error);
+}
+.calls__detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--border-card);
+}
+.calls__side {
+  min-width: 0;
+}
+.calls__heading {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.calls__label {
+  margin: 8px 0 3px;
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.calls__text {
+  overflow: auto;
+  max-height: 340px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.calls__table {
+  width: 100%;
+  border-collapse: collapse;
+  user-select: text;
+}
+.calls__table th {
+  padding: 4px 6px;
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+}
+.calls__table td {
+  padding: 6px;
+  border-top: 1px solid var(--border-card);
+  vertical-align: top;
+}
+.calls__ask,
+.calls__options {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink-muted);
+}
+.calls__options {
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.calls__answer {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.calls__sure {
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.calls__error {
+  margin: 8px 0 0;
+  color: var(--state-error);
+}
+@media (prefers-reduced-motion: reduce) {
+  .calls__status[data-status='running'] {
+    animation: none;
+  }
+}
+
 /* La caja de órdenes: lo que se escribe o se dicta, y encima lo que el motor JEV hizo con ello. */
 .order-bar {
   display: flex;

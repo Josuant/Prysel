@@ -2,6 +2,7 @@ import type { Program, TextEdit } from '@prysel/python'
 import type { Assets, KernelStatus, RunView } from './runs.ts'
 import { LESSON_LIMITS, parseLesson, type Lesson } from './lesson.ts'
 import type { Trace } from './trace.ts'
+import type { CallEntry } from './calls.ts'
 import {
   INTENTS,
   type Decision,
@@ -135,10 +136,22 @@ export interface StepMessage {
   say: string
   /** La línea donde quedó su sentencia. */
   line: number
-  /** Qué le pasa: aparece (`born`, por defecto), cambia (`changed`) o está a punto de irse (`leaving`). */
-  effect?: 'born' | 'changed' | 'leaving'
+  /**
+   * Qué le pasa: aparece (`born`, por defecto), llega su explicación (`told`: ya estaba), cambia
+   * (`changed`) o está a punto de irse (`leaving`).
+   */
+  effect?: 'born' | 'told' | 'changed' | 'leaving'
   /** La cámara enseña el conjunto, no solo la pieza (lo decide el JEV). */
   wide?: boolean
+}
+
+/**
+ * Extensión → webview: una consulta a un modelo (a la IA que redacta o al JEV que decide) empezó, avanzó
+ * o acabó. El lienzo las enseña en su pestaña «Consultas».
+ */
+export interface CallMessage {
+  type: 'call'
+  entry: CallEntry
 }
 
 /** Extensión → webview: en qué se está pensando ahora, mientras no hay nada nuevo que ver. */
@@ -168,6 +181,7 @@ export type WebviewMessage =
   | GeneratedMessage
   | StepMessage
   | ProgressMessage
+  | CallMessage
   | ModelsMessage
   | SayMessage
   | UpdateMessage
@@ -264,6 +278,11 @@ export interface StopOrderMessage {
   type: 'stopOrder'
 }
 
+/** Olvidar las consultas apuntadas. */
+export interface ClearCallsMessage {
+  type: 'clearCalls'
+}
+
 /** Abrir el selector de modelos. */
 export interface PickModelMessage {
   type: 'pickModel'
@@ -273,6 +292,7 @@ export type HostMessage =
   | CommandMessage
   | JevKeyMessage
   | StopOrderMessage
+  | ClearCallsMessage
   | PickModelMessage
   | ReadyMessage
   | EditMessage
@@ -422,10 +442,22 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (!Number.isInteger(index) || !Number.isInteger(line)) return null
     if (wide !== undefined && typeof wide !== 'boolean') return null
     const effect = (value as { effect?: unknown }).effect
-    if (effect !== undefined && !['born', 'changed', 'leaving'].includes(effect as string)) {
+    if (
+      effect !== undefined &&
+      !['born', 'told', 'changed', 'leaving'].includes(effect as string)
+    ) {
       return null
     }
     return value as StepMessage
+  }
+  if (type === 'call') {
+    const entry = (value as { entry?: unknown }).entry as Partial<CallEntry> | null | undefined
+    if (typeof entry !== 'object' || entry === null) return null
+    if (!Number.isInteger(entry.id) || typeof entry.at !== 'number') return null
+    if (entry.kind !== 'ia' && entry.kind !== 'jev') return null
+    if (typeof entry.model !== 'string') return null
+    if (!['running', 'done', 'failed'].includes(entry.status as string)) return null
+    return { type: 'call', entry: entry as CallEntry }
   }
   if (type === 'progress') {
     const { gen, text } = value as Partial<ProgressMessage>
@@ -504,6 +536,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   }
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
+  if (type === 'clearCalls') return { type: 'clearCalls' }
   if (type === 'pickModel') return { type: 'pickModel' }
   if (type === 'newLesson') return { type: 'newLesson' }
   if (type === 'proposeSections') return { type: 'proposeSections' }

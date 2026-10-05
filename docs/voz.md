@@ -133,7 +133,7 @@ El plazo de 800 ms vale para la decisión y para lo que se ve al instante (la pl
 
 Dónde está: `src/jev/compose.ts` (`splitOrder`, `composeCode`, `judgeCode`), `addCode` en `@prysel/python/edits`, y `src/ai/deepseek.ts`.
 
-**DeepSeek**: «Prysel: Configurar la clave de DeepSeek» guarda la clave en el llavero y pone `prysel.aiProvider` en `deepseek` (con `auto` ganaría el modelo de VS Code, si hay uno). El modelo se cambia con `prysel.deepseekModel` (por defecto, `deepseek-chat`). Vale para todo lo que usa IA generativa en Prysel: lecciones, etapas y órdenes.
+**DeepSeek**: «Prysel: Configurar la clave de DeepSeek» guarda la clave en el llavero y pone `prysel.aiProvider` en `deepseek` (con `auto` ganaría el modelo de VS Code, si hay uno). El modelo se cambia con `prysel.deepseekModel` (por defecto, `deepseek-flash`; también `deepseek-v4-pro`). En la API de DeepSeek el **razonamiento viene activado por defecto**, y gasta el cupo de la respuesta: con consultas pequeñas (una frase) devolvía el texto vacío. Prysel lo manda apagado (`thinking: disabled`), con un cupo mínimo de 2000 y un reintento si aun así viene vacío; se enciende con `prysel.deepseekThinking` o desde el selector de modelos. Vale para todo lo que usa IA generativa en Prysel: lecciones, etapas y órdenes.
 
 ## 7. Construir paso a paso, mientras se explica (hecho)
 
@@ -214,7 +214,50 @@ Cuando el motor duda, la pregunta de plantilla aparece al instante y, en cuanto 
 - **Si lo que se quiere entender sí está en el programa** (el JEV lo señala), se explica ese elemento, como antes.
 - **Una regla general contra los callejones sin salida**: cuando el motor no puede cumplir una orden y la IA solo encuentra una lectura posible de lo que se dijo (y el JEV la da por cumplible), no se pregunta: se hace.
 
-## 10. Medidas
+## 10. La pestaña «Consultas» (hecho)
+
+Junto a «Diagrama», en la barra del lienzo, la pestaña **Consultas** enseña todo lo que Prysel le ha preguntado a un modelo y lo que contestó, lo último arriba:
+
+- **A la IA generativa** (la que redacta): sus instrucciones, la petición y el texto que devolvió, que se ve llegar mientras dura el streaming.
+- **Al JEV** (el que decide): el estado que se le mandó, cada pregunta con sus opciones, y cada respuesta con su certeza.
+- De cada una: la hora, el modelo, cuánto tardó y si falló (con su motivo). Se filtran por IA o JEV y se vacían con un botón.
+
+Sirve para entender por qué se hizo lo que se hizo y para comprobar qué sale del equipo. Funciona envolviendo al proveedor y al decisor (`src/calls.ts`, `CallLog`), así que quien los usa no cambia; incluye también las consultas de las lecciones y de las etapas. Las claves no pasan por ahí: nunca aparecen. Se recuerdan las últimas 120 consultas mientras dure la sesión de VS Code, y los textos muy largos se recortan.
+
+## 11. Solo contenido: a la IA no se le pide ningún formato (hecho)
+
+Cada formato que se le pide a un modelo es una ocasión de fallar: un JSON que no se cierra (pasó: la respuesta se cortó a mitad de una etapa y se perdió el plan), una etiqueta mal puesta, un paso que es solo un comentario. Así que a la IA generativa **solo se le pide contenido**, en llamadas pequeñas, cada una con una sola cosa (`src/jev/plain.ts`):
+
+| Se le pide                                     | Y devuelve       | Qué se hace con ello                                                                   |
+| ---------------------------------------------- | ---------------- | -------------------------------------------------------------------------------------- |
+| «Lista las partes, una por línea»              | una lista        | Cada línea es una etapa: su título y, si la trae detrás de dos puntos, su explicación. |
+| «Escribe el código»                            | Python, tal cual | Se trocea aquí por sentencias, leyendo su sangría (`CodeStream`).                      |
+| «Explica esta pieza en una frase»              | una frase        | Es lo que se dice en voz alta de ese trozo.                                            |
+| «La fórmula de esta función, en términos de x» | una fórmula      | Si se puede dibujar, es su ayuda visual.                                               |
+
+**La estructura la ponen el JEV y el director**, no la IA. De cada trozo de código, el JEV decide en una sola petición (`judgeChunk`):
+
+- **a qué parte del plan pertenece** (elige entre los títulos; el código va hacia delante: un trozo puede abrir una parte posterior, nunca volver a una anterior; si no lo tiene claro, se queda donde se estaba);
+- si es **seguro**;
+- si se enseña **de cerca o en su conjunto**, y si merece una **pausa**;
+- si es una función que merece su **curva**, y entre qué valores de x (elige entre rangos fijos).
+
+Y de cada parte del plan, según llega, si pinta algo en lo que se pidió.
+
+**El diagrama crece poco a poco, y la voz cuenta cada pieza.** Cada línea del plan dibuja su caja al llegar. El código llega deprisa, pero no se vuelca: se enseña **pieza a pieza**, cada una con su frase, y la siguiente espera a que esa frase se haya dicho.
+
+- Las frases de un trozo se piden juntas (una por pieza, una por línea) **antes** de enseñarlo, y mientras se enseña un trozo ya se prepara el siguiente: el JEV lo juzga y la IA escribe sus frases. Así nada aparece mudo y entre trozo y trozo no hay huecos.
+- Si la IA da menos frases de las pedidas (o falla), esas piezas aparecen sin voz, con una pausa corta: tampoco entonces se escribe todo de golpe.
+
+Detalles:
+
+- Una sentencia sencilla sale al acabar su línea; una compuesta, cuando llega la siguiente. Dentro de ella, cada línea es una pieza con su nivel (la cabecera nace con un `pass`).
+- Lo que no se arma por partes (`try`, un `if` con `elif`, una clase, un decorador) se escribe entero: ya no detiene nada.
+- Lo que el modelo escriba alrededor del código (una frase, unas vallas) se aparta: lo que no es Python no entra.
+- Una parte del plan a la que no fue ningún código se quita al final, con su rótulo.
+- Los cambios sobre lo ya escrito (`modify.ts`) y las preguntas con opciones (`ask.ts`) todavía piden una lista de objetos; son lo siguiente que pasar a este esquema.
+
+## 12. Medidas
 
 RNF-01 pide ≤ 800 ms desde el final de la orden hasta la mutación visible. Cada orden enseña dos cifras: lo que tardó el motor en decidir y el total, desde que se pulsa Intro hasta que el cambio está pintado.
 

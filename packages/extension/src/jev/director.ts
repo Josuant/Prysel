@@ -1,5 +1,11 @@
 import type { Program } from '@prysel/python'
-import { applyEdits, clearGenerating, type Change } from '@prysel/python/edits'
+import {
+  applyEdits,
+  clearGenerating,
+  deleteNode,
+  removeSection,
+  type Change,
+} from '@prysel/python/edits'
 import type { AiProvider, AiRequest } from '../ai/provider.ts'
 import { streamText } from '../ai/stream.ts'
 import {
@@ -8,26 +14,38 @@ import {
   MAX_STAGES,
   ObjectStream,
   STEP_THRESHOLDS,
-  buildStepsPrompt,
-  buildStepsSystem,
+  judgeStage,
   judgeStep,
   outlinePrompt,
-  outlineSystem,
   paceOf,
   stageGen,
   stageHeading,
-  stageOf,
-  stagePrompt,
-  stageSystem,
-  stepOf,
-  teachingNote,
   type BuildStep,
+  type Reader,
   type Stage,
 } from './build.ts'
 import type { Decider } from './client.ts'
 import { COMPOSE_THRESHOLDS, judgeCode } from './compose.ts'
 import { WHOLE_BUDGET, contextFor } from './context.ts'
 import type { Evidence, Spot } from './engine.ts'
+import {
+  CHUNK_THRESHOLDS,
+  CodeStream,
+  LineStream,
+  codePrompt,
+  codeSystem,
+  formulaOf,
+  formulaSystem,
+  judgeChunk,
+  planSystem,
+  type Chunk,
+  type ChunkVerdict,
+  sentenceOf,
+  stageFromLine,
+  tellPrompt,
+  tellSystem,
+} from './plain.ts'
+import { formatVisual, visualOf } from './visual.ts'
 import {
   LineMap,
   MAX_OPS,
@@ -70,6 +88,8 @@ export interface Stagehand {
    * Escribe un cambio en el archivo, si deja un Python válido. Devuelve por qué no se escribió, o `null`.
    */
   write(change: Change): Promise<string | null>
+  /** ¿Es esto Python, sin errores de sintaxis? Para apartar lo que un modelo escribe alrededor del código. */
+  parses(code: string): boolean
   /** Algo que enseñar en el lienzo (ya con el programa nuevo delante). */
   show(event: Shown): Promise<void>
   /** Espera (lo que tarda en decirse una frase), sin pasar de que se detenga. */
@@ -85,7 +105,11 @@ export type Shown =
       say: string
       /** La línea de la sentencia que aparece, cambia o se va. */
       line: number
-      effect: 'born' | 'changed' | 'leaving'
+      /**
+       * `born`: aparece. `told`: ya estaba, y ahora llega su explicación (se dice, y la cámara va a ella).
+       * `changed` y `leaving`: cambia, o está a punto de quitarse.
+       */
+      effect: 'born' | 'told' | 'changed' | 'leaving'
       /** La cámara enseña el conjunto, no solo la pieza. */
       wide?: boolean
     }
@@ -123,10 +147,9 @@ export function summaryOf(outcome: Outcome, noun: [string, string] = ['paso', 'p
 function listen<T>(
   provider: AiProvider,
   request: AiRequest,
-  accept: (value: unknown) => T | null,
+  reading: Reader<T>,
   signal: AbortSignal,
 ) {
-  const objects = new ObjectStream(accept)
   const queue: T[] = []
   const state = { done: false, failure: null as string | null, raw: '' }
   const finished = streamText(
@@ -134,10 +157,14 @@ function listen<T>(
     request,
     (delta) => {
       state.raw += delta
-      queue.push(...objects.push(delta))
+      queue.push(...reading.push(delta))
     },
     signal,
   )
+    .then(() => {
+      // Lo que quedó a medias al acabar (o al cortarse la respuesta) se aprovecha hasta donde llegó.
+      queue.push(...reading.end())
+    })
     .catch((error: unknown) => {
       if (!signal.aborted) {
         state.failure = `La IA dejó de responder (${error instanceof Error ? error.message : String(error)}).`
@@ -170,92 +197,10 @@ const excerpt = (raw: string) => {
 
 interface Tally {
   written: number
+  /** El código escrito, trozo a trozo: lo que el JEV juzga al final. */
   code: string[]
   jevMs: number
   trouble: string | null
-}
-
-/**
- * Los pasos de una llamada: se sacan del streaming uno a uno y, por cada uno, el JEV juzga, se escribe, el
- * lienzo lo enseña y se espera lo que tarda en contarse. Devuelve cuántos escribió esta llamada.
- */
-async function runSteps(
-  host: Stagehand,
-  players: Players,
-  command: string,
-  plan: BuildPlan,
-  request: AiRequest,
-  tally: Tally,
-): Promise<number> {
-  let wrote = 0
-  // Si el modelo contesta sin dar ningún paso, se le pide otra vez, diciéndole qué se espera.
-  for (let attempt = 1; attempt <= 2 && wrote === 0; attempt++) {
-    const source = listen(
-      players.provider,
-      attempt === 1
-        ? request
-        : {
-            ...request,
-            prompt: `${request.prompt}\n\nTu respuesta anterior no traía ningún paso. Responde SOLO con líneas JSON como {"nivel": 0, "code": "…", "say": "…"}, una por sentencia.`,
-          },
-      stepOf,
-      host.signal,
-    )
-    for (;;) {
-      if (tally.written >= MAX_BUILD_STEPS) break
-      const step: BuildStep | null = await next(source, host)
-      if (step === null) break
-      let verdict
-      try {
-        verdict = await judgeStep(players.decider, command, step)
-      } catch {
-        tally.trouble = 'El JEV dejó de responder: me detengo aquí.'
-        break
-      }
-      tally.jevMs += verdict.ms
-      if (verdict.safe < STEP_THRESHOLDS.safe) {
-        tally.trouble =
-          'El JEV no da por seguro el siguiente paso (toca archivos, la red o el sistema): me detengo.'
-        break
-      }
-      if (host.signal.aborted) break
-      const placed = plan.place(await host.program(), step)
-      if (!placed.ok) {
-        tally.trouble = placed.error
-        break
-      }
-      if (placed.change) {
-        const refused = await host.write(placed.change)
-        if (refused !== null) {
-          tally.trouble = refused
-          break
-        }
-      }
-      plan.commit(step, placed)
-      if (!placed.change) continue
-      wrote++
-      tally.written++
-      tally.code.push(step.code)
-      await host.show({
-        type: 'step',
-        index: tally.written,
-        say: step.say,
-        line: placed.line,
-        effect: 'born',
-        ...(verdict.wide ? { wide: true } : {}),
-      })
-      await host.wait(paceOf(step, verdict.pause))
-    }
-    await source.finished
-    if (host.signal.aborted || tally.trouble !== null) break
-    if (wrote === 0) {
-      tally.trouble =
-        source.state.failure ??
-        `La IA no dictó ningún paso que se pudiera escribir (${excerpt(source.state.raw)}).`
-      if (attempt === 1 && source.state.failure === null) tally.trouble = null
-    } else if (source.state.failure !== null) tally.trouble = source.state.failure
-  }
-  return wrote
 }
 
 export interface BuildRequest {
@@ -300,13 +245,100 @@ async function conclude(
   }
 }
 
-/** Construir algo nuevo: primero el esquema (si hace falta), luego cada etapa, paso a paso. */
+/**
+ * Lo que se dice de cada pieza de un trozo: una llamada pequeña, y de vuelta una frase por pieza (una por
+ * línea, en su orden). Si faltan frases, esas piezas aparecen sin voz; nunca se deja de escribir por eso.
+ */
+async function tellAll(
+  players: Players,
+  request: { command: string; pieces: string[]; stage?: Stage; written: string; teach: boolean },
+): Promise<string[]> {
+  try {
+    const text = await players.provider.generate({
+      system: tellSystem(request.teach),
+      prompt: tellPrompt(request),
+      maxTokens: 120 + 70 * request.pieces.length,
+    })
+    const said = text
+      .split('\n')
+      .map((line) => sentenceOf(line.replace(/^\s*(?:\[\d+\]|\d+[.):-]|[-*•])\s*/, '')))
+      .filter((line) => line !== '')
+    return request.pieces.map((_, index) => said[index] ?? '')
+  } catch {
+    return request.pieces.map(() => '')
+  }
+}
+
+/** La fórmula de una función, pedida a la IA: solo la fórmula. `null` si no contesta. */
+async function formulaFor(players: Players, code: string): Promise<string | null> {
+  try {
+    return formulaOf(
+      await players.provider.generate({ system: formulaSystem(), prompt: code, maxTokens: 80 }),
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Apunta la ayuda visual de una función junto a su cabecera (una marca al final de su línea), si su fórmula
+ * se puede dibujar, entre los valores de x que eligió el JEV.
+ */
+async function addAid(
+  host: Stagehand,
+  formula: string,
+  line: number,
+  range: [number, number],
+): Promise<void> {
+  const program = await host.program()
+  const node = program.nodes.find((n) => n.range && n.line === line)
+  if (!node?.range) return
+  const title = node.label.charAt(0).toUpperCase() + node.label.slice(1).replace(/_/g, ' ')
+  const visual = visualOf({
+    tipo: 'curva',
+    titulo: title,
+    y: formula,
+    desde: range[0],
+    hasta: range[1],
+  })
+  if (!visual) return
+  // Al final de la línea de su cabecera, si no lleva ya un comentario.
+  const source = program.source
+  const head = node.range.head ?? node.range.end
+  const eol = source.indexOf('\n', head)
+  const rest = source.slice(head, eol < 0 ? source.length : eol)
+  if (rest.trim() !== '') return
+  await host.write({ edits: [{ start: head, end: head, text: `  # ${formatVisual(visual)}` }] })
+}
+
+/** Un trozo ya preparado para enseñarse: lo que decidió el JEV y lo que se va a decir de cada pieza. */
+interface Prepared {
+  chunk: Chunk
+  /** `null`: el JEV no contestó. */
+  verdict: ChunkVerdict | null
+  /** La parte del plan a la que va. */
+  stage: number
+  /** La frase de cada pieza, en su orden. */
+  says: string[]
+  formula: string | null
+}
+
+/** Entre dos piezas que aparecen sin frase: lo justo para que se vea llegar cada una. */
+const QUIET_PACE_MS = 900
+
+/**
+ * Construir algo nuevo. A la IA se le pide solo contenido, en llamadas pequeñas: la lista de partes, el
+ * código, y una frase por cada trozo. La estructura la pone el JEV (a qué parte va cada trozo, cómo se
+ * enseña) y este director, que escribe cada sentencia **en cuanto llega su código**: el diagrama crece
+ * mientras la IA sigue escribiendo, y la explicación de cada trozo llega detrás.
+ */
 export async function build(
   host: Stagehand,
   players: Players,
   request: BuildRequest,
 ): Promise<Outcome> {
   const { command, gen } = request
+  const teach = request.teach === true
   const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null }
   const start = await host.program()
   const anchor = start.nodes.find((n) => n.id === (request.place.after ?? request.place.into))
@@ -318,28 +350,27 @@ export async function build(
   })
   tally.jevMs += context.jevMs
 
-  // ── El plan: las etapas, a grandes rasgos. Cada una aparece en cuanto se dicta. ──
+  // ── El plan: una lista de partes. Cada una aparece en el diagrama en cuanto llega su línea. ──
   const stages: Stage[] = []
   if (request.outline && !host.signal.aborted) {
     await host.show({ type: 'progress', text: 'Pensando el plan, a grandes rasgos…' })
     const source = listen(
       players.provider,
       {
-        system: outlineSystem(request.teach === true),
+        system: planSystem(teach),
         prompt: outlinePrompt({ command, where: request.where, context: context.text }),
-        maxTokens: 600,
+        maxTokens: 700,
       },
-      stageOf,
+      new LineStream(stageFromLine),
       host.signal,
     )
     const skeleton = new BuildPlan(request.place)
-    /** Una sola etapa no es un esquema: la primera espera a que llegue la segunda para dibujarse. */
+    /** Una sola parte no es un plan: la primera espera a que llegue la segunda para dibujarse. */
     let held: Stage | null = null
     const draw = async (stage: Stage): Promise<boolean> => {
-      const index = stages.length
       const step: BuildStep = {
         level: 0,
-        code: `${stageHeading(stage)}\n...  # prysel:gen:${stageGen(gen, index)}`,
+        code: `${stageHeading(stage)}\n...  # prysel:gen:${stageGen(gen, stages.length)}`,
         say: stage.goal || stage.title,
       }
       const placed = skeleton.place(await host.program(), step)
@@ -362,6 +393,14 @@ export async function build(
       if (stages.length >= MAX_STAGES) break
       const stage = await next(source, host)
       if (stage === null) break
+      // El JEV mira cada parte según llega: la que no pinta nada en lo que se pidió se queda fuera.
+      try {
+        const fit = await judgeStage(players.decider, command, stage)
+        tally.jevMs += fit.ms
+        if (fit.fits < STEP_THRESHOLDS.stage) continue
+      } catch {
+        // Sin su juicio, la parte entra: es mejor un plan con una parte de más que quedarse sin plan.
+      }
       if (held === null && stages.length === 0) {
         held = stage
         continue
@@ -375,68 +414,189 @@ export async function build(
     }
     await source.finished
   }
+  const planned = stages.length >= 2
 
-  if (stages.length >= 2) {
-    // ── Cada etapa, con lo ya escrito delante: otra llamada, más pequeña y mejor informada. ──
-    for (const [index, stage] of stages.entries()) {
-      if (host.signal.aborted || tally.trouble !== null) break
-      await host.show({
-        type: 'progress',
-        text: `Etapa ${index + 1} de ${stages.length} · ${stage.title}: pensando sus pasos…`,
-      })
-      const now = await host.program()
-      const mark = stageGen(gen, index)
-      const hole = now.nodes.find((n) => n.generating === mark)
-      if (!hole) continue
-      const around = await contextFor(players.decider, {
-        command,
-        program: now,
-        must: [hole.line],
-      })
-      tally.jevMs += around.jevMs
-      const wrote = await runSteps(
-        host,
-        players,
-        command,
-        new BuildPlan({}, mark),
-        {
-          system: stageSystem(request.teach === true),
-          prompt: stagePrompt({ command, stages, index, context: around.text }),
-          maxTokens: 1800,
-        },
-        tally,
-      )
-      // Una etapa que se quedó sin pasos no se queda diciendo que algo está en marcha.
-      if (wrote === 0 && !host.signal.aborted) {
-        const left = clearGenerating(await host.program(), mark)
-        if (left.edits.length > 0) await host.write(left)
-      }
-    }
-    // Lo que no llegó a detallarse (se detuvo antes) deja de estar marcado como en marcha.
-    for (const [index] of stages.entries()) {
-      const left = clearGenerating(await host.program(), stageGen(gen, index))
-      if (left.edits.length > 0) await host.write(left)
-    }
-  } else if (!host.signal.aborted) {
-    // ── Directo: unos pocos pasos, sin esquema. ──
-    await host.show({ type: 'progress', text: 'Pensando el primer paso…' })
-    await runSteps(
-      host,
-      players,
-      command,
-      new BuildPlan(request.place),
+  // ── El código: una sola llamada, y de vuelta Python tal cual. Cada sentencia se escribe al llegar. ──
+  let current = 0
+  let plan = planned ? new BuildPlan({}, stageGen(gen, 0)) : new BuildPlan(request.place)
+  const used = new Set<number>()
+  if (!host.signal.aborted) {
+    await host.show({
+      type: 'progress',
+      text: planned
+        ? `Escribiendo el código · ${stages[0]?.title ?? ''}…`
+        : 'Escribiendo el código…',
+    })
+    const source = listen(
+      players.provider,
       {
-        system: request.teach ? `${buildStepsSystem()}\n${teachingNote()}` : buildStepsSystem(),
-        prompt: buildStepsPrompt({
+        system: codeSystem(teach),
+        prompt: codePrompt({
           command,
           where: request.where,
           context: context.text,
+          stages: planned ? stages : [],
           ...(anchor?.scope ? { scope: anchor.scope } : {}),
         }),
         maxTokens: 3000,
       },
-      tally,
+      new CodeStream(),
+      host.signal,
     )
+    // Mientras se enseña un trozo, el siguiente se prepara: el JEV lo juzga y la IA escribe lo que se va a
+    // decir de cada una de sus piezas. Así nada aparece sin su explicación, y entre trozo y trozo no hay huecos.
+    const ready: Prepared[] = []
+    const prep = { done: false }
+    const preparing = (async () => {
+      const seen: string[] = []
+      let stage = 0
+      for (;;) {
+        const chunk = await next(source, host)
+        if (chunk === null) break
+        // Lo que no es Python (una frase suelta que el modelo puso alrededor) no es parte del programa.
+        if (!host.parses(chunk.code)) continue
+        let verdict: ChunkVerdict | null = null
+        try {
+          verdict = await judgeChunk(
+            players.decider,
+            command,
+            chunk.code,
+            planned ? stages : [],
+            seen.join('\n'),
+          )
+          tally.jevMs += verdict.ms
+        } catch {
+          verdict = null
+        }
+        const safe = verdict !== null && verdict.safe >= CHUNK_THRESHOLDS.safe
+        // El código va hacia delante: un trozo puede abrir una parte posterior del plan, nunca volver atrás.
+        if (
+          planned &&
+          verdict?.stage != null &&
+          verdict.stage > stage &&
+          verdict.stage < stages.length
+        ) {
+          stage = verdict.stage
+        }
+        const planStage = planned ? stages[stage] : undefined
+        const [says, formula] = safe
+          ? await Promise.all([
+              tellAll(players, {
+                command,
+                pieces: chunk.steps.map((step) => step.code),
+                ...(planStage ? { stage: planStage } : {}),
+                written: seen.join('\n'),
+                teach,
+              }),
+              verdict?.aid ? formulaFor(players, chunk.code) : Promise.resolve(null),
+            ])
+          : [[], null]
+        seen.push(chunk.code)
+        ready.push({ chunk, verdict, stage, says, formula })
+        // Tras un trozo que no se va a escribir no se prepara nada más.
+        if (!safe) break
+      }
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        prep.done = true
+      })
+
+    for (;;) {
+      if (tally.written >= MAX_BUILD_STEPS) break
+      let item: Prepared | undefined
+      for (;;) {
+        if (host.signal.aborted) break
+        item = ready.shift()
+        if (item || prep.done) break
+        await host.wait(40)
+      }
+      item ??= ready.shift()
+      if (!item || host.signal.aborted) break
+      const { chunk, verdict } = item
+      if (verdict === null) {
+        tally.trouble = 'El JEV dejó de responder: me detengo aquí.'
+        break
+      }
+      if (verdict.safe < CHUNK_THRESHOLDS.safe) {
+        tally.trouble =
+          'El JEV no da por seguro el siguiente trozo (toca archivos, la red o el sistema): me detengo.'
+        break
+      }
+      if (planned && item.stage !== current) {
+        current = item.stage
+        plan = new BuildPlan({}, stageGen(gen, current))
+      }
+      if (planned) used.add(current)
+      // Cada pieza aparece con su frase, y la siguiente espera a que esa frase se haya dicho.
+      let first: number | null = null
+      for (const [index, step] of chunk.steps.entries()) {
+        const placed = plan.place(await host.program(), step)
+        if (!placed.ok) {
+          tally.trouble = placed.error
+          break
+        }
+        if (placed.change) {
+          const refused = await host.write(placed.change)
+          if (refused !== null) {
+            tally.trouble = refused
+            break
+          }
+        }
+        plan.commit(step, placed)
+        if (!placed.change) continue
+        tally.written++
+        // La curva de una función se apunta con su cabecera: aparece con ella.
+        if (first === null && item.formula && verdict.aid) {
+          await addAid(host, item.formula, placed.line, verdict.aid)
+        }
+        first ??= placed.line
+        const say = item.says[index] ?? ''
+        await host.show({
+          type: 'step',
+          index: tally.written,
+          say,
+          line: placed.line,
+          effect: 'born',
+          ...(verdict.wide ? { wide: true } : {}),
+        })
+        await host.wait(
+          say === ''
+            ? QUIET_PACE_MS
+            : paceOf({ level: 0, code: step.code, say }, verdict.pause && index === 0),
+        )
+        if (host.signal.aborted) break
+      }
+      if (tally.trouble !== null) break
+      tally.code.push(chunk.code)
+    }
+    await preparing
+    await source.finished
+    if (!host.signal.aborted && tally.trouble === null) {
+      if (source.state.failure !== null) tally.trouble = source.state.failure
+      else if (tally.written === 0) {
+        tally.trouble = `La IA no escribió código que se pudiera usar (${excerpt(source.state.raw)}).`
+      }
+    }
+  }
+
+  // ── Los huecos del plan que quedaron: ninguno se queda diciendo que algo está en marcha. ──
+  for (const [index] of stages.entries()) {
+    const mark = stageGen(gen, index)
+    const program = await host.program()
+    const hole = program.nodes.find((n) => n.generating === mark)
+    if (!hole) continue
+    const section = (program.sections ?? []).find((item) => item.members.includes(hole.id))
+    // Una parte a la que no fue ningún código, si se llegó a escribir algo, sobra: se quita con su rótulo.
+    if (tally.written > 0 && !used.has(index) && section) {
+      await host.write(removeSection(program, section.id))
+      const after = await host.program()
+      const left = after.nodes.find((n) => n.generating === mark)
+      if (left) await host.write(deleteNode(after, left.id))
+    } else {
+      const left = clearGenerating(program, mark)
+      if (left.edits.length > 0) await host.write(left)
+    }
   }
   return conclude(host, players, command, tally)
 }
@@ -469,6 +629,7 @@ export async function modify(
   tally.jevMs += context.jevMs
   if (host.signal.aborted) return conclude(host, players, command, tally)
   await host.show({ type: 'progress', text: 'Pensando qué hay que cambiar…' })
+  const ops = new ObjectStream(opOf)
   const source = listen(
     players.provider,
     {
@@ -482,7 +643,8 @@ export async function modify(
       }),
       maxTokens: 2500,
     },
-    opOf,
+    // Los cambios siguen llegando como objetos: se leen vengan como vengan.
+    { push: (delta) => ops.push(delta), end: () => [] },
     host.signal,
   )
   const map = new LineMap()

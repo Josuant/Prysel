@@ -172,7 +172,12 @@
         "prysel.deepseekModel": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Modelo de la API de DeepSeek a usar. Vacío: `deepseek-chat`."
+          "markdownDescription": "Modelo de la API de DeepSeek a usar (`deepseek-flash`, `deepseek-v4-pro`…). Vacío: `deepseek-flash`."
+        },
+        "prysel.deepseekThinking": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Dejar que DeepSeek razone antes de contestar. Apagado por defecto: Prysel hace muchas consultas pequeñas, y razonar cada una las hace lentas."
         },
         "prysel.jevEngine": {
           "type": "string",

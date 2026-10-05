@@ -29,6 +29,8 @@ import {
   type Theme,
 } from '../../src/protocol.ts'
 import type { Forced } from '../../src/jev/engine.ts'
+import type { CallEntry } from '../../src/calls.ts'
+import { CallsPanel } from './CallsPanel.tsx'
 import { CommandBar } from './CommandBar.tsx'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -200,6 +202,9 @@ export function App() {
     change?: 'changed' | 'leaving'
     wide?: boolean
   } | null>(null)
+  /** Lo que se le ha preguntado a cada modelo y lo que contestó, y si se está mirando esa pestaña. */
+  const [calls, setCalls] = useState<CallEntry[]>([])
+  const [tab, setTab] = useState<'canvas' | 'calls'>('canvas')
   /** En qué está pensando la IA ahora mismo (mientras no hay nada nuevo que ver): se enseña en el diagrama. */
   const [thinking, setThinking] = useState<string | null>(null)
   /** La IA que redacta y el motor que decide ahora: lo dice la extensión. */
@@ -273,6 +278,15 @@ export function App() {
         onSay.current(message)
       } else if (message.type === 'step') {
         onStep.current(message)
+      } else if (message.type === 'call') {
+        const entry = message.entry
+        // La misma consulta llega varias veces (empieza, avanza, acaba): se queda la última versión.
+        setCalls((previous) => {
+          const at = previous.findIndex((call) => call.id === entry.id)
+          const next =
+            at < 0 ? [...previous, entry] : previous.map((call, i) => (i === at ? entry : call))
+          return next.length > 150 ? next.slice(next.length - 150) : next
+        })
       } else if (message.type === 'progress') {
         const text = message.text
         setThinking(text)
@@ -1018,9 +1032,14 @@ export function App() {
     }
     onStep.current = (message) => {
       setThinking(null)
+      // Una pieza puede aparecer antes que su explicación (llega detrás): mientras, se queda lo que se decía.
       setOrder((previous) =>
         previous.phase === 'done'
-          ? { ...previous, note: `${message.index} · ${message.say}`, building: true }
+          ? {
+              ...previous,
+              building: true,
+              ...(message.say ? { note: `${message.index} · ${message.say}` } : {}),
+            }
           : previous,
       )
       if (voice && message.say) speak(message.say)
@@ -1028,9 +1047,12 @@ export function App() {
       setWanted({
         line: message.line,
         key: ++spotSeq.current,
+        // `told`: la pieza ya estaba; solo se la vuelve a mirar mientras se cuenta.
         ...(message.effect === 'changed' || message.effect === 'leaving'
           ? { change: message.effect }
-          : { born: true }),
+          : message.effect === 'told'
+            ? {}
+            : { born: true }),
         ...(message.wide ? { wide: true } : {}),
       })
     }
@@ -1099,6 +1121,34 @@ export function App() {
             onOpen={view.open}
             onCrumb={view.descend}
           />
+        </div>
+        <div role="tablist" aria-label="Qué se ve" className="segmented appbar__tabs">
+          <button
+            type="button"
+            role="tab"
+            className="segmented__item"
+            aria-selected={tab === 'canvas'}
+            aria-pressed={tab === 'canvas'}
+            onClick={() => {
+              setTab('canvas')
+            }}
+          >
+            Diagrama
+          </button>
+          <button
+            type="button"
+            role="tab"
+            className="segmented__item"
+            aria-selected={tab === 'calls'}
+            aria-pressed={tab === 'calls'}
+            title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
+            onClick={() => {
+              setTab('calls')
+            }}
+          >
+            Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
+            {calls.some((call) => call.status === 'running') ? ' ·' : ''}
+          </button>
         </div>
         <span className="sr-only" aria-live="polite">
           {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
@@ -1206,6 +1256,18 @@ export function App() {
 
       <div className={`flex min-h-0 flex-1 ${wide ? 'flex-row' : 'flex-col'}`}>
         <main className="relative min-h-0 min-w-0 flex-1">
+          {/* La pestaña «Consultas» va encima del diagrama, que sigue montado (no pierde su cámara). */}
+          {tab === 'calls' && (
+            <div className="calls-layer">
+              <CallsPanel
+                calls={calls}
+                onClear={() => {
+                  setCalls([])
+                  post({ type: 'clearCalls' })
+                }}
+              />
+            </div>
+          )}
           {program && program.nodes.length > 0 ? (
             <ErrorBoundary label="No se pudo dibujar el lienzo" resetKey={program}>
               <Canvas

@@ -38,6 +38,11 @@ export interface BuildStep {
   say: string
   /** Una ayuda visual que la acompaña (la curva de la función que usa, una tabla de valores). */
   visual?: Visual
+  /**
+   * Es una sentencia entera, con su cuerpo (un `try`, un `if` con sus `elif`): se escribe de una vez, tal
+   * cual, en vez de armarse línea a línea.
+   */
+  whole?: boolean
 }
 
 // ───────────────────────── del streaming a los pasos ─────────────────────────
@@ -137,6 +142,13 @@ export class StepStream {
   }
 }
 
+/** Quien lee una respuesta que llega a trozos y va entregando lo que encuentra. */
+export interface Reader<T> {
+  push(delta: string): T[]
+  /** Al acabar la respuesta: lo que quedara a medias y aún se pueda aprovechar. */
+  end(): T[]
+}
+
 // ───────────────────────── dónde va cada paso ─────────────────────────
 
 interface Level {
@@ -160,6 +172,12 @@ const statementOf = (code: string) =>
     .split('\n')
     .filter((row) => row.trim() !== '' && !row.trimStart().startsWith('#'))
     .join('\n')
+
+/**
+ * Un paso que es solo un comentario (un rótulo, una aclaración): no es una sentencia, así que no se puede
+ * escribir suelto, pero tampoco es un error. Va encima de la sentencia del paso siguiente.
+ */
+export const isCommentOnly = (code: string) => code.trim() !== '' && statementOf(code) === ''
 
 /** Una cabecera compuesta sola (`for x in y:`): su cuerpo llega en los pasos siguientes. */
 const isHeader = (statement: string) => !statement.includes('\n') && /:\s*$/.test(statement)
@@ -192,7 +210,7 @@ export class BuildPlan {
   place(program: Program, step: BuildStep): Placed {
     const statement = statementOf(step.code)
     if (statement === '') return { ok: false, error: 'El paso no trae ninguna sentencia.' }
-    if (UNSUPPORTED.test(statement)) {
+    if (!step.whole && UNSUPPORTED.test(statement)) {
       return { ok: false, error: `Esa construcción no se arma paso a paso: «${statement}».` }
     }
     // Un paso más hondo de lo que hay abierto va en lo más hondo que haya; uno menos hondo cierra bloques.
@@ -210,7 +228,7 @@ export class BuildPlan {
       return { ok: true, change: null, line: decision.line, opens: true }
     }
 
-    const opens = isHeader(statement)
+    const opens = !step.whole && isHeader(statement)
     const body = opens ? `${step.code}\n    pass` : step.code
     // La ayuda visual del paso va con él, como una marca al final de la línea de su sentencia.
     const code = step.visual ? withVisual(body, step.visual) : body
@@ -258,21 +276,24 @@ export class BuildPlan {
 export function buildStepsSystem(): string {
   return [
     'Construyes un programa en Python paso a paso mientras lo explicas en voz alta a alguien que está aprendiendo. Un editor dibuja cada paso como un nodo de un diagrama en cuanto lo dices.',
-    'Tu respuesta son líneas JSON (JSON Lines), una por paso, sin nada más (ni vallas de código, ni texto):',
-    '{"nivel": 0, "code": "…", "say": "…"}',
-    '«code»: UNA sentencia de Python. Los pasos van en el orden en que quedan en el archivo, de arriba abajo: cada paso se escribe detrás del anterior.',
-    'De una sentencia compuesta (def, for, while, if, with) escribe solo su cabecera, acabada en dos puntos; lo de dentro va en los pasos siguientes, con «nivel» una unidad mayor. Para volver a salir, usa un «nivel» menor.',
-    'Un «else» es un paso con code "else:" al mismo nivel que su if; lo que va dentro, en los pasos siguientes con un nivel más. No uses elif, try, match ni class.',
-    '«nivel» 0 es el sitio donde se pidió el código.',
-    '«say»: una frase corta, en español y sin código, que diga qué es esa pieza y por qué se pone ahí, como quien piensa en voz alta mientras explica. Se leerá en voz alta al aparecer el nodo.',
+    'No escribas JSON ni vallas de código ni texto de más. Cada paso son estos campos, cada uno en su línea y con su etiqueta en mayúsculas, en este orden:',
+    'NIVEL: 0',
+    'CODIGO: numero_1 = 3',
+    'DICE: Guardamos el primer número.',
+    '(una línea en blanco entre paso y paso)',
+    'CODIGO: UNA sentencia de Python, tal cual se escribe (sin comillas alrededor ni escapes). Los pasos van en el orden en que quedan en el archivo, de arriba abajo: cada paso se escribe detrás del anterior.',
+    'De una sentencia compuesta (def, for, while, if, with) escribe solo su cabecera, acabada en dos puntos; lo de dentro va en los pasos siguientes, con NIVEL una unidad mayor. Para volver a salir, usa un NIVEL menor.',
+    'Un «else» es un paso con CODIGO: else: al mismo nivel que su if; lo que va dentro, en los pasos siguientes con un nivel más. No uses elif, try, match ni class.',
+    'NIVEL 0 es el sitio donde se pidió el código.',
+    'DICE: una sola frase corta (menos de 25 palabras), en español y sin código, que diga qué es esa pieza y por qué se pone ahí, como quien piensa en voz alta mientras explica. Se leerá en voz alta al aparecer el nodo. Va siempre al final del paso.',
     'Ordena los pasos para que se entienda: primero los datos, luego lo que se hace con ellos, luego el resultado, siempre que el orden del archivo lo permita (una función se define antes de usarla).',
-    'Si el programa tiene varias fases, puedes empezar una etapa poniendo una línea de comentario («# Preparar los datos») encima de la sentencia, dentro del mismo «code»: al menos dos etapas por bloque, o ninguna.',
+    'Si el programa tiene varias fases, puedes empezar una etapa poniendo una línea de comentario («# Preparar los datos») encima de la sentencia, dentro del mismo CODIGO (en la línea anterior): al menos dos etapas por bloque, o ninguna. Un comentario nunca va solo en un paso.',
     'Código claro, de principiante: nombres en español, valores de ejemplo concretos, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
     'No leas ni escribas archivos, no uses la red ni el sistema, ni pidas datos con input(), salvo que la orden lo pida expresamente.',
-    'Sé proactivo ayudando a entender. Cuando un paso use una función matemática o una fórmula que se entiende mejor viéndola (una sigmoide, una ReLU, un error cuadrático, un crecimiento, una probabilidad), añade al paso una ayuda visual con «ver»: el editor dibuja al lado un nodo auxiliar que no forma parte del programa.',
-    '  Una curva: "ver": {"tipo": "curva", "titulo": "Sigmoide", "y": "1/(1+exp(-x))", "desde": -6, "hasta": 6}',
-    '  Una tabla de valores: "ver": {"tipo": "tabla", "titulo": "Elevar al cuadrado", "y": "x**2", "x": [-2, -1, 0, 1, 2]}',
-    '  En «y» solo caben x, números, + - * / ** y paréntesis, y las funciones exp, log, sqrt, sin, cos, tan, tanh, abs, max, min. Pon una ayuda donde de verdad aclare (una o dos por programa), no en cada paso.',
+    'Sé proactivo ayudando a entender. Cuando un paso use una función matemática o una fórmula que se entiende mejor viéndola (una sigmoide, una ReLU, un error cuadrático, un crecimiento, una probabilidad), añade al paso una ayuda visual con una línea VER (entre NIVEL y CODIGO): el editor dibuja al lado un nodo auxiliar que no forma parte del programa.',
+    '  Una curva (tipo | título | fórmula de x | desde | hasta):   VER: curva | Sigmoide | 1/(1+exp(-x)) | -6 | 6',
+    '  Una tabla de valores (tipo | título | fórmula de x | valores de x):   VER: tabla | Elevar al cuadrado | x**2 | -2 -1 0 1 2',
+    '  En la fórmula solo caben x, números, + - * / ** y paréntesis, y las funciones exp, log, sqrt, sin, cos, tan, tanh, abs, max, min. Pon una ayuda donde de verdad aclare (una o dos por programa), no en cada paso.',
     `Como mucho ${MAX_BUILD_STEPS} pasos.`,
   ].join('\n')
 }
@@ -335,9 +356,10 @@ export function outlineSystem(teach = false): string {
   return [
     ...(teach ? [teachingNote()] : []),
     'Alguien te pide un programa en Python y tú lo vas a construir explicándolo. Antes de escribir nada, piensa el plan: las etapas por las que pasa, a grandes rasgos, como el índice de una explicación.',
-    'Tu respuesta son líneas JSON, una por etapa, sin nada más:',
-    '{"titulo": "…", "que": "…"}',
-    '«titulo»: dos a cuatro palabras, con un verbo («Pedir los datos», «Calcular la media»). «que»: una frase que diga qué hace esa etapa y con qué.',
+    'No escribas JSON ni texto de más. Cada etapa son dos líneas, con su etiqueta en mayúsculas, y una línea en blanco entre etapa y etapa:',
+    'ETAPA: Calcular la media',
+    'QUE: Suma las notas y divide entre cuántas son.',
+    'ETAPA: dos a cuatro palabras, con un verbo («Pedir los datos», «Calcular la media»). QUE: UNA sola frase, de menos de 20 palabras, que diga qué hace esa etapa y con qué. Sé breve: es el índice, no la explicación.',
     `Entre 2 y ${MAX_STAGES} etapas, en el orden en que se ejecutan. Cada etapa es una fase con sentido propio, no una línea de código. No escribas código todavía.`,
   ].join('\n')
 }
@@ -408,10 +430,16 @@ export const STEP_THRESHOLDS = {
   safe: 0.7,
   /** Por debajo, la cámara y el ritmo son los de siempre. */
   staging: 0.5,
+  /** Por debajo, el paso no encaja con lo que dice o con lo que se pidió: se manda rehacer (una vez). */
+  fits: 0.4,
+  /** Por debajo, una etapa del plan no pinta nada en lo que se pidió: se deja fuera. */
+  stage: 0.3,
 } as const
 
 export interface StepVerdict {
   safe: number
+  /** Si el código hace lo que dice su frase y sirve a lo que se pidió (0 a 1). */
+  fits: number
   /** La cámara enseña el conjunto (lo nuevo dentro de lo que ya hay) en vez de acercarse a la pieza. */
   wide: boolean
   /** Es un paso clave: se le deja más tiempo antes del siguiente. */
@@ -429,6 +457,16 @@ export function stepQuestions(): Record<string, JevQuestion> {
         true: 'Solo calcula, guarda valores, define funciones o imprime; o toca archivos, la red o el sistema porque la orden lo pide expresamente.',
         false:
           'Borra o sobrescribe archivos, usa la red, lanza otros programas o ejecuta código dinámico sin que la orden lo pida.',
+      },
+    },
+    encaja: {
+      type: 'noul',
+      instructions:
+        '¿El `codigo` hace lo que dice su `explicacion`, y es un paso que sirve para cumplir la `orden`?',
+      criteria: {
+        true: 'El código y su explicación dicen lo mismo, y el paso tiene que ver con lo que se pidió.',
+        false:
+          'El código hace otra cosa que lo que se explica, está a medias (un nombre sin definir, puntos suspensivos), o no tiene que ver con la orden.',
       },
     },
     camara: {
@@ -471,7 +509,44 @@ export async function judgeStep(
       answer.confidence >= STEP_THRESHOLDS.staging
     )
   }
-  return { safe, wide: sure('camara', 'conjunto'), pause: sure('ritmo', 'pausa'), ms }
+  // Si el JEV no contesta a esto, no es motivo para rehacer nada.
+  const fits = answers.encaja?.type === 'noul' ? answers.encaja.noul : 1
+  return { safe, fits, wide: sure('camara', 'conjunto'), pause: sure('ritmo', 'pausa'), ms }
+}
+
+/** ¿Pinta algo esta etapa en lo que se pidió? Lo que el JEV dice de cada etapa del plan, según llega. */
+export async function judgeStage(
+  decider: Decider,
+  command: string,
+  stage: Stage,
+): Promise<{ fits: number; ms: number }> {
+  const { answers, ms } = await decider.decide({
+    state: { orden: command, etapa: stage.title, que: stage.goal },
+    questions: {
+      pertinente: {
+        type: 'noul',
+        instructions:
+          'La `etapa` es una parte del plan para cumplir la `orden`. ¿Tiene que ver con lo que se pidió?',
+        criteria: {
+          true: 'Es una parte razonable de lo que se pidió, o de su explicación.',
+          false:
+            'No tiene que ver, se repite, o es relleno (una introducción vacía, una despedida).',
+        },
+      },
+    },
+  })
+  return { fits: answers.pertinente?.type === 'noul' ? answers.pertinente.noul : 1, ms }
+}
+
+/** Lo que se le pide a la IA para rehacer un paso que el JEV no dio por bueno. */
+export function reworkPrompt(command: string, step: BuildStep, context: string): string {
+  return [
+    `Orden: ${command}`,
+    'Este paso no ha pasado la revisión: su código no hace lo que dice su frase, está a medias, o no sirve a la orden.',
+    `NIVEL: ${step.level}\nCODIGO: ${step.code}\nDICE: ${step.say}`,
+    'Rehaz SOLO este paso (uno, con el mismo NIVEL), de modo que el código y la frase digan lo mismo y encaje con lo que ya hay.',
+    context,
+  ].join('\n\n')
 }
 
 /** Cuánto se espera tras un paso antes del siguiente: lo que se tarda en decir su frase, y algo más si es clave. */

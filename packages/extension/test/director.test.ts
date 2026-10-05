@@ -70,6 +70,7 @@ function stage(source: string, stopAfter?: number) {
   const host: Stagehand = {
     signal: control.signal,
     program: () => Promise.resolve(parse(state.text)),
+    parses: (code) => !hasError(code),
     write(change) {
       const next = applyEdits(state.text, change.edits)
       if (hasError(next)) return Promise.resolve('El siguiente paso no deja un programa válido.')
@@ -111,14 +112,6 @@ const SUM_TEXT = [
   '',
 ].join('\n')
 
-const direct = {
-  command: 'una función que sume dos números',
-  gen: 'g1',
-  place: {},
-  where: 'al final del programa',
-  outline: false,
-}
-
 describe('los pasos se sacan de la respuesta vengan como vengan', () => {
   it('uno por línea, en una lista con sangría, entre vallas o envueltos en otro objeto', () => {
     const read = (text: string) => {
@@ -140,162 +133,6 @@ describe('los pasos se sacan de la respuesta vengan como vengan', () => {
       'd = {"a": 1}',
     ])
     expect(read('Usa {esto} y "aquello".\n{"code": "x = 1"}')).toEqual(['x = 1'])
-  })
-})
-
-describe('construir algo pequeño: directo a los pasos', () => {
-  it('cada paso se escribe y se enseña antes del siguiente, y al final se juzga el conjunto', async () => {
-    const provider = scripted([jsonl(SUM)])
-    const { host, state } = stage('')
-    const outcome = await build(host, players(provider), direct)
-    expect(state.text).toBe(SUM_TEXT)
-    expect(state.frames).toHaveLength(6)
-    expect(steps(state).map((event) => `${event.index} ${event.effect} L${event.line}`)).toEqual([
-      '1 born L1',
-      '2 born L2',
-      '3 born L3',
-      '4 born L4',
-      '5 born L5',
-      '6 born L6',
-    ])
-    // Mientras piensa, dice en qué está.
-    expect(state.shown[0]).toEqual({ type: 'progress', text: 'Leyendo lo que ya hay…' })
-    expect(outcome).toMatchObject({ written: 6, stopped: false, trouble: null, doubt: false })
-    expect(summaryOf(outcome)).toBe('Hecho, en 6 pasos.')
-    expect(provider.requests).toHaveLength(1)
-  })
-
-  it('una respuesta en una lista con sangría (no una línea por paso) vale igual', async () => {
-    const provider = scripted([JSON.stringify(SUM, null, 2)])
-    const { host, state } = stage('')
-    const outcome = await build(host, players(provider), direct)
-    expect(state.text).toBe(SUM_TEXT)
-    expect(outcome.written).toBe(6)
-  })
-
-  it('si la IA contesta sin pasos, se le pide otra vez; y si insiste, se dice qué contestó', async () => {
-    const again = scripted(['Voy a pensarlo con calma.', jsonl(SUM)])
-    const first = stage('')
-    expect((await build(first.host, players(again), direct)).written).toBe(6)
-    expect(again.requests).toHaveLength(2)
-    expect(again.requests[1]?.prompt).toContain('no traía ningún paso')
-
-    const stubborn = scripted(['No sé hacer eso.', 'De verdad que no.'])
-    const second = stage('')
-    const outcome = await build(second.host, players(stubborn), direct)
-    expect(outcome.written).toBe(0)
-    expect(summaryOf(outcome)).toContain('La IA no dictó ningún paso')
-    expect(summaryOf(outcome)).toContain('De verdad que no.')
-    expect(summaryOf(outcome)).not.toContain('Hecho')
-  })
-
-  it('se puede detener a mitad: lo escrito es un programa válido', async () => {
-    const { host, state } = stage('', 3)
-    const outcome = await build(host, players(scripted([jsonl(SUM)])), direct)
-    expect(outcome).toMatchObject({ written: 3, stopped: true })
-    expect(state.text).toBe('numero_1 = 3\nnumero_2 = 5\ndef sumar(a, b):\n    pass\n')
-    expect(summaryOf(outcome)).toBe('Detenido: quedan hechos 3 pasos.')
-  })
-
-  it('un paso que no es seguro detiene la construcción', async () => {
-    const risky = [SUM[0], { nivel: 0, code: 'os.remove("datos.txt")', say: 'Borra.' }, SUM[1]]
-    const { host, state } = stage('')
-    const outcome = await build(host, players(scripted([jsonl(risky)])), direct)
-    expect(state.text).toBe('numero_1 = 3\n')
-    expect(outcome.trouble).toContain('no da por seguro')
-  })
-})
-
-describe('construir algo grande: primero el esquema, luego cada etapa', () => {
-  const OUTLINE = [
-    { titulo: 'Preparar las notas', que: 'Guarda las notas de la clase.' },
-    { titulo: 'Calcular la media', que: 'Suma las notas y divide.' },
-    { titulo: 'Mostrar el resultado', que: 'Imprime la media.' },
-  ]
-  const STAGES = [
-    [{ nivel: 0, code: 'notas = [7, 4, 9]', say: 'Las notas.' }],
-    [
-      { nivel: 0, code: 'total = 0', say: 'Empezamos de cero.' },
-      { nivel: 0, code: 'for nota in notas:', say: 'Recorremos las notas.' },
-      { nivel: 1, code: 'total = total + nota', say: 'Sumando cada una.' },
-      { nivel: 0, code: 'media = total / len(notas)', say: 'Y dividimos.' },
-    ],
-    [{ nivel: 0, code: 'print(media)', say: 'La enseñamos.' }],
-  ]
-  const request = {
-    command: 'un programa que calcule la media de unas notas',
-    gen: 'g1',
-    place: {},
-    where: 'al final del programa',
-    outline: true,
-  }
-
-  it('una llamada para el plan y una por etapa, cada una con lo ya escrito delante', async () => {
-    const provider = scripted([jsonl(OUTLINE), ...STAGES.map((stage) => jsonl(stage))])
-    const { host, state } = stage('')
-    const outcome = await build(host, players(provider), request)
-    expect(provider.requests).toHaveLength(4)
-    // El esquema se ve entero antes de que exista una sola línea de código.
-    expect(state.frames[2]).toBe(
-      '# Preparar las notas: Guarda las notas de la clase\n...  # prysel:gen:g1s0\n\n# Calcular la media: Suma las notas y divide\n...  # prysel:gen:g1s1\n\n# Mostrar el resultado: Imprime la media\n...  # prysel:gen:g1s2\n',
-    )
-    expect((parse(state.frames[2] ?? '').sections ?? []).map((section) => section.title)).toEqual([
-      'Preparar las notas',
-      'Calcular la media',
-      'Mostrar el resultado',
-    ])
-    expect(
-      steps(state)
-        .slice(0, 3)
-        .map((event) => event.say),
-    ).toEqual([
-      'Preparar las notas. Guarda las notas de la clase.',
-      'Calcular la media. Suma las notas y divide.',
-      'Mostrar el resultado. Imprime la media.',
-    ])
-    // Cada etapa se detalla sabiendo cuál es y viendo lo que ya escribieron las anteriores.
-    expect(provider.requests[2]?.prompt).toContain(
-      '2. Calcular la media: Suma las notas y divide.   ◀ ESTA',
-    )
-    expect(provider.requests[2]?.prompt).toContain('notas = [7, 4, 9]')
-    expect(state.text).toBe(
-      [
-        '# Preparar las notas: Guarda las notas de la clase',
-        'notas = [7, 4, 9]',
-        '',
-        '# Calcular la media: Suma las notas y divide',
-        'total = 0',
-        'for nota in notas:',
-        '    total = total + nota',
-        'media = total / len(notas)',
-        '',
-        '# Mostrar el resultado: Imprime la media',
-        'print(media)',
-        '',
-      ].join('\n'),
-    )
-    expect(outcome).toMatchObject({ written: 6, trouble: null })
-    // Dice en qué etapa está mientras piensa sus pasos.
-    expect(state.shown).toContainEqual({
-      type: 'progress',
-      text: 'Etapa 2 de 3 · Calcular la media: pensando sus pasos…',
-    })
-  })
-
-  it('un plan de una sola etapa no es un esquema: se va directo a los pasos', async () => {
-    const provider = scripted([jsonl([OUTLINE[0]]), jsonl(SUM)])
-    const { host, state } = stage('')
-    await build(host, players(provider), request)
-    expect(state.text).toBe(SUM_TEXT)
-  })
-
-  it('detenido a mitad, ninguna etapa se queda marcada como en marcha', async () => {
-    const provider = scripted([jsonl(OUTLINE), ...STAGES.map((stage) => jsonl(stage))])
-    const { host, state } = stage('', 5)
-    const outcome = await build(host, players(provider), request)
-    expect(outcome.stopped).toBe(true)
-    expect(state.text).not.toContain('prysel:gen')
-    expect(hasError(state.text)).toBe(false)
   })
 })
 
@@ -530,50 +367,6 @@ describe('entender un tema: «explícame cómo funciona la reproducción humana�
       say: 'Para explicarte eso construyendo un modelo hace falta una IA generativa: elige un modelo.',
     })
   })
-
-  it('a la IA se le pide que enseñe el tema, no que escriba un programa cualquiera', async () => {
-    const provider = scripted([
-      jsonl([
-        {
-          titulo: 'Las células que se unen',
-          que: 'Un óvulo y un espermatozoide, cada uno con 23 cromosomas.',
-        },
-        { titulo: 'La fecundación', que: 'Se unen y forman una célula con 46 cromosomas.' },
-      ]),
-      jsonl([{ nivel: 0, code: 'cromosomas_ovulo = 23', say: 'El óvulo aporta 23 cromosomas.' }]),
-      jsonl([
-        {
-          nivel: 0,
-          code: 'cigoto = cromosomas_ovulo + 23',
-          say: 'Al unirse suman 46: es el cigoto.',
-        },
-      ]),
-    ])
-    const { host, state } = stage('')
-    const outcome = await build(host, players(provider), {
-      command: TOPIC,
-      gen: 'g1',
-      place: {},
-      where: 'al final del programa',
-      outline: true,
-      teach: true,
-    })
-    expect(outcome.written).toBe(2)
-    for (const request of provider.requests) {
-      expect(request.system).toContain('quiere ENTENDER un tema')
-      expect(request.prompt).toContain(TOPIC)
-    }
-    expect(state.text).toBe(
-      [
-        '# Las células que se unen: Un óvulo y un espermatozoide, cada uno con 23 cromosomas',
-        'cromosomas_ovulo = 23',
-        '',
-        '# La fecundación: Se unen y forman una célula con 46 cromosomas',
-        'cigoto = cromosomas_ovulo + 23',
-        '',
-      ].join('\n'),
-    )
-  })
 })
 
 describe('ayudas visuales: nodos que no son del programa, pero lo explican', () => {
@@ -619,34 +412,6 @@ describe('ayudas visuales: nodos que no son del programa, pero lo explican', () 
     // Lo que no se puede dibujar no se propone.
     expect(visualOf({ tipo: 'curva', titulo: 'Rara', y: 'borrar(x)' })).toBeNull()
     expect(visualOf({ tipo: 'curva', titulo: '', y: 'x' })).toBeNull()
-  })
-
-  it('un paso con su ayuda la deja escrita junto a su sentencia, y el analizador la reconoce', async () => {
-    const provider = scripted([
-      jsonl([
-        {
-          nivel: 0,
-          code: 'def sigmoide(x):',
-          say: 'La función de activación.',
-          ver: { tipo: 'curva', titulo: 'Sigmoide', y: '1/(1+exp(-x))', desde: -6, hasta: 6 },
-        },
-        {
-          nivel: 1,
-          code: 'return 1 / (1 + math.exp(-x))',
-          say: 'Aplasta cualquier número entre 0 y 1.',
-        },
-      ]),
-    ])
-    const { host, state } = stage('import math\n')
-    await build(host, players(provider), { ...direct, command: 'la función sigmoide' })
-    expect(state.text).toBe(
-      'import math\ndef sigmoide(x):  # prysel:ver curva «Sigmoide» y = 1/(1+exp(-x)), x de -6 a 6\n    return 1 / (1 + math.exp(-x))\n',
-    )
-    const fn = parse(state.text).nodes.find((n) => n.label === 'sigmoide')
-    expect(fn?.aid).toBe('curva «Sigmoide» y = 1/(1+exp(-x)), x de -6 a 6')
-    // No es una nota del código, ni estorba al programa.
-    expect(fn?.note).toBeUndefined()
-    expect(hasError(state.text)).toBe(false)
   })
 })
 

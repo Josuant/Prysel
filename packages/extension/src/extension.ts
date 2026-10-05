@@ -40,12 +40,13 @@ import {
 } from '@prysel/python/edits'
 import type { TemplateId } from '@prysel/morphology'
 import { DEFAULT_JEV_MODEL, JevError, typesafeDecider, type Decider } from './jev/client.ts'
+import { CallLog } from './calls.ts'
 import { smartAsk } from './jev/ask.ts'
 import { splitOrder } from './jev/compose.ts'
 import { contextFor } from './jev/context.ts'
 import { build, modify, summaryOf, type Outcome, type Stagehand } from './jev/director.ts'
 import { decideCommand, type Directive, type Effect } from './jev/engine.ts'
-import { deepseekProvider, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
+import { deepseekProvider, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
 import { explainNode, generateFill } from './jev/fill.ts'
 import { localDecider } from './jev/local.ts'
 import { Session } from './session.ts'
@@ -263,6 +264,14 @@ async function refresh() {
   }
 }
 
+/**
+ * Lo que se le pregunta a cada modelo y lo que contesta: el lienzo lo enseña en su pestaña «Consultas».
+ * Cada cambio (una consulta que empieza, avanza o acaba) se le manda en cuanto pasa.
+ */
+const callLog = new CallLog((entry) => {
+  postToAll({ type: 'call', entry })
+})
+
 /** Dónde vive, en el llavero del sistema, la clave de la API de Anthropic. */
 const ANTHROPIC_SECRET = 'prysel.anthropicApiKey'
 /** Y la de DeepSeek. */
@@ -293,13 +302,23 @@ async function pickProvider(context: vscode.ExtensionContext): Promise<AiProvide
   const tryDeepseek = async () => {
     const key = await context.secrets.get(DEEPSEEK_SECRET)
     if (!key) return null
-    const model = vscode.workspace.getConfiguration('prysel').get<string>('deepseekModel')
-    return deepseekProvider({ apiKey: key, model: model || DEFAULT_DEEPSEEK_MODEL })
+    const settings = vscode.workspace.getConfiguration('prysel')
+    return deepseekProvider({
+      apiKey: key,
+      model: settings.get<string>('deepseekModel') || DEFAULT_DEEPSEEK_MODEL,
+      thinking: settings.get<boolean>('deepseekThinking') === true,
+    })
   }
-  if (preference === 'vscode') return tryVscode()
-  if (preference === 'anthropic') return tryAnthropic()
-  if (preference === 'deepseek') return tryDeepseek()
-  return (await tryVscode()) ?? (await tryAnthropic()) ?? (await tryDeepseek())
+  const chosen =
+    preference === 'vscode'
+      ? await tryVscode()
+      : preference === 'anthropic'
+        ? await tryAnthropic()
+        : preference === 'deepseek'
+          ? await tryDeepseek()
+          : ((await tryVscode()) ?? (await tryAnthropic()) ?? (await tryDeepseek()))
+  // Cada petición que se le haga queda apuntada, para verla en la pestaña «Consultas».
+  return chosen ? callLog.provider(chosen) : null
 }
 
 /**
@@ -857,13 +876,15 @@ let extensionContext: vscode.ExtensionContext | null = null
  */
 async function pickDecider(context: vscode.ExtensionContext): Promise<Decider | null> {
   const settings = vscode.workspace.getConfiguration('prysel')
-  if (settings.get<string>('jevEngine') === 'local') return localDecider()
+  if (settings.get<string>('jevEngine') === 'local') return callLog.decider(localDecider())
   const key = await context.secrets.get(TYPESAFE_SECRET)
   if (!key) return null
-  return typesafeDecider({
-    apiKey: key,
-    model: settings.get<string>('jevModel') || DEFAULT_JEV_MODEL,
-  })
+  return callLog.decider(
+    typesafeDecider({
+      apiKey: key,
+      model: settings.get<string>('jevModel') || DEFAULT_JEV_MODEL,
+    }),
+  )
 }
 
 /**
@@ -1129,6 +1150,7 @@ async function runDirected(
   const host: Stagehand = {
     signal,
     program: () => analyse(doc),
+    parses: (code) => !parser.parse(code).rootNode.hasError,
     async write(change) {
       const before = doc.getText()
       const { edits } = change
@@ -1298,7 +1320,7 @@ async function postModels() {
 
 interface ModelItem extends vscode.QuickPickItem {
   /** Los ajustes que deja puestos al elegirlo. */
-  settings?: Record<string, string>
+  settings?: Record<string, string | boolean>
   /** La clave que necesita (dónde vive) y el comando que la pide. */
   secret?: string
   ask?: string
@@ -1325,6 +1347,7 @@ async function pickModel(context: vscode.ExtensionContext) {
   const ai = settings.get<string>('aiProvider') ?? 'auto'
   const now = {
     deepseek: settings.get<string>('deepseekModel') || DEFAULT_DEEPSEEK_MODEL,
+    thinking: settings.get<boolean>('deepseekThinking') === true,
     anthropic: settings.get<string>('anthropicModel') || DEFAULT_ANTHROPIC_MODEL,
     vscode: settings.get<string>('vscodeModel') ?? '',
     jev: settings.get<string>('jevModel') || DEFAULT_JEV_MODEL,
@@ -1342,17 +1365,22 @@ async function pickModel(context: vscode.ExtensionContext) {
       description: 'el de VS Code si hay uno; si no, Anthropic; si no, DeepSeek',
       settings: { aiProvider: 'auto' },
     },
-    ...['deepseek-chat', 'deepseek-reasoner'].map((model): ModelItem => ({
-      label: mark(ai === 'deepseek' && now.deepseek === model, `DeepSeek · ${model}`),
-      description:
-        model === 'deepseek-chat'
-          ? 'rápido: el indicado para construir paso a paso'
-          : 'razona más, tarda más',
-      detail: needs(deepseek),
-      settings: { aiProvider: 'deepseek', deepseekModel: model },
-      secret: DEEPSEEK_SECRET,
-      ask: 'prysel.setDeepseekKey',
-    })),
+    // Cada modelo, sin razonar (rápido: lo indicado para construir paso a paso) y razonando.
+    ...DEEPSEEK_MODELS.flatMap((model) =>
+      [false, true].map((thinking): ModelItem => ({
+        label: mark(
+          ai === 'deepseek' && now.deepseek === model && now.thinking === thinking,
+          `DeepSeek · ${model}${thinking ? ' · razonando' : ''}`,
+        ),
+        description: thinking
+          ? 'piensa antes de contestar: más lento, cada frase tarda'
+          : 'contesta directo: rápido, lo indicado para construir paso a paso',
+        detail: needs(deepseek),
+        settings: { aiProvider: 'deepseek', deepseekModel: model, deepseekThinking: thinking },
+        secret: DEEPSEEK_SECRET,
+        ask: 'prysel.setDeepseekKey',
+      })),
+    ),
     {
       label: mark(ai === 'anthropic', `Anthropic · ${now.anthropic}`),
       detail: needs(anthropic),
@@ -1536,6 +1564,10 @@ function wireWebview(webview: vscode.Webview) {
       if (extensionContext) void handleCommand(extensionContext, parsed)
       return
     }
+    if (parsed.type === 'clearCalls') {
+      callLog.clear()
+      return
+    }
     if (parsed.type === 'stopOrder') {
       stopBuild(currentDoc)
       return
@@ -1581,6 +1613,8 @@ function wireWebview(webview: vscode.Webview) {
     webviewsReady++
     postToAll({ type: 'theme', theme: themeKind() })
     void postModels()
+    // Un lienzo recién abierto no ha visto las consultas de antes: se le mandan.
+    for (const entry of callLog.all()) postToAll({ type: 'call', entry })
     void refresh().then(() => {
       // Un lienzo recién abierto no tiene las imágenes de lo que ya se ejecutó: se le mandan.
       const session = currentDoc ? sessions.get(currentDoc.uri.toString()) : undefined

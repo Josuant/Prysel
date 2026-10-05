@@ -167,6 +167,30 @@ export function localDecider(): Decider {
             id === 'camara'
               ? pick(opens ? 'conjunto' : 'acercar', SURE)
               : pick(key ? 'pausa' : 'seguir', SURE)
+        } else if (id === 'etapa' && question.type === 'choice') {
+          // La etapa cuyo título o explicación comparte alguna palabra con el código; si ninguna, no se sabe.
+          const code = plain(typeof state.codigo === 'string' ? state.codigo : '')
+          const names = code.split(/[^a-z0-9]+/).filter((word) => word.length >= 4)
+          // La que más palabras comparta; en un empate, la más avanzada (el código va hacia delante).
+          let hit: [string, number] | null = null
+          for (const [option, description] of Object.entries(question.criteria)) {
+            const words = plain(description ?? '').split(/[^a-z0-9]+/)
+            const shared = names.filter((name) =>
+              words.some((word) => word.length >= 4 && word.startsWith(name.slice(0, 5))),
+            ).length
+            if (shared > 0 && (hit === null || shared >= hit[1])) hit = [option, shared]
+          }
+          answers[id] = hit ? pick(hit[0], SURE) : pick('e1', UNSURE)
+        } else if (id === 'ayuda') {
+          const code = typeof state.codigo === 'string' ? state.codigo : ''
+          answers[id] = {
+            type: 'noul',
+            noul: /exp\(|\*\*|sqrt\(|log\(|tanh\(/.test(code) ? SURE : 0.1,
+          }
+        } else if (id === 'rango') {
+          answers[id] = pick('de -6 a 6', SURE)
+        } else if (id === 'encaja' || id === 'pertinente') {
+          answers[id] = { type: 'noul', noul: SURE }
         } else if (id === 'cumple') {
           answers[id] = { type: 'noul', noul: SURE }
         } else if (id === 'seguro') {

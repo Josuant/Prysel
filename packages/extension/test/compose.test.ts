@@ -118,7 +118,7 @@ describe('el proveedor de DeepSeek', () => {
       }) as typeof fetch,
     })
     expect(await provider.generate(request)).toBe('hola')
-    expect(provider.id).toBe('deepseek:deepseek-chat')
+    expect(provider.id).toBe('deepseek:deepseek-flash')
     expect(calls[0]?.url).toBe(DEEPSEEK_URL)
     expect((calls[0]?.init.headers as Record<string, string>).authorization).toBe(
       'Bearer clave-de-prueba',
@@ -128,8 +128,11 @@ describe('el proveedor de DeepSeek', () => {
       max_tokens: number
       messages: { role: string; content: string }[]
     }
-    expect(sent.model).toBe('deepseek-chat')
-    expect(sent.max_tokens).toBe(100)
+    expect(sent.model).toBe('deepseek-flash')
+    // Sin razonar, salvo que se pida: son consultas pequeñas, y razonar cada una las hace lentas.
+    expect((sent as { thinking?: unknown }).thinking).toEqual({ type: 'disabled' })
+    // El cupo pedido era pequeño (100): se sube al mínimo, para que un modelo que razona no se lo coma pensando.
+    expect(sent.max_tokens).toBe(2000)
     expect(sent.messages).toEqual([
       { role: 'system', content: 'sistema' },
       { role: 'user', content: 'pregunta' },
@@ -139,13 +142,14 @@ describe('el proveedor de DeepSeek', () => {
   it('un error de la API, o una respuesta vacía, se dicen', async () => {
     const failing = deepseekProvider({
       apiKey: 'mala',
-      model: 'deepseek-reasoner',
+      model: 'deepseek-v4-pro',
+      thinking: true,
       fetchImpl: (() =>
         Promise.resolve(
           new Response(JSON.stringify({ error: { message: 'clave inválida' } }), { status: 401 }),
         )) as typeof fetch,
     })
-    expect(failing.id).toBe('deepseek:deepseek-reasoner')
+    expect(failing.id).toBe('deepseek:deepseek-v4-pro')
     await expect(failing.generate(request)).rejects.toThrow(
       'DeepSeek respondió 401: clave inválida',
     )
@@ -155,6 +159,68 @@ describe('el proveedor de DeepSeek', () => {
         Promise.resolve(new Response(JSON.stringify({ choices: [] })))) as typeof fetch,
     })
     await expect(empty.generate(request)).rejects.toThrow('ningún texto')
+  })
+})
+
+describe('DeepSeek con un modelo que razona antes de contestar', () => {
+  const request: AiRequest = { system: 'sistema', prompt: 'Di una frase.', maxTokens: 190 }
+  /** Una respuesta que gastó su cupo razonando: sin texto, y terminada por «length». */
+  const thinking = {
+    choices: [{ message: { content: '', reasoning_content: 'Veamos…' }, finish_reason: 'length' }],
+  }
+  const answered = { choices: [{ message: { content: 'Una frase.' }, finish_reason: 'stop' }] }
+
+  it('si se queda sin cupo pensando, se repite una vez con más', async () => {
+    const budgets: number[] = []
+    const provider = deepseekProvider({
+      apiKey: 'x',
+      fetchImpl: ((_url: string, init: RequestInit) => {
+        budgets.push((JSON.parse(String(init.body)) as { max_tokens: number }).max_tokens)
+        return Promise.resolve(
+          new Response(JSON.stringify(budgets.length === 1 ? thinking : answered)),
+        )
+      }) as typeof fetch,
+    })
+    expect(await provider.generate(request)).toBe('Una frase.')
+    expect(budgets).toEqual([2000, 8000])
+  })
+
+  it('y si ni así escribe, el motivo se dice claro', async () => {
+    const provider = deepseekProvider({
+      apiKey: 'x',
+      fetchImpl: (() => Promise.resolve(new Response(JSON.stringify(thinking)))) as typeof fetch,
+    })
+    await expect(provider.generate(request)).rejects.toThrow(
+      'gastó todo el cupo de la respuesta razonando',
+    )
+  })
+
+  it('en streaming, igual: el razonamiento no es texto, y sin texto se repite con más cupo', async () => {
+    const sse = (events: unknown[]) =>
+      new Response(
+        events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n',
+      )
+    let calls = 0
+    const provider = deepseekProvider({
+      apiKey: 'x',
+      fetchImpl: (() =>
+        Promise.resolve(
+          ++calls === 1
+            ? sse([
+                { choices: [{ delta: { reasoning_content: 'Pienso…' } }] },
+                { choices: [{ delta: {}, finish_reason: 'length' }] },
+              ])
+            : sse([
+                { choices: [{ delta: { reasoning_content: 'Pienso…' } }] },
+                { choices: [{ delta: { content: 'a = 1' } }] },
+                { choices: [{ delta: {}, finish_reason: 'stop' }] },
+              ]),
+        )) as typeof fetch,
+    })
+    const seen: string[] = []
+    expect(await provider.stream?.(request, (delta) => seen.push(delta))).toBe('a = 1')
+    expect(seen).toEqual(['a = 1'])
+    expect(calls).toBe(2)
   })
 })
 
