@@ -252,6 +252,19 @@ export interface CanvasProps {
    * la cámara lo sigue. Sin él, no hay reproducción.
    */
   cursor?: string | null
+  /**
+   * Llevar la cámara a un nodo y resaltarlo, porque algo acaba de pasar ahí (una orden lo creó o lo nombró).
+   * A diferencia del `cursor`, la cámara va siempre, aunque el nodo ya se vea: es un gesto, no un seguimiento.
+   * `key` cambia con cada gesto (el mismo nodo se puede volver a enfocar).
+   */
+  spotlight?: {
+    id: string
+    key: number
+    /** El nodo acaba de construirse: aparece con su animación de entrada. */
+    born?: boolean
+    /** La cámara enseña el nodo con lo que lo rodea, más de lejos, en vez de acercarse a él. */
+    wide?: boolean
+  } | null
   /** Etiqueta accesible del lienzo, leída por lectores de pantalla. */
   ariaLabel?: string
   /**
@@ -336,6 +349,8 @@ const MAX_HEIGHT = 640
 const SIDE_GAP = 48
 /** Lo más que la cámara se aleja para que quepan a la vez el cursor y la nota que se lee. */
 const MIN_FOLLOW_ZOOM = 0.45
+/** El zoom con el que se enseña una pieza «en su conjunto»: cabe lo que la rodea y aún se lee. */
+const WIDE_SPOT_ZOOM = 0.7
 
 type Point = { x: number; y: number }
 const NO_POSITIONS: Record<string, Point> = {}
@@ -381,6 +396,7 @@ function CanvasInner({
   fitMode,
   fitKey = '',
   cursor = null,
+  spotlight = null,
   ariaLabel,
   framed = true,
   controls = false,
@@ -496,6 +512,8 @@ function CanvasInner({
   const [run, setRun] = useState<number | undefined>(undefined)
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
+  /** El diagrama (su `fitKey`) al que una orden llevó la cámara: ahí el encuadre ya no se rehace solo. */
+  const spotHeld = useRef<string | null>(null)
   /** Dónde está cada nodo ahora mismo: lo necesita un arrastre para saber cuánto se ha movido. */
   const shownRef = useRef<Record<string, Point>>({})
   const boxesRef = useRef<Record<string, { x: number; y: number; w: number; h: number }>>({})
@@ -1546,6 +1564,8 @@ function CanvasInner({
           drop: reparent?.to === node.id ? 'into' : reparent?.from === node.id ? 'out' : undefined,
           addTarget: addTarget === node.id,
           cursor: cursor === node.id,
+          spotlit: spotlight?.id === node.id ? spotlight.key : undefined,
+          born: spotlight?.id === node.id && spotlight.born === true,
           hinted: hinted?.has(node.id) === true,
           // La cajita de chips del territorio, y lo que llevan las casillas de este nodo.
           tray: container ? plan.trays.get(node.id) : undefined,
@@ -1662,6 +1682,7 @@ function CanvasInner({
               ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
               : {}),
             renameSignal: renaming.id === placed.id ? renaming.n : 0,
+            born: spotlight?.id === placed.id && spotlight.born === true,
             hinted: hinted?.has(placed.id) === true,
           },
         })
@@ -2087,6 +2108,8 @@ function CanvasInner({
     const frame = frameRef.current
     if (!frame || taken) return
     const fit = () => {
+      // La cámara está donde la dejó una orden: no se la lleva un reencuadre.
+      if (spotHeld.current === fitKey) return
       const pad = 24
       const byWidth = Math.max(0.15, (frame.clientWidth - pad * 2) / bounds.w)
       const byHeight = Math.max(0.15, (frame.clientHeight - pad * 2) / bounds.h)
@@ -2111,7 +2134,33 @@ function CanvasInner({
     return () => {
       observer.disconnect()
     }
-  }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive])
+  }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive, fitKey])
+
+  // El foco de una orden: la cámara va a donde el nodo **va a quedar** (no a donde está a medio camino de
+  // su animación), a un tamaño que se lea. Desde ahí la cámara ya no se reencuadra sola: se movió a propósito.
+  // Va después del encuadre: si los dos tocan a la vez (un nodo nuevo cambia el tamaño del diagrama), gana este.
+  const spotDone = useRef('')
+  useEffect(() => {
+    const frame = frameRef.current
+    const gesture = spotlight ? `${spotlight.key}:${spotlight.id}` : ''
+    if (!frame || !spotlight || spotDone.current === gesture) return
+    const item = motionItems.find((entry) => entry.id === spotlight.id)
+    if (!item) return
+    spotDone.current = gesture
+    const { w, h } = item.value.size
+    const margin = 64
+    // Un territorio grande se enseña entero; un paso suelto, a tamaño de lectura.
+    const room = Math.min(
+      (frame.clientWidth - 2 * margin) / w,
+      (frame.clientHeight - 2 * margin) / h,
+    )
+    const zoom = Math.max(MIN_FOLLOW_ZOOM, Math.min(spotlight.wide ? WIDE_SPOT_ZOOM : 1, room))
+    spotHeld.current = fitKey
+    void setCenter(item.position.x + w / 2, item.position.y + h / 2, {
+      zoom,
+      duration: animate ? 450 : 0,
+    })
+  }, [spotlight, motionItems, setCenter, animate, fitKey])
 
   // Un lienzo de trabajo (que se ajusta al ancho) pliega sus filas según el ancho que tiene.
   const narrowing = interactive && (fitMode ?? 'width') === 'width'
@@ -2356,6 +2405,7 @@ function CanvasInner({
               onClick={() => {
                 // Vuelve a encuadrar como al principio: el lienzo deja de estar «tomado» por el usuario.
                 setTakenKey(null)
+                spotHeld.current = null
                 setRefits((n) => n + 1)
               }}
             />

@@ -134,6 +134,12 @@ export interface ProgramNode {
    */
   note?: string
   /**
+   * La pieza se puso con una orden y su contenido aún se está escribiendo: lleva la marca
+   * `# prysel:gen:<id>` en su primera línea (este es su `<id>`). La marca no es una nota: es estado, y vive
+   * en el código para que no se pierda si el lienzo se cierra a medias.
+   */
+  generating?: string
+  /**
    * En una decisión: el `elif` en el que sigue su camino falso, si lo hay. Lo que se quiera poner al
    * principio de ese camino va en los puertos de ese `elif`, no en los de esta decisión.
    */
@@ -153,6 +159,9 @@ export interface Program {
    */
   sections?: ProgramSection[]
 }
+
+/** La marca de una pieza cuyo contenido se está generando, ya sin la almohadilla: `prysel:gen:<id>`. */
+const GENERATING = /^prysel:gen:([a-z0-9]{1,24})$/
 
 /** Llamadas que tocan el mundo exterior: son un efecto, no una transformación. */
 const IO_CALLS = [
@@ -435,8 +444,15 @@ class Builder {
    */
   annotate(id: string, text: string, where: 'before' | 'after' = 'after') {
     const node = this.nodes.find((n) => n.id === id)
-    const clean = text.trim()
-    if (!node || !clean) return
+    if (!node) return
+    // La marca de «generándose» no es prosa: se apunta en el nodo y no entra en su nota.
+    const prose = text.split('\n').filter((line) => {
+      const mark = GENERATING.exec(line.trim())
+      if (mark?.[1]) node.generating = mark[1]
+      return !mark
+    })
+    const clean = prose.join('\n').trim()
+    if (!clean) return
     node.note =
       node.note === undefined
         ? clean

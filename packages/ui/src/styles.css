@@ -983,6 +983,10 @@
   background-image: radial-gradient(var(--grid-dot) 1.2px, transparent 1.2px);
   background-size: 22px 22px;
 }
+/* Un lienzo que se recorre ya dibuja su retícula (la que se mueve y crece con él): la fija sobraría debajo. */
+.stage:has(.react-flow__background) {
+  background-image: none;
+}
 
 /* Las conexiones viven en un SVG que flota sobre los nodos. */
 .edges {
@@ -1632,6 +1636,109 @@ button.fn-menu__crumb:hover {
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
   pointer-events: none;
   animation: prysel-cursor-arrive 380ms ease-out;
+}
+/* Lo que una orden acaba de crear o de nombrar: un anillo que aparece, se queda un momento y se va (solo
+   cambia su opacidad: vale también con «reducir movimiento»). Los dos valores (0 y 1) son la misma animación
+   con dos nombres, para que vuelva a empezar si se enfoca otra vez el mismo nodo. */
+.flow-node[data-spotlit]::before {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  inset: -6px;
+  border: 2px solid var(--accent);
+  border-radius: 28px;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 24%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  animation: prysel-spotlight-0 2200ms ease-out;
+}
+.flow-node[data-spotlit='1']::before {
+  animation-name: prysel-spotlight-1;
+}
+@keyframes prysel-spotlight-0 {
+  18%,
+  70% {
+    opacity: 1;
+  }
+}
+@keyframes prysel-spotlight-1 {
+  18%,
+  70% {
+    opacity: 1;
+  }
+}
+/* Lo que una orden acaba de construir **aparece**: la pieza sube y toma cuerpo, y lo que lleva dentro (su
+   nombre, sus campos, sus valores) entra detrás, uno tras otro, en el orden en que se lee. Es lo que deja
+   seguir la construcción de un programa paso a paso en vez de encontrárselo hecho. */
+.flow-node[data-born] {
+  animation: prysel-born 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.flow-node[data-born]
+  :is(.node__line, .node__head, .node__control, .node__glance, .node__question)
+  > * {
+  animation: prysel-born-part 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: 620ms;
+}
+.flow-node[data-born]
+  :is(.node__line, .node__head, .node__control, .node__glance, .node__question)
+  > :nth-child(1) {
+  animation-delay: 180ms;
+}
+.flow-node[data-born]
+  :is(.node__line, .node__head, .node__control, .node__glance, .node__question)
+  > :nth-child(2) {
+  animation-delay: 290ms;
+}
+.flow-node[data-born]
+  :is(.node__line, .node__head, .node__control, .node__glance, .node__question)
+  > :nth-child(3) {
+  animation-delay: 400ms;
+}
+.flow-node[data-born]
+  :is(.node__line, .node__head, .node__control, .node__glance, .node__question)
+  > :nth-child(4) {
+  animation-delay: 510ms;
+}
+/* Un dato que nace como chip (en la cajita de su contexto) entra igual: él, y luego su nombre y su valor. */
+.vchip[data-born] {
+  animation: prysel-born 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.vchip[data-born] > * {
+  animation: prysel-born-part 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: 400ms;
+}
+.vchip[data-born] > :nth-child(1) {
+  animation-delay: 180ms;
+}
+.vchip[data-born] > :nth-child(2) {
+  animation-delay: 290ms;
+}
+@keyframes prysel-born {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.94);
+  }
+}
+@keyframes prysel-born-part {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vchip[data-born],
+  .vchip[data-born] > *,
+  .flow-node[data-born],
+  .flow-node[data-born]
+    :is(.node__line, .node__head, .node__control, .node__glance, .node__question)
+    > * {
+    animation-name: prysel-born-fade;
+  }
+}
+@keyframes prysel-born-fade {
+  from {
+    opacity: 0;
+  }
 }
 @keyframes prysel-cursor-arrive {
   from {
@@ -3279,6 +3386,117 @@ button.fn-menu__crumb:hover {
   bottom: 16px;
   left: 16px;
 }
+.canvas-float[data-at='bottom-center'] {
+  bottom: 16px;
+  left: 50%;
+  width: min(620px, calc(100% - 300px));
+  min-width: 260px;
+  transform: translateX(-50%);
+}
+
+/* La caja de órdenes: lo que se escribe o se dicta, y encima lo que el motor JEV hizo con ello. */
+.order-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.order-bar__form,
+.order-bar__reply {
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(var(--blur-glass));
+}
+.order-bar__form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 12px;
+  color: var(--ink-muted);
+}
+.order-bar__form:focus-within {
+  border-color: var(--accent);
+}
+.order-bar__input {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+.order-bar__input::placeholder {
+  color: var(--ink-faint);
+}
+.order-bar__voice,
+.order-bar__model {
+  flex: none;
+  font-size: 12px;
+}
+.order-bar__model {
+  overflow: hidden;
+  max-width: 190px;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.order-bar__model[data-missing] {
+  color: var(--state-warning);
+}
+.order-bar__reply {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.order-bar__said {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--ink-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.order-bar__say {
+  color: var(--ink);
+  font-weight: 500;
+}
+.order-bar__reply[data-tone='muted'] .order-bar__say {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+.order-bar__reply[data-tone='error'] .order-bar__say {
+  color: var(--state-error);
+}
+.order-bar__note {
+  color: var(--ink-muted);
+}
+.order-bar__options {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.order-bar__meter {
+  margin-left: auto;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
+.order-bar__meter[data-within='yes'] {
+  color: var(--state-success);
+}
+.order-bar__meter[data-within='no'] {
+  color: var(--state-warning);
+}
+
 .segmented--float {
   border: 1px solid var(--border-card);
   background: color-mix(in srgb, var(--surface) 85%, transparent);

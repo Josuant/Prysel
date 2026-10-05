@@ -156,6 +156,11 @@ export type NodeAction =
       /** Con `into` una decisión: al principio de uno de sus dos caminos (se crea el `else` si falta). */
       branch?: 'yes' | 'no'
       connect?: { from: string; port?: string }
+      /**
+       * La plantilla nace marcada como «generándose» (con este id): se puso con una orden, y su contenido
+       * lo escribe después la IA. La marca va en el código, en su primera línea.
+       */
+      pending?: string
     }
   /**
    * Conectar la salida de un nodo (`port`: el parámetro de una función, si sale de uno) a un campo de

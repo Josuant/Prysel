@@ -1,4 +1,5 @@
 import { AiUnavailableError, type AiProvider } from './provider.ts'
+import { readEventStream } from './stream.ts'
 
 /**
  * El proveedor de la API de Anthropic: la clave vive en `SecretStorage` (la pone el host), aquí solo se usa.
@@ -27,6 +28,39 @@ export function anthropicProvider(options: AnthropicOptions): AiProvider {
   const model = options.model?.trim() || DEFAULT_ANTHROPIC_MODEL
   return {
     id: `anthropic:${model}`,
+    async stream({ system, prompt, maxTokens }, onText, signal) {
+      const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': options.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens ?? 4000,
+          stream: true,
+          system,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        ...(signal ? { signal } : {}),
+      })
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as AnthropicResponse | null
+        throw new AiUnavailableError(
+          `Anthropic respondió ${response.status}${data?.error?.message ? `: ${data.error.message}` : ''}`,
+        )
+      }
+      return readEventStream(
+        response,
+        (event) => {
+          const { type, delta } = event as { type?: string; delta?: { text?: string } }
+          return type === 'content_block_delta' ? delta?.text : undefined
+        },
+        onText,
+        signal,
+      )
+    },
     async generate({ system, prompt, maxTokens }) {
       const response = await fetchImpl('https://api.anthropic.com/v1/messages', {
         method: 'POST',

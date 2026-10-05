@@ -69,6 +69,10 @@ export interface PryselNodeData extends Record<string, unknown> {
   addTarget?: boolean
   /** Por aquí va la reproducción de una traza: el nodo que se está ejecutando en este paso. */
   cursor?: boolean
+  /** Una orden acaba de crear o de nombrar este nodo: se resalta un momento (el número cambia con cada vez). */
+  spotlit?: number | undefined
+  /** Acaba de construirse: entra con su animación (él, y lo que lleva dentro, uno tras otro). */
+  born?: boolean
   /** Una nota nombra este nodo en su `código`, y el puntero está encima de ese trozo. */
   hinted?: boolean
   /** La cajita de chips de este contexto, si es un territorio que tiene una. */
@@ -329,6 +333,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         data-selected={selected ? '' : undefined}
         data-add-target={data.addTarget ? '' : undefined}
         data-cursor={data.cursor ? '' : undefined}
+        data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
+        data-born={data.born ? '' : undefined}
         data-hinted={data.hinted ? '' : undefined}
         data-modifier={modifier}
       >
@@ -421,6 +427,8 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-selected={selected ? '' : undefined}
       data-add-target={data.addTarget ? '' : undefined}
       data-cursor={data.cursor ? '' : undefined}
+      data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
+      data-born={data.born ? '' : undefined}
       data-hinted={data.hinted ? '' : undefined}
     >
       {/* De aquí sale la flecha de una nota: existe en todo nodo (también en un territorio, que no tiene salida). */}

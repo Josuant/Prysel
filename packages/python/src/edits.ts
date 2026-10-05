@@ -410,14 +410,90 @@ const SPACED: ReadonlySet<TemplateId> = new Set(['function'])
 export function addTemplate(
   program: Program,
   template: TemplateId,
-  where: Place & { fill?: string } = {},
+  where: Place & { fill?: string; pending?: string } = {},
 ): Change {
+  const mark = where.pending !== undefined && GEN_ID.test(where.pending) ? where.pending : undefined
   return insertLines(
     program,
     where,
-    (indent) => linesOf(template, where.fill).map((line) => ' '.repeat(indent) + line),
+    (indent) =>
+      linesOf(template, where.fill).map(
+        (line, i) =>
+          ' '.repeat(indent) + line + (i === 0 && mark !== undefined ? genMark(mark) : ''),
+      ),
     SPACED.has(template),
   )
+}
+
+// ───────────────────────── generándose ─────────────────────────
+
+/** El id de una pieza que se está generando: corto, y sin nada que no quepa en un comentario. */
+const GEN_ID = /^[a-z0-9]{1,24}$/
+
+/** La marca, como va al final de la primera línea de la pieza. */
+const genMark = (id: string) => `  # prysel:gen:${id}`
+
+/** El Python de una plantilla tal como nace (sin sangría): con él se sabe si alguien ya la tocó. */
+export const templateLines = (template: TemplateId): string[] => linesOf(template)
+
+/** Dónde está una pieza que se está generando: toda ella, con la marca de su primera línea. */
+function generatingSpan(
+  program: Program,
+  id: string,
+): { node: ProgramNode; start: number; end: number; mark: { start: number; end: number } } | null {
+  const node = program.nodes.find((n) => n.generating === id)
+  const range = node?.range
+  if (!node || !range) return null
+  const text = program.source
+  const first = lineEnd(text, range.start)
+  const found = /[ \t]*#[ \t]*prysel:gen:[a-z0-9]+[ \t]*$/.exec(text.slice(range.start, first))
+  if (!found) return null
+  const at = range.start + found.index
+  return {
+    node,
+    start: range.start,
+    end: Math.max(range.end, first),
+    mark: { start: at, end: first },
+  }
+}
+
+/** Quita la marca de «generándose» de una pieza: se queda como está, ya sin estado pendiente. */
+export function clearGenerating(program: Program, id: string): Change {
+  const span = generatingSpan(program, id)
+  return { edits: span ? [{ start: span.mark.start, end: span.mark.end, text: '' }] : [] }
+}
+
+/**
+ * ¿Sigue la pieza como nació? Si alguien ya la cambió (le puso un nombre, le metió algo dentro), lo
+ * generado no la pisa: lo que se escribió a mano manda.
+ */
+export function untouchedTemplate(program: Program, id: string, template: TemplateId): boolean {
+  const span = generatingSpan(program, id)
+  if (!span?.node.range) return false
+  const text = program.source
+  const written = text.slice(span.start, span.mark.start) + text.slice(span.mark.end, span.end)
+  const indent = span.node.range.indent
+  const lines = written.split(/\r?\n/).map((line, i) => (i === 0 ? line : line.slice(indent)))
+  return lines.join('\n') === linesOf(template).join('\n')
+}
+
+/**
+ * Sustituye una pieza que se estaba generando por su contenido (`code`: Python sin sangría, una sola
+ * sentencia), con la sangría de su sitio y los saltos de línea del archivo. La marca desaparece con ella.
+ */
+export function fillGenerated(program: Program, id: string, code: string): Change {
+  const span = generatingSpan(program, id)
+  if (!span?.node.range) return { edits: [] }
+  const text = program.source
+  const pad = ' '.repeat(span.node.range.indent)
+  const lines = code.replace(/\r\n/g, '\n').replace(/\s+$/, '').split('\n')
+  const body = lines
+    .map((line, i) => (i === 0 || line.trim() === '' ? line.trimEnd() : pad + line.trimEnd()))
+    .join(eolOf(text))
+  return {
+    edits: [{ start: span.start, end: span.end, text: body }],
+    select: { line: lineOf(text, span.start) },
+  }
 }
 
 /**
@@ -945,6 +1021,7 @@ export function actionEdits(program: Program, action: NodeAction): Change {
         return addTemplate(program, action.template, {
           ...placed,
           ...(fill === undefined || !isIdentifier(fill) ? {} : { fill }),
+          ...(action.pending === undefined ? {} : { pending: action.pending }),
         })
       }
       const first = action.at === 'start' ? firstStatement(program, action.into) : undefined
@@ -957,6 +1034,7 @@ export function actionEdits(program: Program, action: NodeAction): Change {
             : { into: action.into }
           : { before: first.id }),
         ...(fill === undefined || !isIdentifier(fill) ? {} : { fill }),
+        ...(action.pending === undefined ? {} : { pending: action.pending }),
       })
     }
     case 'move':
@@ -982,6 +1060,66 @@ export function actionEdits(program: Program, action: NodeAction): Change {
     case 'unsection':
       return removeSection(program, action.id)
   }
+}
+
+/**
+ * Escribe un trozo de Python ya redactado (varias sentencias, sin sangría) en un sitio del programa: detrás
+ * de un nodo, dentro de un cuerpo, al principio, o en un camino de una decisión. Es lo que hace una orden
+ * compleja: no una plantilla, sino un algoritmo entero, con sus comentarios de sección.
+ */
+export function addCode(
+  program: Program,
+  where: { after?: string; into?: string; at?: 'start'; branch?: 'yes' | 'no' },
+  code: string,
+): Change {
+  const lines = code.replace(/\r\n/g, '\n').replace(/\s+$/, '').split('\n')
+  if (lines.join('').trim() === '') return { edits: [] }
+  if (where.into !== undefined && nodeById(program, where.into)?.kind === 'control.match') {
+    return { edits: [] }
+  }
+  const write = (indent: number) =>
+    lines.map((line) => (line.trim() === '' ? '' : ' '.repeat(indent) + line.trimEnd()))
+  const placed = (): Change => {
+    if (where.branch !== undefined) {
+      const spot = resolvePlace(program, {
+        ...(where.into === undefined ? {} : { into: where.into }),
+        branch: where.branch,
+      })
+      return spot === null ? { edits: [] } : insertLines(program, spot, write)
+    }
+    const first = where.at === 'start' ? firstStatement(program, where.into) : undefined
+    return insertLines(
+      program,
+      {
+        ...(where.after === undefined ? {} : { after: where.after }),
+        ...(first === undefined
+          ? where.into === undefined
+            ? {}
+            : { into: where.into }
+          : { before: first.id }),
+      },
+      write,
+    )
+  }
+  const change = placed()
+  const [edit] = change.edits
+  if (!edit || !change.select) return change
+  const text = program.source
+  let line = change.select.line
+  // Lo escrito empieza con un rótulo de etapa: para que lo sea, va separado de lo anterior por una línea en
+  // blanco (salvo al principio de un bloque, donde no hace falta).
+  if (lines[0]?.startsWith('#') && edit.start === edit.end && edit.start > 0) {
+    const follows = /^\r?\n/.test(edit.text)
+    const at = follows ? edit.start : edit.start - 1
+    const previous = text.slice(lineStart(text, at), lineEnd(text, lineStart(text, at)))
+    if (previous.trim() !== '' && !previous.trimEnd().endsWith(':')) {
+      edit.text = eolOf(text) + edit.text
+      line += 1
+    }
+  }
+  // Lo que se enfoca es su primera sentencia, no el rótulo que lleva encima.
+  const lead = lines.findIndex((row) => row.trim() !== '' && !row.trimStart().startsWith('#'))
+  return { edits: change.edits, select: { line: line + Math.max(0, lead) } }
 }
 
 // ───────────────────────── etapas ─────────────────────────

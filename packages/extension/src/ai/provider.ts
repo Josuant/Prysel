@@ -13,6 +13,15 @@ export interface AiProvider {
   /** Un nombre corto para mostrar y para la caché (`vscode:gpt-4o`, `anthropic:claude-sonnet-5`). */
   readonly id: string
   generate(request: AiRequest): Promise<string>
+  /**
+   * Lo mismo, viendo llegar el texto trozo a trozo (`onText`) y pudiendo cortarlo a mitad (`signal`).
+   * Devuelve el texto entero (o lo que llevara al cortarse). Sin él, el texto llega de una vez.
+   */
+  stream?(
+    request: AiRequest,
+    onText: (delta: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string>
 }
 
 /** Por qué no hay un proveedor listo: ninguno configurado, o el que se pidió no está disponible. */

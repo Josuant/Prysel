@@ -97,6 +97,7 @@ vi.mock('vscode', () => {
       getConfiguration: () => ({ get: () => state.configuredPython }),
       getWorkspaceFolder: () => undefined,
       onDidChangeTextDocument: () => ({ dispose() {} }),
+      onDidChangeConfiguration: () => ({ dispose() {} }),
       onDidCloseTextDocument: (listener: (doc: unknown) => void) => {
         state.closeListeners.push(listener)
         return { dispose() {} }
@@ -176,6 +177,11 @@ describe.skipIf(!available)('la extensión con una API de VS Code simulada', () 
     extension.activate({
       subscriptions: [],
       extensionUri: { path: '/ext', fsPath: '/ext' },
+      // Sin claves guardadas: no hay IA ni motor JEV, y el lienzo lo dice.
+      secrets: {
+        get: () => Promise.resolve(undefined),
+        onDidChange: () => ({ dispose() {} }),
+      },
     } as never)
     await state.commands.get('prysel.openCanvas')?.()
     // El webview avisa de que está listo: la extensión responde con el tema, el programa y el estado.

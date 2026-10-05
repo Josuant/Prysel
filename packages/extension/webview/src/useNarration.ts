@@ -18,7 +18,7 @@ export function speakableNote(note: { title?: string; text: string }): string {
 }
 
 /** La voz que mejor casa con el idioma pedido: exacta, o el mismo idioma sin variante regional. */
-function pickVoice(lang: string | undefined): SpeechSynthesisVoice | undefined {
+export function pickVoice(lang: string | undefined): SpeechSynthesisVoice | undefined {
   if (!lang || typeof window === 'undefined' || !window.speechSynthesis) return undefined
   const voices = window.speechSynthesis.getVoices()
   const short = lang.split('-')[0]

@@ -26,7 +26,37 @@ import {
   skeletonLesson,
   type Lesson,
 } from './lesson.ts'
-import { parseHostMessage, type Theme, type WebviewMessage } from './protocol.ts'
+import {
+  parseHostMessage,
+  type CommandMessage,
+  type Theme,
+  type WebviewMessage,
+} from './protocol.ts'
+import {
+  applyEdits as applyTextEdits,
+  clearGenerating,
+  fillGenerated,
+  untouchedTemplate,
+} from '@prysel/python/edits'
+import type { TemplateId } from '@prysel/morphology'
+import { DEFAULT_JEV_MODEL, JevError, typesafeDecider, type Decider } from './jev/client.ts'
+import {
+  BuildPlan,
+  MAX_BUILD_STEPS,
+  STEP_THRESHOLDS,
+  StepStream,
+  buildStepsPrompt,
+  buildStepsSystem,
+  judgeStep,
+  paceOf,
+  type BuildStep,
+} from './jev/build.ts'
+import { COMPOSE_THRESHOLDS, judgeCode, splitOrder } from './jev/compose.ts'
+import { decideCommand, type Directive, type Effect, type Evidence } from './jev/engine.ts'
+import { streamText } from './ai/stream.ts'
+import { deepseekProvider, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
+import { explainNode, generateFill } from './jev/fill.ts'
+import { localDecider } from './jev/local.ts'
 import { Session } from './session.ts'
 import type { KernelStatus, RunState } from './runs.ts'
 
@@ -235,6 +265,7 @@ async function refresh() {
     postRuns()
     postHistory(doc)
     void postLesson(doc)
+    tendGenerating(doc, program)
   } catch {
     // El código a medio escribir no debe tumbar el lienzo.
     postToAll({ type: 'update', program: null })
@@ -243,6 +274,8 @@ async function refresh() {
 
 /** Dónde vive, en el llavero del sistema, la clave de la API de Anthropic. */
 const ANTHROPIC_SECRET = 'prysel.anthropicApiKey'
+/** Y la de DeepSeek. */
+const DEEPSEEK_SECRET = 'prysel.deepseekApiKey'
 
 /**
  * El proveedor de IA con el que generar una lección: el que se pida en el ajuste `prysel.aiProvider`, o
@@ -253,7 +286,9 @@ async function pickProvider(context: vscode.ExtensionContext): Promise<AiProvide
   const preference = vscode.workspace.getConfiguration('prysel').get<string>('aiProvider') ?? 'auto'
   const tryVscode = async () => {
     try {
-      return await vscodeLmProvider()
+      return await vscodeLmProvider(
+        vscode.workspace.getConfiguration('prysel').get<string>('vscodeModel') || undefined,
+      )
     } catch {
       return null
     }
@@ -264,9 +299,16 @@ async function pickProvider(context: vscode.ExtensionContext): Promise<AiProvide
     const model = vscode.workspace.getConfiguration('prysel').get<string>('anthropicModel')
     return anthropicProvider({ apiKey: key, model: model || DEFAULT_ANTHROPIC_MODEL })
   }
+  const tryDeepseek = async () => {
+    const key = await context.secrets.get(DEEPSEEK_SECRET)
+    if (!key) return null
+    const model = vscode.workspace.getConfiguration('prysel').get<string>('deepseekModel')
+    return deepseekProvider({ apiKey: key, model: model || DEFAULT_DEEPSEEK_MODEL })
+  }
   if (preference === 'vscode') return tryVscode()
   if (preference === 'anthropic') return tryAnthropic()
-  return (await tryVscode()) ?? (await tryAnthropic())
+  if (preference === 'deepseek') return tryDeepseek()
+  return (await tryVscode()) ?? (await tryAnthropic()) ?? (await tryDeepseek())
 }
 
 /**
@@ -807,6 +849,636 @@ async function stepHistory(direction: 'undo' | 'redo') {
   postHistory(doc)
 }
 
+// ───────────────────────── órdenes: el motor JEV ─────────────────────────
+
+/** Dónde vive, en el llavero del sistema, la clave de la API de TypeSafe (Jev). */
+const TYPESAFE_SECRET = 'prysel.typesafeApiKey'
+
+/** Se avisó ya, en este espacio de trabajo, de lo que las órdenes mandan fuera del equipo. */
+const COMMAND_CONSENT = 'prysel.commandConsent'
+
+/** El contexto de la extensión: las órdenes llegan del lienzo, que no lo trae consigo. */
+let extensionContext: vscode.ExtensionContext | null = null
+
+/**
+ * Quién decide las órdenes: Jev de TypeSafe, con la clave guardada; o, si se pide en el ajuste
+ * `prysel.jevEngine`, el decisor local (sin red, por palabras clave). Sin clave no hay Jev: `null`.
+ */
+async function pickDecider(context: vscode.ExtensionContext): Promise<Decider | null> {
+  const settings = vscode.workspace.getConfiguration('prysel')
+  if (settings.get<string>('jevEngine') === 'local') return localDecider()
+  const key = await context.secrets.get(TYPESAFE_SECRET)
+  if (!key) return null
+  return typesafeDecider({
+    apiKey: key,
+    model: settings.get<string>('jevModel') || DEFAULT_JEV_MODEL,
+  })
+}
+
+/**
+ * Las piezas que nacieron «generándose» y esperan su contenido, por su id. `waiting`: la orden ya se
+ * decidió, pero la pieza aún no está en el código (la escribe el lienzo). `running`: se está redactando.
+ */
+const fills = new Map<
+  string,
+  { uri: string; command: string; template: TemplateId; state: 'waiting' | 'running'; at: number }
+>()
+
+/** Una pieza que no llega al código en este tiempo ya no va a llegar (la edición se descartó). */
+const FILL_PATIENCE_MS = 30_000
+
+/** Los documentos que ya se miraron en esta sesión: en el primer vistazo se limpian las marcas viejas. */
+const tended = new Set<string>()
+
+const newGenId = () => Math.random().toString(36).slice(2, 8).padEnd(6, '0')
+
+/** Lo que hace falta para decidir una orden: quién decide, quién redacta y sobre qué documento. */
+interface OrderContext {
+  doc: vscode.TextDocument
+  message: CommandMessage
+  decider: Decider
+  provider: AiProvider | null
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** Cuánto se espera a que el lienzo escriba lo que se le mandó, antes de dar el paso por perdido. */
+const STEP_PATIENCE_MS = 3000
+/** Entre dos pasos que no cambian el código (ir a ver algo, plegar): lo justo para que se vea cada uno. */
+const STEP_PAUSE_MS = 700
+
+/**
+ * Una orden del lienzo: el motor JEV decide y el lienzo ejecuta lo decidido. Aquí no se toca el código de
+ * las órdenes sencillas: la directiva vuelve al lienzo, que la escribe por el mismo camino que cualquier
+ * otro cambio suyo. Las complejas (escribir un algoritmo, varias órdenes en una) las redacta la IA
+ * generativa y las juzga el JEV (ver `jev/compose.ts`).
+ */
+async function handleCommand(context: vscode.ExtensionContext, message: CommandMessage) {
+  const doc = currentDoc
+  if (!doc || doc.languageId !== 'python') return
+  const reply = (directive: Directive) => {
+    postToAll({
+      type: 'decision',
+      id: message.id,
+      version: doc.version,
+      directive,
+      evidence: [],
+      engine: '',
+      jevMs: 0,
+    })
+  }
+  const changed = () => {
+    void refresh()
+    reply({ kind: 'failed', say: 'El archivo cambió mientras tanto. Repite la orden.' })
+  }
+  if (doc.version !== message.version) return changed()
+  const decider = await pickDecider(context)
+  if (!decider) {
+    return reply({
+      kind: 'failed',
+      say: 'Falta la clave de TypeSafe: sin ella no hay motor JEV que decida.',
+      needsKey: true,
+    })
+  }
+  const provider = await pickProvider(context)
+  // Lo que sale del equipo se dice una vez por espacio de trabajo, antes de la primera orden.
+  if (
+    (decider.id !== 'local' || provider) &&
+    !context.workspaceState.get<boolean>(COMMAND_CONSENT)
+  ) {
+    const sent = [
+      ...(decider.id === 'local'
+        ? []
+        : [
+            'a TypeSafe (Jev), el texto de cada orden, un esquema del programa (la primera línea de cada paso) y el código que se escriba, para juzgarlo',
+          ]),
+      ...(provider
+        ? [
+            `a ${provider.id}, el texto de cada orden y el código del archivo, para escribir lo que se pide`,
+          ]
+        : []),
+    ]
+    const proceed = await vscode.window.showWarningMessage(
+      `Las órdenes de Prysel envían: ${sent.join('; y ')}. ¿Continuar?`,
+      { modal: true },
+      'Continuar',
+    )
+    if (proceed !== 'Continuar') return reply({ kind: 'failed', say: 'Orden cancelada.' })
+    await context.workspaceState.update(COMMAND_CONSENT, true)
+  }
+  if (doc.version !== message.version) return changed()
+  const now = Date.now()
+  for (const [id, fill] of fills) {
+    if (fill.state === 'waiting' && now - fill.at > FILL_PATIENCE_MS) fills.delete(id)
+  }
+  const order: OrderContext = { doc, message, decider, provider }
+  try {
+    const decision = await decideOrder(order, message.text, false)
+    if (decision === null) return changed()
+    if (decision.directive.kind !== 'several' || !provider) {
+      await carryOut(order, message.text, decision)
+      return
+    }
+    // Varias órdenes en una: la IA generativa la parte, y cada trozo vuelve a pasar por el JEV.
+    const steps = await splitOrder(provider, message.text)
+    if (!steps) {
+      const single = await decideOrder(order, message.text, true)
+      if (single === null) return changed()
+      await carryOut(order, message.text, single)
+      return
+    }
+    for (const [index, step] of steps.entries()) {
+      const before = doc.version
+      const part = await decideOrder(order, step, true)
+      if (part === null) return changed()
+      const { directive } = part
+      const label = `${index + 1}/${steps.length}`
+      // Un trozo que no se entiende detiene el resto: seguir sería hacer otra cosa que la que se pidió.
+      if (directive.kind !== 'do') {
+        const why = directive.kind === 'ask' ? directive.question : directive.say
+        postToAll({
+          type: 'decision',
+          id: message.id,
+          version: doc.version,
+          ...part,
+          directive: { kind: 'unknown', say: `Me paro en el paso ${label} («${step}»): ${why}` },
+        })
+        return
+      }
+      const said = { ...directive, say: `${label} · ${directive.say}` }
+      const wrote = await carryOut(order, step, { ...part, directive: said })
+      // Lo que escribe el lienzo tarda un instante en llegar al documento: el paso siguiente lo necesita.
+      if (
+        said.effect.type === 'action' ||
+        said.effect.type === 'undo' ||
+        said.effect.type === 'redo'
+      ) {
+        const until = Date.now() + STEP_PATIENCE_MS
+        while (doc.version === before && Date.now() < until) await sleep(25)
+      } else if (!wrote) await sleep(STEP_PAUSE_MS)
+      await refresh()
+    }
+  } catch (error) {
+    reply({
+      kind: 'failed',
+      say: error instanceof JevError ? error.message : `No se pudo decidir. ${messageOf(error)}`,
+      ...(error instanceof JevError && error.reason === 'key' ? { needsKey: true } : {}),
+    })
+  }
+}
+
+/** Le pregunta al JEV qué hacer con una orden. `null` si el documento cambió mientras decidía. */
+async function decideOrder(order: OrderContext, text: string, single: boolean) {
+  const { doc, message, decider, provider } = order
+  const version = doc.version
+  const program = await analyse(doc)
+  const decision = await decideCommand(
+    {
+      text,
+      program,
+      selected: message.selected,
+      focus: message.focus,
+      ...(message.force && !single ? { forced: message.force } : {}),
+      ...(provider ? { genId: newGenId() } : {}),
+      ...(single ? { single: true } : {}),
+    },
+    decider,
+  )
+  return doc.version === version ? decision : null
+}
+
+/**
+ * Cumple una decisión: se la manda al lienzo y, si deja algo en marcha (el contenido de una pieza, el
+ * código de una orden compleja, una explicación, la lección), lo pone en marcha. Devuelve si escribió en
+ * el documento desde aquí.
+ */
+async function carryOut(
+  order: OrderContext,
+  text: string,
+  decision: Awaited<ReturnType<typeof decideCommand>>,
+): Promise<boolean> {
+  const { doc, message, decider, provider } = order
+  const { directive } = decision
+  if (directive.kind === 'do' && directive.pending) {
+    fills.set(directive.pending.id, {
+      uri: doc.uri.toString(),
+      command: text,
+      template: directive.pending.template,
+      state: 'waiting',
+      at: Date.now(),
+    })
+  }
+  postToAll({ type: 'decision', id: message.id, version: doc.version, ...decision })
+  if (directive.kind !== 'do') return false
+  const { effect } = directive
+  if (effect.type === 'compose' && provider) {
+    return runCompose(doc, decider, provider, text, effect)
+  }
+  if (effect.type === 'lesson') {
+    await vscode.commands.executeCommand('prysel.explainFile')
+    if (vscode.workspace.isTrusted) await traceDocument(doc)
+    return false
+  }
+  if (directive.explain !== undefined && provider) {
+    const program = await analyse(doc)
+    const node = program.nodes.find((n) => n.id === directive.explain)
+    const said = node ? await explainNode(provider, program, node) : null
+    if (said && node) postToAll({ type: 'say', text: said, focus: node.id })
+  }
+  return false
+}
+
+/** Lo que se está construyendo paso a paso en cada documento: con esto se detiene. */
+const builds = new Map<string, AbortController>()
+
+/** Detiene la construcción en marcha de un documento, si la hay. Lo ya escrito se queda. */
+function stopBuild(doc: vscode.TextDocument | null) {
+  if (doc) builds.get(doc.uri.toString())?.abort()
+}
+
+/** Espera, pero no más allá de que se detenga la construcción. */
+async function pauseFor(ms: number, signal: AbortSignal) {
+  const until = Date.now() + ms
+  while (!signal.aborted && Date.now() < until) await sleep(40)
+}
+
+/**
+ * Una orden compleja se construye **paso a paso** (ver `jev/build.ts`): la IA generativa dicta en streaming
+ * una sentencia y su explicación por paso; cada paso, en cuanto llega, lo juzga el JEV (¿seguro?, ¿cómo se
+ * enseña?), se escribe en el documento y el lienzo lo dibuja y lo cuenta, antes de que llegue el siguiente.
+ * Se detiene si el usuario lo pide (o da otra orden), si un paso no es seguro o si no encaja; lo escrito
+ * hasta ahí es un programa válido. Al acabar, el JEV juzga si el conjunto cumple la orden.
+ */
+async function runCompose(
+  doc: vscode.TextDocument,
+  decider: Decider,
+  provider: AiProvider,
+  command: string,
+  effect: Extract<Effect, { type: 'compose' }>,
+): Promise<boolean> {
+  const key = doc.uri.toString()
+  builds.get(key)?.abort()
+  const control = new AbortController()
+  builds.set(key, control)
+  const { signal } = control
+  const parser = await getParser()
+  const start = await analyse(doc)
+  const anchor = start.nodes.find((n) => n.id === (effect.place.after ?? effect.place.into))
+  const plan = new BuildPlan(effect.place)
+  const incoming = new StepStream()
+  const queue: BuildStep[] = []
+  let streamed = false
+  let trouble: string | null = null
+  const streaming = streamText(
+    provider,
+    {
+      system: buildStepsSystem(),
+      prompt: buildStepsPrompt({
+        command,
+        program: start,
+        where: effect.where,
+        ...(anchor?.scope ? { scope: anchor.scope } : {}),
+      }),
+      maxTokens: 3000,
+    },
+    (delta) => {
+      queue.push(...incoming.push(delta))
+    },
+    signal,
+  )
+    .then(() => {
+      queue.push(...incoming.end())
+    })
+    .catch((error: unknown) => {
+      if (!signal.aborted) trouble = `La IA dejó de responder. ${messageOf(error)}`
+    })
+    .finally(() => {
+      streamed = true
+    })
+
+  const shown = () => currentDoc?.uri.toString() === key
+  const written: string[] = []
+  let jevMs = 0
+  while (!signal.aborted && written.length < MAX_BUILD_STEPS) {
+    const step = queue.shift()
+    if (!step) {
+      if (streamed) break
+      await sleep(40)
+      continue
+    }
+    // El JEV, entre paso y paso: si no es seguro, no se escribe y aquí se acaba.
+    let verdict = { safe: 1, wide: false, pause: false, ms: 0 }
+    try {
+      verdict = await judgeStep(decider, command, step)
+    } catch {
+      // Sin su juicio (se cayó la red) no se sigue escribiendo a ciegas.
+      trouble = 'El JEV dejó de responder: me detengo aquí.'
+      break
+    }
+    jevMs += verdict.ms
+    if (verdict.safe < STEP_THRESHOLDS.safe) {
+      trouble =
+        'El JEV no da por seguro el siguiente paso (toca archivos, la red o el sistema): me detengo.'
+      break
+    }
+    if (signal.aborted) break
+    const program = await analyse(doc)
+    const placed = plan.place(program, step)
+    if (!placed.ok) {
+      trouble = placed.error
+      break
+    }
+    if (placed.change) {
+      const before = doc.getText()
+      const edits = placed.change.edits
+      // El diagrama se rehace tras cada paso: lo que no deje un Python válido no se escribe.
+      if (
+        !validEdits(edits, before.length) ||
+        parser.parse(applyTextEdits(before, edits)).rootNode.hasError
+      ) {
+        trouble = 'El paso no deja un programa válido: me detengo.'
+        break
+      }
+      if (!(await writeEdits(doc, edits))) {
+        trouble = 'No se pudo escribir el paso.'
+        break
+      }
+      historyOf(doc).applied(before, edits, doc.version)
+      postHistory(doc)
+    }
+    plan.commit(step, placed)
+    if (!placed.change) continue
+    written.push(step.code)
+    if (shown()) {
+      // Primero el programa nuevo, luego el paso: el lienzo enfoca un nodo que ya tiene.
+      await refresh()
+      postToAll({
+        type: 'step',
+        gen: effect.gen,
+        index: written.length,
+        say: step.say,
+        line: placed.line,
+        ...(verdict.wide ? { wide: true } : {}),
+      })
+    }
+    await pauseFor(paceOf(step, verdict.pause), signal)
+  }
+  const stopped = signal.aborted
+  control.abort()
+  await streaming
+  if (builds.get(key) === control) builds.delete(key)
+
+  // Al final, el JEV juzga el conjunto: ¿hace lo que se pidió?
+  let evidence: Evidence[] = []
+  let doubt = false
+  if (written.length > 0 && !stopped && trouble === null) {
+    try {
+      const whole = await judgeCode(decider, command, written.join('\n'))
+      evidence = whole.evidence
+      jevMs += whole.ms
+      doubt = whole.fulfils < COMPOSE_THRESHOLDS.fulfils
+    } catch {
+      // Sin juicio final, lo escrito se queda como está.
+    }
+  }
+  if (shown()) {
+    const count = `${written.length} ${written.length === 1 ? 'paso' : 'pasos'}`
+    postToAll({
+      type: 'generated',
+      gen: effect.gen,
+      ok: written.length > 0,
+      say: stopped
+        ? `Detenido: quedan escritos ${count}.`
+        : trouble !== null
+          ? `${trouble} Quedan escritos ${count}.`
+          : doubt
+            ? `Hecho en ${count}, pero el JEV duda de que cumpla todo lo pedido: revísalo.`
+            : `Hecho, en ${count}.`,
+      ...(written.length === 0
+        ? { error: trouble ?? 'La IA no dictó ningún paso que se pudiera escribir.' }
+        : {}),
+      ...(evidence.length > 0 ? { evidence } : {}),
+      jevMs,
+      done: true,
+    })
+  }
+  return written.length > 0
+}
+
+// ───────────────────────── qué modelos se usan ─────────────────────────
+
+/** Le dice al lienzo qué IA redacta y qué motor decide ahora: lo enseña en la caja de órdenes. */
+async function postModels() {
+  const context = extensionContext
+  if (!context || webviews.size === 0) return
+  const [provider, decider] = await Promise.all([pickProvider(context), pickDecider(context)])
+  postToAll({ type: 'models', ai: provider?.id ?? null, jev: decider?.id ?? null })
+}
+
+interface ModelItem extends vscode.QuickPickItem {
+  /** Los ajustes que deja puestos al elegirlo. */
+  settings?: Record<string, string>
+  /** La clave que necesita (dónde vive) y el comando que la pide. */
+  secret?: string
+  ask?: string
+}
+
+/**
+ * Elegir con qué modelos trabaja Prysel: la IA que redacta (DeepSeek, Anthropic, los de VS Code) y el motor
+ * que decide (Jev o el local). Lo que falta una clave lo dice, y la pide al elegirlo.
+ */
+async function pickModel(context: vscode.ExtensionContext) {
+  const settings = vscode.workspace.getConfiguration('prysel')
+  const has = async (secret: string) => Boolean(await context.secrets.get(secret))
+  const [deepseek, anthropic, typesafe] = await Promise.all([
+    has(DEEPSEEK_SECRET),
+    has(ANTHROPIC_SECRET),
+    has(TYPESAFE_SECRET),
+  ])
+  let installed: vscode.LanguageModelChat[] = []
+  try {
+    installed = await vscode.lm.selectChatModels({})
+  } catch {
+    installed = []
+  }
+  const ai = settings.get<string>('aiProvider') ?? 'auto'
+  const now = {
+    deepseek: settings.get<string>('deepseekModel') || DEFAULT_DEEPSEEK_MODEL,
+    anthropic: settings.get<string>('anthropicModel') || DEFAULT_ANTHROPIC_MODEL,
+    vscode: settings.get<string>('vscodeModel') ?? '',
+    jev: settings.get<string>('jevModel') || DEFAULT_JEV_MODEL,
+    engine: settings.get<string>('jevEngine') ?? 'typesafe',
+  }
+  const mark = (on: boolean, label: string) => (on ? `$(check) ${label}` : `$(blank) ${label}`)
+  const needs = (ready: boolean) => (ready ? '' : '$(key) falta la clave: se pedirá al elegirlo')
+  const items: ModelItem[] = [
+    {
+      label: 'IA que redacta el código y las explicaciones',
+      kind: vscode.QuickPickItemKind.Separator,
+    },
+    {
+      label: mark(ai === 'auto', 'Automático'),
+      description: 'el de VS Code si hay uno; si no, Anthropic; si no, DeepSeek',
+      settings: { aiProvider: 'auto' },
+    },
+    ...['deepseek-chat', 'deepseek-reasoner'].map((model): ModelItem => ({
+      label: mark(ai === 'deepseek' && now.deepseek === model, `DeepSeek · ${model}`),
+      description:
+        model === 'deepseek-chat'
+          ? 'rápido: el indicado para construir paso a paso'
+          : 'razona más, tarda más',
+      detail: needs(deepseek),
+      settings: { aiProvider: 'deepseek', deepseekModel: model },
+      secret: DEEPSEEK_SECRET,
+      ask: 'prysel.setDeepseekKey',
+    })),
+    {
+      label: mark(ai === 'anthropic', `Anthropic · ${now.anthropic}`),
+      detail: needs(anthropic),
+      settings: { aiProvider: 'anthropic' },
+      secret: ANTHROPIC_SECRET,
+      ask: 'prysel.setAnthropicKey',
+    },
+    ...installed.map((model): ModelItem => ({
+      label: mark(
+        ai === 'vscode' && (now.vscode === model.id || now.vscode === ''),
+        `VS Code · ${model.name}`,
+      ),
+      description: `${model.vendor} · sin clave`,
+      settings: { aiProvider: 'vscode', vscodeModel: model.id },
+    })),
+    {
+      label: 'Motor JEV: quién decide qué hacer con cada orden',
+      kind: vscode.QuickPickItemKind.Separator,
+    },
+    ...['jev-latest', 'jev-preview'].map((model): ModelItem => ({
+      label: mark(now.engine === 'typesafe' && now.jev === model, `Jev (TypeSafe) · ${model}`),
+      detail: needs(typesafe),
+      settings: { jevEngine: 'typesafe', jevModel: model },
+      secret: TYPESAFE_SECRET,
+      ask: 'prysel.setTypesafeKey',
+    })),
+    {
+      label: mark(now.engine === 'local', 'Local · sin red'),
+      description: 'reconoce palabras clave, no entiende: para probar sin clave',
+      settings: { jevEngine: 'local' },
+    },
+  ]
+  const chosen = await vscode.window.showQuickPick(items, {
+    title: 'Prysel: modelos',
+    placeHolder: 'Elige la IA que redacta o el motor que decide',
+    matchOnDescription: true,
+  })
+  if (!chosen?.settings) return
+  for (const [name, value] of Object.entries(chosen.settings)) {
+    await settings.update(name, value, vscode.ConfigurationTarget.Global)
+  }
+  if (chosen.secret && chosen.ask && !(await has(chosen.secret))) {
+    await vscode.commands.executeCommand(chosen.ask)
+  }
+  await postModels()
+}
+
+/**
+ * Tras cada análisis: las piezas marcadas como «generándose» que acaban de llegar al código empiezan a
+ * redactarse. Y la primera vez que se mira un documento, una marca sin nadie que la esté redactando (se
+ * cerró VS Code a medias) se retira: el código no se queda diciendo que algo está en marcha cuando no lo está.
+ */
+function tendGenerating(doc: vscode.TextDocument, program: Awaited<ReturnType<typeof analyse>>) {
+  const key = doc.uri.toString()
+  const firstLook = !tended.has(key)
+  tended.add(key)
+  for (const node of program.nodes) {
+    const gen = node.generating
+    if (gen === undefined) continue
+    const fill = fills.get(gen)
+    if (fill?.uri === key && fill.state === 'waiting') {
+      fill.state = 'running'
+      void runFill(doc, gen)
+    } else if (!fill && firstLook) {
+      void writeChange(doc, (current) => clearGenerating(current, gen).edits, false)
+      // De una en una: la edición vuelve a analizar el documento, y ahí no es ya el primer vistazo.
+      tended.delete(key)
+      return
+    }
+  }
+}
+
+/**
+ * Escribe en el documento un cambio calculado sobre su análisis de ahora mismo. `remember`: entra en la
+ * historia del lienzo (se deshace desde él, como lo que el usuario cambia a mano).
+ */
+async function writeChange(
+  doc: vscode.TextDocument,
+  build: (program: Awaited<ReturnType<typeof analyse>>) => TextEdit[],
+  remember = true,
+): Promise<boolean> {
+  const edits = build(await analyse(doc))
+  const before = doc.getText()
+  if (edits.length === 0 || !validEdits(edits, before.length)) return false
+  if (!(await writeEdits(doc, edits))) return false
+  if (remember) {
+    historyOf(doc).applied(before, edits, doc.version)
+    postHistory(doc)
+  }
+  return true
+}
+
+/** Redacta el contenido de una pieza y lo pone en el sitio de su plantilla; si no vale, la plantilla se queda. */
+async function runFill(doc: vscode.TextDocument, gen: string) {
+  const fill = fills.get(gen)
+  const context = extensionContext
+  if (!fill || !context) return
+  let code = ''
+  let finished = false
+  const finish = async (say: string | null, error?: string) => {
+    if (finished) return
+    finished = true
+    fills.delete(gen)
+    let line: number | undefined
+    const written =
+      say !== null &&
+      (await writeChange(doc, (program) => {
+        if (!untouchedTemplate(program, gen, fill.template)) return []
+        const change = fillGenerated(program, gen, code)
+        line = change.select?.line
+        return change.edits
+      }))
+    // No se escribió (falló, o alguien ya había tocado la plantilla): se quita la marca y queda como está.
+    if (!written) await writeChange(doc, (program) => clearGenerating(program, gen).edits)
+    // El lienzo ya enseña otro archivo: lo que se diga de este no le dice nada.
+    if (currentDoc?.uri.toString() !== doc.uri.toString()) return
+    postToAll({
+      type: 'generated',
+      gen,
+      ok: written,
+      ...(written && say !== null ? { say } : {}),
+      ...(written || error === undefined ? {} : { error }),
+      ...(line === undefined ? {} : { line }),
+    })
+  }
+  try {
+    const provider = await pickProvider(context)
+    if (!provider) return await finish(null, 'No hay una IA con la que escribir el contenido.')
+    const parser = await getParser()
+    const result = await generateFill(
+      provider,
+      {
+        parse: (text) => {
+          const tree = parser.parse(text)
+          return { program: buildProgram(tree, text), hasError: tree.rootNode.hasError }
+        },
+      },
+      { command: fill.command, template: fill.template, program: await analyse(doc), genId: gen },
+    )
+    if (!result.ok) return await finish(null, result.error)
+    code = result.code
+    await finish(result.say)
+  } catch (error) {
+    await finish(null, messageOf(error))
+  }
+}
+
 /** Graba la traza del archivo entero y se la manda al lienzo (con la versión del texto que se trazó). */
 async function traceDocument(doc: vscode.TextDocument) {
   const version = doc.version
@@ -835,6 +1507,24 @@ function wireWebview(webview: vscode.Webview) {
       // Los ids llevan la línea: si el texto cambió desde que el lienzo los vio, no valen.
       if (doc.version !== parsed.version) return void refresh()
       if (mayRun()) void sessionFor(doc).run(parsed.ids)
+      return
+    }
+    if (parsed.type === 'command') {
+      // Una orden nueva interrumpe lo que se estuviera construyendo: quien habla tiene la palabra.
+      stopBuild(currentDoc)
+      if (extensionContext) void handleCommand(extensionContext, parsed)
+      return
+    }
+    if (parsed.type === 'stopOrder') {
+      stopBuild(currentDoc)
+      return
+    }
+    if (parsed.type === 'pickModel') {
+      void vscode.commands.executeCommand('prysel.pickModel')
+      return
+    }
+    if (parsed.type === 'jevKey') {
+      void vscode.commands.executeCommand('prysel.setTypesafeKey')
       return
     }
     if (parsed.type === 'newLesson') {
@@ -869,6 +1559,7 @@ function wireWebview(webview: vscode.Webview) {
     }
     webviewsReady++
     postToAll({ type: 'theme', theme: themeKind() })
+    void postModels()
     void refresh().then(() => {
       // Un lienzo recién abierto no tiene las imágenes de lo que ya se ejecutó: se le mandan.
       const session = currentDoc ? sessions.get(currentDoc.uri.toString()) : undefined
@@ -956,6 +1647,7 @@ function targetDocument(): vscode.TextDocument | null {
 }
 
 export function activate(context: vscode.ExtensionContext): PryselApi {
+  extensionContext = context
   // El comando y la vista se registran de forma síncrona: el parser se carga aparte.
   context.subscriptions.push(
     vscode.commands.registerCommand('prysel.runAll', async () => {
@@ -1070,6 +1762,49 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
     vscode.commands.registerCommand('prysel.clearAnthropicKey', async () => {
       await context.secrets.delete(ANTHROPIC_SECRET)
       void vscode.window.showInformationMessage('Prysel: clave de Anthropic borrada.')
+    }),
+    vscode.commands.registerCommand('prysel.pickModel', async () => {
+      await pickModel(context)
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration('prysel')) void postModels()
+    }),
+    context.secrets.onDidChange(() => {
+      void postModels()
+    }),
+    vscode.commands.registerCommand('prysel.setDeepseekKey', async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: 'Clave de la API de DeepSeek (platform.deepseek.com)',
+        password: true,
+        ignoreFocusOut: true,
+      })
+      if (!key) return
+      await context.secrets.store(DEEPSEEK_SECRET, key.trim())
+      // Quien guarda esta clave quiere usarla: con «auto» ganaría el modelo de VS Code, si hay uno.
+      await vscode.workspace
+        .getConfiguration('prysel')
+        .update('aiProvider', 'deepseek', vscode.ConfigurationTarget.Global)
+      void vscode.window.showInformationMessage(
+        'Prysel: clave de DeepSeek guardada. A partir de ahora la IA de Prysel es DeepSeek (ajuste «prysel.aiProvider»).',
+      )
+    }),
+    vscode.commands.registerCommand('prysel.clearDeepseekKey', async () => {
+      await context.secrets.delete(DEEPSEEK_SECRET)
+      void vscode.window.showInformationMessage('Prysel: clave de DeepSeek borrada.')
+    }),
+    vscode.commands.registerCommand('prysel.setTypesafeKey', async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: 'Clave de la API de TypeSafe (Jev), para el motor que decide las órdenes',
+        password: true,
+        ignoreFocusOut: true,
+      })
+      if (!key) return
+      await context.secrets.store(TYPESAFE_SECRET, key.trim())
+      void vscode.window.showInformationMessage('Prysel: clave de TypeSafe guardada.')
+    }),
+    vscode.commands.registerCommand('prysel.clearTypesafeKey', async () => {
+      await context.secrets.delete(TYPESAFE_SECRET)
+      void vscode.window.showInformationMessage('Prysel: clave de TypeSafe borrada.')
     }),
     vscode.commands.registerCommand('prysel.interrupt', () => {
       const doc = targetDocument()

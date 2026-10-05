@@ -2,6 +2,15 @@ import type { Program, TextEdit } from '@prysel/python'
 import type { Assets, KernelStatus, RunView } from './runs.ts'
 import { LESSON_LIMITS, parseLesson, type Lesson } from './lesson.ts'
 import type { Trace } from './trace.ts'
+import {
+  INTENTS,
+  type Decision,
+  type Directive,
+  type Evidence,
+  type Forced,
+  type Intent,
+} from './jev/engine.ts'
+import { TEMPLATE_IDS, type TemplateId } from '@prysel/morphology'
 
 /**
  * Protocolo de mensajes entre la extensión y el webview.
@@ -85,7 +94,72 @@ export interface HistoryMessage {
   redo: number
 }
 
+/**
+ * Extensión → webview: lo que el motor JEV decidió para una orden (`id`: la que mandó el lienzo). `version`
+ * es la del texto sobre el que se decidió: si el documento ya cambió, el lienzo no la ejecuta.
+ */
+export interface DecisionMessage extends Decision {
+  type: 'decision'
+  id: number
+  version: number
+}
+
+/**
+ * Extensión → webview: el contenido de una pieza que nació «generándose» ya está escrito (o no se pudo:
+ * la plantilla se queda). `say` es lo que se dice de ella; `line`, dónde quedó.
+ */
+export interface GeneratedMessage {
+  type: 'generated'
+  gen: string
+  ok: boolean
+  say?: string
+  error?: string
+  line?: number
+  /** Si lo juzgó el JEV (una orden compleja): lo que contestó. */
+  evidence?: Evidence[]
+  /** Lo que tardó el JEV en total, entre paso y paso. */
+  jevMs?: number
+  /** Ya no queda nada en marcha de esa orden. */
+  done?: boolean
+}
+
+/**
+ * Extensión → webview: un paso de una construcción ya está escrito (el programa nuevo llegó justo antes).
+ * El lienzo lo hace aparecer, lleva la cámara a él y dice su frase.
+ */
+export interface StepMessage {
+  type: 'step'
+  gen: string
+  /** Qué paso es (desde 1). */
+  index: number
+  say: string
+  /** La línea donde quedó su sentencia. */
+  line: number
+  /** La cámara enseña el conjunto, no solo la pieza (lo decide el JEV). */
+  wide?: boolean
+}
+
+/** Extensión → webview: qué IA redacta y qué motor decide ahora (`null`: no hay, falta su clave). */
+export interface ModelsMessage {
+  type: 'models'
+  ai: string | null
+  jev: string | null
+}
+
+/** Extensión → webview: algo que decir en voz alta (una explicación que tardó en redactarse). */
+export interface SayMessage {
+  type: 'say'
+  text: string
+  /** El elemento del que se habla: la cámara va a él. */
+  focus?: string
+}
+
 export type WebviewMessage =
+  | DecisionMessage
+  | GeneratedMessage
+  | StepMessage
+  | ModelsMessage
+  | SayMessage
   | UpdateMessage
   | ThemeMessage
   | RunsMessage
@@ -155,7 +229,41 @@ export interface NoteMoveMessage {
   offset: { x: number; y: number } | null
 }
 
+/**
+ * Una orden escrita (o dictada) en el lienzo: el motor JEV decide qué hacer con ella. Lleva lo que el
+ * lienzo sabe y el anfitrión no: qué está seleccionado y qué función se está viendo. `force` es lo que el
+ * usuario ya aclaró al contestar una pregunta del motor.
+ */
+export interface CommandMessage {
+  type: 'command'
+  id: number
+  text: string
+  version: number
+  selected: string | null
+  focus: string | null
+  force?: Forced
+}
+
+/** Guardar la clave de TypeSafe (la pide VS Code en su propia caja: el lienzo nunca la ve). */
+export interface JevKeyMessage {
+  type: 'jevKey'
+}
+
+/** Detener lo que una orden esté construyendo paso a paso. */
+export interface StopOrderMessage {
+  type: 'stopOrder'
+}
+
+/** Abrir el selector de modelos. */
+export interface PickModelMessage {
+  type: 'pickModel'
+}
+
 export type HostMessage =
+  | CommandMessage
+  | JevKeyMessage
+  | StopOrderMessage
+  | PickModelMessage
   | ReadyMessage
   | EditMessage
   | RunMessage
@@ -171,6 +279,44 @@ export type HostMessage =
 const MAX_EDITS = 64
 const MAX_TEXT = 200_000
 const MAX_RUN_IDS = 500
+/** Una orden es una frase: lo que pase de aquí no lo es. */
+export const MAX_COMMAND = 400
+const MAX_ID = 200
+
+const DIRECTIVE_KINDS = ['do', 'ask', 'several', 'ignored', 'unknown', 'failed']
+
+/** La directiva llega del anfitrión: se comprueba su forma por fuera; lo de dentro lo valida quien lo usa. */
+function isDirective(value: unknown): value is Directive {
+  if (typeof value !== 'object' || value === null) return false
+  const { kind, say, effect, question, options } = value as {
+    kind?: unknown
+    say?: unknown
+    effect?: unknown
+    question?: unknown
+    options?: unknown
+  }
+  if (typeof kind !== 'string' || !DIRECTIVE_KINDS.includes(kind)) return false
+  if (kind === 'ask') return typeof question === 'string' && Array.isArray(options)
+  if (typeof say !== 'string') return false
+  return kind !== 'do' || (typeof effect === 'object' && effect !== null)
+}
+
+const isId = (value: unknown): value is string =>
+  typeof value === 'string' && value !== '' && value.length <= MAX_ID
+
+/** Lo que el usuario aclaró: solo lo que se conoce, y nada más. */
+function parseForced(value: unknown): Forced | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { intent, piece, target } = value as { intent?: unknown; piece?: unknown; target?: unknown }
+  if (intent !== undefined && !(INTENTS as readonly unknown[]).includes(intent)) return null
+  if (piece !== undefined && !(TEMPLATE_IDS as readonly unknown[]).includes(piece)) return null
+  if (target !== undefined && !isId(target)) return null
+  return {
+    ...(intent === undefined ? {} : { intent: intent as Intent }),
+    ...(piece === undefined ? {} : { piece: piece as TemplateId }),
+    ...(target === undefined ? {} : { target }),
+  }
+}
 
 function isEdit(value: unknown): value is TextEdit {
   if (typeof value !== 'object' || value === null) return false
@@ -243,6 +389,42 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     }
     return value as TraceResultMessage
   }
+  if (type === 'decision') {
+    const { id, version, directive, evidence, engine, jevMs } = value as Partial<DecisionMessage>
+    if (!Number.isInteger(id) || !Number.isInteger(version)) return null
+    if (!isDirective(directive) || !Array.isArray(evidence)) return null
+    if (typeof engine !== 'string' || typeof jevMs !== 'number') return null
+    return value as DecisionMessage
+  }
+  if (type === 'generated') {
+    const { gen, ok, say, error, line } = value as Partial<GeneratedMessage>
+    if (typeof gen !== 'string' || typeof ok !== 'boolean') return null
+    const judged = (value as { evidence?: unknown }).evidence
+    if (judged !== undefined && !Array.isArray(judged)) return null
+    if (say !== undefined && typeof say !== 'string') return null
+    if (error !== undefined && typeof error !== 'string') return null
+    if (line !== undefined && !Number.isInteger(line)) return null
+    return value as GeneratedMessage
+  }
+  if (type === 'step') {
+    const { gen, index, say, line, wide } = value as Partial<StepMessage>
+    if (typeof gen !== 'string' || typeof say !== 'string') return null
+    if (!Number.isInteger(index) || !Number.isInteger(line)) return null
+    if (wide !== undefined && typeof wide !== 'boolean') return null
+    return value as StepMessage
+  }
+  if (type === 'models') {
+    const { ai, jev } = value as Partial<ModelsMessage>
+    if (ai !== null && typeof ai !== 'string') return null
+    if (jev !== null && typeof jev !== 'string') return null
+    return { type: 'models', ai, jev }
+  }
+  if (type === 'say') {
+    const { text, focus } = value as Partial<SayMessage>
+    if (typeof text !== 'string' || text === '') return null
+    if (focus !== undefined && typeof focus !== 'string') return null
+    return value as SayMessage
+  }
   if (type === 'theme') {
     const theme = (value as { theme?: unknown }).theme
     if (theme === 'light' || theme === 'dark') return value as ThemeMessage
@@ -283,6 +465,27 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     const { version } = value as { version?: unknown }
     return Number.isInteger(version) ? { type: 'trace', version: version as number } : null
   }
+  if (type === 'command') {
+    const { id, text, version, selected, focus, force } = value as Record<string, unknown>
+    if (!Number.isInteger(id) || !Number.isInteger(version)) return null
+    if (typeof text !== 'string' || text.trim() === '' || text.length > MAX_COMMAND) return null
+    if (selected !== null && !isId(selected)) return null
+    if (focus !== null && !isId(focus)) return null
+    const forced = force === undefined ? undefined : parseForced(force)
+    if (forced === null) return null
+    return {
+      type: 'command',
+      id: id as number,
+      text: text.trim(),
+      version: version as number,
+      selected,
+      focus,
+      ...(forced === undefined ? {} : { force: forced }),
+    }
+  }
+  if (type === 'jevKey') return { type: 'jevKey' }
+  if (type === 'stopOrder') return { type: 'stopOrder' }
+  if (type === 'pickModel') return { type: 'pickModel' }
   if (type === 'newLesson') return { type: 'newLesson' }
   if (type === 'proposeSections') return { type: 'proposeSections' }
   if (type === 'interrupt') return { type: 'interrupt' }

@@ -24,7 +24,12 @@
     "onCommand:prysel.proposeSections",
     "onCommand:prysel.setAnthropicKey",
     "onCommand:prysel.clearAnthropicKey",
-    "onCommand:prysel.showAiProvider"
+    "onCommand:prysel.showAiProvider",
+    "onCommand:prysel.pickModel",
+    "onCommand:prysel.setDeepseekKey",
+    "onCommand:prysel.clearDeepseekKey",
+    "onCommand:prysel.setTypesafeKey",
+    "onCommand:prysel.clearTypesafeKey"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -88,6 +93,31 @@
         "command": "prysel.clearAnthropicKey",
         "title": "Borrar la clave de Anthropic",
         "category": "Prysel"
+      },
+      {
+        "command": "prysel.pickModel",
+        "title": "Elegir los modelos (IA que redacta y motor JEV)",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.setDeepseekKey",
+        "title": "Configurar la clave de DeepSeek",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.clearDeepseekKey",
+        "title": "Borrar la clave de DeepSeek",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.setTypesafeKey",
+        "title": "Configurar la clave de TypeSafe (motor JEV de las órdenes)",
+        "category": "Prysel"
+      },
+      {
+        "command": "prysel.clearTypesafeKey",
+        "title": "Borrar la clave de TypeSafe",
+        "category": "Prysel"
       }
     ],
     "viewsContainers": {
@@ -122,15 +152,45 @@
           "enum": [
             "auto",
             "vscode",
-            "anthropic"
+            "anthropic",
+            "deepseek"
           ],
           "enumDescriptions": [
             "El de vscode.lm si hay uno instalado (p. ej. Copilot); si no, el de Anthropic si hay clave.",
             "Solo el modelo de chat que ya tengas instalado en VS Code (sin clave).",
-            "Solo la API de Anthropic, con la clave guardada con «Prysel: Configurar la clave de Anthropic»."
+            "Solo la API de Anthropic, con la clave guardada con «Prysel: Configurar la clave de Anthropic».",
+            "Solo la API de DeepSeek, con la clave guardada con «Prysel: Configurar la clave de DeepSeek»."
           ],
           "default": "auto",
           "markdownDescription": "Con qué IA se genera la lección de «Explicar este archivo»."
+        },
+        "prysel.vscodeModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Qué modelo de chat de VS Code usar (su id o su familia). Vacío: el primero que haya. Se elige con «Prysel: Elegir los modelos»."
+        },
+        "prysel.deepseekModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Modelo de la API de DeepSeek a usar. Vacío: `deepseek-chat`."
+        },
+        "prysel.jevEngine": {
+          "type": "string",
+          "enum": [
+            "typesafe",
+            "local"
+          ],
+          "enumDescriptions": [
+            "Jev, de TypeSafe AI, con la clave guardada con «Prysel: Configurar la clave de TypeSafe».",
+            "Un decisor local por palabras clave, sin red: para probar la caja de órdenes sin clave. No entiende, reconoce."
+          ],
+          "default": "typesafe",
+          "markdownDescription": "Quién decide qué hacer con cada orden escrita o dictada en el lienzo."
+        },
+        "prysel.jevModel": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Modelo de Jev a usar. Vacío: `jev-latest`."
         },
         "prysel.anthropicModel": {
           "type": "string",

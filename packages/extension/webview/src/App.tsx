@@ -20,7 +20,17 @@ import {
 } from '@prysel/ui'
 import { actionEdits } from '@prysel/python/edits'
 import type { NodeAction, TemplateId } from '@prysel/morphology'
-import { parseWebviewMessage, type Theme } from '../../src/protocol.ts'
+import {
+  parseWebviewMessage,
+  type DecisionMessage,
+  type GeneratedMessage,
+  type SayMessage,
+  type StepMessage,
+  type Theme,
+} from '../../src/protocol.ts'
+import type { Forced } from '../../src/jev/engine.ts'
+import { CommandBar } from './CommandBar.tsx'
+import { hush, speak, type OrderState } from './orders.ts'
 import { topLevelOf } from '../../src/plan.ts'
 import { indexOf, type Trace, type TraceIndex } from '../../src/trace.ts'
 import type { Lesson } from '../../src/lesson.ts'
@@ -87,6 +97,8 @@ interface SavedState {
   insights?: Record<string, InsightId[]>
   /** Voz sincronizada al reproducir una lección: leer en voz alta la nota del momento actual. */
   narrate?: boolean
+  /** Decir en voz alta lo que se hace con cada orden. */
+  voice?: boolean
 }
 
 /** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
@@ -166,11 +178,62 @@ export function App() {
       window.removeEventListener('keydown', onKey)
     }
   }, [])
+  /** La orden en curso (o la última) y lo que el motor JEV hizo con ella. */
+  const [order, setOrder] = useState<OrderState>({ phase: 'idle' })
+  /** Las órdenes se numeran: una decisión que llega tarde, de una orden anterior, no se ejecuta. */
+  const orderSeq = useRef(0)
+  const lastOrder = useRef('')
+  /** Cuándo salió la orden cuyo cambio aún no se ha visto pintado: de ahí sale su latencia. */
+  const awaitingPaint = useRef<number | null>(null)
+  /** La orden ya se decidió y su cambio va de camino: el siguiente programa que llegue es el suyo. */
+  const paintArmed = useRef(false)
+  /** Lo que se está creando lo pidió una orden: al aparecer, la cámara va a ello. */
+  const orderCreates = useRef(false)
+  /** A dónde lleva la cámara una orden: a un nodo, o a lo que haya en una línea. `key` cambia con cada gesto. */
+  const [wanted, setWanted] = useState<{
+    id?: string
+    line?: number
+    key: number
+    /** Acaba de construirse (aparece con su animación) y, si lo dice el JEV, se enseña en su conjunto. */
+    born?: boolean
+    wide?: boolean
+  } | null>(null)
+  /** La IA que redacta y el motor que decide ahora: lo dice la extensión. */
+  const [models, setModels] = useState<{ ai: string | null; jev: string | null } | null>(null)
+  const spotSeq = useRef(0)
+  const [voice, setVoice] = useState<boolean>(() => saved().voice ?? true)
+  /** El cambio de una orden ya está en el lienzo: en cuanto se pinte, se sabe cuánto tardó. */
+  const markPainted = useCallback(() => {
+    const from = awaitingPaint.current
+    if (from === null || !paintArmed.current) return
+    awaitingPaint.current = null
+    paintArmed.current = false
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const totalMs = performance.now() - from
+        setOrder((previous) =>
+          previous.phase === 'done' && previous.totalMs === undefined
+            ? { ...previous, totalMs }
+            : previous,
+        )
+      })
+    })
+  }, [])
   // Lo que se acaba de crear queda enfocado: se localiza por la línea en la que se escribió.
   const focusCreated = useCallback((created: Program, line: number) => {
     const node = created.nodes.find((n) => n.line === line)
-    if (node) setSelected(node.id)
+    if (!node) return
+    setSelected(node.id)
+    if (orderCreates.current) {
+      orderCreates.current = false
+      setWanted({ id: node.id, key: ++spotSeq.current })
+    }
   }, [])
+  /** Lo que llega del motor JEV se atiende con lo que el lienzo sabe ahora (ver más abajo). */
+  const onDecision = useRef<(message: DecisionMessage) => void>(() => undefined)
+  const onGenerated = useRef<(message: GeneratedMessage) => void>(() => undefined)
+  const onSay = useRef<(message: SayMessage) => void>(() => undefined)
+  const onStep = useRef<(message: StepMessage) => void>(() => undefined)
   const { pending, change: changeControl, submit, received } = useWriteBack(post, focusCreated)
   const [theme, setTheme] = useState<Theme>('dark')
   const [density, setDensity] = useState<Density>(() => {
@@ -197,6 +260,17 @@ export function App() {
         setFile(message.file ?? null)
         setVersion(message.version ?? null)
         received(message.program, message.version ?? null)
+        markPainted()
+      } else if (message.type === 'decision') {
+        onDecision.current(message)
+      } else if (message.type === 'generated') {
+        onGenerated.current(message)
+      } else if (message.type === 'say') {
+        onSay.current(message)
+      } else if (message.type === 'step') {
+        onStep.current(message)
+      } else if (message.type === 'models') {
+        setModels({ ai: message.ai, jev: message.jev })
       } else if (message.type === 'runs') {
         setRuns(message.views)
         setKernel(message.kernel)
@@ -228,7 +302,7 @@ export function App() {
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [received])
+  }, [received, markPainted])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -589,13 +663,27 @@ export function App() {
         : null,
     [program, replay, player.state, view.nodes, view.representative],
   )
-  /** Construcción progresiva: lo que la reproducción ya tocó. Sin reproducción, todo se ve a todo color. */
+  /**
+   * Construcción progresiva: lo que la reproducción ya tocó. Solo cuando se le ha dado a reproducir (o se ha
+   * dado un paso): con la traza grabada pero sin empezar, y sin reproducción, todo se ve a todo color.
+   */
+  const replayStarted = player.playing || player.step >= 0
   const reached = useMemo(
-    () => (program && replay?.trace ? reachedNodes(program, replay.trace, player.step) : null),
-    [program, replay, player.step],
+    () =>
+      program && replay?.trace && replayStarted
+        ? reachedNodes(program, replay.trace, player.step)
+        : null,
+    [program, replay, player.step, replayStarted],
+  )
+  /** Las piezas que una orden colocó y cuyo contenido aún se está escribiendo (lo dice su marca en el código). */
+  const generating = useMemo(
+    () =>
+      new Set((program?.nodes ?? []).filter((n) => n.generating !== undefined).map((n) => n.id)),
+    [program],
   )
   const modifierOf = useCallback(
     (id: string) => {
+      if (generating.has(id)) return 'generating' as const
       if (!reached || reached.has(id)) return undefined
       // Una etapa no es una sentencia: se enciende en cuanto la ejecución toca algo de lo que tiene dentro.
       const shown = view.nodes.find((node) => node.id === id)
@@ -604,16 +692,13 @@ export function App() {
       }
       return 'pending' as const
     },
-    [reached, view.nodes],
+    [reached, view.nodes, generating],
   )
   // Un momento de la lección abre la etapa donde está la sentencia de la que habla (y la cierra al pasar).
   const momentNode = moment
     ? (resolved.find((entry) => entry.beat.id === moment.beat.id)?.node ?? null)
     : null
   const reveal = view.reveal
-  useEffect(() => {
-    reveal(replay && momentNode ? [momentNode] : [])
-  }, [replay, momentNode, reveal])
   /** Las notas de la lección, con su flecha: todas sobre el diagrama, o las del momento si se reproduce. */
   const notes = useMemo(
     () =>
@@ -717,6 +802,194 @@ export function App() {
   const add = (template: TemplateId) => {
     act({ type: 'add', template, ...place })
   }
+
+  // ── Órdenes: lo que se escribe o se dicta lo decide el motor JEV, y aquí se ejecuta (docs/voz.md). ──
+  const shownIds = useMemo(() => new Set(view.nodes.map((node) => node.id)), [view.nodes])
+  /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
+  const goTo = (id: string) => {
+    setSelected(id)
+    setWanted({ id, key: ++spotSeq.current })
+  }
+  const wantedId = wanted
+    ? (wanted.id ?? program?.nodes.find((n) => n.range && n.line === wanted.line)?.id)
+    : undefined
+  const spotId =
+    wantedId === undefined
+      ? null
+      : shownIds.has(wantedId)
+        ? wantedId
+        : view.representative(wantedId)
+  const spotKey = wanted?.key
+  const spotBorn = wanted?.born === true
+  const spotWide = wanted?.wide === true
+  const spotlight = useMemo(
+    () =>
+      spotId !== null && spotKey !== undefined
+        ? {
+            id: spotId,
+            key: spotKey,
+            ...(spotBorn ? { born: true } : {}),
+            ...(spotWide ? { wide: true } : {}),
+          }
+        : null,
+    [spotId, spotKey, spotBorn, spotWide],
+  )
+  // Lo que una orden quiere enseñar puede no estar a la vista: dentro de una función que no se está viendo
+  // (se entra en ella) o de una etapa plegada (se abre). Vale también para lo que se acaba de crear.
+  // Las etapas plegadas que hay que abrir: la del momento de la lección y la de lo que una orden enseña. Van
+  // juntas, en un solo efecto: dos que abrieran cada uno lo suyo se cerrarían el uno al otro sin parar.
+  const revealMoment = replay && momentNode ? momentNode : null
+  const revealIds = useMemo(
+    () => [
+      ...(revealMoment === null ? [] : [revealMoment]),
+      ...(wantedId === undefined ? [] : [wantedId]),
+    ],
+    [revealMoment, wantedId],
+  )
+  useEffect(() => {
+    reveal(revealIds)
+  }, [revealIds, reveal])
+  useEffect(() => {
+    if (!program || wantedId === undefined || spotId !== null) return
+    const node = program.nodes.find((n) => n.id === wantedId)
+    if (!node) return
+    const fn = node.kind === 'abstraction.collapsed' ? node : enclosingFunctionNode(program, node)
+    const home = fn ? homeOf(fn.id) : null
+    if (home !== focusId) openView(home)
+  }, [program, wantedId, spotId, homeOf, focusId, openView])
+  const sendOrder = (text: string, force?: Forced) => {
+    if (version === null) return
+    hush()
+    const id = ++orderSeq.current
+    lastOrder.current = text
+    awaitingPaint.current = performance.now()
+    paintArmed.current = false
+    setOrder({ phase: 'deciding', text })
+    post({
+      type: 'command',
+      id,
+      text,
+      version,
+      selected,
+      focus: view.focus?.id ?? null,
+      ...(force ? { force } : {}),
+    })
+  }
+  useEffect(() => {
+    onDecision.current = (message) => {
+      if (message.id !== orderSeq.current) return
+      const text = lastOrder.current
+      const { directive } = message
+      const meta = message.engine
+        ? { engine: message.engine, jevMs: message.jevMs, evidence: message.evidence }
+        : {}
+      const tell = (say: string) => {
+        if (voice) speak(say)
+      }
+      const stop = (say: string, tone: 'muted' | 'error', needsKey = false) => {
+        awaitingPaint.current = null
+        setOrder({ phase: 'done', text, say, tone, ...meta, ...(needsKey ? { needsKey } : {}) })
+        tell(say)
+      }
+      if (directive.kind === 'ask') {
+        awaitingPaint.current = null
+        setOrder({ phase: 'ask', text, question: directive.question, options: directive.options })
+        tell(directive.question)
+        return
+      }
+      if (directive.kind !== 'do') {
+        const failed = directive.kind === 'failed'
+        stop(directive.say, failed ? 'error' : 'muted', failed && directive.needsKey === true)
+        return
+      }
+      if (!program || message.version !== version) {
+        stop('El archivo cambió mientras tanto. Repite la orden.', 'error')
+        return
+      }
+      const { effect } = directive
+      paintArmed.current = true
+      if (effect.type === 'action') {
+        // Lo que no se puede escribir (un sitio que no admite esa pieza) se dice: no se queda en silencio.
+        if (actionEdits(program, effect.action).edits.length === 0) {
+          stop('Eso no se puede hacer ahí.', 'error')
+          return
+        }
+        orderCreates.current = effect.action.type === 'add'
+        act(effect.action)
+      } else if (effect.type === 'undo' || effect.type === 'redo') post({ type: effect.type })
+      else if (effect.type === 'run') run(effect.ids)
+      else if (effect.type === 'trace') post({ type: 'trace', version })
+      else if (effect.type === 'fold') view.enter(effect.id)
+      if (directive.focus !== undefined) goTo(directive.focus)
+      setOrder({
+        phase: 'done',
+        text,
+        say: directive.say,
+        tone: 'ok',
+        ...meta,
+        ...(directive.pending ? { note: 'Escribiendo su contenido…' } : {}),
+        ...(effect.type === 'compose' ? { note: 'Pensando el primer paso…', building: true } : {}),
+        ...(effect.type === 'lesson' ? { note: 'Generando la lección…' } : {}),
+      })
+      tell(directive.say)
+      // Lo que cambia el código se mide cuando vuelve reanalizado; lo demás ya está en el lienzo.
+      if (effect.type !== 'action' && effect.type !== 'undo' && effect.type !== 'redo')
+        markPainted()
+    }
+    onStep.current = (message) => {
+      setOrder((previous) =>
+        previous.phase === 'done'
+          ? { ...previous, note: `${message.index} · ${message.say}`, building: true }
+          : previous,
+      )
+      if (voice && message.say) speak(message.say)
+      // La pieza aparece (con su animación) y la cámara va a ella; de lejos, si el JEV dice que hay que ver el conjunto.
+      setWanted({
+        line: message.line,
+        key: ++spotSeq.current,
+        born: true,
+        ...(message.wide ? { wide: true } : {}),
+      })
+    }
+    onGenerated.current = (message) => {
+      const note = message.done
+        ? (message.say ?? message.error ?? '')
+        : message.ok
+          ? (message.say ?? 'Contenido escrito.')
+          : `No se pudo escribir su contenido${message.error ? ` (${message.error})` : ''}: se queda la plantilla.`
+      setOrder((previous) =>
+        previous.phase === 'done'
+          ? {
+              ...previous,
+              note,
+              building: false,
+              ...(message.done && !message.ok ? { tone: 'error' as const } : {}),
+              ...(message.jevMs !== undefined
+                ? { jevMs: (previous.jevMs ?? 0) + message.jevMs }
+                : {}),
+              // Lo que el JEV juzgó de lo escrito se suma a lo que decidió antes.
+              ...(message.evidence
+                ? { evidence: [...(previous.evidence ?? []), ...message.evidence] }
+                : {}),
+            }
+          : previous,
+      )
+      // El cierre de una construcción se dice detrás de la frase del último paso, sin cortarla.
+      if (message.done) {
+        if (voice && note) speak(note, 'es', true)
+        return
+      }
+      if (!message.ok) return
+      if (message.say && voice) speak(message.say)
+      if (message.line !== undefined) setWanted({ line: message.line, key: ++spotSeq.current })
+    }
+    onSay.current = (message) => {
+      setOrder((previous) =>
+        previous.phase === 'done' ? { ...previous, note: message.text } : previous,
+      )
+      if (voice) speak(message.text)
+    }
+  })
   const canvasLabel = program
     ? `Diagrama de ${file ?? 'Python'}: ${program.nodes.length} nodos y ${program.edges.length} conexiones`
     : 'Lienzo vacío'
@@ -889,6 +1162,7 @@ export function App() {
                 height="fill"
                 fitKey={view.viewKey}
                 cursor={cursor}
+                spotlight={spotlight}
                 showActions
                 showStatus={started}
                 ariaLabel={canvasLabel}
@@ -906,6 +1180,43 @@ export function App() {
               </div>
               <div className="canvas-float" data-at="bottom-left">
                 <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
+              </div>
+              <div className="canvas-float" data-at="bottom-center">
+                <CommandBar
+                  state={order}
+                  voice={voice}
+                  onToggleVoice={() => {
+                    if (voice) hush()
+                    vscode.setState({ ...saved(), voice: !voice } satisfies SavedState)
+                    setVoice(!voice)
+                  }}
+                  onSubmit={(text) => {
+                    sendOrder(text)
+                  }}
+                  onChoose={(force) => {
+                    sendOrder(lastOrder.current, force)
+                  }}
+                  onDismiss={() => {
+                    // Una decisión que llegue después ya no es de nadie.
+                    orderSeq.current++
+                    awaitingPaint.current = null
+                    hush()
+                    post({ type: 'stopOrder' })
+                    setOrder({ phase: 'idle' })
+                  }}
+                  onKey={() => {
+                    post({ type: 'jevKey' })
+                  }}
+                  onTyping={hush}
+                  onStop={() => {
+                    hush()
+                    post({ type: 'stopOrder' })
+                  }}
+                  models={models}
+                  onPickModel={() => {
+                    post({ type: 'pickModel' })
+                  }}
+                />
               </div>
             </>
           )}
