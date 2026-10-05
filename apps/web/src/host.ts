@@ -77,7 +77,17 @@ export class WebHost {
         const provider = providerFrom(this.settings)
         return provider ? this.calls.provider(provider) : null
       },
-      decider: () => this.calls.decider(deciderFrom(this.settings)),
+      decider: () =>
+        this.calls.decider(
+          deciderFrom(this.settings, () =>
+            this.post({
+              type: 'say',
+              text:
+                'No pude conectar con TypeSafe desde el navegador (su API no admite llamadas desde ' +
+                'páginas web). Decido con el motor local; para usar TypeSafe, pon un intermediario en Ajustes.',
+            }),
+          ),
+        ),
       trace: () => this.session.trace(this.doc.text),
       setLesson: (lesson: Lesson) => {
         this.doc = { ...this.doc, lesson: JSON.stringify(lesson, null, 2) }

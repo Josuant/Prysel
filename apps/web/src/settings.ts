@@ -5,7 +5,11 @@ import {
   deepseekProvider,
 } from '../../../packages/extension/src/ai/deepseek.ts'
 import type { AiProvider } from '../../../packages/extension/src/ai/provider.ts'
-import { typesafeDecider, type Decider } from '../../../packages/extension/src/jev/client.ts'
+import {
+  JevError,
+  typesafeDecider,
+  type Decider,
+} from '../../../packages/extension/src/jev/client.ts'
 import { localDecider } from '../../../packages/extension/src/jev/local.ts'
 
 /**
@@ -24,6 +28,11 @@ export interface AiSettings {
   deepseekModel: string
   /** Clave de TypeSafe: el motor JEV que decide. Sin ella decide el motor local (sin red). */
   typesafeKey: string
+  /**
+   * Un intermediario para llegar a TypeSafe desde el navegador (su API no admite llamadas desde páginas web):
+   * la dirección de un Worker que reenvía la petición tal cual (ver `apps/web/proxy`). Vacío: directo.
+   */
+  jevProxy: string
 }
 
 export const ANTHROPIC_MODELS = [
@@ -41,6 +50,7 @@ const DEFAULTS: AiSettings = {
   deepseekKey: '',
   deepseekModel: DEFAULT_DEEPSEEK_MODEL,
   typesafeKey: '',
+  jevProxy: '',
 }
 
 const KEY = 'prysel.web.ai'
@@ -60,6 +70,7 @@ export function loadSettings(): AiSettings {
       deepseekKey: text(parsed.deepseekKey, ''),
       deepseekModel: text(parsed.deepseekModel, DEFAULTS.deepseekModel) || DEFAULTS.deepseekModel,
       typesafeKey: text(parsed.typesafeKey, ''),
+      jevProxy: text(parsed.jevProxy, ''),
     }
   } catch {
     return { ...DEFAULTS }
@@ -107,7 +118,38 @@ export function providerFrom(settings: AiSettings): AiProvider | null {
 export const hasAiKey = (settings: AiSettings) =>
   settings.anthropicKey.trim() !== '' || settings.deepseekKey.trim() !== ''
 
-export function deciderFrom(settings: AiSettings): Decider {
+/** Las claves (y el intermediario) con los que TypeSafe resultó inalcanzable: no se vuelve a probar. */
+let unreachable: string | null = null
+
+/**
+ * Quién decide: el JEV de TypeSafe si hay clave; si no, el motor local (sin red). Si TypeSafe no se deja
+ * alcanzar desde el navegador, decide el local y se avisa una vez (`onFallback`): el chat no se queda parado.
+ */
+export function deciderFrom(
+  settings: AiSettings,
+  onFallback: () => void = () => undefined,
+): Decider {
+  const local = localDecider()
   const key = settings.typesafeKey.trim()
-  return key ? typesafeDecider({ apiKey: key }) : localDecider()
+  if (!key) return local
+  const proxy = settings.jevProxy.trim()
+  const remote = typesafeDecider({
+    apiKey: key,
+    ...(proxy ? { fetchImpl: (_input, init) => fetch(proxy, init) } : {}),
+  })
+  const tag = `${key}|${proxy}`
+  return {
+    id: remote.id,
+    async decide(request) {
+      if (unreachable === tag) return local.decide(request)
+      try {
+        return await remote.decide(request)
+      } catch (error) {
+        if (!(error instanceof JevError) || error.reason !== 'network') throw error
+        unreachable = tag
+        onFallback()
+        return local.decide(request)
+      }
+    },
+  }
 }

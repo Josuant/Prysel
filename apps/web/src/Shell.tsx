@@ -269,6 +269,7 @@ function SettingsSheet({
             anthropicKey: draft.anthropicKey.trim(),
             deepseekKey: draft.deepseekKey.trim(),
             typesafeKey: draft.typesafeKey.trim(),
+            jevProxy: draft.jevProxy.trim(),
           })
         }}
       >
@@ -380,6 +381,24 @@ function SettingsSheet({
             El motor JEV decide qué hacer con cada mensaje. Sin clave, decide uno local, sin red.
           </small>
         </label>
+        {draft.typesafeKey.trim() !== '' && (
+          <label>
+            <span>Intermediario para TypeSafe</span>
+            <input
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              placeholder="https://prysel-jev.tu-cuenta.workers.dev"
+              value={draft.jevProxy}
+              onChange={(event) => setDraft({ ...draft, jevProxy: event.target.value })}
+            />
+            <small>
+              TypeSafe no admite llamadas desde páginas web: hace falta un intermediario que reenvíe
+              las peticiones (un Worker de Cloudflare, gratis; instrucciones en apps/web/proxy del
+              repositorio). Sin él, decide el motor local.
+            </small>
+          </label>
+        )}
         <div className="web-settings__actions">
           {(hasAiKey(initial) || initial.typesafeKey) && (
             <button
