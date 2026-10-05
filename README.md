@@ -4,6 +4,17 @@ Prysel no representa código: representa su **comportamiento**. Un lienzo 2D que
 
 Estado: **Fase 0** (fundaciones y lenguaje visual). Ver [docs/phase-0.md](docs/phase-0.md).
 
+## La web (móvil incluido)
+
+`apps/web` es Prysel en el navegador, sin VS Code ni servidor: el mismo lienzo, con Python ejecutándose dentro de la página (Pyodide) y las lecciones de `examples/lecciones` listas para reproducir paso a paso.
+
+```bash
+pnpm dev:web      # http://localhost:5174
+pnpm build:web    # apps/web/dist, lista para publicar
+```
+
+Se publica sola en GitHub Pages con cada push a `main` o a `web` (`.github/workflows/pages.yml`). Aún no tiene las órdenes con IA ni la generación de lecciones: llegan en las siguientes fases.
+
 ## Ver la galería de morfología
 
 Requisitos: Node 24 y pnpm 12.

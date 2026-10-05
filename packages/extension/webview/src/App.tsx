@@ -141,7 +141,19 @@ const KERNEL_LABEL: Record<KernelStatus, string> = {
   dead: 'Motor caído',
 }
 
-export function App() {
+/**
+ * Lo que el anfitrión sabe hacer. En VS Code, todo; otro anfitrión (la web) puede no tener aún las órdenes
+ * con IA, la pestaña de consultas o un guion de lección que abrir en un editor, y entonces no se ofrecen.
+ */
+export interface HostFeatures {
+  orders: boolean
+  calls: boolean
+  editLesson: boolean
+}
+
+const ALL_FEATURES: HostFeatures = { orders: true, calls: true, editLesson: true }
+
+export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {}) {
   // «Reducir movimiento» del sistema (o de VS Code, que lo refleja dentro del webview): la cámara del
   // reproductor salta directa en vez de deslizarse. El desplazamiento de los nodos ya se apaga solo
   // (`useMotion`, en `@prysel/ui`); esto es lo mismo para la cámara, que no pasa por ahí.
@@ -1210,34 +1222,36 @@ export function App() {
             onCrumb={view.descend}
           />
         </div>
-        <div role="tablist" aria-label="Qué se ve" className="segmented appbar__tabs">
-          <button
-            type="button"
-            role="tab"
-            className="segmented__item"
-            aria-selected={tab === 'canvas'}
-            aria-pressed={tab === 'canvas'}
-            onClick={() => {
-              setTab('canvas')
-            }}
-          >
-            Diagrama
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className="segmented__item"
-            aria-selected={tab === 'calls'}
-            aria-pressed={tab === 'calls'}
-            title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
-            onClick={() => {
-              setTab('calls')
-            }}
-          >
-            Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
-            {calls.some((call) => call.status === 'running') ? ' ·' : ''}
-          </button>
-        </div>
+        {features.calls && (
+          <div role="tablist" aria-label="Qué se ve" className="segmented appbar__tabs">
+            <button
+              type="button"
+              role="tab"
+              className="segmented__item"
+              aria-selected={tab === 'canvas'}
+              aria-pressed={tab === 'canvas'}
+              onClick={() => {
+                setTab('canvas')
+              }}
+            >
+              Diagrama
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className="segmented__item"
+              aria-selected={tab === 'calls'}
+              aria-pressed={tab === 'calls'}
+              title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
+              onClick={() => {
+                setTab('calls')
+              }}
+            >
+              Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
+              {calls.some((call) => call.status === 'running') ? ' ·' : ''}
+            </button>
+          </div>
+        )}
         <span className="sr-only" aria-live="polite">
           {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
         </span>
@@ -1275,7 +1289,7 @@ export function App() {
             >
               {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
             </Button>
-            {file && (
+            {file && features.editLesson && (
               <Button
                 icon="book"
                 title={
@@ -1423,45 +1437,47 @@ export function App() {
               <div className="canvas-float" data-at="bottom-left">
                 <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
               </div>
-              <div className="canvas-float" data-at="bottom-center">
-                <CommandBar
-                  state={order}
-                  voice={voice}
-                  onToggleVoice={() => {
-                    if (voice) hush()
-                    vscode.setState({ ...saved(), voice: !voice } satisfies SavedState)
-                    setVoice(!voice)
-                  }}
-                  onSubmit={(text) => {
-                    sendOrder(text)
-                  }}
-                  onChoose={(option) => {
-                    // Una salida que es otra orden, ya completa, se manda tal cual; si no, aclara la que había.
-                    if (option.order) sendOrder(option.order)
-                    else sendOrder(lastOrder.current, option.force)
-                  }}
-                  onDismiss={() => {
-                    // Una decisión que llegue después ya no es de nadie.
-                    orderSeq.current++
-                    awaitingPaint.current = null
-                    hush()
-                    post({ type: 'stopOrder' })
-                    setOrder({ phase: 'idle' })
-                  }}
-                  onKey={() => {
-                    post({ type: 'jevKey' })
-                  }}
-                  onTyping={hush}
-                  onStop={() => {
-                    hush()
-                    post({ type: 'stopOrder' })
-                  }}
-                  models={models}
-                  onPickModel={() => {
-                    post({ type: 'pickModel' })
-                  }}
-                />
-              </div>
+              {features.orders && (
+                <div className="canvas-float" data-at="bottom-center">
+                  <CommandBar
+                    state={order}
+                    voice={voice}
+                    onToggleVoice={() => {
+                      if (voice) hush()
+                      vscode.setState({ ...saved(), voice: !voice } satisfies SavedState)
+                      setVoice(!voice)
+                    }}
+                    onSubmit={(text) => {
+                      sendOrder(text)
+                    }}
+                    onChoose={(option) => {
+                      // Una salida que es otra orden, ya completa, se manda tal cual; si no, aclara la que había.
+                      if (option.order) sendOrder(option.order)
+                      else sendOrder(lastOrder.current, option.force)
+                    }}
+                    onDismiss={() => {
+                      // Una decisión que llegue después ya no es de nadie.
+                      orderSeq.current++
+                      awaitingPaint.current = null
+                      hush()
+                      post({ type: 'stopOrder' })
+                      setOrder({ phase: 'idle' })
+                    }}
+                    onKey={() => {
+                      post({ type: 'jevKey' })
+                    }}
+                    onTyping={hush}
+                    onStop={() => {
+                      hush()
+                      post({ type: 'stopOrder' })
+                    }}
+                    models={models}
+                    onPickModel={() => {
+                      post({ type: 'pickModel' })
+                    }}
+                  />
+                </div>
+              )}
             </>
           )}
         </main>

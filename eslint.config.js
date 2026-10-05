@@ -5,7 +5,15 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/generated/**', '**/.vite/**'] },
+  {
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/generated/**',
+      '**/.vite/**',
+      '**/public/pyodide/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.strict,
   {

@@ -9,3 +9,4 @@ Thumbs.db
 *.tsbuildinfo
 __pycache__/
 *.pyc
+apps/web/public/pyodide/
