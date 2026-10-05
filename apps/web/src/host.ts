@@ -2,8 +2,9 @@ import { buildProgram, createPythonParser, type Program, type PythonParser } fro
 import { validEdits, type TextEdit } from '@prysel/python/edits'
 import runtimeWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm?url'
 import pythonWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm?url'
+import { CallLog } from '../../../packages/extension/src/calls.ts'
 import { EditHistory } from '../../../packages/extension/src/history.ts'
-import { moveNoteIn, readLesson } from '../../../packages/extension/src/lesson.ts'
+import { moveNoteIn, readLesson, type Lesson } from '../../../packages/extension/src/lesson.ts'
 import {
   parseHostMessage,
   type HostMessage,
@@ -12,6 +13,14 @@ import {
 } from '../../../packages/extension/src/protocol.ts'
 import { Session } from '../../../packages/extension/src/session.ts'
 import { WebKernel } from './engine.ts'
+import { Orders } from './orders.ts'
+import {
+  deciderFrom,
+  loadSettings,
+  providerFrom,
+  saveSettings,
+  type AiSettings,
+} from './settings.ts'
 
 /**
  * El anfitrión del lienzo en la web: hace lo que en VS Code hace la extensión (`extension.ts`), pero en la
@@ -32,6 +41,9 @@ export interface WebDocument {
 
 type Listener = (doc: WebDocument & { version: number }) => void
 
+/** Lo que el lienzo le pide a la página y no es del documento: abrir los ajustes de la IA. */
+export type ShellRequest = 'settings'
+
 export class WebHost {
   private doc: WebDocument = { name: 'programa.py', text: '', lesson: null }
   private version = 1
@@ -42,12 +54,37 @@ export class WebHost {
   private ready = false
   private listeners = new Set<Listener>()
   private theme: Theme = 'light'
+  private requests = new Set<(request: ShellRequest) => void>()
+  private settings: AiSettings = loadSettings()
+  private calls = new CallLog((entry) => this.post({ type: 'call', entry }))
+  private orders: Orders
 
   constructor() {
     this.parserReady = createPythonParser({ runtime: runtimeWasm, language: pythonWasm }).then(
       (parser) => (this.parser = parser),
     )
     this.session = this.newSession()
+    this.orders = new Orders({
+      version: () => this.version,
+      text: () => this.doc.text,
+      name: () => this.doc.name,
+      parser: () => this.parserReady,
+      analyse: () => this.analyse(),
+      write: (edits, remember = true) => this.writeFrom(edits, remember),
+      refresh: () => this.refresh(),
+      post: (message) => this.post(message),
+      provider: () => {
+        const provider = providerFrom(this.settings)
+        return provider ? this.calls.provider(provider) : null
+      },
+      decider: () => this.calls.decider(deciderFrom(this.settings)),
+      trace: () => this.session.trace(this.doc.text),
+      setLesson: (lesson: Lesson) => {
+        this.doc = { ...this.doc, lesson: JSON.stringify(lesson, null, 2) }
+        this.notify()
+        this.postLesson()
+      },
+    })
   }
 
   private newSession(): Session {
@@ -75,8 +112,30 @@ export class WebHost {
     return () => this.listeners.delete(listener)
   }
 
+  /** El lienzo pide algo a la página (abrir los ajustes). */
+  onRequest(listener: (request: ShellRequest) => void): () => void {
+    this.requests.add(listener)
+    return () => this.requests.delete(listener)
+  }
+
+  get aiSettings(): AiSettings {
+    return { ...this.settings }
+  }
+
+  setAiSettings(settings: AiSettings) {
+    this.settings = { ...settings }
+    saveSettings(this.settings)
+    this.postModels()
+  }
+
+  private postModels() {
+    const provider = providerFrom(this.settings)
+    this.post({ type: 'models', ai: provider?.id ?? null, jev: deciderFrom(this.settings).id })
+  }
+
   /** Abre otro documento: se olvida lo ejecutado y la historia del anterior. */
   open(doc: WebDocument) {
+    this.orders.reset()
     this.session.dispose()
     this.session = this.newSession()
     this.history.clear()
@@ -116,7 +175,8 @@ export class WebHost {
       case 'ready':
         this.ready = true
         this.post({ type: 'theme', theme: this.theme })
-        this.post({ type: 'models', ai: null, jev: null })
+        this.postModels()
+        for (const entry of this.calls.all()) this.post({ type: 'call', entry })
         await this.refresh()
         return
       case 'edit':
@@ -147,18 +207,20 @@ export class WebHost {
         return
       }
       case 'command':
-        this.post({
-          type: 'decision',
-          id: message.id,
-          version: message.version,
-          directive: {
-            kind: 'failed',
-            say: 'Las órdenes con IA todavía no están en la versión web. Llegan en la siguiente fase.',
-          },
-          evidence: [],
-          engine: 'web',
-          jevMs: 0,
-        })
+        void this.orders.receive(message)
+        return
+      case 'spoken':
+        this.orders.spoken(message.seq, message.spoke)
+        return
+      case 'stopOrder':
+        this.orders.stop()
+        return
+      case 'clearCalls':
+        this.calls.clear()
+        return
+      case 'pickModel':
+      case 'jevKey':
+        for (const listener of this.requests) listener('settings')
         return
       default:
         // Lo demás (claves, selector de modelos, etapas con IA…) llega en fases siguientes.
@@ -183,6 +245,7 @@ export class WebHost {
     try {
       program = buildProgram(parser.parse(text), text)
       this.session.update(program, text)
+      this.orders.tend(program)
     } catch {
       // El código a medio escribir no debe tumbar el lienzo.
       program = null
@@ -214,6 +277,21 @@ export class WebHost {
         ? { type: 'lesson', file, lesson: result.lesson }
         : { type: 'lesson', file, lesson: null, error: result.error },
     )
+  }
+
+  private async analyse(): Promise<Program> {
+    const parser = await this.parserReady
+    return buildProgram(parser.parse(this.doc.text), this.doc.text)
+  }
+
+  /** Una edición que llega de una orden (no del lienzo): se aplica y se apunta en la historia. */
+  private writeFrom(edits: readonly TextEdit[], remember: boolean): boolean {
+    if (!validEdits(edits, this.doc.text.length)) return false
+    const before = this.doc.text
+    this.write(edits)
+    if (remember) this.history.applied(before, edits, this.version)
+    this.notify()
+    return true
   }
 
   private write(edits: readonly TextEdit[]) {

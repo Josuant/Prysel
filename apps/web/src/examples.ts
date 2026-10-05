@@ -54,8 +54,11 @@ export const EXAMPLES: Example[] = Object.entries(programs)
     return rank(a.id) - rank(b.id) || a.id.localeCompare(b.id)
   })
 
+/** Un tema nuevo: sin código. La IA lo construye mientras lo explica. */
+export const EMPTY: WebDocument = { name: 'tema.py', text: '', lesson: null }
+
 export const BLANK: WebDocument = {
   name: 'programa.py',
-  text: '# Escribe Python aquí y mira el diagrama en la pestaña «Diagrama».\n\nnumeros = [3, 1, 2]\ntotal = 0\nfor n in numeros:\n    total = total + n\nprint(total)\n',
+  text: '# Escribe Python aquí: el diagrama se dibuja solo.\n\nnumeros = [3, 1, 2]\ntotal = 0\nfor n in numeros:\n    total = total + n\nprint(total)\n',
   lesson: null,
 }

@@ -31,6 +31,7 @@ import {
 import type { Forced } from '../../src/jev/engine.ts'
 import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
+import { ChatDock, type ChatEntry } from './ChatDock.tsx'
 import { CommandBar } from './CommandBar.tsx'
 import { dragChips } from './dragging.ts'
 import { markIn } from './marking.ts'
@@ -149,6 +150,13 @@ export interface HostFeatures {
   orders: boolean
   calls: boolean
   editLesson: boolean
+  /**
+   * Interfaz de chat (la web, el móvil): sin barra de herramientas, el diagrama a pantalla completa y,
+   * abajo, la conversación con la IA en lugar de la caja de órdenes.
+   */
+  chat?: boolean
+  /** Sugerencias para empezar a hablar con la IA (en la interfaz de chat). */
+  suggestions?: string[]
 }
 
 const ALL_FEATURES: HostFeatures = { orders: true, calls: true, editLesson: true }
@@ -221,6 +229,44 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   } | null>(null)
   /** Lo que se le ha preguntado a cada modelo y lo que contestó, y si se está mirando esa pestaña. */
   const [calls, setCalls] = useState<CallEntry[]>([])
+  /** La conversación con la IA (interfaz de chat): cada orden y lo que se contestó, y se fue contando. */
+  const [chat, setChat] = useState<ChatEntry[]>([])
+  /** Añade una frase a la respuesta de la orden en curso (o una respuesta nueva, si no hay ninguna). */
+  const tellChat = useCallback((line: string) => {
+    if (!line) return
+    setChat((previous) => {
+      const at = previous.findLastIndex((entry) => entry.role === 'ai')
+      const entry = previous[at]
+      if (!entry) return [...previous, { id: Date.now(), role: 'ai', text: '', lines: [line] }]
+      if (entry.lines?.[entry.lines.length - 1] === line || entry.text === line) return previous
+      const next = [...previous]
+      next[at] = { ...entry, lines: [...(entry.lines ?? []), line] }
+      return next
+    })
+  }, [])
+  // La respuesta de la orden en curso sigue a su estado: pensando, preguntando, hecho (o construyendo).
+  useEffect(() => {
+    if (order.phase === 'idle') return
+    const id = orderSeq.current
+    setChat((previous) =>
+      previous.map((entry) => {
+        if (entry.role !== 'ai' || entry.id !== id) return entry
+        if (order.phase === 'deciding') return { ...entry, busy: true, note: 'Pensando…' }
+        if (order.phase === 'ask') {
+          return { ...entry, busy: false, text: order.question, options: order.options, note: '' }
+        }
+        return {
+          ...entry,
+          text: order.say,
+          tone: order.tone,
+          busy: order.building === true,
+          note: order.note ?? '',
+          options: [],
+          needsKey: order.needsKey === true,
+        }
+      }),
+    )
+  }, [order])
   const [tab, setTab] = useState<'canvas' | 'calls'>('canvas')
   /** Lo que se está diciendo de la pieza enfocada: se ve escrito junto a ella, como una nota. */
   const [caption, setCaption] = useState<string | null>(null)
@@ -1040,6 +1086,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     awaitingPaint.current = performance.now()
     paintArmed.current = false
     setOrder({ phase: 'deciding', text })
+    setChat((previous) => [
+      ...previous.slice(-60),
+      { id, role: 'user', text },
+      { id, role: 'ai', text: '', busy: true, note: 'Pensando…' },
+    ])
     post({
       type: 'command',
       id,
@@ -1132,6 +1183,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       if (voice && message.say) speak(message.say, 'es', false, heard)
       else heard(false)
       setCaption(message.say ? message.say : null)
+      if (message.say) tellChat(message.say)
       // La pieza aparece (con su animación) y la cámara va a ella; de lejos, si el JEV dice que hay que ver el conjunto.
       setWanted({
         line: message.line,
@@ -1185,6 +1237,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     }
     onSay.current = (message) => {
       setThinking(null)
+      tellChat(message.text)
       setOrder((previous) =>
         previous.phase === 'done' ? { ...previous, note: message.text } : previous,
       )
@@ -1202,140 +1255,142 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
 
   return (
     <div ref={rootRef} className="flex h-full flex-col">
-      <header className="appbar">
-        <div className="appbar__lead">
-          <span className="appbar__mark" aria-hidden>
-            P
-          </span>
-          <span className="appbar__file" title={file ?? undefined}>
-            <Icon name="file" size={14} />
-            <span className="appbar__file-name">
-              {file ? baseName(file) : 'Sin archivo Python'}
+      {!features.chat && (
+        <header className="appbar">
+          <div className="appbar__lead">
+            <span className="appbar__mark" aria-hidden>
+              P
             </span>
-          </span>
-          <FunctionMenu
-            functions={view.functions}
-            methods={view.methods}
-            focus={view.focus}
-            trail={view.trail}
-            onOpen={view.open}
-            onCrumb={view.descend}
-          />
-        </div>
-        {features.calls && (
-          <div role="tablist" aria-label="Qué se ve" className="segmented appbar__tabs">
-            <button
-              type="button"
-              role="tab"
-              className="segmented__item"
-              aria-selected={tab === 'canvas'}
-              aria-pressed={tab === 'canvas'}
-              onClick={() => {
-                setTab('canvas')
-              }}
-            >
-              Diagrama
-            </button>
-            <button
-              type="button"
-              role="tab"
-              className="segmented__item"
-              aria-selected={tab === 'calls'}
-              aria-pressed={tab === 'calls'}
-              title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
-              onClick={() => {
-                setTab('calls')
-              }}
-            >
-              Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
-              {calls.some((call) => call.status === 'running') ? ' ·' : ''}
-            </button>
-          </div>
-        )}
-        <span className="sr-only" aria-live="polite">
-          {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
-        </span>
-        {program && (
-          <div className="appbar__actions">
-            <RunControls
-              kernel={kernel}
-              problem={problem}
-              hasSelection={selected !== null}
-              onRunAll={() => {
-                run('all')
-              }}
-              onRunSelected={() => {
-                if (selected !== null) run([selected])
-              }}
-              onInterrupt={() => {
-                post({ type: 'interrupt' })
-              }}
-              onRestart={() => {
-                post({ type: 'restart' })
-              }}
+            <span className="appbar__file" title={file ?? undefined}>
+              <Icon name="file" size={14} />
+              <span className="appbar__file-name">
+                {file ? baseName(file) : 'Sin archivo Python'}
+              </span>
+            </span>
+            <FunctionMenu
+              functions={view.functions}
+              methods={view.methods}
+              focus={view.focus}
+              trail={view.trail}
+              onOpen={view.open}
+              onCrumb={view.descend}
             />
-            <span className="appbar__sep" aria-hidden />
-            <Button
-              icon="step"
-              disabled={version === null || recording?.status === 'running'}
-              title={
-                recording?.status === 'failed'
-                  ? recording.message
-                  : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
-              }
-              onClick={() => {
-                if (version !== null) post({ type: 'trace', version })
-              }}
-            >
-              {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
-            </Button>
-            {file && features.editLesson && (
+          </div>
+          {features.calls && (
+            <div role="tablist" aria-label="Qué se ve" className="segmented appbar__tabs">
+              <button
+                type="button"
+                role="tab"
+                className="segmented__item"
+                aria-selected={tab === 'canvas'}
+                aria-pressed={tab === 'canvas'}
+                onClick={() => {
+                  setTab('canvas')
+                }}
+              >
+                Diagrama
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className="segmented__item"
+                aria-selected={tab === 'calls'}
+                aria-pressed={tab === 'calls'}
+                title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
+                onClick={() => {
+                  setTab('calls')
+                }}
+              >
+                Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
+                {calls.some((call) => call.status === 'running') ? ' ·' : ''}
+              </button>
+            </div>
+          )}
+          <span className="sr-only" aria-live="polite">
+            {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
+          </span>
+          {program && (
+            <div className="appbar__actions">
+              <RunControls
+                kernel={kernel}
+                problem={problem}
+                hasSelection={selected !== null}
+                onRunAll={() => {
+                  run('all')
+                }}
+                onRunSelected={() => {
+                  if (selected !== null) run([selected])
+                }}
+                onInterrupt={() => {
+                  post({ type: 'interrupt' })
+                }}
+                onRestart={() => {
+                  post({ type: 'restart' })
+                }}
+              />
+              <span className="appbar__sep" aria-hidden />
               <Button
-                icon="book"
+                icon="step"
+                disabled={version === null || recording?.status === 'running'}
                 title={
-                  lesson
-                    ? 'Abrir el guion de la lección'
-                    : 'Crea el guion de la lección de este archivo (un .lesson.json junto a él)'
+                  recording?.status === 'failed'
+                    ? recording.message
+                    : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
                 }
                 onClick={() => {
-                  post({ type: 'newLesson' })
+                  if (version !== null) post({ type: 'trace', version })
                 }}
               >
-                {lesson ? lesson.title : 'Lección'}
+                {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
               </Button>
-            )}
-            {/* Solo si hay bloques largos sin etapas: la IA propone sus comentarios de sección. */}
-            {file && longBlocks > 0 && (
-              <Button
-                icon="section"
-                title={`${longBlocks === 1 ? 'Hay un bloque largo' : `Hay ${longBlocks} bloques largos`} sin etapas: la IA propone sus comentarios de sección, y los revisas antes de que se escriban`}
+              {file && features.editLesson && (
+                <Button
+                  icon="book"
+                  title={
+                    lesson
+                      ? 'Abrir el guion de la lección'
+                      : 'Crea el guion de la lección de este archivo (un .lesson.json junto a él)'
+                  }
+                  onClick={() => {
+                    post({ type: 'newLesson' })
+                  }}
+                >
+                  {lesson ? lesson.title : 'Lección'}
+                </Button>
+              )}
+              {/* Solo si hay bloques largos sin etapas: la IA propone sus comentarios de sección. */}
+              {file && longBlocks > 0 && (
+                <Button
+                  icon="section"
+                  title={`${longBlocks === 1 ? 'Hay un bloque largo' : `Hay ${longBlocks} bloques largos`} sin etapas: la IA propone sus comentarios de sección, y los revisas antes de que se escriban`}
+                  onClick={() => {
+                    post({ type: 'proposeSections' })
+                  }}
+                >
+                  Etapas
+                </Button>
+              )}
+              <span className="appbar__sep" aria-hidden />
+              <IconButton
+                icon="undo"
+                label="Deshacer lo último que se cambió en el lienzo (Ctrl+Z)"
+                disabled={history.undo === 0}
                 onClick={() => {
-                  post({ type: 'proposeSections' })
+                  post({ type: 'undo' })
                 }}
-              >
-                Etapas
-              </Button>
-            )}
-            <span className="appbar__sep" aria-hidden />
-            <IconButton
-              icon="undo"
-              label="Deshacer lo último que se cambió en el lienzo (Ctrl+Z)"
-              disabled={history.undo === 0}
-              onClick={() => {
-                post({ type: 'undo' })
-              }}
-            />
-            <IconButton
-              icon="redo"
-              label="Rehacer (Ctrl+Mayús+Z)"
-              disabled={history.redo === 0}
-              onClick={() => {
-                post({ type: 'redo' })
-              }}
-            />
-          </div>
-        )}
-      </header>
+              />
+              <IconButton
+                icon="redo"
+                label="Rehacer (Ctrl+Mayús+Z)"
+                disabled={history.redo === 0}
+                onClick={() => {
+                  post({ type: 'redo' })
+                }}
+              />
+            </div>
+          )}
+        </header>
+      )}
 
       {lessonError && (
         <div
@@ -1420,7 +1475,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               />
             </ErrorBoundary>
           ) : (
-            <EmptyState thinking={extras.busy} intro={intro} />
+            <EmptyState thinking={extras.busy} intro={intro} chat={features.chat === true} />
           )}
           {program && (
             <>
@@ -1431,13 +1486,30 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   {caption}
                 </div>
               )}
-              <div className="canvas-float" data-at="top-right">
-                <DensityControl value={density} onChange={changeDensity} />
-              </div>
-              <div className="canvas-float" data-at="bottom-left">
-                <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
-              </div>
-              {features.orders && (
+              {features.chat ? (
+                (view.functions.length > 0 || view.methods.length > 0 || view.focus !== null) && (
+                  <div className="canvas-float" data-at="top-left">
+                    <FunctionMenu
+                      functions={view.functions}
+                      methods={view.methods}
+                      focus={view.focus}
+                      trail={view.trail}
+                      onOpen={view.open}
+                      onCrumb={view.descend}
+                    />
+                  </div>
+                )
+              ) : (
+                <>
+                  <div className="canvas-float" data-at="top-right">
+                    <DensityControl value={density} onChange={changeDensity} />
+                  </div>
+                  <div className="canvas-float" data-at="bottom-left">
+                    <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
+                  </div>
+                </>
+              )}
+              {features.orders && !features.chat && (
                 <div className="canvas-float" data-at="bottom-center">
                   <CommandBar
                     state={order}
@@ -1583,6 +1655,36 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           />
         </ErrorBoundary>
       )}
+
+      {features.chat && features.orders && (
+        <ChatDock
+          entries={chat}
+          building={order.phase === 'done' && order.building === true}
+          voice={voice}
+          ai={models ? models.ai : ''}
+          suggestions={features.suggestions ?? []}
+          onSubmit={(text) => {
+            sendOrder(text)
+          }}
+          onChoose={(option) => {
+            if (option.order) sendOrder(option.order)
+            else sendOrder(lastOrder.current, option.force)
+          }}
+          onStop={() => {
+            hush()
+            post({ type: 'stopOrder' })
+          }}
+          onToggleVoice={() => {
+            if (voice) hush()
+            vscode.setState({ ...saved(), voice: !voice } satisfies SavedState)
+            setVoice(!voice)
+          }}
+          onSettings={() => {
+            post({ type: 'pickModel' })
+          }}
+          onTyping={hush}
+        />
+      )}
     </div>
   )
 }
@@ -1684,7 +1786,15 @@ function baseName(file: string): string {
   return file.split(/[\\/]/).pop() ?? file
 }
 
-function EmptyState({ thinking, intro }: { thinking: string | null; intro: string | null }) {
+function EmptyState({
+  thinking,
+  intro,
+  chat,
+}: {
+  thinking: string | null
+  intro: string | null
+  chat: boolean
+}) {
   // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
   if (intro !== null) {
     return (
@@ -1698,6 +1808,19 @@ function EmptyState({ thinking, intro }: { thinking: string | null; intro: strin
     return (
       <div className="flex h-full items-center justify-center p-6" role="status">
         <div className="thinking-card">La IA está pensando · {thinking}</div>
+      </div>
+    )
+  }
+  if (chat) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-center" role="status">
+        <div className="max-w-xs">
+          <p className="text-base text-ink">¿Qué quieres aprender?</p>
+          <p className="mt-2 text-sm leading-6 text-ink-faint">
+            Pídeselo a la IA abajo, por ejemplo «enséñame la recursión», y mira cómo el diagrama se
+            construye aquí mientras te lo explica.
+          </p>
+        </div>
       </div>
     )
   }

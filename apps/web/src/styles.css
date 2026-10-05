@@ -34,131 +34,131 @@ body {
 
 .web-bar {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 8px;
-  padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+  gap: 6px;
   min-height: 48px;
-  border-bottom: 1px solid var(--line, rgb(0 0 0 / 0.08));
-  background: var(--surface, var(--void));
-  flex: none;
+  padding: calc(4px + env(safe-area-inset-top)) 6px 4px;
+  border-bottom: 1px solid var(--border-card);
+  background: var(--surface);
 }
-
-.web-bar__menu {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  flex: none;
-}
-.web-bar__menu:hover,
-.web-bar__menu:focus-visible {
-  background: color-mix(in srgb, currentColor 8%, transparent);
-}
-.web-bar__menu svg {
-  width: 22px;
-  height: 22px;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  fill: none;
-}
-
 .web-bar__title {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-width: 0;
-  flex: 1;
   line-height: 1.15;
 }
 .web-bar__brand {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  opacity: 0.55;
+  opacity: 0.5;
 }
 .web-bar__doc {
+  overflow: hidden;
   font-size: 15px;
   font-weight: 600;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.web-tabs {
-  display: flex;
-  padding: 3px;
-  border-radius: 12px;
-  background: color-mix(in srgb, currentColor 7%, transparent);
+.web-icon {
+  display: grid;
   flex: none;
-}
-.web-tabs button {
+  width: 44px;
+  height: 44px;
+  place-items: center;
   border: 0;
-  border-radius: 9px;
-  padding: 7px 12px;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  color: inherit;
+  border-radius: 12px;
   background: transparent;
-  opacity: 0.65;
+  color: inherit;
   cursor: pointer;
-  min-height: 36px;
 }
-.web-tabs button[aria-selected='true'] {
-  background: var(--void);
-  opacity: 1;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+.web-icon:hover,
+.web-icon:focus-visible,
+.web-icon[aria-pressed='true'] {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.web-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .web-main {
   position: relative;
+  display: flex;
   flex: 1;
   min-height: 0;
-  display: flex;
 }
-.web-main--wide .web-code {
-  width: min(42%, 560px);
-  border-right: 1px solid var(--line, rgb(0 0 0 / 0.08));
-}
-
 .web-canvas {
   position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
 }
-/* Oculto sin desmontarlo: el diagrama conserva su estado (reproducción, cámara) al volver. */
-.web-canvas[data-hidden='true'] {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-.web-canvas[data-hidden='true'] * {
-  visibility: hidden !important;
-}
 .web-canvas > * {
   height: 100%;
 }
 
+/* El código: encima del diagrama en el móvil; al lado, en una pantalla ancha. */
 .web-code {
-  position: relative;
-  z-index: 1;
-  background: var(--void);
-  flex: none;
-  width: 100%;
-  min-height: 0;
   display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--void);
 }
-.web-code[hidden] {
-  display: none;
+.web-code[data-overlay] {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+.web-main--split .web-code {
+  order: -1;
+  width: min(42%, 560px);
+  border-right: 1px solid var(--border-card);
+}
+.web-code__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 14px;
+  border-bottom: 1px solid var(--border-card);
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.web-text-button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.web-primary {
+  min-height: 44px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--void);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* ── el editor ─────────────────────────────────────────────────────────── */
@@ -176,27 +176,27 @@ body {
   position: sticky;
   left: 0;
   flex: none;
-  padding: 12px 8px 12px 12px;
-  text-align: right;
-  opacity: 0.4;
-  user-select: none;
-  background: var(--void);
   min-width: 2.5em;
+  padding: 12px 8px 12px 12px;
+  background: var(--void);
+  opacity: 0.4;
+  text-align: right;
+  user-select: none;
 }
 .web-editor__text {
   flex: 1;
   min-width: max-content;
+  padding: 12px 16px 12px 8px;
   border: 0;
   outline: none;
   resize: none;
   overflow: hidden;
-  padding: 12px 16px 12px 8px;
+  background: transparent;
+  color: inherit;
   font: inherit;
   /* 16px como mínimo en móvil: con menos, iOS hace zoom al enfocar. */
   font-size: max(16px, 1em);
   line-height: inherit;
-  color: inherit;
-  background: transparent;
   tab-size: 4;
   white-space: pre;
 }
@@ -206,12 +206,12 @@ body {
   }
 }
 
-/* ── el menú de lecciones ──────────────────────────────────────────────── */
+/* ── menú y ajustes ────────────────────────────────────────────────────── */
 
 .web-sheet {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 60;
 }
 .web-sheet__scrim {
   position: absolute;
@@ -222,44 +222,48 @@ body {
 .web-sheet__panel {
   position: absolute;
   top: 0;
-  left: 0;
   bottom: 0;
+  left: 0;
   width: min(88vw, 380px);
   overflow-y: auto;
   padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
   background: var(--void);
   box-shadow: 4px 0 24px rgb(0 0 0 / 0.2);
 }
+.web-sheet[data-side='bottom'] .web-sheet__panel {
+  top: auto;
+  right: 0;
+  width: auto;
+  max-width: 560px;
+  max-height: 88dvh;
+  margin: 0 auto;
+  border-radius: 20px 20px 0 0;
+}
 .web-sheet h2 {
-  margin: 8px 4px 6px;
+  margin: 10px 4px 6px;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   opacity: 0.55;
 }
-.web-sheet__hint {
-  margin: 0 4px 12px;
-  font-size: 14px;
-  opacity: 0.75;
-}
 .web-sheet ul {
-  list-style: none;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   padding: 0;
+  list-style: none;
 }
 .web-sheet li button {
   display: flex;
   flex-direction: column;
   gap: 2px;
   width: 100%;
-  text-align: left;
+  padding: 12px;
   border: 0;
   border-radius: 12px;
-  padding: 12px;
-  font: inherit;
-  color: inherit;
   background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
 .web-sheet li button:hover,
@@ -267,7 +271,7 @@ body {
   background: color-mix(in srgb, currentColor 7%, transparent);
 }
 .web-sheet li button[aria-current='true'] {
-  background: color-mix(in srgb, var(--accent, #5b4fd6) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .web-sheet li strong {
   font-size: 15px;
@@ -277,81 +281,104 @@ body {
   opacity: 0.65;
 }
 
+.web-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.web-settings h2 {
+  margin: 0;
+}
+.web-settings__hint {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.web-settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.web-settings label > span {
+  font-size: 14px;
+  font-weight: 600;
+}
+.web-settings input,
+.web-settings select {
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+.web-settings small {
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.web-settings a {
+  color: var(--accent);
+}
+.web-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ── el lienzo dentro de la web ────────────────────────────────────────── */
 
-/* La barra de la web ya dice qué archivo es: la del lienzo no lo repite. */
-.web-canvas .appbar__mark,
-.web-canvas .appbar__file {
-  display: none;
+/* Limpio: sin botones de zoom (en el móvil se pellizca) ni avisos de construcciones sueltas. */
+@media (pointer: coarse), (max-width: 720px) {
+  .web-canvas .canvas-controls {
+    display: none;
+  }
 }
 
 @media (max-width: 720px) {
-  /* Una sola fila de acciones que se desliza de lado, en vez de tres filas que tapan el diagrama. */
-  .web-canvas .appbar {
-    flex-wrap: nowrap;
-    gap: 8px;
-    min-height: 0;
-    padding: 6px 10px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .web-canvas .appbar::-webkit-scrollbar {
-    display: none;
-  }
-  .web-canvas .appbar__lead,
-  .web-canvas .appbar__actions {
-    flex-wrap: nowrap;
-    flex: none;
-  }
-  .web-canvas .appbar__lead:not(:has(*:not(.appbar__mark, .appbar__file, .appbar__file *))) {
-    display: none;
-  }
-  .web-canvas .btn {
-    height: 36px;
-  }
-
-  .web-canvas .canvas-float[data-at='top-right'] {
-    top: 8px;
-    right: 8px;
-  }
-  .web-canvas .canvas-float[data-at='bottom-left'] {
-    bottom: 10px;
-    left: 10px;
-  }
-
-  /* La reproducción, compacta: controles y línea de tiempo arriba; lo demás se desliza de lado. */
+  /* La reproducción, compacta: una fila de controles y la línea de tiempo; lo demás se desliza de lado. */
   .web-canvas .player {
-    margin: 0 6px calc(6px + env(safe-area-inset-bottom));
-    padding: 8px 10px 10px;
+    margin: 0 6px 6px;
+    padding: 6px 10px 8px;
     border-radius: 16px;
   }
   .web-canvas .player__bar {
-    gap: 4px 8px;
+    gap: 2px 6px;
   }
   .web-canvas .player__timeline {
     min-width: 0;
     flex-basis: 100%;
     order: 5;
   }
-  .web-canvas .player__speed {
+  /* Lo justo: atrás, reproducir, adelante, la línea de tiempo (con sus momentos) y la nota del momento. */
+  .web-canvas .player__speed,
+  .web-canvas .player__voice,
+  .web-canvas .player__moments,
+  .web-canvas .player__extras,
+  .web-canvas .player:has(.player__caption) .player__now,
+  .web-canvas .player__vars {
     display: none;
   }
-  .web-canvas .player__extras {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
+  .web-canvas .player__controls > :first-child,
+  .web-canvas .player__controls > :last-child {
+    display: none;
   }
-  .web-canvas .player__extras > * {
-    flex-wrap: nowrap;
+  .web-canvas .player__caption {
+    margin-top: 4px;
+    font-size: 15px;
   }
+
   /* Los nodos para entender, en fila: una tarjeta cada vez, deslizando de lado. */
   .web-canvas .insight-dock {
     flex-wrap: nowrap;
     align-items: flex-start;
-    max-height: 28dvh;
-    padding: 6px 8px;
     gap: 8px;
+    max-height: 22dvh;
+    padding: 6px 8px;
     overflow-x: auto;
     overflow-y: hidden;
     scroll-snap-type: x mandatory;
@@ -362,8 +389,5 @@ body {
     max-height: 100%;
     overflow-y: auto;
     scroll-snap-align: start;
-  }
-  .web-canvas .player__extras button {
-    white-space: nowrap;
   }
 }

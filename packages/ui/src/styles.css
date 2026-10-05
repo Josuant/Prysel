@@ -3668,6 +3668,10 @@ button.fn-menu__crumb:hover {
   top: 12px;
   right: 14px;
 }
+.canvas-float[data-at='top-left'] {
+  top: 10px;
+  left: 10px;
+}
 .canvas-float[data-at='bottom-left'] {
   bottom: 16px;
   left: 16px;

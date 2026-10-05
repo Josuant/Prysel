@@ -126,6 +126,14 @@ export type IconId =
   // Las etapas de un algoritmo (una escalera) y abrir un subproceso (una flecha que sale).
   | 'section'
   | 'open'
+  | 'mic'
+  | 'send'
+  | 'volume'
+  | 'volume-off'
+  | 'chevron-up'
+  | 'code'
+  | 'gear'
+  | 'menu'
 
 /**
  * El editor gráfico que el nodo muestra en su cuerpo. Es lo que hace que un nodo sea
