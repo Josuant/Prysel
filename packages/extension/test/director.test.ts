@@ -85,6 +85,7 @@ function stage(source: string, stopAfter?: number) {
       return Promise.resolve()
     },
     wait: () => Promise.resolve(),
+    settle: () => Promise.resolve(),
   }
   return { host, state }
 }

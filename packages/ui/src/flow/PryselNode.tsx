@@ -73,6 +73,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   spotlit?: number | undefined
   /** Acaba de construirse: entra con su animación (él, y lo que lleva dentro, uno tras otro). */
   born?: boolean
+  /** La pieza que se está explicando usa lo que este nodo define: late con ella. */
+  echoed?: boolean
   /** Una orden acaba de cambiarlo, o está a punto de quitarlo. */
   change?: 'changed' | 'leaving' | undefined
   /** Una nota nombra este nodo en su `código`, y el puntero está encima de ese trozo. */
@@ -337,6 +339,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         data-cursor={data.cursor ? '' : undefined}
         data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
         data-born={data.born ? '' : undefined}
+        data-echo={data.echoed ? '' : undefined}
         data-change={data.change}
         data-hinted={data.hinted ? '' : undefined}
         data-modifier={modifier}
@@ -432,6 +435,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-cursor={data.cursor ? '' : undefined}
       data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
       data-born={data.born ? '' : undefined}
+      data-echo={data.echoed ? '' : undefined}
       data-change={data.change}
       data-hinted={data.hinted ? '' : undefined}
     >

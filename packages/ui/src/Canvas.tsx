@@ -267,6 +267,11 @@ export interface CanvasProps {
     /** La cámara enseña el nodo con lo que lo rodea, más de lejos, en vez de acercarse a él. */
     wide?: boolean
   } | null
+  /**
+   * Los nodos de los que saca sus datos la pieza que se está explicando: laten con ella, para que se vea de
+   * dónde viene lo que usa.
+   */
+  echo?: readonly string[]
   /** Etiqueta accesible del lienzo, leída por lectores de pantalla. */
   ariaLabel?: string
   /**
@@ -352,7 +357,11 @@ const SIDE_GAP = 48
 /** Lo más que la cámara se aleja para que quepan a la vez el cursor y la nota que se lee. */
 const MIN_FOLLOW_ZOOM = 0.45
 /** El zoom con el que se enseña una pieza «en su conjunto»: cabe lo que la rodea y aún se lee. */
-const WIDE_SPOT_ZOOM = 0.7
+const WIDE_SPOT_ZOOM = 0.95
+/** Lo más que se acerca la cámara a una pieza pequeña. */
+const MAX_SPOT_ZOOM = 1.6
+/** Lo más que se aleja para enseñar algo que se está explicando: por debajo, ya no se lee. */
+const MIN_SPOT_ZOOM = 0.7
 
 type Point = { x: number; y: number }
 const NO_POSITIONS: Record<string, Point> = {}
@@ -399,6 +408,7 @@ function CanvasInner({
   fitKey = '',
   cursor = null,
   spotlight = null,
+  echo,
   ariaLabel,
   framed = true,
   controls = false,
@@ -1504,6 +1514,7 @@ function CanvasInner({
         ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
         : {}),
       renameSignal: renaming.id === node.id ? renaming.n : 0,
+      echoed: echo?.includes(node.id) === true,
       born: spotlight?.id === node.id && spotlight.born === true,
       change: spotlight?.id === node.id ? spotlight.change : undefined,
       hinted: hinted?.has(node.id) === true,
@@ -1569,6 +1580,7 @@ function CanvasInner({
           addTarget: addTarget === node.id,
           cursor: cursor === node.id,
           spotlit: spotlight?.id === node.id ? spotlight.key : undefined,
+          echoed: echo?.includes(node.id) === true,
           born: spotlight?.id === node.id && spotlight.born === true,
           change: spotlight?.id === node.id ? spotlight.change : undefined,
           hinted: hinted?.has(node.id) === true,
@@ -1687,6 +1699,7 @@ function CanvasInner({
               ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
               : {}),
             renameSignal: renaming.id === placed.id ? renaming.n : 0,
+            echoed: echo?.includes(placed.id) === true,
             born: spotlight?.id === placed.id && spotlight.born === true,
             change: spotlight?.id === placed.id ? spotlight.change : undefined,
             hinted: hinted?.has(placed.id) === true,
@@ -2160,9 +2173,22 @@ function CanvasInner({
       (frame.clientWidth - 2 * margin) / w,
       (frame.clientHeight - 2 * margin) / h,
     )
-    const zoom = Math.max(MIN_FOLLOW_ZOOM, Math.min(spotlight.wide ? WIDE_SPOT_ZOOM : 1, room))
+    // El zoom justo para lo que se explica: una pieza pequeña se acerca hasta ocupar un tercio del lienzo
+    // (se lee sin esfuerzo); una grande se aleja lo que haga falta para verse entera. «En su conjunto»,
+    // algo más lejos, para que quepa lo que la rodea.
+    const reading = Math.min((frame.clientWidth * 0.5) / w, (frame.clientHeight * 0.34) / h)
+    const close = Math.max(1, Math.min(MAX_SPOT_ZOOM, reading))
+    // Un bloque que no cabe entero a un tamaño que se lea no se aleja hasta hacerse ilegible: se enseña
+    // su cabecera (lo de arriba), a tamaño de lectura, y lo de dentro se irá enfocando pieza a pieza.
+    const fits = room >= MIN_SPOT_ZOOM
+    const zoom = fits
+      ? Math.min(room, spotlight.wide ? Math.min(close, WIDE_SPOT_ZOOM) : close)
+      : MIN_SPOT_ZOOM
     spotHeld.current = fitKey
-    void setCenter(item.position.x + w / 2, item.position.y + h / 2, {
+    const centerY = fits
+      ? item.position.y + h / 2
+      : item.position.y + frame.clientHeight / zoom / 2 - margin / zoom
+    void setCenter(item.position.x + w / 2, centerY, {
       zoom,
       duration: animate ? 450 : 0,
     })

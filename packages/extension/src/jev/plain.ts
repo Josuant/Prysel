@@ -111,20 +111,36 @@ function unfinished(text: string): boolean {
 /** Las líneas de una sentencia, como pasos: cada una con su nivel, según su sangría. */
 function stepsOf(lines: readonly string[]): BuildStep[] {
   const base = indentOf(lines.find((line) => line.trim() !== '') ?? '')
-  const whole = (): BuildStep[] => [
-    {
-      level: 0,
-      code: lines.map((line) => line.slice(Math.min(base, indentOf(line))).trimEnd()).join('\n'),
-      say: '',
-      whole: true,
-    },
-  ]
-  // Las líneas lógicas: una sentencia que ocupa varias (un paréntesis abierto) es una sola pieza.
+  // Las líneas lógicas: una sentencia que ocupa varias (un paréntesis abierto) es una sola pieza. De cada
+  // una se recuerda en qué fila empieza.
   const logical: string[] = []
-  for (const line of lines) {
+  const rows: number[] = []
+  lines.forEach((line, row) => {
     const last = logical[logical.length - 1]
     if (last !== undefined && unfinished(last)) logical[logical.length - 1] = `${last}\n${line}`
-    else if (line.trim() !== '') logical.push(line)
+    else if (line.trim() !== '') {
+      logical.push(line)
+      rows.push(row)
+    }
+  })
+  const whole = (): BuildStep[] => {
+    const first = rows[logical.findIndex((line) => !line.trimStart().startsWith('#'))] ?? 0
+    return [
+      {
+        level: 0,
+        code: lines.map((line) => line.slice(Math.min(base, indentOf(line))).trimEnd()).join('\n'),
+        say: '',
+        whole: true,
+        // Sus partes, para explicarlo rama a rama: cada sentencia de dentro, menos lo que solo abre un
+        // camino sin decir nada (`else:`, `finally:`).
+        parts: logical.flatMap((line, index) => {
+          const text = line.trim()
+          return text.startsWith('#') || /^(else|finally)\s*:$/.test(text)
+            ? []
+            : [{ offset: (rows[index] ?? 0) - first, code: text }]
+        }),
+      },
+    ]
   }
   if (logical.some((line) => WHOLE.test(line.trimStart()))) return whole()
   const stack: number[] = []
@@ -419,6 +435,131 @@ export async function judgeChunk(
   }
 }
 
+// ───────────────────────── subrayar: la parte exacta de la que habla una frase ─────────────────────────
+
+const KEYWORDS = new Set(
+  'and as assert break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield print len range'.split(
+    ' ',
+  ),
+)
+
+/**
+ * Los trozos de una pieza de código que se podrían subrayar al explicarla: sus llamadas (con sus
+ * argumentos), sus nombres, sus números y sus textos. Es el conjunto cerrado entre el que elige el JEV.
+ */
+export function fragmentsOf(code: string, max = 12): string[] {
+  const line =
+    code.split('\n').find((row) => row.trim() !== '' && !row.trimStart().startsWith('#')) ?? ''
+  const text = line.replace(/#.*$/, '').trim()
+  const found: string[] = []
+  const add = (fragment: string) => {
+    const clean = fragment.trim()
+    if (clean.length >= 1 && clean !== text && !found.includes(clean)) found.push(clean)
+  }
+  // Las llamadas, de fuera adentro: `abs(sum(pesos) - 1.0)`, `sum(pesos)`.
+  for (const match of text.matchAll(/[A-Za-z_][\w.]*\(/g)) {
+    let depth = 0
+    for (let i = (match.index ?? 0) + match[0].length - 1; i < text.length; i++) {
+      if (text[i] === '(') depth++
+      else if (text[i] === ')' && --depth === 0) {
+        add(text.slice(match.index ?? 0, i + 1))
+        break
+      }
+    }
+  }
+  for (const match of text.matchAll(/"[^"]*"|'[^']*'/g)) add(match[0])
+  // Los nombres y los números, sin contar lo que va dentro de un texto entre comillas.
+  const bare = text.replace(/"[^"]*"|'[^']*'/g, (quoted) => ' '.repeat(quoted.length))
+  for (const match of bare.matchAll(/[A-Za-z_]\w*/g)) if (!KEYWORDS.has(match[0])) add(match[0])
+  for (const match of bare.matchAll(/\b\d+(?:\.\d+)?\b/g)) add(match[0])
+  return found.slice(0, max)
+}
+
+/** A partir de aquí, el JEV tiene claro qué trozo subrayar. */
+export const MARK_THRESHOLD = 0.5
+
+/**
+ * Qué trozo exacto de cada pieza conviene subrayar mientras se dice su frase. Se pregunta por todas las
+ * piezas a la vez; el JEV elige entre los trozos de cada una (o ninguno). Devuelve un trozo por pieza
+ * (`''`: ninguno).
+ */
+export async function judgeMarks(
+  decider: Decider,
+  pieces: readonly { code: string; say: string }[],
+): Promise<{ marks: string[]; ms: number }> {
+  const options = pieces.map((piece) => (piece.say === '' ? [] : fragmentsOf(piece.code)))
+  const questions: Record<string, JevQuestion> = {}
+  pieces.forEach((piece, index) => {
+    const fragments = options[index] ?? []
+    if (fragments.length === 0) return
+    questions[`m${index + 1}`] = {
+      type: 'choice',
+      instructions: `Se va a decir en voz alta: «${piece.say}», mientras se enseña este código: ${piece.code.split('\n')[0] ?? ''}\n¿De qué trozo exacto del código habla la frase? Es el que se subrayará.`,
+      criteria: {
+        ...Object.fromEntries(fragments.map((fragment, i) => [`f${i + 1}`, fragment])),
+        ninguno: 'La frase habla de la pieza entera, o de nada en concreto.',
+      },
+    }
+  })
+  if (Object.keys(questions).length === 0) return { marks: pieces.map(() => ''), ms: 0 }
+  const { answers, ms } = await decider.decide({ state: {}, questions })
+  return {
+    ms,
+    marks: pieces.map((_, index) => {
+      const answer = answers[`m${index + 1}`]
+      if (answer?.type !== 'choice' || answer.confidence < MARK_THRESHOLD) return ''
+      const picked = /^f(\d+)$/.exec(answer.choice)?.[1]
+      return picked === undefined ? '' : ((options[index] ?? [])[Number(picked) - 1] ?? '')
+    }),
+  }
+}
+
+// ───────────────────────── si el usuario interrumpe: ¿vale lo que ya estaba preparado? ─────────────────────────
+
+/** Qué hacer con una orden que llega mientras se está construyendo otra cosa. */
+export type Interruption = 'seguir' | 'ajustar' | 'otra'
+
+/**
+ * El usuario dice algo mientras se construye. El JEV decide si lo que estaba preparado sigue valiendo
+ * (`seguir`: no cambia nada), si hay que rehacer lo que faltaba teniendo en cuenta lo nuevo (`ajustar`), o si
+ * es otra cosa distinta (`otra`: se deja lo que se estaba haciendo y se atiende). Con dudas, es `otra`: lo
+ * que el usuario acaba de decir manda.
+ */
+export async function judgeInterruption(
+  decider: Decider,
+  request: { building: string; said: string; pending: string },
+): Promise<{ what: Interruption; ms: number }> {
+  const { answers, ms } = await decider.decide({
+    state: {
+      construyendo: request.building,
+      nuevo: request.said,
+      ...(request.pending ? { preparado_sin_escribir: request.pending.slice(0, 1500) } : {}),
+    },
+    questions: {
+      interrupcion: {
+        type: 'choice',
+        instructions:
+          'Se está construyendo un programa para cumplir `construyendo`, y hay código ya preparado que aún no se ha escrito. El usuario acaba de decir `nuevo`. ¿Qué hay que hacer con lo preparado?',
+        criteria: {
+          seguir:
+            'Lo nuevo no cambia lo que se está construyendo: es un comentario, un ánimo, o algo que no pide nada distinto.',
+          ajustar:
+            'Lo nuevo corrige o matiza lo que se está construyendo: lo que falta hay que rehacerlo teniéndolo en cuenta.',
+          otra: 'Lo nuevo es otra petición distinta: hay que dejar lo que se estaba haciendo y atenderla.',
+        },
+      },
+    },
+  })
+  const answer = answers.interrupcion
+  const what =
+    answer?.type === 'choice' &&
+    answer.confidence >= 0.5 &&
+    (answer.choice === 'seguir' || answer.choice === 'ajustar')
+      ? answer.choice
+      : 'otra'
+  return { what, ms }
+}
+
 // ───────────────────────── lo que se le pide a la IA: solo contenido ─────────────────────────
 
 const TEACH =
@@ -429,7 +570,7 @@ export function planSystem(teach: boolean): string {
     teach
       ? `${TEACH} Piensa las partes de la EXPLICACIÓN (qué pasa primero, qué después), no partes de un programa cualquiera.`
       : 'Alguien te pide un programa en Python y tú lo vas a construir explicándolo. Antes de escribir nada, piensa el plan.',
-    'Lista las partes por las que pasa, en orden, una por línea: un título de dos a cuatro palabras y, si quieres, detrás de dos puntos, una frase corta que diga qué ocurre en esa parte.',
+    'Lista las partes por las que pasa, en orden, una por línea: un título de dos a cuatro palabras y, si quieres, detrás de dos puntos, qué ocurre en esa parte en menos de diez palabras.',
     'Entre 2 y 7 partes. Solo la lista: sin introducción, sin código y sin despedida.',
   ].join('\n')
 }
@@ -473,7 +614,8 @@ export function tellSystem(teach: boolean): string {
     teach
       ? 'Estás explicando un tema a alguien mientras construyes, pieza a pieza, un programa que lo modela. De cada pieza, di qué ocurre en la realidad y cómo lo representa; no describas la sintaxis.'
       : 'Estás construyendo un programa pieza a pieza mientras lo explicas a alguien que aprende. De cada pieza, di qué es y por qué se pone ahí, como quien piensa en voz alta.',
-    'Te doy las piezas en el orden en que van a aparecer. Di una frase corta por cada pieza, en español y sin código: una por línea, en el mismo orden, tantas líneas como piezas. Solo las frases: se leerán en voz alta, cada una al aparecer su pieza.',
+    'Te doy las piezas en el orden en que van a aparecer. Di una frase por cada pieza, en español y sin código: una por línea, en el mismo orden, tantas líneas como piezas. Solo las frases: se leerán en voz alta, cada una al aparecer su pieza.',
+    'Frases MUY cortas: como mucho doce palabras cada una, directas, sin rodeos ni muletillas («en este paso», «aquí»). Una idea por frase.',
   ].join('\n')
 }
 
@@ -493,6 +635,16 @@ export function tellPrompt(request: {
   ]
     .filter((part) => part !== '')
     .join('\n\n')
+}
+
+/** El comentario de entrada: qué se va a hacer, antes de enseñar el plan. */
+export function introSystem(teach: boolean): string {
+  return [
+    teach
+      ? 'Alguien quiere entender un tema y se lo vas a explicar construyendo, pieza a pieza, un pequeño programa que lo modela.'
+      : 'Alguien te ha pedido un programa y lo vas a construir delante de él, pieza a pieza, explicándolo.',
+    'Antes de empezar, dile en una o dos frases cortas (menos de treinta palabras en total) qué vais a hacer y cómo lo vais a abordar. Cercano y directo, en español, sin código ni listas. Solo esas frases: se leerán en voz alta.',
+  ].join('\n')
 }
 
 export function formulaSystem(): string {

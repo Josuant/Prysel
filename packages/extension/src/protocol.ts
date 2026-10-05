@@ -136,6 +136,10 @@ export interface StepMessage {
   say: string
   /** La línea donde quedó su sentencia. */
   line: number
+  /** Si lo lleva, el lienzo avisa (`spoken`) cuando ha terminado de decir su frase. */
+  seq?: number
+  /** El trozo exacto del código de la pieza que se subraya mientras se dice (lo elige el JEV). */
+  mark?: string
   /**
    * Qué le pasa: aparece (`born`, por defecto), llega su explicación (`told`: ya estaba), cambia
    * (`changed`) o está a punto de irse (`leaving`).
@@ -174,6 +178,8 @@ export interface SayMessage {
   text: string
   /** El elemento del que se habla: la cámara va a él. */
   focus?: string
+  /** Si lo lleva, el lienzo avisa (`spoken`) cuando ha terminado de decirlo. */
+  seq?: number
 }
 
 export type WebviewMessage =
@@ -273,6 +279,16 @@ export interface JevKeyMessage {
   type: 'jevKey'
 }
 
+/**
+ * El lienzo terminó de decir en voz alta lo que se le mandó con ese `seq` (o no lo dijo: la voz está apagada).
+ * Es lo que deja al anfitrión esperar a que se acabe de hablar antes de enseñar lo siguiente.
+ */
+export interface SpokenMessage {
+  type: 'spoken'
+  seq: number
+  spoke: boolean
+}
+
 /** Detener lo que una orden esté construyendo paso a paso. */
 export interface StopOrderMessage {
   type: 'stopOrder'
@@ -292,6 +308,7 @@ export type HostMessage =
   | CommandMessage
   | JevKeyMessage
   | StopOrderMessage
+  | SpokenMessage
   | ClearCallsMessage
   | PickModelMessage
   | ReadyMessage
@@ -536,6 +553,12 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   }
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
+  if (type === 'spoken') {
+    const { seq, spoke } = value as { seq?: unknown; spoke?: unknown }
+    return Number.isInteger(seq) && typeof spoke === 'boolean'
+      ? { type: 'spoken', seq: seq as number, spoke }
+      : null
+  }
   if (type === 'clearCalls') return { type: 'clearCalls' }
   if (type === 'pickModel') return { type: 'pickModel' }
   if (type === 'newLesson') return { type: 'newLesson' }

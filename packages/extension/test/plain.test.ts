@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { localDecider } from '../src/jev/local.ts'
+import { bestMatch } from '../webview/src/marking.ts'
 import {
   CodeStream,
   LineStream,
   formulaOf,
+  fragmentsOf,
   judgeChunk,
+  judgeInterruption,
+  judgeMarks,
   sentenceOf,
   stageFromLine,
   type Chunk,
@@ -162,6 +166,80 @@ describe('una frase, una fórmula', () => {
     expect(sentenceOf('«Recorremos\ncada nota»')).toBe('Recorremos cada nota')
     expect(formulaOf('```\ny = 1 / (1 + exp(-x))\n```')).toBe('1 / (1 + exp(-x))')
     expect(formulaOf('f(x) = `x**2`')).toBe('x**2')
+  })
+})
+
+describe('subrayar la parte exacta de la que habla una frase', () => {
+  it('los trozos de una pieza entre los que elige el JEV: llamadas, nombres, números y textos', () => {
+    expect(fragmentsOf('elif abs(sum(pesos) - 1.0) > 0.001:')).toEqual([
+      'abs(sum(pesos) - 1.0)',
+      'sum(pesos)',
+      'abs',
+      'sum',
+      'pesos',
+      '1.0',
+      '0.001',
+    ])
+    expect(fragmentsOf('# comentario\ntotal = total + nota')).toEqual(['total', 'nota'])
+    expect(fragmentsOf('print("Hola")')).toEqual(['"Hola"'])
+  })
+
+  it('el JEV elige uno por frase (o ninguno), todos en una petición', async () => {
+    const { marks } = await judgeMarks(localDecider(), [
+      { code: 'total = total + nota', say: 'Sumamos cada nota al total.' },
+      { code: 'print(total)', say: 'Y lo enseñamos.' },
+      { code: 'x = 1', say: '' },
+    ])
+    // El decisor local subraya el nombre que la frase dice tal cual.
+    expect(marks).toEqual(['total', '', ''])
+  })
+
+  it('en el nodo, se subraya el campo que lleva ese trozo', () => {
+    const fields = ['¿', 'abs(sum(pesos) − 1.0)', '>', '0.001', '?']
+    expect(bestMatch(fields, 'abs(sum(pesos) - 1.0)')).toBe(1)
+    expect(bestMatch(fields, '0.001')).toBe(3)
+    // Si ningún campo lo lleva entero, el trozo más largo de él que haya escrito.
+    expect(bestMatch(['total', '=', 'total + nota'], 'sum(total + nota)')).toBe(2)
+    expect(bestMatch(fields, 'media')).toBe(-1)
+    expect(bestMatch(fields, '')).toBe(-1)
+  })
+})
+
+describe('si el usuario interrumpe: ¿vale lo que ya estaba preparado?', () => {
+  const ask = async (said: string) =>
+    (
+      await judgeInterruption(localDecider(), {
+        building: 'un programa que calcule la media',
+        said,
+        pending: 'print(media)',
+      })
+    ).what
+
+  it('el JEV decide: seguir, ajustar lo que falta, u otra cosa', async () => {
+    expect(await ask('vale, sigue')).toBe('seguir')
+    expect(await ask('mejor usa un bucle while')).toBe('ajustar')
+    expect(await ask('explícame cómo funciona el amor')).toBe('otra')
+  })
+
+  it('con dudas, manda lo que el usuario acaba de decir', async () => {
+    const unsure = {
+      id: 'duda',
+      decide: () =>
+        Promise.resolve({
+          answers: {
+            interrupcion: {
+              type: 'choice' as const,
+              choice: 'seguir',
+              confidence: 0.3,
+              probabilities: {},
+            },
+          },
+          ms: 1,
+        }),
+    }
+    expect((await judgeInterruption(unsure, { building: 'x', said: 'y', pending: '' })).what).toBe(
+      'otra',
+    )
   })
 })
 

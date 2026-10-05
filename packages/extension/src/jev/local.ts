@@ -134,11 +134,13 @@ function targetIn(text: string, options: Record<string, string | null>): JevAnsw
   return pick('ninguno', SURE)
 }
 
+const textOf = (value: unknown) => (typeof value === 'string' ? value : '')
+
 export function localDecider(): Decider {
   return {
     id: 'local',
     decide(request: JevRequest) {
-      const state = request.state as { orden?: unknown; codigo?: unknown }
+      const state = request.state as { orden?: unknown; codigo?: unknown; nuevo?: unknown }
       const text = plain(typeof state.orden === 'string' ? state.orden : '')
       const intent = first(INTENT_WORDS, text)
       const answers: Record<string, JevAnswer> = {}
@@ -189,6 +191,24 @@ export function localDecider(): Decider {
           }
         } else if (id === 'rango') {
           answers[id] = pick('de -6 a 6', SURE)
+        } else if (/^m\d+$/.test(id) && question.type === 'choice') {
+          // El trozo que la frase nombra tal cual; si no nombra ninguno, nada que subrayar.
+          const said = plain(question.instructions.split('»')[0] ?? '')
+          const hit = Object.entries(question.criteria).find(
+            ([option, fragment]) =>
+              option !== 'ninguno' &&
+              /^[A-Za-z_]\w*$/.test(fragment ?? '') &&
+              said.split(/[^a-z0-9_]+/).includes(plain(fragment ?? '')),
+          )
+          answers[id] = hit ? pick(hit[0], SURE) : pick('ninguno', SURE)
+        } else if (id === 'interrupcion') {
+          answers[id] = /\b(sigue|continua|vale|bien|gracias|ok)\b/.test(plain(textOf(state.nuevo)))
+            ? pick('seguir', SURE)
+            : /\b(pero|mejor|en vez|en lugar|tambien|ademas|cambia|usa)\b/.test(
+                  plain(textOf(state.nuevo)),
+                )
+              ? pick('ajustar', SURE)
+              : pick('otra', SURE)
         } else if (id === 'encaja' || id === 'pertinente') {
           answers[id] = { type: 'noul', noul: SURE }
         } else if (id === 'cumple') {

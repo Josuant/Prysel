@@ -44,6 +44,7 @@ import { CallLog } from './calls.ts'
 import { smartAsk } from './jev/ask.ts'
 import { splitOrder } from './jev/compose.ts'
 import { contextFor } from './jev/context.ts'
+import { judgeInterruption, type Interruption } from './jev/plain.ts'
 import { build, modify, summaryOf, type Outcome, type Stagehand } from './jev/director.ts'
 import { decideCommand, type Directive, type Effect } from './jev/engine.ts'
 import { deepseekProvider, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
@@ -910,6 +911,8 @@ interface OrderContext {
   message: CommandMessage
   decider: Decider
   provider: AiProvider | null
+  /** Lo que se estaba construyendo cuando llegó esta orden, y se dejó a medias para tenerla en cuenta. */
+  resume?: string
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -925,7 +928,11 @@ const STEP_PAUSE_MS = 700
  * otro cambio suyo. Las complejas (escribir un algoritmo, varias órdenes en una) las redacta la IA
  * generativa y las juzga el JEV (ver `jev/compose.ts`).
  */
-async function handleCommand(context: vscode.ExtensionContext, message: CommandMessage) {
+async function handleCommand(
+  context: vscode.ExtensionContext,
+  message: CommandMessage,
+  resume?: string,
+) {
   const doc = currentDoc
   if (!doc || doc.languageId !== 'python') return
   const reply = (directive: Directive) => {
@@ -983,7 +990,13 @@ async function handleCommand(context: vscode.ExtensionContext, message: CommandM
   for (const [id, fill] of fills) {
     if (fill.state === 'waiting' && now - fill.at > FILL_PATIENCE_MS) fills.delete(id)
   }
-  const order: OrderContext = { doc, message, decider, provider }
+  const order: OrderContext = {
+    doc,
+    message,
+    decider,
+    provider,
+    ...(resume === undefined ? {} : { resume }),
+  }
   try {
     const decision = await decideOrder(order, message.text, false)
     if (decision === null) return changed()
@@ -1093,7 +1106,12 @@ async function carryOut(
   }
   const { effect } = directive
   if ((effect.type === 'compose' || effect.type === 'modify') && provider) {
-    return runDirected(doc, decider, provider, text, effect)
+    // Si se interrumpió algo para atender esto, la IA lo sabe: termina lo que faltaba con lo nuevo en cuenta.
+    const asked =
+      order.resume === undefined
+        ? text
+        : `${text}\n(Se estaba construyendo «${order.resume}» y se dejó a medias al oír esto. Tenlo en cuenta: termina lo que falte o cámbialo, sin repetir lo que ya está escrito.)`
+    return runDirected(doc, decider, provider, asked, effect, text)
   }
   if (effect.type === 'lesson') {
     await vscode.commands.executeCommand('prysel.explainFile')
@@ -1114,6 +1132,73 @@ const builds = new Map<string, AbortController>()
 
 /** Las líneas de lo último que una orden construyó o cambió en cada documento: «eso», «lo de antes». */
 const lastWork = new Map<string, { from: number; to: number }>()
+
+/** Lo que el lienzo está diciendo en voz alta y aún no ha avisado de que terminó, por su número. */
+const speaking = new Map<number, (spoke: boolean) => void>()
+let speechSeq = 0
+
+/** Lo más que se espera a que el lienzo avise de que terminó de hablar. */
+const SPEECH_PATIENCE_MS = 25_000
+/** Entre el final de una frase y lo siguiente: un respiro. */
+const AFTER_SPEECH_MS = 280
+
+/** Lo que se está construyendo en un documento: qué se pidió, qué hay preparado, y cuándo termina. */
+interface Building {
+  command: string
+  /** El código de los trozos ya preparados (juzgados, con sus frases) y aún sin escribir. */
+  pending: string[]
+  done: Promise<void>
+}
+const building = new Map<string, Building>()
+
+/**
+ * Una orden llega del lienzo. Si no se está construyendo nada, se atiende sin más. Si se está construyendo,
+ * es una interrupción: el JEV mira lo que se pedía, lo que hay preparado sin escribir y lo que se acaba de
+ * decir, y decide: seguir (lo preparado vale), ajustar (se para, y lo que faltaba se rehace con lo nuevo en
+ * cuenta) u otra cosa (se para y se atiende lo nuevo).
+ */
+async function interrupt(context: vscode.ExtensionContext, message: CommandMessage) {
+  const doc = currentDoc
+  const active = doc ? building.get(doc.uri.toString()) : undefined
+  if (!doc || !active) return handleCommand(context, message)
+  let what: Interruption = 'otra'
+  const decider = await pickDecider(context)
+  if (decider) {
+    try {
+      what = (
+        await judgeInterruption(decider, {
+          building: active.command,
+          said: message.text,
+          pending: active.pending.join('\n'),
+        })
+      ).what
+    } catch {
+      what = 'otra'
+    }
+  }
+  if (what === 'seguir') {
+    postToAll({
+      type: 'decision',
+      id: message.id,
+      version: doc.version,
+      directive: { kind: 'ignored', say: 'Sigo con lo que estaba construyendo.' },
+      evidence: [],
+      engine: decider?.id ?? '',
+      jevMs: 0,
+    })
+    return
+  }
+  // Se deja lo que se estaba haciendo (lo escrito se queda) y, cuando haya parado, se atiende lo nuevo.
+  stopBuild(doc)
+  await active.done
+  await refresh()
+  // El lienzo mandó la orden con la versión que veía entonces: la de ahora es la que vale.
+  return handleCommand(
+    context,
+    { ...message, version: doc.version },
+    what === 'ajustar' ? active.command : undefined,
+  )
+}
 
 /** Detiene la construcción en marcha de un documento, si la hay. Lo ya escrito se queda. */
 function stopBuild(doc: vscode.TextDocument | null) {
@@ -1137,14 +1222,25 @@ async function runDirected(
   provider: AiProvider,
   command: string,
   effect: Extract<Effect, { type: 'compose' | 'modify' }>,
+  /** Lo que dijo el usuario, sin lo que se le añade para la IA. */
+  said?: string,
 ): Promise<boolean> {
   const key = doc.uri.toString()
   builds.get(key)?.abort()
   const control = new AbortController()
   builds.set(key, control)
   const { signal } = control
+  /** Lo que el director tiene preparado y aún no ha escrito: la recámara. */
+  const state: Building = { command: said ?? command, pending: [], done: Promise.resolve() }
+  let finish: () => void = () => undefined
+  state.done = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  building.set(key, state)
   const parser = await getParser()
   const shown = () => currentDoc?.uri.toString() === key
+  /** El aviso pendiente de lo último que se mandó decir: se cumple cuando el lienzo termina de hablar. */
+  let heard: Promise<boolean> | null = null
   /** Por dónde ha ido pasando el trabajo: lo que después es «lo último que se hizo». */
   let span: { from: number; to: number } | null = null
   const host: Stagehand = {
@@ -1178,6 +1274,18 @@ async function runDirected(
         postToAll({ type: 'progress', gen: effect.gen, text: event.text })
         return
       }
+      // Lo que lleva voz lleva un número: el lienzo avisa con él cuando ha terminado de decirlo.
+      const seq = event.say === '' ? undefined : ++speechSeq
+      heard =
+        seq === undefined
+          ? null
+          : new Promise<boolean>((resolve) => {
+              speaking.set(seq, resolve)
+            })
+      if (event.type === 'say') {
+        postToAll({ type: 'say', text: event.say, ...(seq === undefined ? {} : { seq }) })
+        return
+      }
       // Primero el programa nuevo, luego el paso: el lienzo enfoca un nodo que ya tiene.
       await refresh()
       postToAll({
@@ -1188,9 +1296,30 @@ async function runDirected(
         line: event.line,
         effect: event.effect,
         ...(event.wide ? { wide: true } : {}),
+        ...(event.mark ? { mark: event.mark } : {}),
+        ...(seq === undefined ? {} : { seq }),
       })
     },
     wait: (ms) => pauseFor(ms, signal),
+    buffer(pending) {
+      state.pending = [...pending]
+    },
+    async settle(estimate) {
+      const started = Date.now()
+      const pending = heard
+      heard = null
+      if (!pending || !shown()) return pauseFor(estimate, signal)
+      // Hasta que el lienzo avise de que terminó de hablar (o se detenga, o tarde demasiado en avisar).
+      const spoke = await Promise.race([
+        pending,
+        pauseFor(Math.max(SPEECH_PATIENCE_MS, estimate * 4), signal).then(() => false),
+      ])
+      // Si no hubo voz (está apagada), se deja el tiempo de leerlo.
+      await pauseFor(
+        spoke ? AFTER_SPEECH_MS : Math.max(0, estimate - (Date.now() - started)),
+        signal,
+      )
+    },
   }
   let outcome: Outcome
   try {
@@ -1229,6 +1358,8 @@ async function runDirected(
   }
   control.abort()
   if (builds.get(key) === control) builds.delete(key)
+  if (building.get(key) === state) building.delete(key)
+  finish()
   if (span) {
     // Hasta el final de la última sentencia tocada (si es un bloque, con su cuerpo).
     const { from, to } = span as { from: number; to: number }
@@ -1559,13 +1690,18 @@ function wireWebview(webview: vscode.Webview) {
       return
     }
     if (parsed.type === 'command') {
-      // Una orden nueva interrumpe lo que se estuviera construyendo: quien habla tiene la palabra.
-      stopBuild(currentDoc)
-      if (extensionContext) void handleCommand(extensionContext, parsed)
+      // Mientras se construye algo, lo que diga el usuario lo interrumpe: el JEV decide si lo que estaba
+      // preparado sigue valiendo, si hay que rehacer lo que faltaba, o si es otra cosa.
+      if (extensionContext) void interrupt(extensionContext, parsed)
       return
     }
     if (parsed.type === 'clearCalls') {
       callLog.clear()
+      return
+    }
+    if (parsed.type === 'spoken') {
+      speaking.get(parsed.seq)?.(parsed.spoke)
+      speaking.delete(parsed.seq)
       return
     }
     if (parsed.type === 'stopOrder') {

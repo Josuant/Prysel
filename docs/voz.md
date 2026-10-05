@@ -257,7 +257,27 @@ Detalles:
 - Una parte del plan a la que no fue ningún código se quita al final, con su rótulo.
 - Los cambios sobre lo ya escrito (`modify.ts`) y las preguntas con opciones (`ask.ts`) todavía piden una lista de objetos; son lo siguiente que pasar a este esquema.
 
-## 12. Medidas
+## 12. El ritmo lo marca la voz, y el diagrama acompaña (hecho)
+
+- **No se pasa al paso siguiente hasta que se ha terminado de hablar.** Cada cosa que se manda decir lleva un número; el lienzo avisa (`spoken`) cuando su voz termina, y el director espera a ese aviso (`Stagehand.settle`). Ya no se calcula la espera por la longitud de la frase: eso solo queda como reserva, para cuando la voz está apagada (el tiempo de leerla) o el aviso no llega.
+- **Frases más cortas.** A la IA se le piden como mucho doce palabras por pieza, y del plan se dice solo el título de cada parte (lo demás se lee en su caja).
+- **Un comentario de entrada.** Antes de enseñar el plan se dice, en una o dos frases, qué se va a hacer y cómo. Se pide a la vez que el plan, así que no añade espera; con el archivo vacío se ve escrito en el centro del lienzo.
+- **El zoom justo.** La cámara se acerca a una pieza pequeña hasta que ocupa un tercio del lienzo (se lee sin esfuerzo) y se aleja de una grande lo necesario para verla entera; cuando el JEV dice que hay que ver el conjunto, algo más lejos. Si la pieza está dentro de una función que no se está viendo, el lienzo entra en ella.
+- **Lo que se dice, escrito**: un subtítulo a mano, fijo sobre el lienzo, que cambia con cada paso. Se lee además de oírse, con cualquier zoom. (Empezó como una nota junto a la pieza, pero la cámara se alejaba para abarcarla.)
+- **De dónde vienen los datos**: los nodos cuyos valores usa la pieza que se explica laten con ella (`echo`), para que se vea la relación sin seguir un cable.
+- **Más ayudas visuales**: una lista de números escrita tal cual (`notas = [7, 4, 9]`) lleva su dibujo (`# prysel:ver serie «notas» 7 4 9`). Sale del propio código, sin preguntar a ningún modelo. Se suma a la curva de una función y a la tabla de valores.
+
+## 13. Subrayar, explicar rama a rama, y la recámara (hecho)
+
+- **Un bloque que se escribe entero se explica parte a parte.** Un `if` con sus `elif` (o un `try`) no se puede armar línea a línea, así que se escribe de una vez; pero después se va señalando cada rama, con su frase y su foco, una detrás de otra (`BuildStep.parts`, efecto `told`). El `else:` a secas no es un momento: no dice nada por sí solo.
+- **El rotulador.** Mientras se dice una frase se subraya, como en un cuaderno, **el trozo exacto del nodo del que habla** («se calcula el valor absoluto…» → `abs(sum(pesos) - 1.0)`). El trozo lo elige el **JEV** entre un conjunto cerrado —las llamadas, los nombres, los números y los textos de esa pieza (`fragmentsOf`)—, todas las piezas de un trozo en una sola petición (`judgeMarks`). En el lienzo se busca el campo del nodo que lo lleva escrito (`marking.ts`) y se le pasa el trazo, de izquierda a derecha.
+- **Un zoom más cercano.** Hasta 1,6×, con la pieza ocupando la mitad del ancho. Lo que no cabe entero a un tamaño que se lea no se aleja hasta hacerse ilegible: se enseña su cabecera a 0,7× y lo de dentro se enfoca pieza a pieza.
+- **La recámara.** Mientras se enseña un trozo, los siguientes ya están preparados (juzgados por el JEV, con sus frases y sus subrayados): es un buffer de «lo que viene». Si el usuario dice algo a mitad, el **JEV decide qué hacer con lo preparado** (`judgeInterruption`), viendo lo que se pedía, lo que hay sin escribir y lo que se acaba de decir:
+  - **seguir**: lo nuevo no cambia nada (un comentario, un «vale»): se sigue con lo preparado;
+  - **ajustar**: lo nuevo corrige o matiza: se para (lo escrito se queda) y lo que faltaba se vuelve a pedir, con lo nuevo en cuenta;
+  - **otra**: es otra petición: se para y se atiende. Con dudas, es esta: lo que el usuario acaba de decir manda.
+
+## 14. Medidas
 
 RNF-01 pide ≤ 800 ms desde el final de la orden hasta la mutación visible. Cada orden enseña dos cifras: lo que tardó el motor en decidir y el total, desde que se pulsa Intro hasta que el cambio está pintado.
 

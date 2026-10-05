@@ -15,6 +15,8 @@
 export type Visual =
   | { kind: 'curva'; title: string; formula: string; from: number; to: number }
   | { kind: 'tabla'; title: string; formula: string; xs: number[] }
+  /** Los números de una lista, dibujados: se ve de un vistazo cuál sube y cuál baja. */
+  | { kind: 'serie'; title: string; values: number[] }
 
 const MAX_TITLE = 40
 const MAX_FORMULA = 120
@@ -164,6 +166,7 @@ const finite = (value: unknown): value is number =>
 
 /** ¿Se puede dibujar? La fórmula se entiende y da números en lo que se va a enseñar. */
 export function drawable(visual: Visual): boolean {
+  if (visual.kind === 'serie') return visual.values.length >= 2
   const xs =
     visual.kind === 'curva' ? [visual.from, (visual.from + visual.to) / 2, visual.to] : visual.xs
   return xs.filter((x) => evaluate(visual.formula, x) !== null).length >= Math.min(2, xs.length)
@@ -197,6 +200,9 @@ const short = (value: number) => String(Number(value.toPrecision(6)))
 
 /** La marca de una ayuda, como va en el código (sin la almohadilla). */
 export function formatVisual(visual: Visual): string {
+  if (visual.kind === 'serie') {
+    return `prysel:ver serie «${visual.title}» ${visual.values.map(short).join(' ')}`
+  }
   const where =
     visual.kind === 'curva'
       ? `x de ${short(visual.from)} a ${short(visual.to)}`
@@ -206,6 +212,11 @@ export function formatVisual(visual: Visual): string {
 
 /** Lee la marca de una ayuda (lo que el analizador deja en `ProgramNode.aid`). */
 export function parseVisual(text: string): Visual | null {
+  const series = /^serie\s+«([^»]*)»\s+(.+)$/.exec(text.trim())
+  if (series) {
+    const values = (series[2] ?? '').trim().split(/\s+/).map(Number).filter(Number.isFinite)
+    return values.length < 2 ? null : { kind: 'serie', title: series[1] ?? '', values }
+  }
   const match = /^(curva|tabla)\s+«([^»]*)»\s+y\s*=\s*(.+),\s*x\s+(de|en)\s+(.+)$/.exec(text.trim())
   if (!match) return null
   const [, kind, title = '', formula = '', , rest = ''] = match
@@ -218,6 +229,24 @@ export function parseVisual(text: string): Visual | null {
   }
   const xs = rest.trim().split(/\s+/).map(Number).filter(Number.isFinite).slice(0, MAX_XS)
   return xs.length < 2 ? null : { kind: 'tabla', title, formula: formula.trim(), xs }
+}
+
+/**
+ * Una lista de números escrita tal cual (`notas = [7, 4, 9]`) se entiende mejor viéndola: su ayuda es el
+ * dibujo de sus valores. No hace falta preguntarle a nadie: sale del propio código.
+ */
+export function seriesIn(code: string): Visual | null {
+  const match = /^([A-Za-z_]\w*)\s*=\s*\[([^\]]+)\]\s*$/.exec(code.trim())
+  if (!match) return null
+  const parts = (match[2] ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part !== '')
+  const values = parts.map(Number)
+  if (values.length < 3 || values.length > 24 || values.some((value) => !Number.isFinite(value))) {
+    return null
+  }
+  return { kind: 'serie', title: match[1] ?? '', values }
 }
 
 /** Añade la marca de una ayuda al final de la línea de la sentencia de un paso (si no lleva ya un comentario). */

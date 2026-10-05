@@ -36,7 +36,9 @@ import {
   codeSystem,
   formulaOf,
   formulaSystem,
+  introSystem,
   judgeChunk,
+  judgeMarks,
   planSystem,
   type Chunk,
   type ChunkVerdict,
@@ -45,7 +47,7 @@ import {
   tellPrompt,
   tellSystem,
 } from './plain.ts'
-import { formatVisual, visualOf } from './visual.ts'
+import { formatVisual, seriesIn, visualOf } from './visual.ts'
 import {
   LineMap,
   MAX_OPS,
@@ -92,13 +94,25 @@ export interface Stagehand {
   parses(code: string): boolean
   /** Algo que enseñar en el lienzo (ya con el programa nuevo delante). */
   show(event: Shown): Promise<void>
-  /** Espera (lo que tarda en decirse una frase), sin pasar de que se detenga. */
+  /** Espera un rato, sin pasar de que se detenga. */
   wait(ms: number): Promise<void>
+  /**
+   * Espera a que lo último que se enseñó **se haya dicho** en voz alta. Si no hay voz (está apagada, o no hay
+   * lienzo), espera `estimate`: lo que se tardaría en leerlo.
+   */
+  settle(estimate: number): Promise<void>
+  /**
+   * Lo que hay preparado y aún sin escribir (el código de cada trozo, en orden). Es la recámara: si el
+   * usuario interrumpe, con esto se decide si lo preparado sigue valiendo.
+   */
+  buffer?(pending: readonly string[]): void
 }
 
 export type Shown =
   /** En qué se está pensando ahora: lo que se lee mientras no hay nada nuevo que ver. */
   | { type: 'progress'; text: string }
+  /** Algo que decir sin señalar ninguna pieza: el comentario de entrada. */
+  | { type: 'say'; say: string }
   | {
       type: 'step'
       index: number
@@ -110,6 +124,8 @@ export type Shown =
        * `changed` y `leaving`: cambia, o está a punto de quitarse.
        */
       effect: 'born' | 'told' | 'changed' | 'leaving'
+      /** El trozo exacto del código de la pieza que se subraya mientras se dice su frase. */
+      mark?: string
       /** La cámara enseña el conjunto, no solo la pieza. */
       wide?: boolean
     }
@@ -318,13 +334,39 @@ interface Prepared {
   verdict: ChunkVerdict | null
   /** La parte del plan a la que va. */
   stage: number
-  /** La frase de cada pieza, en su orden. */
+  /** Los momentos del trozo: cada cosa que se enseña y se cuenta por separado. */
+  moments: Moment[]
+  /** La frase de cada momento, en su orden. */
   says: string[]
+  /** El trozo exacto del código que se subraya en cada momento (`''`: ninguno). Lo elige el JEV. */
+  marks: string[]
   formula: string | null
+}
+
+/**
+ * Un momento de la explicación: una pieza que aparece (un paso), o —en un bloque que se escribe entero, como
+ * un `if` con sus `elif`— cada una de sus partes, que se va señalando y contando después de escrito.
+ */
+interface Moment {
+  /** El paso del trozo al que pertenece. */
+  step: number
+  /** Cuántas líneas por debajo de la primera línea de ese paso está. */
+  offset: number
+  code: string
+}
+
+function momentsOf(chunk: Chunk): Moment[] {
+  return chunk.steps.flatMap((step, index) =>
+    step.parts && step.parts.length > 0
+      ? step.parts.map((part) => ({ step: index, offset: part.offset, code: part.code }))
+      : [{ step: index, offset: 0, code: step.code }],
+  )
 }
 
 /** Entre dos piezas que aparecen sin frase: lo justo para que se vea llegar cada una. */
 const QUIET_PACE_MS = 900
+/** Tras decir una idea clave (lo decide el JEV): un respiro antes de seguir. */
+const KEY_PAUSE_MS = 500
 
 /**
  * Construir algo nuevo. A la IA se le pide solo contenido, en llamadas pequeñas: la lista de partes, el
@@ -354,6 +396,14 @@ export async function build(
   const stages: Stage[] = []
   if (request.outline && !host.signal.aborted) {
     await host.show({ type: 'progress', text: 'Pensando el plan, a grandes rasgos…' })
+    const intro = players.provider
+      .generate({
+        system: introSystem(teach),
+        prompt: `Lo que se pidió: ${command}`,
+        maxTokens: 200,
+      })
+      .then((text) => sentenceOf(text, 260))
+      .catch(() => '')
     const source = listen(
       players.provider,
       {
@@ -364,6 +414,12 @@ export async function build(
       new LineStream(stageFromLine),
       host.signal,
     )
+    // El comentario de entrada: qué se va a hacer. Se pide a la vez que el plan y se dice antes de enseñarlo.
+    const opening = await intro
+    if (opening !== '' && !host.signal.aborted) {
+      await host.show({ type: 'say', say: opening })
+      await host.settle(paceOf({ level: 0, code: '', say: opening }, false))
+    }
     const skeleton = new BuildPlan(request.place)
     /** Una sola parte no es un plan: la primera espera a que llegue la segunda para dibujarse. */
     let held: Stage | null = null
@@ -381,12 +437,13 @@ export async function build(
       await host.show({
         type: 'step',
         index: stages.length,
-        say: `${stage.title}. ${stage.goal}`.trim(),
+        // Del plan se dice solo el título de cada parte: lo demás se lee en su caja.
+        say: stage.title,
         line: placed.line,
         effect: 'born',
         wide: true,
       })
-      await host.wait(Math.min(2200, 500 + stage.title.length * 40))
+      await host.settle(Math.min(2200, 500 + stage.title.length * 40))
       return true
     }
     for (;;) {
@@ -479,11 +536,12 @@ export async function build(
           stage = verdict.stage
         }
         const planStage = planned ? stages[stage] : undefined
+        const moments = momentsOf(chunk)
         const [says, formula] = safe
           ? await Promise.all([
               tellAll(players, {
                 command,
-                pieces: chunk.steps.map((step) => step.code),
+                pieces: moments.map((moment) => moment.code),
                 ...(planStage ? { stage: planStage } : {}),
                 written: seen.join('\n'),
                 teach,
@@ -492,7 +550,27 @@ export async function build(
             ])
           : [[], null]
         seen.push(chunk.code)
-        ready.push({ chunk, verdict, stage, says, formula })
+        // Una lista de números se ve mejor dibujada: su ayuda sale del propio código.
+        const [only] = chunk.steps
+        const series = chunk.steps.length === 1 && only ? seriesIn(only.code) : null
+        if (series && only) only.visual = series
+        // Y el JEV elige, de cada frase, de qué trozo exacto del código habla: es lo que se subrayará.
+        let marks: string[] = []
+        if (safe) {
+          try {
+            const chosen = await judgeMarks(
+              players.decider,
+              moments.map((moment, index) => ({ code: moment.code, say: says[index] ?? '' })),
+            )
+            marks = chosen.marks
+            tally.jevMs += chosen.ms
+          } catch {
+            marks = []
+          }
+        }
+        ready.push({ chunk, verdict, stage, moments, says, marks, formula })
+        // Lo preparado y aún sin escribir: lo que hay «en la recámara» si el usuario interrumpe.
+        host.buffer?.(ready.map((item) => item.chunk.code))
         // Tras un trozo que no se va a escribir no se prepara nada más.
         if (!safe) break
       }
@@ -513,6 +591,7 @@ export async function build(
       }
       item ??= ready.shift()
       if (!item || host.signal.aborted) break
+      host.buffer?.(ready.map((waiting) => waiting.chunk.code))
       const { chunk, verdict } = item
       if (verdict === null) {
         tally.trouble = 'El JEV dejó de responder: me detengo aquí.'
@@ -551,20 +630,32 @@ export async function build(
           await addAid(host, item.formula, placed.line, verdict.aid)
         }
         first ??= placed.line
-        const say = item.says[index] ?? ''
-        await host.show({
-          type: 'step',
-          index: tally.written,
-          say,
-          line: placed.line,
-          effect: 'born',
-          ...(verdict.wide ? { wide: true } : {}),
-        })
-        await host.wait(
-          say === ''
-            ? QUIET_PACE_MS
-            : paceOf({ level: 0, code: step.code, say }, verdict.pause && index === 0),
-        )
+        // Lo que se enseña y se cuenta de este paso: él mismo o, si es un bloque entero, cada una de sus
+        // partes (las ramas de un `if`/`elif`), una detrás de otra, ya escritas.
+        let shown = 0
+        for (const [at, moment] of item.moments.entries()) {
+          if (moment.step !== index) continue
+          const say = item.says[at] ?? ''
+          const mark = item.marks[at] ?? ''
+          await host.show({
+            type: 'step',
+            index: tally.written,
+            say,
+            line: placed.line + moment.offset,
+            effect: shown === 0 ? 'born' : 'told',
+            ...(verdict.wide && shown === 0 ? { wide: true } : {}),
+            ...(mark === '' ? {} : { mark }),
+          })
+          shown++
+          // Lo siguiente no aparece hasta que esto se haya dicho.
+          if (say === '') await host.wait(QUIET_PACE_MS)
+          else {
+            await host.settle(paceOf({ level: 0, code: moment.code, say }, false))
+            // Una idea clave se deja reposar un momento.
+            if (verdict.pause && index === 0 && shown === 1) await host.wait(KEY_PAUSE_MS)
+          }
+          if (host.signal.aborted) break
+        }
         if (host.signal.aborted) break
       }
       if (tally.trouble !== null) break
@@ -708,7 +799,7 @@ export async function modify(
         ...(verdict.wide ? { wide: true } : {}),
       })
     }
-    await host.wait(paceOf({ level: 0, code, say: op.say }, verdict.pause))
+    await host.settle(paceOf({ level: 0, code, say: op.say }, verdict.pause))
   }
   await source.finished
   if (!host.signal.aborted && tally.trouble === null) {

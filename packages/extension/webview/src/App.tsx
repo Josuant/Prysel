@@ -32,6 +32,7 @@ import type { Forced } from '../../src/jev/engine.ts'
 import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { CommandBar } from './CommandBar.tsx'
+import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
 import { topLevelOf } from '../../src/plan.ts'
@@ -118,6 +119,7 @@ interface Recording {
 }
 
 const NO_EDGES: SemanticEdge[] = []
+const NO_ECHO: readonly string[] = []
 const NO_SECTIONS: NonNullable<Program['sections']> = []
 const NO_RUNS: Record<string, RunView> = {}
 
@@ -201,10 +203,16 @@ export function App() {
     born?: boolean
     change?: 'changed' | 'leaving'
     wide?: boolean
+    /** El trozo exacto de su código que se subraya mientras se habla de ella. */
+    mark?: string
   } | null>(null)
   /** Lo que se le ha preguntado a cada modelo y lo que contestó, y si se está mirando esa pestaña. */
   const [calls, setCalls] = useState<CallEntry[]>([])
   const [tab, setTab] = useState<'canvas' | 'calls'>('canvas')
+  /** Lo que se está diciendo de la pieza enfocada: se ve escrito junto a ella, como una nota. */
+  const [caption, setCaption] = useState<string | null>(null)
+  /** El comentario de entrada de una construcción: se ve mientras aún no hay diagrama. */
+  const [intro, setIntro] = useState<string | null>(null)
   /** En qué está pensando la IA ahora mismo (mientras no hay nada nuevo que ver): se enseña en el diagrama. */
   const [thinking, setThinking] = useState<string | null>(null)
   /** La IA que redacta y el motor que decide ahora: lo dice la extensión. */
@@ -756,6 +764,26 @@ export function App() {
    * nodo que dice que **la IA está pensando**, colgado de donde está trabajando.
    */
   const deciding = order.phase === 'deciding'
+  /** La pieza de la que se está hablando (la que señala la orden), si se ve. */
+  const captionAt =
+    wanted === null
+      ? undefined
+      : (wanted.id ?? program?.nodes.find((n) => n.range && n.line === wanted.line)?.id)
+  /**
+   * De dónde saca sus datos la pieza de la que se habla: los nodos cuyos valores usa. Se iluminan con ella,
+   * para que se vea la relación (lo que se definió antes y ahora se aprovecha).
+   */
+  const echo = useMemo(() => {
+    if (captionAt === undefined || !program) return NO_ECHO
+    const sources = program.edges
+      .filter(
+        (edge) =>
+          edge.to === captionAt &&
+          (edge.relation === 'dependency' || edge.relation === 'transform'),
+      )
+      .map((edge) => edge.from)
+    return sources.length === 0 ? NO_ECHO : [...new Set(sources)]
+  }, [program, captionAt])
   const extras = useMemo(() => {
     const nodes: CanvasNode[] = []
     const links: SemanticEdge[] = []
@@ -775,19 +803,28 @@ export function App() {
         label: visual.title,
         viewer: {
           title: visual.title,
-          subtitle: `y = ${visual.formula}`,
+          subtitle:
+            visual.kind === 'serie' ? `${visual.values.length} valores` : `y = ${visual.formula}`,
           aid: true,
-          ...(visual.kind === 'curva'
-            ? { series: curveOf(visual) }
-            : {
-                table: {
-                  columns: [
-                    { name: 'x', dtype: '' },
-                    { name: 'y', dtype: '' },
-                  ],
-                  rows: tableOf(visual),
+          ...(visual.kind === 'serie'
+            ? {
+                series: {
+                  at: visual.values.map((_, index) => index),
+                  values: visual.values,
+                  n: visual.values.length,
                 },
-              }),
+              }
+            : visual.kind === 'curva'
+              ? { series: curveOf(visual) }
+              : {
+                  table: {
+                    columns: [
+                      { name: 'x', dtype: '' },
+                      { name: 'y', dtype: '' },
+                    ],
+                    rows: tableOf(visual),
+                  },
+                }),
         },
       })
       links.push({ from: shown.id, to: id, relation: 'transform' })
@@ -926,6 +963,21 @@ export function App() {
         : null,
     [spotId, spotKey, spotBorn, spotChange, spotWide],
   )
+  // Mientras se habla de una pieza, se subraya —como con un rotulador— el trozo exacto del que habla la
+  // frase. Se espera un momento a que el nodo esté pintado en su sitio; al pasar a otra cosa, se quita.
+  const spotMark = wanted?.mark
+  useEffect(() => {
+    if (spotId === null || !spotMark) return
+    let unmark: (() => void) | null = null
+    const timer = setTimeout(() => {
+      const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(spotId)}"]`)
+      unmark = node ? markIn(node, spotMark) : null
+    }, 450)
+    return () => {
+      clearTimeout(timer)
+      unmark?.()
+    }
+  }, [spotId, spotMark, spotKey])
   // Lo que una orden quiere enseñar puede no estar a la vista: dentro de una función que no se está viendo
   // (se entra en ella) o de una etapa plegada (se abre). Vale también para lo que se acaba de crear.
   // Las etapas plegadas que hay que abrir: la del momento de la lección y la de lo que una orden enseña. Van
@@ -1042,7 +1094,13 @@ export function App() {
             }
           : previous,
       )
-      if (voice && message.say) speak(message.say)
+      // Al terminar de decirlo se avisa: la extensión no enseña lo siguiente hasta entonces.
+      const heard = (spoke: boolean) => {
+        if (message.seq !== undefined) post({ type: 'spoken', seq: message.seq, spoke })
+      }
+      if (voice && message.say) speak(message.say, 'es', false, heard)
+      else heard(false)
+      setCaption(message.say ? message.say : null)
       // La pieza aparece (con su animación) y la cámara va a ella; de lejos, si el JEV dice que hay que ver el conjunto.
       setWanted({
         line: message.line,
@@ -1054,10 +1112,15 @@ export function App() {
             ? {}
             : { born: true }),
         ...(message.wide ? { wide: true } : {}),
+        ...(message.mark ? { mark: message.mark } : {}),
       })
     }
     onGenerated.current = (message) => {
-      if (message.done) setThinking(null)
+      if (message.done) {
+        setThinking(null)
+        setCaption(null)
+        setIntro(null)
+      }
       const note = message.done
         ? (message.say ?? message.error ?? '')
         : message.ok
@@ -1090,10 +1153,16 @@ export function App() {
       if (message.line !== undefined) setWanted({ line: message.line, key: ++spotSeq.current })
     }
     onSay.current = (message) => {
+      setThinking(null)
       setOrder((previous) =>
         previous.phase === 'done' ? { ...previous, note: message.text } : previous,
       )
-      if (voice) speak(message.text)
+      const heard = (spoke: boolean) => {
+        if (message.seq !== undefined) post({ type: 'spoken', seq: message.seq, spoke })
+      }
+      if (voice) speak(message.text, 'es', false, heard)
+      else heard(false)
+      setIntro(message.seq === undefined ? null : message.text)
     }
   })
   const canvasLabel = program
@@ -1309,6 +1378,7 @@ export function App() {
                 fitKey={view.viewKey}
                 cursor={cursor}
                 spotlight={spotlight}
+                echo={echo}
                 showActions
                 showStatus={started}
                 ariaLabel={canvasLabel}
@@ -1317,10 +1387,17 @@ export function App() {
               />
             </ErrorBoundary>
           ) : (
-            <EmptyState thinking={extras.busy} />
+            <EmptyState thinking={extras.busy} intro={intro} />
           )}
           {program && (
             <>
+              {/* Lo que se está diciendo, escrito: un subtítulo a mano sobre el lienzo. Va fijo (no en el
+                  diagrama) para que se lea con cualquier zoom y la cámara no tenga que ir a buscarlo. */}
+              {caption !== null && (
+                <div className="canvas-caption" role="status" aria-live="off" key={caption}>
+                  {caption}
+                </div>
+              )}
               <div className="canvas-float" data-at="top-right">
                 <DensityControl value={density} onChange={changeDensity} />
               </div>
@@ -1572,7 +1649,15 @@ function baseName(file: string): string {
   return file.split(/[\\/]/).pop() ?? file
 }
 
-function EmptyState({ thinking }: { thinking: string | null }) {
+function EmptyState({ thinking, intro }: { thinking: string | null; intro: string | null }) {
+  // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
+  if (intro !== null) {
+    return (
+      <div className="flex h-full items-center justify-center p-6" role="status">
+        <p className="intro-card">{intro}</p>
+      </div>
+    )
+  }
   // Aún no hay diagrama, pero la IA ya está en ello: se dice aquí, donde va a aparecer.
   if (thinking !== null) {
     return (

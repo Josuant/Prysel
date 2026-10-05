@@ -1785,6 +1785,99 @@ button.fn-menu__crumb:hover {
   animation: prysel-dots 1200ms steps(1, end) infinite;
 }
 
+/* El rotulador: la parte exacta del nodo de la que habla la frase que se está diciendo, subrayada como en un
+   cuaderno. El trazo entra de izquierda a derecha, con los bordes irregulares de algo hecho a mano. */
+[data-marked] {
+  border-radius: 0.6em 0.25em 0.7em 0.3em / 0.35em 0.7em 0.3em 0.6em;
+  background-image: linear-gradient(
+    100deg,
+    transparent 0%,
+    color-mix(in srgb, var(--state-warning) 62%, transparent) 3%,
+    color-mix(in srgb, var(--state-warning) 44%, transparent) 55%,
+    color-mix(in srgb, var(--state-warning) 58%, transparent) 97%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  background-position: 0 62%;
+  background-size: 100% 82%;
+  /* Gana a la animación de entrada de la pieza, si acaba de aparecer: el trazo se tiene que ver. */
+  animation: prysel-marker 700ms cubic-bezier(0.3, 0.7, 0.2, 1) both !important;
+}
+@keyframes prysel-marker {
+  from {
+    background-size: 0% 82%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-marked] {
+    animation: none !important;
+  }
+  .canvas-caption {
+    animation: none;
+  }
+}
+/* El subtítulo: lo que se está diciendo de la pieza, escrito a mano sobre el lienzo. */
+.canvas-caption {
+  position: absolute;
+  z-index: 9;
+  top: 14px;
+  left: 50%;
+  max-width: min(640px, calc(100% - 340px));
+  padding: 6px 18px 8px;
+  transform: translateX(-50%) rotate(-0.6deg);
+  border-radius: 14px 18px 12px 20px / 16px 12px 18px 14px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  font-family: 'Caveat', 'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive;
+  font-size: 24px;
+  line-height: 28px;
+  text-align: center;
+  pointer-events: none;
+  animation: prysel-caption 380ms ease-out both;
+}
+@keyframes prysel-caption {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px) rotate(-0.6deg);
+  }
+}
+
+/* De dónde saca sus datos la pieza que se está explicando: esos nodos laten con ella, con un halo que va y
+   viene. Así se ve la relación —esto usa aquello— sin tener que seguir un cable. */
+:is(.flow-node, .vchip)[data-echo] {
+  animation: prysel-echo 1500ms ease-in-out infinite;
+}
+@keyframes prysel-echo {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  50% {
+    filter: drop-shadow(0 0 7px var(--accent));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.flow-node, .vchip)[data-echo] {
+    animation: none;
+    filter: drop-shadow(0 0 5px var(--accent));
+  }
+}
+.intro-card {
+  max-width: 460px;
+  margin: 0;
+  padding: 16px 20px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 23px;
+  text-align: center;
+  animation: prysel-born 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
 /* Lo que una orden **cambia** en algo que ya estaba: un barrido de luz lo recorre y la pieza late una vez,
    para que se vea dónde está la diferencia. Lo que una orden **quita** se despide antes de irse: se
    apaga, encoge y se tiñe del color del aviso. */

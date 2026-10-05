@@ -43,6 +43,11 @@ export interface BuildStep {
    * cual, en vez de armarse línea a línea.
    */
   whole?: boolean
+  /**
+   * En un paso entero, sus partes: cada sentencia de dentro (cada rama de un `if`/`elif`, cada línea de un
+   * `try`), con cuántas líneas hay desde la primera. Se escribe de una vez, pero se explica parte a parte.
+   */
+  parts?: { offset: number; code: string }[]
 }
 
 // ───────────────────────── del streaming a los pasos ─────────────────────────
@@ -158,10 +163,12 @@ interface Level {
   branch?: 'no'
   /** La línea de la última sentencia escrita en este bloque. */
   last: number | null
+  /** Cuántas líneas ocupaba esa sentencia al escribirla: dónde acaba, si no deja un nodo al que agarrarse. */
+  span?: number
 }
 
 export type Placed =
-  | { ok: true; change: Change; line: number; opens: boolean }
+  | { ok: true; change: Change; line: number; opens: boolean; span?: number }
   /** Un `else:` no escribe nada: abre el camino del «no» para los pasos que siguen. */
   | { ok: true; change: null; line: number; opens: true }
   | { ok: false; error: string }
@@ -178,6 +185,44 @@ const statementOf = (code: string) =>
  * escribir suelto, pero tampoco es un error. Va encima de la sentencia del paso siguiente.
  */
 export const isCommentOnly = (code: string) => code.trim() !== '' && statementOf(code) === ''
+
+/** Cuántas líneas de comentario (o en blanco) lleva un código antes de su primera sentencia. */
+function leadOf(code: string): number {
+  const rows = code.split('\n')
+  const first = rows.findIndex((row) => row.trim() !== '' && !row.trimStart().startsWith('#'))
+  return Math.max(0, first)
+}
+
+/**
+ * Escribe un código justo debajo de una sentencia de la que solo se sabe dónde está en el texto (su primera
+ * línea y cuántas ocupa), con su misma sangría. Es la salida cuando esa sentencia no dejó un nodo.
+ */
+function insertBelow(
+  source: string,
+  line: number,
+  span: number,
+  code: string,
+): { change: Change; line: number } | null {
+  const rows = source.split('\n')
+  const head = rows[line - 1]
+  const tail = line + span - 1
+  if (head === undefined || rows[tail - 1] === undefined) return null
+  const eol = source.includes('\r\n') ? '\r\n' : '\n'
+  const indent = ' '.repeat(head.length - head.trimStart().length)
+  // El final de la última línea de esa sentencia (sin su retorno de carro, si lo lleva).
+  const end =
+    rows.slice(0, tail).reduce((sum, row) => sum + row.length + 1, 0) -
+    1 -
+    (rows[tail - 1]?.endsWith('\r') ? 1 : 0)
+  const written = code
+    .split('\n')
+    .map((row) => (row.trim() === '' ? '' : indent + row.trimEnd()))
+    .join(eol)
+  return {
+    change: { edits: [{ start: end, end, text: eol + written }], select: { line: tail + 1 } },
+    line: tail + 1 + leadOf(code),
+  }
+}
 
 /** Una cabecera compuesta sola (`for x in y:`): su cuerpo llega en los pasos siguientes. */
 const isHeader = (statement: string) => !statement.includes('\n') && /:\s*$/.test(statement)
@@ -234,7 +279,15 @@ export class BuildPlan {
     const code = step.visual ? withVisual(body, step.visual) : body
     const previous = at(here.last)
     const owner = at(here.owner)
-    if (here.last !== null && !previous) return { ok: false, error: 'El paso anterior ya no está.' }
+    const span = code.split('\n').length
+    // Lo anterior no dejó un nodo al que agarrarse (un docstring, un `pass`, una sentencia con decoradores):
+    // no es un error. Se sabe en qué línea acaba, y lo nuevo se escribe justo debajo, a su misma altura.
+    if (here.last !== null && !previous) {
+      const below = insertBelow(program.source, here.last, here.span ?? 1, code)
+      return below
+        ? { ok: true, ...below, opens, span }
+        : { ok: false, error: 'No encuentro dónde seguir escribiendo.' }
+    }
     if (here.owner !== null && !owner) return { ok: false, error: 'El bloque del paso ya no está.' }
     const where: Spot = previous
       ? { after: previous.id }
@@ -253,7 +306,16 @@ export class BuildPlan {
     // Lo primero que entra en un «no» crea su `else:`: la sentencia queda una línea más abajo.
     const createsElse =
       !previous && here.branch === 'no' && owner !== undefined && owner.range?.elseAt === undefined
-    return { ok: true, change, line: change.select.line + (createsElse ? 1 : 0), opens }
+    // Al ocupar el hueco de una etapa, la línea que vuelve es donde empieza lo escrito: si lleva comentarios
+    // encima, su sentencia está más abajo.
+    const lead = fills ? leadOf(code) : 0
+    return {
+      ok: true,
+      change,
+      line: change.select.line + (createsElse ? 1 : 0) + lead,
+      opens,
+      span: span - leadOf(code),
+    }
   }
 
   /** El paso ya está escrito, en esa línea. */
@@ -267,6 +329,7 @@ export class BuildPlan {
       return
     }
     here.last = placed.line
+    here.span = placed.span ?? 1
     if (placed.opens) this.levels.push({ owner: placed.line, last: null })
   }
 }

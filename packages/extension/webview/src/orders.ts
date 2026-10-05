@@ -61,14 +61,38 @@ export function evidenceLine(evidence: readonly Evidence[]): string {
 }
 
 /** Dice un texto en voz alta, cortando lo que se estuviera diciendo: lo último manda. */
-export function speak(text: string, lang = 'es', queue = false): void {
-  if (typeof window === 'undefined' || !window.speechSynthesis || text.trim() === '') return
+export function speak(
+  text: string,
+  lang = 'es',
+  queue = false,
+  /** Se llama una vez, cuando se termina de decir (o si no se pudo decir: `false`). */
+  onEnd?: (spoke: boolean) => void,
+): void {
+  if (typeof window === 'undefined' || !window.speechSynthesis || text.trim() === '') {
+    onEnd?.(false)
+    return
+  }
   // `queue`: se dice cuando acabe lo que se está diciendo, sin cortarlo.
   if (!queue) window.speechSynthesis.cancel()
   const utterance = new SpeechSynthesisUtterance(text)
   utterance.lang = lang
   const voice = pickVoice(lang)
   if (voice) utterance.voice = voice
+  if (onEnd) {
+    let told = false
+    const finish = (spoke: boolean) => {
+      if (told) return
+      told = true
+      onEnd(spoke)
+    }
+    utterance.onend = () => {
+      finish(true)
+    }
+    // Cortada (se calló, o llegó otra frase) o fallida: en todo caso, ya no se está diciendo.
+    utterance.onerror = () => {
+      finish(true)
+    }
+  }
   window.speechSynthesis.speak(utterance)
 }
 

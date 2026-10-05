@@ -42,6 +42,8 @@ interface Script {
   tell?: (pieces: string[]) => string
   /** La fórmula de una función. */
   formula?: string
+  /** El comentario de entrada. */
+  intro?: string
 }
 
 /** Una IA de mentira: según lo que se le pida (lista, código, frase, fórmula), contesta lo suyo, a trozos. */
@@ -54,11 +56,14 @@ function ai(script: Script): AiProvider & { requests: { kind: string; request: A
         ? 'code'
         : request.system.includes('solo la fórmula')
           ? 'formula'
-          : 'tell'
+          : request.system.includes('Antes de empezar')
+            ? 'intro'
+            : 'tell'
     requests.push({ kind, request })
     if (kind === 'plan') return script.plan ?? ''
     if (kind === 'code') return script.code
     if (kind === 'formula') return script.formula ?? ''
+    if (kind === 'intro') return script.intro ?? ''
     const pieces = (
       request.prompt.split(/Las piezas que van a aparecer ahora \(\d+\):\n/).pop() ?? ''
     )
@@ -108,6 +113,7 @@ function stage(source: string, stopAfter?: number) {
       return Promise.resolve()
     },
     wait: () => Promise.resolve(),
+    settle: () => Promise.resolve(),
   }
   return { host, state }
 }
@@ -196,7 +202,8 @@ describe('algo pequeño: el código, tal cual, y cada sentencia en cuanto llega'
     const { host, state } = stage('')
     const paced: Stagehand = {
       ...host,
-      wait: (ms) => {
+      // Tras cada pieza se espera a que su frase se haya dicho.
+      settle: (ms) => {
         control.waits.push(ms)
         return Promise.resolve()
       },
@@ -211,9 +218,10 @@ describe('algo pequeño: el código, tal cual, y cada sentencia en cuanto llega'
       'born L5: Aquí va «resultado = sumar(numero_1, numero_2)».',
       'born L6: Aquí va «print(resultado)».',
     ])
-    // Tras cada pieza se espera lo que tarda en decirse su frase (no unas décimas): el diagrama crece despacio.
-    const spoken = control.waits.filter((ms) => ms >= 600)
-    expect(spoken).toHaveLength(6)
+    // Tras cada pieza se espera a que termine de decirse su frase: una espera por pieza, ni una menos.
+    expect(control.waits).toHaveLength(6)
+    // Lo que se le pasa es solo lo que se tardaría en leerla, por si no hay voz.
+    expect(control.waits.every((ms) => ms >= 600)).toBe(true)
     // Las frases de un trozo se piden juntas, con sus piezas numeradas, antes de enseñarlo.
     const fn = provider.requests.filter((item) => item.kind === 'tell')[2]
     expect(fn?.request.prompt).toContain(
@@ -384,7 +392,7 @@ describe('algo grande: una lista de partes, y el JEV reparte el código entre el
     expect(state.text).toBe(
       lines(
         '# Preparar las notas: guarda las notas de la clase',
-        'notas = [7, 4, 9]',
+        'notas = [7, 4, 9]  # prysel:ver serie «notas» 7 4 9',
         '',
         '# Calcular la media: suma las notas y divide',
         'total = 0',
@@ -441,7 +449,279 @@ describe('algo grande: una lista de partes, y el JEV reparte el código entre el
   })
 })
 
+describe('un bloque que se escribe entero (un if con sus elif) se explica rama a rama', () => {
+  const CODE = lines(
+    'notas = [8.5, 6.0, 9.2]',
+    'pesos = [0.3, 0.3, 0.4]',
+    'if len(notas) != len(pesos):',
+    '    print("Error: distinta longitud")',
+    'elif abs(sum(pesos) - 1.0) > 0.001:',
+    '    print("Error: los pesos deben sumar 1")',
+    'else:',
+    '    final = sum(n * p for n, p in zip(notas, pesos))',
+    '    print(final)',
+  )
+
+  it('se escribe de una vez, y luego se señala y se cuenta cada rama', async () => {
+    const provider = ai({ code: CODE })
+    const { host, state } = stage('')
+    const outcome = await build(host, { decider: localDecider(), provider }, small)
+    expect(state.text).toBe(
+      CODE.replace('9.2]', '9.2]  # prysel:ver serie «notas» 8.5 6 9.2').replace(
+        '0.4]',
+        '0.4]  # prysel:ver serie «pesos» 0.3 0.3 0.4',
+      ),
+    )
+    expect(outcome.trouble).toBeNull()
+    // El bloque aparece una vez (born) y sus ramas se van contando (told), cada una en su línea.
+    expect(
+      steps(state)
+        .slice(2)
+        .map((event) => `${event.effect} L${event.line}`),
+    ).toEqual(['born L3', 'told L4', 'told L5', 'told L6', 'told L8', 'told L9'])
+    // A la IA se le pide una frase por rama, no una para todo el bloque.
+    const tell = provider.requests.filter((item) => item.kind === 'tell').pop()
+    expect(tell?.request.prompt).toContain('Las piezas que van a aparecer ahora (6):')
+    expect(tell?.request.prompt).toContain('[3]\nelif abs(sum(pesos) - 1.0) > 0.001:')
+    // El «else:» no dice nada por sí solo: no es un momento.
+    expect(tell?.request.prompt).not.toContain(']\nelse:')
+  })
+
+  it('el JEV elige el trozo exacto que se subraya en cada frase', async () => {
+    const provider = ai({
+      code: CODE,
+      tell: (pieces) =>
+        pieces
+          .map((piece) =>
+            piece.startsWith('elif') ? 'Se calcula el valor absoluto de la diferencia.' : 'Sigue.',
+          )
+          .join('\n'),
+    })
+    const { host, state } = stage('')
+    const local = localDecider()
+    // Un JEV que, cuando la frase habla de «valor absoluto», elige la llamada a `abs(...)`.
+    const decider: Decider = {
+      id: 'subraya',
+      async decide(request) {
+        const response = await local.decide(request)
+        const answers: Record<string, JevAnswer> = { ...response.answers }
+        for (const [id, question] of Object.entries(request.questions)) {
+          if (!/^m\d+$/.test(id) || question.type !== 'choice') continue
+          const call = Object.entries(question.criteria).find(([, text]) =>
+            (text ?? '').startsWith('abs('),
+          )
+          answers[id] =
+            call && question.instructions.includes('valor absoluto')
+              ? { type: 'choice', choice: call[0], confidence: 0.9, probabilities: {} }
+              : { type: 'choice', choice: 'ninguno', confidence: 0.9, probabilities: {} }
+        }
+        return { answers, ms: response.ms }
+      },
+    }
+    await build(host, { decider, provider }, small)
+    const marked = steps(state).filter((event) => event.mark !== undefined)
+    expect(marked.map((event) => `L${event.line}: ${event.mark}`)).toEqual([
+      'L5: abs(sum(pesos) - 1.0)',
+    ])
+  })
+
+  it('lo preparado y aún sin escribir se va diciendo: es la recámara, por si el usuario interrumpe', async () => {
+    const provider = ai({ code: 'a = 1\nb = 2\nc = 3\n' })
+    const { host } = stage('')
+    const seen: string[][] = []
+    await build(
+      {
+        ...host,
+        buffer: (pending) => {
+          seen.push([...pending])
+        },
+      },
+      { decider: localDecider(), provider },
+      small,
+    )
+    // Hubo momentos con algo esperando, y al final no queda nada.
+    expect(seen.some((pending) => pending.length > 0)).toBe(true)
+    expect(seen[seen.length - 1]).toEqual([])
+  })
+})
+
+describe('seguir escribiendo detrás de lo que no deja un nodo («El paso anterior ya no está»)', () => {
+  const run = async (code: string, plan?: string) => {
+    const { host, state } = stage('')
+    const decider = assigning((piece) => (piece.includes('resultado') ? 'e2' : 'e1'))
+    const outcome = await build(
+      host,
+      { decider, provider: ai({ code, ...(plan ? { plan } : {}) }) },
+      {
+        command: 'x',
+        gen: 'g1',
+        place: {},
+        where: 'al final del programa',
+        outline: plan !== undefined,
+      },
+    )
+    return { text: state.text, outcome }
+  }
+
+  it('una función con docstring: lo de después del docstring se escribe debajo', async () => {
+    const code = lines(
+      'def media(valores):',
+      '    \"\"\"Devuelve la media de unos valores.\"\"\"',
+      '    total = sum(valores)',
+      '    return total / len(valores)',
+      'print(media([1, 2, 3]))',
+    )
+    const { text, outcome } = await run(code)
+    expect(text).toBe(code)
+    expect(outcome.trouble).toBeNull()
+  })
+
+  it('un docstring de varias líneas, un pass y un global tampoco cortan', async () => {
+    const code = lines(
+      'contador = 0',
+      'def contar():',
+      '    \"\"\"Suma uno.',
+      '',
+      '    Usa la variable de fuera.',
+      '    \"\"\"',
+      '    global contador',
+      '    contador = contador + 1',
+      'def nada():',
+      '    pass',
+      'contar()',
+    )
+    const { text, outcome } = await run(code)
+    expect(text).toBe(code)
+    expect(outcome.trouble).toBeNull()
+  })
+
+  it('en una etapa del plan, un trozo que empieza con un comentario: lo siguiente va detrás de su sentencia', async () => {
+    const { text, outcome } = await run(
+      lines(
+        '# Las notas de la clase',
+        'notas = [7, 4]',
+        'total = sum(notas)',
+        '# Lo que sale',
+        'resultado = total / 2',
+        'print(resultado)',
+      ),
+      'Preparar los datos: las notas\nMostrar el resultado: la media\n',
+    )
+    expect(outcome.trouble).toBeNull()
+    expect(text).toBe(
+      lines(
+        '# Preparar los datos: las notas',
+        '# Las notas de la clase',
+        'notas = [7, 4]',
+        'total = sum(notas)',
+        '',
+        '# Mostrar el resultado: la media',
+        '# Lo que sale',
+        'resultado = total / 2',
+        'print(resultado)',
+      ),
+    )
+  })
+
+  it('detrás de una función con decorador, y de una clase, se sigue escribiendo', async () => {
+    const code = lines(
+      'import functools',
+      '@functools.cache',
+      'def doble(n):',
+      '    return n * 2',
+      'valor = doble(4)',
+      'class Punto:',
+      '    x = 0',
+      'p = Punto()',
+    )
+    const { text, outcome } = await run(code)
+    expect(text).toBe(code)
+    expect(outcome.trouble).toBeNull()
+  })
+})
+
+describe('antes del plan, un comentario de entrada', () => {
+  const request = {
+    command: 'un programa que calcule la media de unas notas',
+    gen: 'g1',
+    place: {},
+    where: 'al final del programa',
+    outline: true,
+  }
+  const PLAN = 'Preparar las notas: las notas de la clase\nCalcular la media: suma y divide\n'
+
+  it('primero se dice qué se va a hacer; luego aparece el plan, y de cada parte se dice solo su título', async () => {
+    const provider = ai({
+      intro:
+        '"Vamos a calcular la media de unas notas: primero las guardamos y luego las promediamos."',
+      plan: PLAN,
+      code: 'notas = [7, 4, 9]\n',
+    })
+    const { host, state } = stage('')
+    await build(host, { decider: localDecider(), provider }, request)
+    const said = state.shown.flatMap((event) =>
+      event.type === 'say'
+        ? [`entrada: ${event.say}`]
+        : event.type === 'step'
+          ? [`paso: ${event.say}`]
+          : [],
+    )
+    expect(said.slice(0, 3)).toEqual([
+      'entrada: Vamos a calcular la media de unas notas: primero las guardamos y luego las promediamos.',
+      'paso: Preparar las notas',
+      'paso: Calcular la media',
+    ])
+    // Cuando se dice la entrada aún no hay nada escrito.
+    expect(state.frames[0]).toContain('# Preparar las notas')
+    expect(provider.requests.find((item) => item.kind === 'intro')?.request.prompt).toBe(
+      'Lo que se pidió: un programa que calcule la media de unas notas',
+    )
+  })
+
+  it('si la IA no da entrada, se sigue con el plan sin más', async () => {
+    const provider = ai({ plan: PLAN, code: 'notas = [7, 4, 9]\n' })
+    const { host, state } = stage('')
+    const outcome = await build(host, { decider: localDecider(), provider }, request)
+    expect(state.shown.some((event) => event.type === 'say')).toBe(false)
+    expect(outcome.written).toBe(1)
+  })
+
+  it('a la IA se le piden frases muy cortas', () => {
+    const provider = ai({ code: 'a = 1\n' })
+    const { host } = stage('')
+    return build(host, { decider: localDecider(), provider }, { ...request, outline: false }).then(
+      () => {
+        expect(provider.requests.find((item) => item.kind === 'tell')?.request.system).toContain(
+          'como mucho doce palabras',
+        )
+      },
+    )
+  })
+})
+
 describe('entender un tema, y las ayudas visuales', () => {
+  it('una lista de números lleva su dibujo: sale del propio código, sin preguntar a nadie', async () => {
+    const provider = ai({ code: 'notas = [7, 4, 9]\nnombres = ["Ana", "Luis"]\npar = [1, 2]\n' })
+    const { host, state } = stage('')
+    await build(
+      host,
+      { decider: localDecider(), provider },
+      {
+        command: 'unas notas',
+        gen: 'g1',
+        place: {},
+        where: 'al final del programa',
+        outline: false,
+      },
+    )
+    expect(state.text).toBe(
+      'notas = [7, 4, 9]  # prysel:ver serie «notas» 7 4 9\nnombres = ["Ana", "Luis"]\npar = [1, 2]\n',
+    )
+    expect(parse(state.text).nodes.find((n) => n.label === 'notas')?.aid).toBe(
+      'serie «notas» 7 4 9',
+    )
+  })
+
   it('a la IA se le pide que enseñe el tema: el plan, el código y cada frase', async () => {
     const provider = ai({
       plan: lines(
@@ -466,7 +746,7 @@ describe('entender un tema, y las ayudas visuales', () => {
     )
     expect(outcome.written).toBe(2)
     for (const { request } of provider.requests)
-      expect(request.system).toMatch(/ENTENDER un tema|explicando un tema/)
+      expect(request.system).toMatch(/ENTENDER un tema|explicando un tema|entender un tema/)
     expect(state.text).toBe(
       lines(
         '# Las células que se unen: un óvulo y un espermatozoide',
