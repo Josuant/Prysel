@@ -140,6 +140,11 @@ export interface ProgramNode {
    */
   generating?: string
   /**
+   * Una ayuda visual que acompaña a la sentencia sin ser parte del programa (la curva de una función, una
+   * tabla de valores): lo que dice su marca `# prysel:ver …`, tal cual. El lienzo la dibuja al lado.
+   */
+  aid?: string
+  /**
    * En una decisión: el `elif` en el que sigue su camino falso, si lo hay. Lo que se quiera poner al
    * principio de ese camino va en los puertos de ese `elif`, no en los de esta decisión.
    */
@@ -162,6 +167,8 @@ export interface Program {
 
 /** La marca de una pieza cuyo contenido se está generando, ya sin la almohadilla: `prysel:gen:<id>`. */
 const GENERATING = /^prysel:gen:([a-z0-9]{1,24})$/
+/** La marca de una ayuda visual (una curva, una tabla) que acompaña a la sentencia: `prysel:ver …`. */
+const AID = /^prysel:ver\s+(.+)$/
 
 /** Llamadas que tocan el mundo exterior: son un efecto, no una transformación. */
 const IO_CALLS = [
@@ -449,7 +456,9 @@ class Builder {
     const prose = text.split('\n').filter((line) => {
       const mark = GENERATING.exec(line.trim())
       if (mark?.[1]) node.generating = mark[1]
-      return !mark
+      const aid = AID.exec(line.trim())
+      if (aid?.[1]) node.aid = aid[1]
+      return !mark && !aid
     })
     const clean = prose.join('\n').trim()
     if (!clean) return

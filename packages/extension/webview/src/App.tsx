@@ -31,6 +31,7 @@ import {
 import type { Forced } from '../../src/jev/engine.ts'
 import { CommandBar } from './CommandBar.tsx'
 import { hush, speak, type OrderState } from './orders.ts'
+import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
 import { topLevelOf } from '../../src/plan.ts'
 import { indexOf, type Trace, type TraceIndex } from '../../src/trace.ts'
 import type { Lesson } from '../../src/lesson.ts'
@@ -196,8 +197,11 @@ export function App() {
     key: number
     /** Acaba de construirse (aparece con su animación) y, si lo dice el JEV, se enseña en su conjunto. */
     born?: boolean
+    change?: 'changed' | 'leaving'
     wide?: boolean
   } | null>(null)
+  /** En qué está pensando la IA ahora mismo (mientras no hay nada nuevo que ver): se enseña en el diagrama. */
+  const [thinking, setThinking] = useState<string | null>(null)
   /** La IA que redacta y el motor que decide ahora: lo dice la extensión. */
   const [models, setModels] = useState<{ ai: string | null; jev: string | null } | null>(null)
   const spotSeq = useRef(0)
@@ -269,6 +273,12 @@ export function App() {
         onSay.current(message)
       } else if (message.type === 'step') {
         onStep.current(message)
+      } else if (message.type === 'progress') {
+        const text = message.text
+        setThinking(text)
+        setOrder((previous) =>
+          previous.phase === 'done' ? { ...previous, note: text, building: true } : previous,
+        )
       } else if (message.type === 'models') {
         setModels({ ai: message.ai, jev: message.jev })
       } else if (message.type === 'runs') {
@@ -632,7 +642,10 @@ export function App() {
     const wanted = fn ? homeOf(fn.id) : null
     if (wanted !== focusId) openView(wanted)
   }, [program, replay, player.state, focusId, openView, homeOf])
-  const unsupported = program?.unsupported ?? []
+  // El hueco que deja el esquema de una etapa (`...`) no es algo «sin entender»: se está escribiendo.
+  const unsupported = (program?.unsupported ?? []).filter(
+    (item) => !program?.nodes.some((n) => n.generating !== undefined && n.line === item.line),
+  )
   /** Cuántos bloques largos no tienen etapas: la IA puede proponérselas. */
   const longBlocks = useMemo(() => (program ? sectionBlocks(program).length : 0), [program])
   /** Los visores fijados: ventanas con el valor que dejó su sentencia, colgando de ella. */
@@ -723,13 +736,76 @@ export function App() {
       view.representative,
     ],
   )
+  /**
+   * Los nodos auxiliares: no son parte del programa, ayudan a entenderlo. Las **ayudas visuales** que una
+   * sentencia lleva en su marca (`# prysel:ver …`: la curva de una función, una tabla de valores), y el
+   * nodo que dice que **la IA está pensando**, colgado de donde está trabajando.
+   */
+  const deciding = order.phase === 'deciding'
+  const extras = useMemo(() => {
+    const nodes: CanvasNode[] = []
+    const links: SemanticEdge[] = []
+    const byId = new Map((program?.nodes ?? []).map((n) => [n.id, n]))
+    const visible = new Set(view.nodes.map((n) => n.id))
+    for (const source of program?.nodes ?? []) {
+      const visual = source.aid ? parseVisual(source.aid) : null
+      if (!visual) continue
+      // Si su sentencia no se ve (su etapa está plegada), la ayuda cuelga de la tarjeta que la contiene.
+      const anchor = visible.has(source.id) ? source.id : view.representative(source.id)
+      if (anchor === null) continue
+      const shown = { id: anchor }
+      const id = `aid:${source.id}`
+      nodes.push({
+        id,
+        kind: 'output.display',
+        label: visual.title,
+        viewer: {
+          title: visual.title,
+          subtitle: `y = ${visual.formula}`,
+          aid: true,
+          ...(visual.kind === 'curva'
+            ? { series: curveOf(visual) }
+            : {
+                table: {
+                  columns: [
+                    { name: 'x', dtype: '' },
+                    { name: 'y', dtype: '' },
+                  ],
+                  rows: tableOf(visual),
+                },
+              }),
+        },
+      })
+      links.push({ from: shown.id, to: id, relation: 'transform' })
+    }
+    const busy = thinking ?? (deciding ? 'Decidiendo qué hacer…' : null)
+    if (busy !== null) {
+      // Donde trabaja: el hueco que espera contenido, lo último que tocó, lo seleccionado o el final.
+      const hole = view.nodes.find((n) => byId.get(n.id)?.generating !== undefined)?.id
+      const anchor =
+        hole ??
+        view.nodes.find((n) => n.id === wanted?.id)?.id ??
+        view.nodes.find((n) => n.id === selected)?.id ??
+        view.nodes[view.nodes.length - 1]?.id
+      if (anchor !== undefined) {
+        nodes.push({
+          id: 'prysel:thinking',
+          kind: 'output.display',
+          label: 'La IA está pensando',
+          viewer: { title: 'La IA está pensando', text: [busy], busy: true },
+        })
+        links.push({ from: anchor, to: 'prysel:thinking', relation: 'transform' })
+      }
+    }
+    return { nodes, links, busy }
+  }, [program, view.nodes, view.representative, thinking, deciding, wanted, selected])
   const canvasNodes = useMemo(
-    () => [...view.nodes, ...viewers.nodes, ...notes.nodes],
-    [view.nodes, viewers.nodes, notes.nodes],
+    () => [...view.nodes, ...viewers.nodes, ...notes.nodes, ...extras.nodes],
+    [view.nodes, viewers.nodes, notes.nodes, extras.nodes],
   )
   const canvasEdges = useMemo(
-    () => [...view.edges, ...viewers.links, ...notes.links],
-    [view.edges, viewers.links, notes.links],
+    () => [...view.edges, ...viewers.links, ...notes.links, ...extras.links],
+    [view.edges, viewers.links, notes.links, extras.links],
   )
   /** Lo que ofrece el menú de un nodo ejecutado: ver cada uno de sus valores en un visor. */
   const viewerMenu = (id: string): NodeMenuItem[] => {
@@ -821,6 +897,7 @@ export function App() {
         : view.representative(wantedId)
   const spotKey = wanted?.key
   const spotBorn = wanted?.born === true
+  const spotChange = wanted?.change
   const spotWide = wanted?.wide === true
   const spotlight = useMemo(
     () =>
@@ -829,10 +906,11 @@ export function App() {
             id: spotId,
             key: spotKey,
             ...(spotBorn ? { born: true } : {}),
+            ...(spotChange ? { change: spotChange } : {}),
             ...(spotWide ? { wide: true } : {}),
           }
         : null,
-    [spotId, spotKey, spotBorn, spotWide],
+    [spotId, spotKey, spotBorn, spotChange, spotWide],
   )
   // Lo que una orden quiere enseñar puede no estar a la vista: dentro de una función que no se está viendo
   // (se entra en ella) o de una etapa plegada (se abre). Vale también para lo que se acaba de crear.
@@ -928,7 +1006,9 @@ export function App() {
         tone: 'ok',
         ...meta,
         ...(directive.pending ? { note: 'Escribiendo su contenido…' } : {}),
-        ...(effect.type === 'compose' ? { note: 'Pensando el primer paso…', building: true } : {}),
+        ...(effect.type === 'compose' || effect.type === 'modify'
+          ? { note: 'Leyendo lo que ya hay…', building: true }
+          : {}),
         ...(effect.type === 'lesson' ? { note: 'Generando la lección…' } : {}),
       })
       tell(directive.say)
@@ -937,6 +1017,7 @@ export function App() {
         markPainted()
     }
     onStep.current = (message) => {
+      setThinking(null)
       setOrder((previous) =>
         previous.phase === 'done'
           ? { ...previous, note: `${message.index} · ${message.say}`, building: true }
@@ -947,11 +1028,14 @@ export function App() {
       setWanted({
         line: message.line,
         key: ++spotSeq.current,
-        born: true,
+        ...(message.effect === 'changed' || message.effect === 'leaving'
+          ? { change: message.effect }
+          : { born: true }),
         ...(message.wide ? { wide: true } : {}),
       })
     }
     onGenerated.current = (message) => {
+      if (message.done) setThinking(null)
       const note = message.done
         ? (message.say ?? message.error ?? '')
         : message.ok
@@ -1171,7 +1255,7 @@ export function App() {
               />
             </ErrorBoundary>
           ) : (
-            <EmptyState />
+            <EmptyState thinking={extras.busy} />
           )}
           {program && (
             <>
@@ -1193,8 +1277,10 @@ export function App() {
                   onSubmit={(text) => {
                     sendOrder(text)
                   }}
-                  onChoose={(force) => {
-                    sendOrder(lastOrder.current, force)
+                  onChoose={(option) => {
+                    // Una salida que es otra orden, ya completa, se manda tal cual; si no, aclara la que había.
+                    if (option.order) sendOrder(option.order)
+                    else sendOrder(lastOrder.current, option.force)
                   }}
                   onDismiss={() => {
                     // Una decisión que llegue después ya no es de nadie.
@@ -1424,7 +1510,15 @@ function baseName(file: string): string {
   return file.split(/[\\/]/).pop() ?? file
 }
 
-function EmptyState() {
+function EmptyState({ thinking }: { thinking: string | null }) {
+  // Aún no hay diagrama, pero la IA ya está en ello: se dice aquí, donde va a aparecer.
+  if (thinking !== null) {
+    return (
+      <div className="flex h-full items-center justify-center p-6" role="status">
+        <div className="thinking-card">La IA está pensando · {thinking}</div>
+      </div>
+    )
+  }
   return (
     <div className="flex h-full items-center justify-center p-6 text-center" role="status">
       <div className="max-w-xs">

@@ -1713,6 +1713,147 @@ button.fn-menu__crumb:hover {
 .vchip[data-born] > :nth-child(2) {
   animation-delay: 290ms;
 }
+/* La IA está trabajando aquí: su nodo late, tres puntos corren tras su título y un brillo recorre su borde.
+   Y el hueco que espera su contenido respira, para que se vea que algo va a llegar. */
+.viewer[data-busy] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: prysel-thinking 1600ms ease-in-out infinite;
+}
+.viewer[data-busy] .viewer__title::after {
+  content: '';
+  display: inline-block;
+  width: 1.4em;
+  margin-left: 2px;
+  text-align: left;
+  animation: prysel-dots 1200ms steps(1, end) infinite;
+}
+.viewer[data-aid] {
+  border-style: dashed;
+}
+.node[data-modifier='generating'] {
+  animation: node-breathe 1.6s ease-in-out infinite;
+}
+@keyframes prysel-thinking {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 26%, transparent);
+  }
+}
+@keyframes prysel-dots {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75% {
+    content: '...';
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .viewer[data-busy],
+  .node[data-modifier='generating'] {
+    animation: none;
+  }
+  .viewer[data-busy] .viewer__title::after {
+    content: '…';
+    animation: none;
+  }
+}
+.thinking-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  animation: prysel-thinking 1600ms ease-in-out infinite;
+}
+.thinking-card::after {
+  content: '';
+  width: 1.4em;
+  animation: prysel-dots 1200ms steps(1, end) infinite;
+}
+
+/* Lo que una orden **cambia** en algo que ya estaba: un barrido de luz lo recorre y la pieza late una vez,
+   para que se vea dónde está la diferencia. Lo que una orden **quita** se despide antes de irse: se
+   apaga, encoge y se tiñe del color del aviso. */
+:is(.flow-node, .vchip)[data-change='changed'] {
+  animation: prysel-changed 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+:is(.flow-node, .vchip)[data-change='changed']::after {
+  content: '';
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--accent) 34%, transparent) 50%,
+    transparent 70%
+  );
+  background-size: 260% 100%;
+  pointer-events: none;
+  animation: prysel-sweep 900ms ease-out both;
+}
+:is(.flow-node, .vchip)[data-change='leaving'] {
+  animation: prysel-leaving 700ms ease-in both;
+}
+@keyframes prysel-changed {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.045);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes prysel-sweep {
+  from {
+    background-position: 130% 0;
+    opacity: 1;
+  }
+  to {
+    background-position: -130% 0;
+    opacity: 0;
+  }
+}
+@keyframes prysel-leaving {
+  30% {
+    opacity: 1;
+    transform: scale(1.02);
+    filter: drop-shadow(0 0 6px var(--state-error));
+  }
+  100% {
+    opacity: 0.15;
+    transform: scale(0.9);
+    filter: drop-shadow(0 0 2px var(--state-error));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(.flow-node, .vchip)[data-change='changed'],
+  :is(.flow-node, .vchip)[data-change='leaving'] {
+    animation-name: prysel-born-fade;
+    animation-direction: reverse;
+  }
+  :is(.flow-node, .vchip)[data-change='changed']::after {
+    animation: none;
+    opacity: 0;
+  }
+}
 @keyframes prysel-born {
   from {
     opacity: 0;

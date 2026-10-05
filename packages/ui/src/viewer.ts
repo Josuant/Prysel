@@ -12,6 +12,10 @@ export interface ViewerContent {
   subtitle?: string
   /** El resultado quedó atrás (algo cambió después de ejecutarlo): se atenúa. */
   stale?: boolean
+  /** No enseña un valor: dice que la IA está trabajando ahí. Late mientras dura. */
+  busy?: boolean
+  /** Es una ayuda para entender (una curva, una tabla), no algo que el programa haya calculado. */
+  aid?: boolean
   table?: {
     columns: { name: string; dtype: string; nulls?: number }[]
     rows: (string | number | boolean | null)[][]

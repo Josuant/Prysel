@@ -135,8 +135,17 @@ export interface StepMessage {
   say: string
   /** La línea donde quedó su sentencia. */
   line: number
+  /** Qué le pasa: aparece (`born`, por defecto), cambia (`changed`) o está a punto de irse (`leaving`). */
+  effect?: 'born' | 'changed' | 'leaving'
   /** La cámara enseña el conjunto, no solo la pieza (lo decide el JEV). */
   wide?: boolean
+}
+
+/** Extensión → webview: en qué se está pensando ahora, mientras no hay nada nuevo que ver. */
+export interface ProgressMessage {
+  type: 'progress'
+  gen: string
+  text: string
 }
 
 /** Extensión → webview: qué IA redacta y qué motor decide ahora (`null`: no hay, falta su clave). */
@@ -158,6 +167,7 @@ export type WebviewMessage =
   | DecisionMessage
   | GeneratedMessage
   | StepMessage
+  | ProgressMessage
   | ModelsMessage
   | SayMessage
   | UpdateMessage
@@ -411,7 +421,16 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (typeof gen !== 'string' || typeof say !== 'string') return null
     if (!Number.isInteger(index) || !Number.isInteger(line)) return null
     if (wide !== undefined && typeof wide !== 'boolean') return null
+    const effect = (value as { effect?: unknown }).effect
+    if (effect !== undefined && !['born', 'changed', 'leaving'].includes(effect as string)) {
+      return null
+    }
     return value as StepMessage
+  }
+  if (type === 'progress') {
+    const { gen, text } = value as Partial<ProgressMessage>
+    if (typeof gen !== 'string' || typeof text !== 'string' || text === '') return null
+    return { type: 'progress', gen, text }
   }
   if (type === 'models') {
     const { ai, jev } = value as Partial<ModelsMessage>

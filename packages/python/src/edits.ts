@@ -564,8 +564,9 @@ function insertLines(
     const { head, bodyEnd } = box
     if (head !== undefined && bodyEnd !== undefined) {
       const body = text.slice(head, bodyEnd)
-      if (/^\s*pass\s*$/.test(body)) {
-        const start = head + body.indexOf('pass')
+      // La cabecera puede llevar un comentario al final de su linea (una marca): no cuenta como cuerpo.
+      if (/^[ \t]*(#[^\n]*)?\s*pass\s*$/.test(body)) {
+        const start = head + body.lastIndexOf('pass')
         pass = { start, end: start + 4 }
       }
     }

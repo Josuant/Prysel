@@ -1,8 +1,14 @@
 import { useState } from 'react'
 import { Icon } from '@prysel/ui'
-import type { Forced } from '../../src/jev/engine.ts'
 import { MAX_COMMAND } from '../../src/protocol.ts'
-import { BUDGET_MS, evidenceLine, formatMs, withinBudget, type OrderState } from './orders.ts'
+import {
+  BUDGET_MS,
+  evidenceLine,
+  formatMs,
+  withinBudget,
+  type AskOption,
+  type OrderState,
+} from './orders.ts'
 
 /**
  * La caja de órdenes: se escribe (o se dicta, con el dictado del sistema: Win+H) lo que se quiere, y el
@@ -15,7 +21,7 @@ export interface CommandBarProps {
   onToggleVoice: () => void
   onSubmit: (text: string) => void
   /** El usuario contestó a una pregunta del motor. */
-  onChoose: (force: Forced) => void
+  onChoose: (option: AskOption) => void
   onDismiss: () => void
   /** Guardar la clave de TypeSafe (la pide VS Code). */
   onKey: () => void
@@ -68,7 +74,7 @@ export function CommandBar({
                     className="btn"
                     data-variant="secondary"
                     onClick={() => {
-                      onChoose(option.force)
+                      onChoose(option)
                     }}
                   >
                     {option.label}

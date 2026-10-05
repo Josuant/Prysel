@@ -63,8 +63,11 @@ describe('los pasos salen del texto según llega', () => {
     expect(stream.push('mer número."}\n{"nivel": 0, "code": "b')).toEqual([
       { level: 0, code: 'a = 3', say: 'El primer número.' },
     ])
-    expect(stream.push(' = 5", "say": "El segundo."}')).toEqual([])
-    expect(stream.end()).toEqual([{ level: 0, code: 'b = 5', say: 'El segundo.' }])
+    // No hace falta el salto de línea: el paso sale en cuanto se cierra su llave.
+    expect(stream.push(' = 5", "say": "El segundo."}')).toEqual([
+      { level: 0, code: 'b = 5', say: 'El segundo.' },
+    ])
+    expect(stream.end()).toEqual([])
   })
 
   it('lo que no es un paso se salta: vallas, texto suelto, líneas rotas', () => {

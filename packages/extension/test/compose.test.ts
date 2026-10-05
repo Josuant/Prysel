@@ -181,6 +181,7 @@ describe('el JEV reparte: una pieza, un algoritmo, o varias órdenes', () => {
         gen: 'g1',
         place: { into: fn?.id },
         where: 'dentro de función «def media(valores):»',
+        outline: true,
       },
       say: 'Lo escribo dentro de función «def media(valores):».',
     })

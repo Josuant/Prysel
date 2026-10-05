@@ -1,7 +1,8 @@
 import type { Program } from '@prysel/python'
-import { addCode, type Change } from '@prysel/python/edits'
+import { addCode, fillGenerated, type Change } from '@prysel/python/edits'
 import type { Decider, JevQuestion } from './client.ts'
 import type { Spot } from './engine.ts'
+import { visualOf, withVisual, type Visual } from './visual.ts'
 
 /**
  * Construir un programa **paso a paso**, mientras se explica.
@@ -35,46 +36,104 @@ export interface BuildStep {
   code: string
   /** Lo que se dice al ponerla. */
   say: string
+  /** Una ayuda visual que la acompaña (la curva de la función que usa, una tabla de valores). */
+  visual?: Visual
 }
 
 // ───────────────────────── del streaming a los pasos ─────────────────────────
+
+/**
+ * Saca objetos JSON enteros de un texto que llega a trozos, en cuanto cada uno se cierra, vengan como
+ * vengan: uno por línea, dentro de una lista, con sangría, entre vallas de código o envueltos en otro objeto
+ * (`{"pasos": [{…}, {…}]}`). Un modelo no siempre respeta el formato que se le pide: lo que importa es que
+ * cada paso se vea en cuanto está completo. `accept` dice si un objeto es de los que se buscan.
+ */
+export class ObjectStream<T> {
+  private text = ''
+  /** Dónde empieza cada llave aún abierta. */
+  private open: number[] = []
+  private at = 0
+  private inString = false
+  private escaped = false
+
+  constructor(private readonly accept: (value: unknown) => T | null) {}
+
+  push(delta: string): T[] {
+    this.text += delta
+    const found: T[] = []
+    for (; this.at < this.text.length; this.at++) {
+      const char = this.text[this.at]
+      if (this.inString) {
+        if (this.escaped) this.escaped = false
+        else if (char === '\\') this.escaped = true
+        else if (char === '"') this.inString = false
+        continue
+      }
+      // Fuera de un objeto, unas comillas son texto suelto (una valla, una frase): no abren nada.
+      if (char === '"' && this.open.length > 0) this.inString = true
+      else if (char === '{') this.open.push(this.at)
+      else if (char === '}') {
+        const start = this.open.pop()
+        if (start === undefined) continue
+        try {
+          const value = this.accept(JSON.parse(this.text.slice(start, this.at + 1)))
+          if (value !== null) found.push(value)
+        } catch {
+          // No era JSON (texto con llaves): se sigue buscando.
+        }
+      }
+    }
+    // Lo ya leído que no pertenece a ningún objeto abierto no hace falta guardarlo.
+    if (this.open.length === 0) {
+      this.text = this.text.slice(this.at)
+      this.at = 0
+    }
+    return found
+  }
+
+  /** Lo que llevaba sin cerrar al acabar (para decir qué contestó el modelo, si no sirvió). */
+  get rest(): string {
+    return this.text
+  }
+}
+
+/** Lee un paso de un objeto de la respuesta. `null` si no lo es. */
+export function stepOf(value: unknown): BuildStep | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { nivel, level, code, say, ver } = value as Record<string, unknown>
+  const depth = typeof nivel === 'number' ? nivel : typeof level === 'number' ? level : 0
+  if (typeof code !== 'string' || code.trim() === '') return null
+  const visual = visualOf(ver)
+  return {
+    level: Number.isInteger(depth) && depth >= 0 ? depth : 0,
+    code: code.replace(/\r\n/g, '\n').replace(/\s+$/, ''),
+    say: typeof say === 'string' ? say.trim().slice(0, 300) : '',
+    ...(visual ? { visual } : {}),
+  }
+}
 
 /** Lee un paso de una línea de la respuesta. `null` si esa línea no es un paso (una valla, texto suelto). */
 export function parseStep(line: string): BuildStep | null {
   const trimmed = line.trim().replace(/,$/, '')
   if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null
-  let value: unknown
   try {
-    value = JSON.parse(trimmed)
+    return stepOf(JSON.parse(trimmed))
   } catch {
     return null
   }
-  const { nivel, level, code, say } = value as Record<string, unknown>
-  const depth = typeof nivel === 'number' ? nivel : typeof level === 'number' ? level : 0
-  if (typeof code !== 'string' || code.trim() === '') return null
-  return {
-    level: Number.isInteger(depth) && depth >= 0 ? depth : 0,
-    code: code.replace(/\r\n/g, '\n').replace(/\s+$/, ''),
-    say: typeof say === 'string' ? say.trim().slice(0, 300) : '',
-  }
 }
 
-/** Saca pasos enteros de un texto que llega a trozos: un paso por línea, en cuanto la línea se cierra. */
+/** Saca pasos enteros de un texto que llega a trozos, en cuanto cada uno se cierra. */
 export class StepStream {
-  private buffer = ''
+  private readonly objects = new ObjectStream(stepOf)
 
   push(delta: string): BuildStep[] {
-    this.buffer += delta
-    const lines = this.buffer.split('\n')
-    this.buffer = lines.pop() ?? ''
-    return lines.flatMap((line) => parseStep(line) ?? [])
+    return this.objects.push(delta)
   }
 
-  /** Lo que quedara sin salto de línea al acabar. */
+  /** Al acabar no queda nada a medias que valga: un objeto sin cerrar no es un paso. */
   end(): BuildStep[] {
-    const rest = this.buffer
-    this.buffer = ''
-    return rest.split('\n').flatMap((line) => parseStep(line) ?? [])
+    return []
   }
 }
 
@@ -114,7 +173,14 @@ const UNSUPPORTED = /^(elif|try|except|finally|match|case|class)\b/
 export class BuildPlan {
   private levels: Level[]
 
-  constructor(private readonly spot: Spot) {
+  /**
+   * `replaces`: lo primero que se escriba no se añade, sino que ocupa el sitio de una pieza marcada como
+   * «generándose» (por su id): el hueco que el esquema dejó para esta etapa.
+   */
+  constructor(
+    private readonly spot: Spot,
+    private readonly replaces?: string,
+  ) {
     this.levels = [{ owner: null, last: null }]
   }
 
@@ -145,7 +211,9 @@ export class BuildPlan {
     }
 
     const opens = isHeader(statement)
-    const code = opens ? `${step.code}\n    pass` : step.code
+    const body = opens ? `${step.code}\n    pass` : step.code
+    // La ayuda visual del paso va con él, como una marca al final de la línea de su sentencia.
+    const code = step.visual ? withVisual(body, step.visual) : body
     const previous = at(here.last)
     const owner = at(here.owner)
     if (here.last !== null && !previous) return { ok: false, error: 'El paso anterior ya no está.' }
@@ -157,7 +225,10 @@ export class BuildPlan {
           ? { into: owner.id, branch: 'no' }
           : { into: owner.id }
         : this.spot
-    const change = addCode(program, where, code)
+    const fills = level === 0 && !previous && this.replaces !== undefined
+    const change = fills
+      ? fillGenerated(program, this.replaces, code)
+      : addCode(program, where, code)
     if (change.edits.length === 0 || !change.select) {
       return { ok: false, error: 'El paso no cabe en ese sitio.' }
     }
@@ -198,29 +269,136 @@ export function buildStepsSystem(): string {
     'Si el programa tiene varias fases, puedes empezar una etapa poniendo una línea de comentario («# Preparar los datos») encima de la sentencia, dentro del mismo «code»: al menos dos etapas por bloque, o ninguna.',
     'Código claro, de principiante: nombres en español, valores de ejemplo concretos, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
     'No leas ni escribas archivos, no uses la red ni el sistema, ni pidas datos con input(), salvo que la orden lo pida expresamente.',
+    'Sé proactivo ayudando a entender. Cuando un paso use una función matemática o una fórmula que se entiende mejor viéndola (una sigmoide, una ReLU, un error cuadrático, un crecimiento, una probabilidad), añade al paso una ayuda visual con «ver»: el editor dibuja al lado un nodo auxiliar que no forma parte del programa.',
+    '  Una curva: "ver": {"tipo": "curva", "titulo": "Sigmoide", "y": "1/(1+exp(-x))", "desde": -6, "hasta": 6}',
+    '  Una tabla de valores: "ver": {"tipo": "tabla", "titulo": "Elevar al cuadrado", "y": "x**2", "x": [-2, -1, 0, 1, 2]}',
+    '  En «y» solo caben x, números, + - * / ** y paréntesis, y las funciones exp, log, sqrt, sin, cos, tan, tanh, abs, max, min. Pon una ayuda donde de verdad aclare (una o dos por programa), no en cada paso.',
     `Como mucho ${MAX_BUILD_STEPS} pasos.`,
   ].join('\n')
 }
 
-const MAX_CONTEXT = 12_000
-
 export function buildStepsPrompt(request: {
   command: string
-  program: Program
   where: string
+  context: string
   scope?: readonly string[]
 }): string {
-  const source = request.program.source
   return [
     `Orden: ${request.command}`,
     `Dónde va: ${request.where}.`,
     request.scope?.length ? `Nombres que ya existen ahí: ${request.scope.join(', ')}.` : '',
-    source.trim() === ''
-      ? 'El programa está vacío: constrúyelo desde cero.'
-      : `El programa ahora:\n${source.length > MAX_CONTEXT ? source.slice(-MAX_CONTEXT) : source}`,
+    request.context,
   ]
     .filter((part) => part !== '')
     .join('\n\n')
+}
+
+// ───────────────────────── primero el esquema, luego cada etapa ─────────────────────────
+
+/** Una etapa del esquema: su rótulo y, en una frase, qué hace. */
+export interface Stage {
+  title: string
+  goal: string
+}
+
+export const MAX_STAGES = 7
+
+export function stageOf(value: unknown): Stage | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { titulo, title, que, goal } = value as Record<string, unknown>
+  const name = typeof titulo === 'string' ? titulo : typeof title === 'string' ? title : ''
+  const what = typeof que === 'string' ? que : typeof goal === 'string' ? goal : ''
+  // Los dos puntos separan el título de su subtítulo en el rótulo: dentro del título estorban.
+  const clean = name
+    .replace(/[:\s]+/g, ' ')
+    .replace(/^#+\s*/, '')
+    .trim()
+  if (clean === '' || clean.length > 60) return null
+  return { title: clean, goal: what.replace(/\s+/g, ' ').trim().slice(0, 300) }
+}
+
+/**
+ * Cuando no se pidió un programa sino **entender un tema**: el programa es el medio. Se añade a lo que se le
+ * pide a la IA en el plan y en cada etapa.
+ */
+export function teachingNote(): string {
+  return [
+    'IMPORTANTE: el usuario no ha pedido un programa: quiere ENTENDER un tema. El programa es tu pizarra.',
+    'Diseña un programa pequeño de Python que modele o simule ese tema con datos de ejemplo concretos (cantidades, etapas, probabilidades, una evolución en el tiempo…), de modo que al construirlo pieza a pieza se vaya explicando. Sirve para cualquier tema, aunque no sea de informática: biología, historia, economía, física.',
+    'Las etapas son las partes de la EXPLICACIÓN (qué pasa primero, qué después, por qué), no partes de un programa cualquiera. Sus títulos nombran el tema, no el código.',
+    'Cada «say» enseña el tema: di qué ocurre en la realidad y cómo lo representa esa pieza. No describas la sintaxis.',
+    'Usa nombres de variables y funciones tomados del tema. Si algo se entiende mejor con una curva o una tabla, añade su ayuda visual. Sé riguroso: no inventes datos; si usas valores aproximados, que sean razonables.',
+  ].join('\n')
+}
+
+export function outlineSystem(teach = false): string {
+  return [
+    ...(teach ? [teachingNote()] : []),
+    'Alguien te pide un programa en Python y tú lo vas a construir explicándolo. Antes de escribir nada, piensa el plan: las etapas por las que pasa, a grandes rasgos, como el índice de una explicación.',
+    'Tu respuesta son líneas JSON, una por etapa, sin nada más:',
+    '{"titulo": "…", "que": "…"}',
+    '«titulo»: dos a cuatro palabras, con un verbo («Pedir los datos», «Calcular la media»). «que»: una frase que diga qué hace esa etapa y con qué.',
+    `Entre 2 y ${MAX_STAGES} etapas, en el orden en que se ejecutan. Cada etapa es una fase con sentido propio, no una línea de código. No escribas código todavía.`,
+  ].join('\n')
+}
+
+export function outlinePrompt(request: {
+  command: string
+  where: string
+  context: string
+}): string {
+  return [`Orden: ${request.command}`, `Dónde va: ${request.where}.`, request.context]
+    .filter((part) => part !== '')
+    .join('\n\n')
+}
+
+/** El hueco que el esquema deja para una etapa: su rótulo y una pieza marcada, que su detalle sustituye. */
+export function stageSkeleton(stages: readonly Stage[], gen: string): string {
+  return stages
+    .map((stage, index) => `${stageHeading(stage)}\n...  # prysel:gen:${stageGen(gen, index)}`)
+    .join('\n\n')
+}
+
+/**
+ * El rótulo de una etapa del plan, como va en el código: `# Título: qué hace`. El lienzo enseña el título
+ * en la tarjeta y lo demás debajo, así que el plan se lee en el diagrama antes de que haya código.
+ */
+export function stageHeading(stage: Stage): string {
+  const goal = stage.goal.replace(/[.\s]+$/, '')
+  const about = goal.length > 90 ? `${goal.slice(0, 89)}…` : goal
+  return about === '' ? `# ${stage.title}` : `# ${stage.title}: ${about}`
+}
+
+/** El id de la marca de la etapa `index` de una construcción. */
+export const stageGen = (gen: string, index: number) => `${gen}s${index}`
+
+export function stageSystem(teach = false): string {
+  return [
+    buildStepsSystem(),
+    ...(teach ? [teachingNote()] : []),
+    'Ahora detallas UNA etapa de un plan que ya está decidido. Escribe solo los pasos de esa etapa: no repitas lo de las anteriores (ya está escrito) ni te adelantes a las siguientes.',
+    'No pongas comentarios de etapa: su rótulo ya está en el programa. «nivel» 0 es el sitio de esa etapa.',
+  ].join('\n')
+}
+
+export function stagePrompt(request: {
+  command: string
+  stages: readonly Stage[]
+  index: number
+  context: string
+}): string {
+  const plan = request.stages
+    .map(
+      (stage, i) =>
+        `${i + 1}. ${stage.title}${stage.goal ? `: ${stage.goal}` : ''}${i === request.index ? '   ◀ ESTA' : i < request.index ? '   (ya escrita)' : ''}`,
+    )
+    .join('\n')
+  return [
+    `Orden: ${request.command}`,
+    `El plan:\n${plan}`,
+    `Detalla la etapa ${request.index + 1}: «${request.stages[request.index]?.title ?? ''}».`,
+    request.context,
+  ].join('\n\n')
 }
 
 // ───────────────────────── lo que el JEV decide de cada paso ─────────────────────────

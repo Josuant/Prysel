@@ -163,7 +163,58 @@ Dónde está: `src/jev/build.ts` (`StepStream`, `BuildPlan`, `judgeStep`, `paceO
 
 **Elegir los modelos**: el botón con el nombre del modelo, en la caja de órdenes (o «Prysel: Elegir los modelos»), abre una lista con la IA que redacta (DeepSeek, Anthropic, cada modelo instalado en VS Code, o automático) y el motor que decide (Jev o el local). Lo que no tiene clave lo dice, y la pide al elegirlo.
 
-## 8. Medidas
+## 8. Pensar por partes: el director (hecho)
+
+Una sola llamada grande al principio hace esperar sin ver nada, y si su respuesta no sirve no queda nada. El trabajo se reparte en llamadas pequeñas, cada una con lo que hace falta saber en ese momento, y entre ellas el diagrama ya va cambiando (`src/jev/director.ts`):
+
+| Paso           | Quién                                 | Qué hace                                                                           | Qué se ve mientras                                            |
+| -------------- | ------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| 1. Repartir    | JEV                                   | Qué clase de orden es, dónde va, y si es pequeña (directa) o grande (con esquema). | «Decidiendo…»                                                 |
+| 2. Contexto    | JEV                                   | Qué trozos del programa hay que leer para esta orden.                              | «Leyendo lo que ya hay…»                                      |
+| 3. Plan        | IA (streaming)                        | Las etapas, a grandes rasgos. Sin código.                                          | Cada etapa aparece como una tarjeta con su título y un hueco. |
+| 4. Cada etapa  | IA (streaming), una llamada por etapa | Sus pasos, con el plan y lo ya escrito delante.                                    | «Etapa 2 de 3 · Calcular la media…»                           |
+| 5. Cada paso   | JEV                                   | ¿Es seguro? ¿De cerca o en su conjunto? ¿Merece una pausa?                         | El nodo aparece, la cámara va a él, la voz lo cuenta.         |
+| 6. El conjunto | JEV                                   | ¿Cumple lo que se pidió?                                                           | «Hecho, en 6 pasos.»                                          |
+
+- **Lo pequeño se salta el plan** (una función sencilla, unas pocas sentencias) y va directo a los pasos.
+- **El hueco de una etapa** es una pieza marcada (`...  # prysel:gen:<id>`) bajo su rótulo: el primer paso de la etapa la sustituye. Si se detiene antes, las marcas que queden se retiran.
+- **Nunca «hecho, en 0 pasos».** Los pasos se sacan de la respuesta vengan como vengan (`ObjectStream`: uno por línea, en una lista con sangría, entre vallas, envueltos en otro objeto). Si aun así no hay ninguno, se le pide otra vez diciéndole qué se espera; y si insiste, se dice qué contestó.
+
+### El contexto (`src/jev/context.ts`)
+
+- Un programa corto (hasta 6000 caracteres) se manda entero, **con sus números de línea**.
+- Uno largo se parte en trozos con sentido (cada función o clase; cada tramo de sentencias sueltas) y se manda: el **índice** de todo el archivo, los trozos **obligados** (donde se escribe, lo seleccionado, lo último que se hizo) y los que el **JEV** dice que hacen falta para esa orden. Se le pregunta por todos a la vez, en una petición.
+
+### Cambiar lo que ya está escrito (`src/jev/modify.ts`)
+
+«Ahora que reste en lugar de sumar», «refactoriza esto». El JEV decide que es un cambio y sobre qué: lo que se nombra, lo seleccionado o **lo último que se hizo** («eso», «lo de antes»). La IA no reescribe el programa: dicta cambios pequeños que nombran las sentencias por su número de línea.
+
+- `cambiar` (una sentencia pasa a ser otra; de una compuesta, solo su cabecera), `quitar` y `añadir` (detrás de una sentencia, o dentro de ella).
+- Los números de línea son los del programa de antes de empezar; `LineMap` los traduce a donde está cada cosa tras los cambios ya hechos.
+- Cada cambio se juzga, se escribe y **se ve**: lo que cambia recibe un barrido de luz y late una vez; lo que se quita se despide antes de irse (se apaga y encoge); lo que se añade entra como cualquier pieza nueva.
+
+### Preguntar bien (`src/jev/ask.ts`)
+
+Cuando el motor duda, la pregunta de plantilla aparece al instante y, en cuanto está lista, la sustituye una concreta: la IA generativa lee la orden, el programa y las dudas del JEV y propone de dos a cuatro salidas, cada una escrita como una orden completa. El JEV comprueba cada salida (la decide como si se hubiera dicho) y solo se ofrecen las que el motor sabe cumplir.
+
+## 9. Proactivo y visual (hecho)
+
+- **Lo que se escribe en la caja es una orden.** No se le pregunta al JEV si lo es, y nunca se contesta «no lo tomé como una orden» (eso queda para lo que se oiga de pasada, cuando haya micrófono). Con una IA que redacte, una orden poco clara se toma por su lectura más probable —salvo que destruya algo: eso sí se pregunta— y, si no encaja en nada, como algo que construir. «Una red neuronal artificial», sin verbo, se construye.
+- **Primero el plan, casi siempre.** Solo lo claramente pequeño va directo a los pasos. El rótulo de cada etapa lleva su «qué» (`# Calcular la salida: Suma ponderada de las entradas y activación`), y el lienzo lo enseña bajo el título de la tarjeta: el plan se lee en el diagrama antes de que haya código.
+- **La IA pensando, en el diagrama.** Mientras decide, lee o piensa una etapa, un nodo «La IA está pensando…» cuelga de donde está trabajando (el hueco de esa etapa) y dice en qué anda; los huecos respiran. Con el archivo vacío, se dice en el centro del lienzo.
+- **Ayudas visuales** (`src/jev/visual.ts`): nodos que no son parte del programa pero ayudan a entenderlo. Un paso puede traer la **curva** de la función que usa (una sigmoide) o una **tabla** de valores; el lienzo la dibuja al lado, con borde discontinuo. Se guarda como una marca al final de la línea (`# prysel:ver curva «Sigmoide» y = 1/(1+exp(-x)), x de -6 a 6`, `ProgramNode.aid`), así que no se pierde y se puede borrar a mano. La fórmula la propone un modelo, así que **no se ejecuta**: la lee un intérprete propio que solo sabe de números, `x`, las operaciones de siempre y unas pocas funciones (`exp`, `log`, `sqrt`, `sin`, `cos`, `tan`, `tanh`, `abs`, `max`, `min`). Lo que no entiende, no se dibuja.
+
+### Entender un tema: el programa como pizarra
+
+«Explícame cómo funciona la reproducción humana» no es una pregunta sobre el programa, y contestaba «Dime a qué te refieres: selecciónalo o nómbralo». El fallo no era de comprensión sino de repertorio: «explicar» solo sabía explicar un elemento del diagrama, y sin elemento se rendía. Lo que cambia:
+
+- **Una intención nueva, `ensenar`**: querer entender un tema, un concepto o cómo funciona algo que no está en el programa. Y «explicar» sin nada que señalar en el programa es lo mismo: no se usa lo que casualmente esté seleccionado (para eso está decir «esto»).
+- **Se responde construyendo**: un programa pequeño que modela el tema, con su plan primero (las partes de la explicación, como tarjetas) y luego cada parte, paso a paso, con voz y ayudas visuales. A la IA se le dice que el programa es su pizarra (`teachingNote`): las etapas son las de la explicación, los nombres salen del tema y cada frase cuenta qué pasa en la realidad, no la sintaxis.
+- **Va al final del programa**, no dentro de lo seleccionado.
+- **Si lo que se quiere entender sí está en el programa** (el JEV lo señala), se explica ese elemento, como antes.
+- **Una regla general contra los callejones sin salida**: cuando el motor no puede cumplir una orden y la IA solo encuentra una lectura posible de lo que se dijo (y el JEV la da por cumplible), no se pregunta: se hace.
+
+## 10. Medidas
 
 RNF-01 pide ≤ 800 ms desde el final de la orden hasta la mutación visible. Cada orden enseña dos cifras: lo que tardó el motor en decidir y el total, desde que se pulsa Intro hasta que el cambio está pintado.
 

@@ -16,12 +16,21 @@ const UNSURE = 0.2
 
 /** De más concreto a menos: «crea una etapa» es una etapa, no añadir. */
 const INTENT_WORDS: [Intent, RegExp][] = [
-  ['paso_a_paso', /paso a paso|\btraza|\breproduc/],
+  // Querer entender un tema va antes que nada: «la reproduccion humana» no es «reproducir el programa».
+  [
+    'ensenar',
+    /explicame (como|que|por que|el|la|los|las)\b|como funciona|que es (un|una|el|la)\b|ensename|quiero (aprender|entender)/,
+  ],
+  ['paso_a_paso', /paso a paso|\btraza\b|\breproduce\b|\breproducir\b/],
   ['deshacer', /\bdesha[zc]/],
   ['rehacer', /\breha[zc]/],
   ['etapa', /\betapa|\bseccion|\bfase\b/],
   ['narrar', /\bleccion|\bnarra|\banimacion|explicame el programa|explica el programa/],
   ['renombrar', /\brenombr|cambia(le)? el nombre|\bllama(lo|la|le)\b/],
+  [
+    'modificar',
+    /\bcambia|\bmodific|\brefactor|\bcorrige|\barregla|\bsimplific|en lugar de|en vez de|\bahora que\b|\bhaz que\b/,
+  ],
   ['eliminar', /\belimin|\bborra|\bquita|\bsuprim/],
   ['explicar', /\bexplic|que hace|para que sirve/],
   [
@@ -116,6 +125,9 @@ function targetIn(text: string, options: Record<string, string | null>): JevAnsw
     const found = typed ?? hits[0]
     if (found) return pick(found.ref, SURE)
   }
+  if ('ultimo' in options && /\beso\b|lo de antes|lo ultimo|acabas de/.test(text)) {
+    return pick('ultimo', SURE)
+  }
   if ('seleccionado' in options && /\b(esto|este|esta|aqui|seleccionad[oa])\b/.test(text)) {
     return pick('seleccionado', SURE)
   }
@@ -135,6 +147,17 @@ export function localDecider(): Decider {
           answers[id] = { type: 'noul', noul: intent === undefined ? 0.1 : SURE }
         } else if (id === 'varias') {
           answers[id] = { type: 'noul', noul: /\by (luego|despues)\b|;/.test(text) ? SURE : 0.05 }
+        } else if (id === 'alcance') {
+          // Lo claramente pequeno va directo; lo demas, con su plan.
+          const small =
+            /\bfuncion\b|\bbucle\b|\bvariable\b|\blinea\b/.test(text) &&
+            !/\bprograma\b|\balgoritmo/.test(text)
+          answers[id] = pick(small ? 'directo' : 'esquema', SURE)
+        } else if (/^r\d+$/.test(id) && question.type === 'noul') {
+          // ¿Hace falta leer este trozo? Si la orden nombra algo de su título, sí.
+          const title = plain(question.instructions.split('Líneas').pop() ?? '')
+          const words = text.split(/[^a-z0-9_]+/).filter((w) => w.length >= 4 && !COMMON.has(w))
+          answers[id] = { type: 'noul', noul: words.some((w) => title.includes(w)) ? SURE : 0.1 }
         } else if (id === 'camara' || id === 'ritmo') {
           // Lo que abre un bloque se enseña con lo que lo rodea, y merece una pausa.
           const code = typeof state.codigo === 'string' ? state.codigo : ''

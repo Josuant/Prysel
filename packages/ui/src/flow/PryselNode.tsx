@@ -73,6 +73,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   spotlit?: number | undefined
   /** Acaba de construirse: entra con su animación (él, y lo que lleva dentro, uno tras otro). */
   born?: boolean
+  /** Una orden acaba de cambiarlo, o está a punto de quitarlo. */
+  change?: 'changed' | 'leaving' | undefined
   /** Una nota nombra este nodo en su `código`, y el puntero está encima de ese trozo. */
   hinted?: boolean
   /** La cajita de chips de este contexto, si es un territorio que tiene una. */
@@ -335,6 +337,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         data-cursor={data.cursor ? '' : undefined}
         data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
         data-born={data.born ? '' : undefined}
+        data-change={data.change}
         data-hinted={data.hinted ? '' : undefined}
         data-modifier={modifier}
       >
@@ -429,6 +432,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-cursor={data.cursor ? '' : undefined}
       data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
       data-born={data.born ? '' : undefined}
+      data-change={data.change}
       data-hinted={data.hinted ? '' : undefined}
     >
       {/* De aquí sale la flecha de una nota: existe en todo nodo (también en un territorio, que no tiene salida). */}

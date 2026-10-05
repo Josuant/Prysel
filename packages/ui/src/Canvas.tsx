@@ -262,6 +262,8 @@ export interface CanvasProps {
     key: number
     /** El nodo acaba de construirse: aparece con su animación de entrada. */
     born?: boolean
+    /** O acaba de cambiar (se le ve el cambio), o está a punto de quitarse (se despide). */
+    change?: 'changed' | 'leaving'
     /** La cámara enseña el nodo con lo que lo rodea, más de lejos, en vez de acercarse a él. */
     wide?: boolean
   } | null
@@ -1502,6 +1504,8 @@ function CanvasInner({
         ? { onRename: (id: string, to: string) => onAction({ type: 'rename', id, to }) }
         : {}),
       renameSignal: renaming.id === node.id ? renaming.n : 0,
+      born: spotlight?.id === node.id && spotlight.born === true,
+      change: spotlight?.id === node.id ? spotlight.change : undefined,
       hinted: hinted?.has(node.id) === true,
       // En el diagrama de flujo es un paso más: la secuencia entra por arriba y sale por abajo.
       ...(flow ? { step: true } : {}),
@@ -1566,6 +1570,7 @@ function CanvasInner({
           cursor: cursor === node.id,
           spotlit: spotlight?.id === node.id ? spotlight.key : undefined,
           born: spotlight?.id === node.id && spotlight.born === true,
+          change: spotlight?.id === node.id ? spotlight.change : undefined,
           hinted: hinted?.has(node.id) === true,
           // La cajita de chips del territorio, y lo que llevan las casillas de este nodo.
           tray: container ? plan.trays.get(node.id) : undefined,
@@ -1683,6 +1688,7 @@ function CanvasInner({
               : {}),
             renameSignal: renaming.id === placed.id ? renaming.n : 0,
             born: spotlight?.id === placed.id && spotlight.born === true,
+            change: spotlight?.id === placed.id ? spotlight.change : undefined,
             hinted: hinted?.has(placed.id) === true,
           },
         })

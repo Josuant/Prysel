@@ -30,6 +30,7 @@ export interface ChipNodeData extends Record<string, unknown> {
   renameSignal?: number
   /** Una orden acaba de construirlo: entra con su animación. */
   born?: boolean
+  change?: 'changed' | 'leaving' | undefined
   /** Una nota nombra este chip en su `código`, y el puntero está encima de ese trozo. */
   hinted?: boolean
   /** Es un paso del diagrama de flujo (un valor a mitad de camino): la secuencia entra y sale por él. */
@@ -120,6 +121,7 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
       data-hinted={data.hinted ? '' : undefined}
       data-step={data.step ? '' : undefined}
       data-born={data.born ? '' : undefined}
+      data-change={data.change}
       title={`${chip.label}: arrástrala a una casilla que reciba un valor`}
     >
       {data.line !== undefined && (

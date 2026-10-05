@@ -9,12 +9,24 @@ import { pickVoice } from './useNarration.ts'
 /** RNF-01: de que se acaba la orden a que el cambio se ve, como mucho esto. */
 export const BUDGET_MS = 800
 
+export interface AskOption {
+  label: string
+  force?: Forced
+  order?: string
+}
+
 export type OrderState =
   | { phase: 'idle' }
   /** La orden salió y aún no hay decisión. */
   | { phase: 'deciding'; text: string }
   /** El motor no lo tiene claro: pregunta, y cada respuesta vuelve a mandar la orden ya aclarada. */
-  | { phase: 'ask'; text: string; question: string; options: { label: string; force: Forced }[] }
+  | {
+      phase: 'ask'
+      text: string
+      question: string
+      /** Cada salida aclara la orden (`force`) o es otra orden, ya completa (`order`). */
+      options: AskOption[]
+    }
   | {
       phase: 'done'
       text: string

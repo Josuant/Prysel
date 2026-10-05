@@ -40,20 +40,11 @@ import {
 } from '@prysel/python/edits'
 import type { TemplateId } from '@prysel/morphology'
 import { DEFAULT_JEV_MODEL, JevError, typesafeDecider, type Decider } from './jev/client.ts'
-import {
-  BuildPlan,
-  MAX_BUILD_STEPS,
-  STEP_THRESHOLDS,
-  StepStream,
-  buildStepsPrompt,
-  buildStepsSystem,
-  judgeStep,
-  paceOf,
-  type BuildStep,
-} from './jev/build.ts'
-import { COMPOSE_THRESHOLDS, judgeCode, splitOrder } from './jev/compose.ts'
-import { decideCommand, type Directive, type Effect, type Evidence } from './jev/engine.ts'
-import { streamText } from './ai/stream.ts'
+import { smartAsk } from './jev/ask.ts'
+import { splitOrder } from './jev/compose.ts'
+import { contextFor } from './jev/context.ts'
+import { build, modify, summaryOf, type Outcome, type Stagehand } from './jev/director.ts'
+import { decideCommand, type Directive, type Effect } from './jev/engine.ts'
 import { deepseekProvider, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
 import { explainNode, generateFill } from './jev/fill.ts'
 import { localDecider } from './jev/local.ts'
@@ -1038,9 +1029,14 @@ async function decideOrder(order: OrderContext, text: string, single: boolean) {
       program,
       selected: message.selected,
       focus: message.focus,
+      // Llega de la caja de órdenes: es una orden, no algo oído de pasada.
+      typed: true,
       ...(message.force && !single ? { forced: message.force } : {}),
       ...(provider ? { genId: newGenId() } : {}),
       ...(single ? { single: true } : {}),
+      ...(lastWork.has(doc.uri.toString())
+        ? { last: lastWork.get(doc.uri.toString()) as { from: number; to: number } }
+        : {}),
     },
     decider,
   )
@@ -1069,10 +1065,14 @@ async function carryOut(
     })
   }
   postToAll({ type: 'decision', id: message.id, version: doc.version, ...decision })
-  if (directive.kind !== 'do') return false
+  if (directive.kind !== 'do') {
+    // La pregunta de plantilla ya está en pantalla; si se puede hacer una mejor, la sustituye.
+    if (!message.force) await askBetter(order, text, decision)
+    return false
+  }
   const { effect } = directive
-  if (effect.type === 'compose' && provider) {
-    return runCompose(doc, decider, provider, text, effect)
+  if ((effect.type === 'compose' || effect.type === 'modify') && provider) {
+    return runDirected(doc, decider, provider, text, effect)
   }
   if (effect.type === 'lesson') {
     await vscode.commands.executeCommand('prysel.explainFile')
@@ -1091,6 +1091,9 @@ async function carryOut(
 /** Lo que se está construyendo paso a paso en cada documento: con esto se detiene. */
 const builds = new Map<string, AbortController>()
 
+/** Las líneas de lo último que una orden construyó o cambió en cada documento: «eso», «lo de antes». */
+const lastWork = new Map<string, { from: number; to: number }>()
+
 /** Detiene la construcción en marcha de un documento, si la hay. Lo ya escrito se queda. */
 function stopBuild(doc: vscode.TextDocument | null) {
   if (doc) builds.get(doc.uri.toString())?.abort()
@@ -1099,22 +1102,20 @@ function stopBuild(doc: vscode.TextDocument | null) {
 /** Espera, pero no más allá de que se detenga la construcción. */
 async function pauseFor(ms: number, signal: AbortSignal) {
   const until = Date.now() + ms
-  while (!signal.aborted && Date.now() < until) await sleep(40)
+  while (!signal.aborted && Date.now() < until) await sleep(Math.min(40, ms))
 }
 
 /**
- * Una orden compleja se construye **paso a paso** (ver `jev/build.ts`): la IA generativa dicta en streaming
- * una sentencia y su explicación por paso; cada paso, en cuanto llega, lo juzga el JEV (¿seguro?, ¿cómo se
- * enseña?), se escribe en el documento y el lienzo lo dibuja y lo cuenta, antes de que llegue el siguiente.
- * Se detiene si el usuario lo pide (o da otra orden), si un paso no es seguro o si no encaja; lo escrito
- * hasta ahí es un programa válido. Al acabar, el JEV juzga si el conjunto cumple la orden.
+ * Una orden compleja la lleva el **director** (`jev/director.ts`), por partes: el contexto, el plan, cada
+ * etapa y cada paso son llamadas distintas a la IA generativa y al JEV, y entre ellas el diagrama ya va
+ * cambiando. Aquí solo se le presta lo que necesita de VS Code: el documento, el lienzo y el reloj.
  */
-async function runCompose(
+async function runDirected(
   doc: vscode.TextDocument,
   decider: Decider,
   provider: AiProvider,
   command: string,
-  effect: Extract<Effect, { type: 'compose' }>,
+  effect: Extract<Effect, { type: 'compose' | 'modify' }>,
 ): Promise<boolean> {
   const key = doc.uri.toString()
   builds.get(key)?.abort()
@@ -1122,147 +1123,167 @@ async function runCompose(
   builds.set(key, control)
   const { signal } = control
   const parser = await getParser()
-  const start = await analyse(doc)
-  const anchor = start.nodes.find((n) => n.id === (effect.place.after ?? effect.place.into))
-  const plan = new BuildPlan(effect.place)
-  const incoming = new StepStream()
-  const queue: BuildStep[] = []
-  let streamed = false
-  let trouble: string | null = null
-  const streaming = streamText(
-    provider,
-    {
-      system: buildStepsSystem(),
-      prompt: buildStepsPrompt({
-        command,
-        program: start,
-        where: effect.where,
-        ...(anchor?.scope ? { scope: anchor.scope } : {}),
-      }),
-      maxTokens: 3000,
-    },
-    (delta) => {
-      queue.push(...incoming.push(delta))
-    },
-    signal,
-  )
-    .then(() => {
-      queue.push(...incoming.end())
-    })
-    .catch((error: unknown) => {
-      if (!signal.aborted) trouble = `La IA dejó de responder. ${messageOf(error)}`
-    })
-    .finally(() => {
-      streamed = true
-    })
-
   const shown = () => currentDoc?.uri.toString() === key
-  const written: string[] = []
-  let jevMs = 0
-  while (!signal.aborted && written.length < MAX_BUILD_STEPS) {
-    const step = queue.shift()
-    if (!step) {
-      if (streamed) break
-      await sleep(40)
-      continue
-    }
-    // El JEV, entre paso y paso: si no es seguro, no se escribe y aquí se acaba.
-    let verdict = { safe: 1, wide: false, pause: false, ms: 0 }
-    try {
-      verdict = await judgeStep(decider, command, step)
-    } catch {
-      // Sin su juicio (se cayó la red) no se sigue escribiendo a ciegas.
-      trouble = 'El JEV dejó de responder: me detengo aquí.'
-      break
-    }
-    jevMs += verdict.ms
-    if (verdict.safe < STEP_THRESHOLDS.safe) {
-      trouble =
-        'El JEV no da por seguro el siguiente paso (toca archivos, la red o el sistema): me detengo.'
-      break
-    }
-    if (signal.aborted) break
-    const program = await analyse(doc)
-    const placed = plan.place(program, step)
-    if (!placed.ok) {
-      trouble = placed.error
-      break
-    }
-    if (placed.change) {
+  /** Por dónde ha ido pasando el trabajo: lo que después es «lo último que se hizo». */
+  let span: { from: number; to: number } | null = null
+  const host: Stagehand = {
+    signal,
+    program: () => analyse(doc),
+    async write(change) {
       const before = doc.getText()
-      const edits = placed.change.edits
+      const { edits } = change
+      if (edits.length === 0) return null
       // El diagrama se rehace tras cada paso: lo que no deje un Python válido no se escribe.
       if (
         !validEdits(edits, before.length) ||
         parser.parse(applyTextEdits(before, edits)).rootNode.hasError
       ) {
-        trouble = 'El paso no deja un programa válido: me detengo.'
-        break
+        return 'El siguiente paso no deja un programa válido: me detengo.'
       }
-      if (!(await writeEdits(doc, edits))) {
-        trouble = 'No se pudo escribir el paso.'
-        break
-      }
+      if (!(await writeEdits(doc, edits))) return 'No se pudo escribir en el archivo.'
       historyOf(doc).applied(before, edits, doc.version)
       postHistory(doc)
-    }
-    plan.commit(step, placed)
-    if (!placed.change) continue
-    written.push(step.code)
-    if (shown()) {
+      return null
+    },
+    async show(event) {
+      if (event.type === 'step' && event.effect !== 'leaving') {
+        span = span
+          ? { from: Math.min(span.from, event.line), to: Math.max(span.to, event.line) }
+          : { from: event.line, to: event.line }
+      }
+      if (!shown()) return
+      if (event.type === 'progress') {
+        postToAll({ type: 'progress', gen: effect.gen, text: event.text })
+        return
+      }
       // Primero el programa nuevo, luego el paso: el lienzo enfoca un nodo que ya tiene.
       await refresh()
       postToAll({
         type: 'step',
         gen: effect.gen,
-        index: written.length,
-        say: step.say,
-        line: placed.line,
-        ...(verdict.wide ? { wide: true } : {}),
+        index: event.index,
+        say: event.say,
+        line: event.line,
+        effect: event.effect,
+        ...(event.wide ? { wide: true } : {}),
       })
-    }
-    await pauseFor(paceOf(step, verdict.pause), signal)
+    },
+    wait: (ms) => pauseFor(ms, signal),
   }
-  const stopped = signal.aborted
-  control.abort()
-  await streaming
-  if (builds.get(key) === control) builds.delete(key)
-
-  // Al final, el JEV juzga el conjunto: ¿hace lo que se pidió?
-  let evidence: Evidence[] = []
-  let doubt = false
-  if (written.length > 0 && !stopped && trouble === null) {
-    try {
-      const whole = await judgeCode(decider, command, written.join('\n'))
-      evidence = whole.evidence
-      jevMs += whole.ms
-      doubt = whole.fulfils < COMPOSE_THRESHOLDS.fulfils
-    } catch {
-      // Sin juicio final, lo escrito se queda como está.
+  let outcome: Outcome
+  try {
+    outcome =
+      effect.type === 'compose'
+        ? await build(
+            host,
+            { decider, provider },
+            {
+              command,
+              gen: effect.gen,
+              place: effect.place,
+              where: effect.where,
+              outline: effect.outline,
+              ...(effect.teach ? { teach: true } : {}),
+            },
+          )
+        : await modify(
+            host,
+            { decider, provider },
+            {
+              command,
+              ...(effect.lines ? { lines: effect.lines } : {}),
+              ...(effect.scope ? { scope: effect.scope } : {}),
+            },
+          )
+  } catch (error) {
+    outcome = {
+      written: 0,
+      stopped: signal.aborted,
+      trouble: `Algo falló a mitad. ${messageOf(error)}`,
+      doubt: false,
+      evidence: [],
+      jevMs: 0,
     }
+  }
+  control.abort()
+  if (builds.get(key) === control) builds.delete(key)
+  if (span) {
+    // Hasta el final de la última sentencia tocada (si es un bloque, con su cuerpo).
+    const { from, to } = span as { from: number; to: number }
+    const tail = (await analyse(doc)).nodes.find((n) => n.range && n.line === to)
+    lastWork.set(key, { from, to: tail?.lineEnd ?? to })
   }
   if (shown()) {
-    const count = `${written.length} ${written.length === 1 ? 'paso' : 'pasos'}`
+    await refresh()
     postToAll({
       type: 'generated',
       gen: effect.gen,
-      ok: written.length > 0,
-      say: stopped
-        ? `Detenido: quedan escritos ${count}.`
-        : trouble !== null
-          ? `${trouble} Quedan escritos ${count}.`
-          : doubt
-            ? `Hecho en ${count}, pero el JEV duda de que cumpla todo lo pedido: revísalo.`
-            : `Hecho, en ${count}.`,
-      ...(written.length === 0
-        ? { error: trouble ?? 'La IA no dictó ningún paso que se pudiera escribir.' }
-        : {}),
-      ...(evidence.length > 0 ? { evidence } : {}),
-      jevMs,
+      ok: outcome.written > 0,
+      say: summaryOf(outcome, effect.type === 'modify' ? ['cambio', 'cambios'] : ['paso', 'pasos']),
+      ...(outcome.evidence.length > 0 ? { evidence: outcome.evidence } : {}),
+      jevMs: outcome.jevMs,
       done: true,
     })
   }
-  return written.length > 0
+  return outcome.written > 0
+}
+
+/**
+ * Cuando el motor duda (o no puede), la pregunta de plantilla se cambia por una concreta: la redacta la IA
+ * generativa mirando el programa, y el JEV comprueba que cada salida que ofrece se puede cumplir (`jev/ask.ts`).
+ */
+async function askBetter(
+  order: OrderContext,
+  text: string,
+  decision: Awaited<ReturnType<typeof decideCommand>>,
+) {
+  const { doc, message, decider, provider } = order
+  const { directive } = decision
+  if (!provider || (directive.kind !== 'ask' && directive.kind !== 'unknown')) return
+  const version = doc.version
+  const program = await analyse(doc)
+  const chosen = program.nodes.find((n) => n.id === message.selected)
+  const context = await contextFor(decider, {
+    command: text,
+    program,
+    ...(chosen ? { must: [chosen.line] } : {}),
+  })
+  const last = lastWork.get(doc.uri.toString())
+  const better = await smartAsk(provider, decider, {
+    input: {
+      text,
+      program,
+      selected: message.selected,
+      focus: message.focus,
+      // Llega de la caja de órdenes: es una orden, no algo oído de pasada.
+      typed: true,
+      genId: newGenId(),
+      ...(last ? { last } : {}),
+    },
+    context: context.text,
+    directive,
+    evidence: decision.evidence,
+    ...(chosen
+      ? { selected: `línea ${chosen.line}: ${(chosen.text ?? chosen.label).split('\n')[0]}` }
+      : {}),
+  })
+  if (!better || doc.version !== version) return
+  // Si solo queda una lectura posible de lo que se dijo, no se pregunta: se hace.
+  const [only] = better.options
+  if (directive.kind === 'unknown' && better.options.length === 1 && only?.order !== undefined) {
+    const clear = await decideOrder(order, only.order, true)
+    if (clear?.directive.kind === 'do') {
+      await carryOut(order, only.order, clear)
+      return
+    }
+  }
+  postToAll({
+    type: 'decision',
+    id: message.id,
+    version: doc.version,
+    ...decision,
+    directive: better,
+  })
 }
 
 // ───────────────────────── qué modelos se usan ─────────────────────────

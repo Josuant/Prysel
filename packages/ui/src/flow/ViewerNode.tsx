@@ -27,6 +27,8 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
       className="viewer"
       data-selected={selected ? '' : undefined}
       data-stale={content.stale ? '' : undefined}
+      data-busy={content.busy ? '' : undefined}
+      data-aid={content.aid ? '' : undefined}
       style={{ width: size.w, height: size.h }}
     >
       <Handle
