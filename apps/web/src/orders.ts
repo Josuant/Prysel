@@ -282,7 +282,7 @@ export class Orders {
     if (!provider && (effect.type === 'compose' || effect.type === 'modify')) {
       port.post({
         type: 'say',
-        text: 'Para escribir y explicar esto hace falta una IA: añade tu clave de Anthropic en Ajustes.',
+        text: 'Para escribir y explicar esto hace falta una IA: añade tu clave de Anthropic o de DeepSeek en Ajustes.',
       })
       return false
     }
@@ -298,7 +298,7 @@ export class Orders {
       else {
         port.post({
           type: 'say',
-          text: 'Para generar la lección hace falta una IA: añade tu clave de Anthropic en Ajustes.',
+          text: 'Para generar la lección hace falta una IA: añade tu clave de Anthropic o de DeepSeek en Ajustes.',
         })
       }
       return false
@@ -606,7 +606,10 @@ export class Orders {
     try {
       const provider = port.provider()
       if (!provider)
-        return await finish(null, 'Falta la clave de Anthropic para escribir el contenido.')
+        return await finish(
+          null,
+          'Falta la clave de una IA (Anthropic o DeepSeek) para escribir el contenido.',
+        )
       const parser = await port.parser()
       const result = await generateFill(
         provider,

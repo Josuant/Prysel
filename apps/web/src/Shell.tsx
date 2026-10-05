@@ -4,7 +4,7 @@ import { ErrorBoundary } from '../../../packages/extension/webview/src/ErrorBoun
 import { CodeEditor } from './CodeEditor.tsx'
 import { BLANK, EMPTY, EXAMPLES, type Example } from './examples.ts'
 import type { WebDocument, WebHost } from './host.ts'
-import { ANTHROPIC_MODELS, type AiSettings } from './settings.ts'
+import { ANTHROPIC_MODELS, DEEPSEEK_MODELS, hasAiKey, type AiSettings } from './settings.ts'
 import { loadDocument, saveDocument } from './store.ts'
 
 /**
@@ -267,46 +267,106 @@ function SettingsSheet({
           onSave({
             ...draft,
             anthropicKey: draft.anthropicKey.trim(),
+            deepseekKey: draft.deepseekKey.trim(),
             typesafeKey: draft.typesafeKey.trim(),
           })
         }}
       >
         <h2>Inteligencia artificial</h2>
         <p className="web-settings__hint">
-          La IA escribe el código y las explicaciones. Tu clave se guarda solo en este navegador y
-          la página llama directamente a Anthropic: lo que escribes en el chat y tu código van a su
-          API.
+          La IA escribe el código y las explicaciones. Las claves se guardan solo en este navegador
+          y la página llama directamente a la IA elegida: lo que escribes en el chat y tu código van
+          a su API.
         </p>
-        <label>
-          <span>Clave de la API de Anthropic</span>
-          <input
-            type="password"
-            autoComplete="off"
-            placeholder="sk-ant-…"
-            value={draft.anthropicKey}
-            onChange={(event) => setDraft({ ...draft, anthropicKey: event.target.value })}
-          />
-          <small>
-            Consíguela en{' '}
-            <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
-              console.anthropic.com
-            </a>
-            .
-          </small>
-        </label>
-        <label>
-          <span>Modelo</span>
-          <select
-            value={draft.anthropicModel}
-            onChange={(event) => setDraft({ ...draft, anthropicModel: event.target.value })}
-          >
-            {ANTHROPIC_MODELS.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="web-segmented" role="radiogroup" aria-label="Qué IA usar">
+          {(
+            [
+              ['anthropic', 'Anthropic (Claude)'],
+              ['deepseek', 'DeepSeek'],
+            ] as const
+          ).map(([vendor, label]) => (
+            <button
+              key={vendor}
+              type="button"
+              role="radio"
+              aria-checked={draft.vendor === vendor}
+              onClick={() => setDraft({ ...draft, vendor })}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {draft.vendor === 'anthropic' ? (
+          <>
+            <label>
+              <span>Clave de la API de Anthropic</span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder="sk-ant-…"
+                value={draft.anthropicKey}
+                onChange={(event) => setDraft({ ...draft, anthropicKey: event.target.value })}
+              />
+              <small>
+                Consíguela en{' '}
+                <a
+                  href="https://console.anthropic.com/settings/keys"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  console.anthropic.com
+                </a>
+                .
+              </small>
+            </label>
+            <label>
+              <span>Modelo</span>
+              <select
+                value={draft.anthropicModel}
+                onChange={(event) => setDraft({ ...draft, anthropicModel: event.target.value })}
+              >
+                {ANTHROPIC_MODELS.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : (
+          <>
+            <label>
+              <span>Clave de la API de DeepSeek</span>
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder="sk-…"
+                value={draft.deepseekKey}
+                onChange={(event) => setDraft({ ...draft, deepseekKey: event.target.value })}
+              />
+              <small>
+                Consíguela en{' '}
+                <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">
+                  platform.deepseek.com
+                </a>
+                .
+              </small>
+            </label>
+            <label>
+              <span>Modelo</span>
+              <select
+                value={draft.deepseekModel}
+                onChange={(event) => setDraft({ ...draft, deepseekModel: event.target.value })}
+              >
+                {DEEPSEEK_MODELS.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
         <label>
           <span>Clave de TypeSafe (opcional)</span>
           <input
@@ -321,11 +381,13 @@ function SettingsSheet({
           </small>
         </label>
         <div className="web-settings__actions">
-          {initial.anthropicKey && (
+          {(hasAiKey(initial) || initial.typesafeKey) && (
             <button
               type="button"
               className="web-text-button"
-              onClick={() => onSave({ ...draft, anthropicKey: '', typesafeKey: '' })}
+              onClick={() =>
+                onSave({ ...draft, anthropicKey: '', deepseekKey: '', typesafeKey: '' })
+              }
             >
               Borrar claves
             </button>
