@@ -1,6 +1,7 @@
 import type { TemplateId } from '@prysel/morphology'
 import type { Decider, JevAnswer, JevRequest } from './client.ts'
 import type { Intent, PlaceId } from './engine.ts'
+import { hinted } from './plain.ts'
 
 /**
  * Un decisor local: contesta a las mismas preguntas que Jev, por palabras clave. No entiende: reconoce.
@@ -193,13 +194,18 @@ export function localDecider(): Decider {
           answers[id] = pick('de -6 a 6', SURE)
         } else if (/^m\d+$/.test(id) && question.type === 'choice') {
           // El trozo que la frase nombra tal cual; si no nombra ninguno, nada que subrayar.
-          const said = plain(question.instructions.split('»')[0] ?? '')
-          const hit = Object.entries(question.criteria).find(
-            ([option, fragment]) =>
-              option !== 'ninguno' &&
-              /^[A-Za-z_]\w*$/.test(fragment ?? '') &&
-              said.split(/[^a-z0-9_]+/).includes(plain(fragment ?? '')),
+          // (o que delata con otras palabras: «minúsculas» es `lower`).
+          const said = (question.instructions.split('»')[0] ?? '').split('«')[1] ?? ''
+          const offered = Object.entries(question.criteria).filter(
+            ([option]) => option !== 'ninguno',
           )
+          const hit =
+            offered[
+              hinted(
+                said,
+                offered.map(([, text]) => (text ?? '').split(' — ')[0] ?? ''),
+              )
+            ]
           answers[id] = hit ? pick(hit[0], SURE) : pick('ninguno', SURE)
         } else if (id === 'interrupcion') {
           answers[id] = /\b(sigue|continua|vale|bien|gracias|ok)\b/.test(plain(textOf(state.nuevo)))

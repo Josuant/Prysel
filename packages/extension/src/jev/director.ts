@@ -27,9 +27,9 @@ import {
 import type { Decider } from './client.ts'
 import { COMPOSE_THRESHOLDS, judgeCode } from './compose.ts'
 import { WHOLE_BUDGET, contextFor } from './context.ts'
+import { reachesOutside, safeEnough } from './safety.ts'
 import type { Evidence, Spot } from './engine.ts'
 import {
-  CHUNK_THRESHOLDS,
   CodeStream,
   LineStream,
   codePrompt,
@@ -124,8 +124,11 @@ export type Shown =
        * `changed` y `leaving`: cambia, o está a punto de quitarse.
        */
       effect: 'born' | 'told' | 'changed' | 'leaving'
-      /** El trozo exacto del código de la pieza que se subraya mientras se dice su frase. */
-      mark?: string
+      /**
+       * El trozo exacto del código de la pieza que se subraya mientras se dice su frase: el elegido y sus
+       * suplentes, por orden (el lienzo subraya el primero que encuentra escrito en el nodo).
+       */
+      mark?: string[]
       /** La cámara enseña el conjunto, no solo la pieza. */
       wide?: boolean
     }
@@ -339,7 +342,7 @@ interface Prepared {
   /** La frase de cada momento, en su orden. */
   says: string[]
   /** El trozo exacto del código que se subraya en cada momento (`''`: ninguno). Lo elige el JEV. */
-  marks: string[]
+  marks: string[][]
   formula: string | null
 }
 
@@ -525,7 +528,7 @@ export async function build(
         } catch {
           verdict = null
         }
-        const safe = verdict !== null && verdict.safe >= CHUNK_THRESHOLDS.safe
+        const safe = verdict !== null && safeEnough(chunk.code, verdict.safe)
         // El código va hacia delante: un trozo puede abrir una parte posterior del plan, nunca volver atrás.
         if (
           planned &&
@@ -555,7 +558,7 @@ export async function build(
         const series = chunk.steps.length === 1 && only ? seriesIn(only.code) : null
         if (series && only) only.visual = series
         // Y el JEV elige, de cada frase, de qué trozo exacto del código habla: es lo que se subrayará.
-        let marks: string[] = []
+        let marks: string[][] = []
         if (safe) {
           try {
             const chosen = await judgeMarks(
@@ -597,9 +600,11 @@ export async function build(
         tally.trouble = 'El JEV dejó de responder: me detengo aquí.'
         break
       }
-      if (verdict.safe < CHUNK_THRESHOLDS.safe) {
-        tally.trouble =
-          'El JEV no da por seguro el siguiente trozo (toca archivos, la red o el sistema): me detengo.'
+      if (!safeEnough(chunk.code, verdict.safe)) {
+        // Se dice por qué: o el trozo tiene con qué salir del programa, o el JEV lo rechaza de plano.
+        tally.trouble = reachesOutside(chunk.code)
+          ? 'El JEV no da por seguro el siguiente trozo, que puede tocar archivos, la red o el sistema: me detengo.'
+          : 'El JEV da por arriesgado el siguiente trozo: me detengo.'
         break
       }
       if (planned && item.stage !== current) {
@@ -636,7 +641,7 @@ export async function build(
         for (const [at, moment] of item.moments.entries()) {
           if (moment.step !== index) continue
           const say = item.says[at] ?? ''
-          const mark = item.marks[at] ?? ''
+          const mark = item.marks[at] ?? []
           await host.show({
             type: 'step',
             index: tally.written,
@@ -644,7 +649,7 @@ export async function build(
             line: placed.line + moment.offset,
             effect: shown === 0 ? 'born' : 'told',
             ...(verdict.wide && shown === 0 ? { wide: true } : {}),
-            ...(mark === '' ? {} : { mark }),
+            ...(mark.length === 0 ? {} : { mark }),
           })
           shown++
           // Lo siguiente no aparece hasta que esto se haya dicho.
@@ -753,7 +758,7 @@ export async function modify(
         break
       }
       tally.jevMs += verdict.ms
-      if (verdict.safe < STEP_THRESHOLDS.safe) {
+      if (!safeEnough(code, verdict.safe)) {
         tally.trouble =
           'El JEV no da por seguro el siguiente cambio (toca archivos, la red o el sistema): me detengo.'
         break

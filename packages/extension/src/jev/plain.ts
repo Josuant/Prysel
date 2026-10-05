@@ -1,5 +1,5 @@
 import type { BuildStep, Stage } from './build.ts'
-import type { Decider, JevQuestion } from './client.ts'
+import type { Decider, JevAnswer, JevQuestion } from './client.ts'
 
 /**
  * Pedir solo contenido. A la IA generativa no se le pide ningún formato —ni JSON, ni etiquetas—, porque
@@ -438,78 +438,265 @@ export async function judgeChunk(
 // ───────────────────────── subrayar: la parte exacta de la que habla una frase ─────────────────────────
 
 const KEYWORDS = new Set(
-  'and as assert break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield print len range'.split(
+  'and as assert break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield'.split(
     ' ',
   ),
 )
 
+/** Un trozo de una pieza que se podría subrayar, y qué es dentro de ella (es lo que lee el JEV). */
+export interface Fragment {
+  text: string
+  what: string
+}
+
+/** Parte por las comas de fuera: las de dentro de un paréntesis, un corchete o un texto no cuentan. */
+function splitTop(inner: string): string[] {
+  const parts: string[] = []
+  let depth = 0
+  let quote = ''
+  let from = 0
+  for (let i = 0; i < inner.length; i++) {
+    const char = inner[i] ?? ''
+    if (quote !== '') {
+      if (char === quote) quote = ''
+    } else if (char === '"' || char === "'") quote = char
+    else if ('([{'.includes(char)) depth++
+    else if (')]}'.includes(char)) depth--
+    else if (char === ',' && depth === 0) {
+      parts.push(inner.slice(from, i))
+      from = i + 1
+    }
+  }
+  parts.push(inner.slice(from))
+  return parts.map((part) => part.trim()).filter((part) => part !== '')
+}
+
+/** Dónde se cierra lo que se abre en `open` (un paréntesis o un corchete). -1 si no se cierra. */
+function closing(text: string, open: number): number {
+  let depth = 0
+  for (let i = open; i < text.length; i++) {
+    const char = text[i] ?? ''
+    if ('([{'.includes(char)) depth++
+    else if (')]}'.includes(char) && --depth === 0) return i
+  }
+  return -1
+}
+
 /**
- * Los trozos de una pieza de código que se podrían subrayar al explicarla: sus llamadas (con sus
- * argumentos), sus nombres, sus números y sus textos. Es el conjunto cerrado entre el que elige el JEV.
+ * Los trozos de una pieza de código que se podrían subrayar al explicarla, cada uno con lo que es: la
+ * condición, lo que se calcula, cada llamada (entera, su nombre y lo que recibe), los elementos de una
+ * lista, los textos, los nombres y los números. Es el conjunto cerrado entre el que elige el JEV.
  */
-export function fragmentsOf(code: string, max = 12): string[] {
+export function partsOf(code: string, max = 16): Fragment[] {
   const line =
     code.split('\n').find((row) => row.trim() !== '' && !row.trimStart().startsWith('#')) ?? ''
   const text = line.replace(/#.*$/, '').trim()
-  const found: string[] = []
-  const add = (fragment: string) => {
+  const found: Fragment[] = []
+  const add = (fragment: string, what: string) => {
     const clean = fragment.trim()
-    if (clean.length >= 1 && clean !== text && !found.includes(clean)) found.push(clean)
+    if (clean.length >= 1 && clean !== text && !found.some((item) => item.text === clean))
+      found.push({ text: clean, what })
   }
-  // Las llamadas, de fuera adentro: `abs(sum(pesos) - 1.0)`, `sum(pesos)`.
+  // Lo que la sentencia tiene de principal: lo que comprueba, lo que recorre, lo que calcula y dónde lo deja.
+  const test = /^(?:if|elif|while)\s+(.+?):?$/.exec(text)
+  const loop = /^for\s+(.+?)\s+in\s+(.+?):?$/.exec(text)
+  const back = /^return\s+(.+)$/.exec(text)
+  const kept = /^([A-Za-z_][\w.[\]]*)\s*(?:[-+*/%]|\/\/|\*\*)?=(?!=)\s*(.+)$/.exec(text)
+  if (test) add(test[1] ?? '', 'la condición que se comprueba')
+  else if (loop) {
+    add(loop[1] ?? '', 'la variable que toma cada elemento')
+    add(loop[2] ?? '', 'lo que se recorre')
+  } else if (back) add(back[1] ?? '', 'lo que se devuelve')
+  else if (kept) {
+    add(kept[2] ?? '', 'el valor que se calcula')
+    add(kept[1] ?? '', 'la variable donde se guarda')
+  }
+  // Las llamadas: primero el nombre de cada una —la operación—, que es de lo que suele hablar la frase
+  // («lo pasamos a minúsculas» → `lower`); después enteras, de fuera adentro, y lo que recibe cada una.
+  const calls: { whole: string; name: string; args: string[] }[] = []
   for (const match of text.matchAll(/[A-Za-z_][\w.]*\(/g)) {
-    let depth = 0
-    for (let i = (match.index ?? 0) + match[0].length - 1; i < text.length; i++) {
-      if (text[i] === '(') depth++
-      else if (text[i] === ')' && --depth === 0) {
-        add(text.slice(match.index ?? 0, i + 1))
-        break
-      }
-    }
+    const open = (match.index ?? 0) + match[0].length - 1
+    const end = closing(text, open)
+    if (end < 0) continue
+    calls.push({
+      whole: text.slice(match.index ?? 0, end + 1),
+      name: match[0].slice(0, -1).split('.').pop() ?? '',
+      args: splitTop(text.slice(open + 1, end)),
+    })
   }
-  for (const match of text.matchAll(/"[^"]*"|'[^']*'/g)) add(match[0])
+  for (const call of calls) add(call.name, 'la operación que se aplica')
+  for (const call of calls) add(call.whole, `la llamada a ${call.name}, entera`)
+  for (const call of calls) for (const arg of call.args) add(arg, `lo que recibe ${call.name}`)
+  // Un elemento de una lista o de un diccionario: `notas[0]`.
+  for (const match of text.matchAll(/[A-Za-z_][\w.]*\[/g)) {
+    const end = closing(text, (match.index ?? 0) + match[0].length - 1)
+    if (end >= 0)
+      add(text.slice(match.index ?? 0, end + 1), `un elemento de ${match[0].slice(0, -1)}`)
+  }
+  for (const match of text.matchAll(/"[^"]*"|'[^']*'/g)) add(match[0], 'un texto')
   // Los nombres y los números, sin contar lo que va dentro de un texto entre comillas.
   const bare = text.replace(/"[^"]*"|'[^']*'/g, (quoted) => ' '.repeat(quoted.length))
-  for (const match of bare.matchAll(/[A-Za-z_]\w*/g)) if (!KEYWORDS.has(match[0])) add(match[0])
-  for (const match of bare.matchAll(/\b\d+(?:\.\d+)?\b/g)) add(match[0])
+  for (const match of bare.matchAll(/[A-Za-z_]\w*/g))
+    if (!KEYWORDS.has(match[0])) add(match[0], 'un dato')
+  for (const match of bare.matchAll(/\b\d+(?:\.\d+)?\b/g)) add(match[0], 'un número')
   return found.slice(0, max)
 }
 
-/** A partir de aquí, el JEV tiene claro qué trozo subrayar. */
-export const MARK_THRESHOLD = 0.5
+/** Solo los trozos, sin lo que son. */
+export const fragmentsOf = (code: string, max?: number): string[] =>
+  partsOf(code, max).map((part) => part.text)
+
+/** Minúsculas y sin acentos: para comparar lo que se dice con lo que hay escrito. */
+const fold = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
+/**
+ * Cómo se suele decir en voz alta lo que en Python tiene un nombre en inglés: el comienzo de las palabras
+ * (sin acentos) que lo delatan. «Lo pasamos a minúsculas» habla de `lower` sin nombrarlo.
+ */
+const SPOKEN: Record<string, string[]> = {
+  lower: ['minuscul'],
+  upper: ['mayuscul'],
+  capitalize: ['mayuscul', 'capital'],
+  title: ['mayuscul', 'titulo'],
+  strip: ['espacios', 'limpi', 'recort'],
+  split: ['separ', 'divid', 'trocea', 'parti', 'palabras'],
+  join: ['une ', 'unir', 'unimos', 'junta'],
+  replace: ['reemplaz', 'sustitu', 'cambia'],
+  startswith: ['empieza', 'comienza'],
+  endswith: ['termina', 'acaba'],
+  find: ['busca', 'encuentr'],
+  count: ['cuenta', 'contamos', 'veces'],
+  len: ['longitud', 'cuantos', 'cuantas', 'tamano', 'numero de', 'largo'],
+  sum: ['suma'],
+  abs: ['absolut'],
+  max: ['maxim', 'mayor', 'mas alt', 'mas grande'],
+  min: ['minim', 'menor', 'mas baj', 'mas pequen'],
+  round: ['redonde'],
+  sorted: ['orden'],
+  sort: ['orden'],
+  reversed: ['reves', 'invert', 'invier'],
+  reverse: ['reves', 'invert', 'invier'],
+  append: ['anad', 'agreg', 'al final', 'guardamos en la lista'],
+  extend: ['anad', 'agreg', 'ampli'],
+  insert: ['insert'],
+  pop: ['saca', 'quita', 'extrae'],
+  remove: ['quita', 'elimin', 'borra'],
+  input: ['pregunt', 'pedimos', 'pide', 'escrib', 'teclado', 'usuario'],
+  print: ['muestr', 'mostra', 'imprim', 'pantalla', 'ensena'],
+  int: ['entero'],
+  float: ['decimal'],
+  str: ['a texto', 'en texto', 'cadena'],
+  list: ['lista'],
+  dict: ['diccionario'],
+  set: ['conjunto', 'repetid'],
+  range: ['rango', 'veces', 'desde', 'hasta'],
+  enumerate: ['numera', 'posicion', 'indice'],
+  zip: ['empareja', 'pareja', 'a la vez', 'junto con'],
+  open: ['abr', 'archivo', 'fichero'],
+  read: ['lee', 'leer', 'leemos'],
+  write: ['escrib'],
+  sqrt: ['raiz'],
+  exp: ['exponencial'],
+  random: ['azar', 'aleatori'],
+  randint: ['azar', 'aleatori'],
+  choice: ['azar', 'aleatori', 'elige', 'escoge'],
+  shuffle: ['baraja', 'mezcla', 'desorden'],
+  sleep: ['espera', 'pausa'],
+  get: ['busca', 'consulta'],
+  keys: ['claves'],
+  values: ['valores'],
+  items: ['pares'],
+  isdigit: ['digito', 'numero'],
+  any: ['alguno', 'alguna'],
+  all: ['todos', 'todas'],
+}
+
+/**
+ * De los trozos de una pieza, el que la frase delata por sí sola: una operación que nombra con otras
+ * palabras («minúsculas» → `lower`), o un nombre, un número o un texto que dice tal cual. -1 si ninguno.
+ * No sustituye al JEV: es lo que se usa cuando él no se decide.
+ */
+export function hinted(say: string, fragments: readonly string[]): number {
+  const said = fold(say)
+  if (said.trim() === '') return -1
+  // El punto se queda dentro de un número (`1.0`), no al final de una palabra.
+  const words = said.split(/[^a-z0-9_.]+/).map((word) => word.replace(/^\.+|\.+$/g, ''))
+  const spoken = fragments.findIndex((fragment) =>
+    (SPOKEN[fragment.toLowerCase()] ?? []).some((stem) => said.includes(stem)),
+  )
+  if (spoken >= 0) return spoken
+  return fragments.findIndex((fragment) => {
+    const text = fold(fragment)
+    if (/^[a-z_]\w+$/.test(text) || /^\d+(\.\d+)?$/.test(text)) return words.includes(text)
+    const quoted = /^["'](.{3,})["']$/.exec(text)?.[1]
+    return quoted !== undefined && said.includes(quoted)
+  })
+}
+
+/** A partir de aquí, el JEV tiene claro qué trozo subrayar. Elige entre muchos: no hace falta más. */
+export const MARK_THRESHOLD = 0.3
+/** Con esta seguridad de que la frase no habla de nada en concreto, no se subraya nada. */
+export const NO_MARK_THRESHOLD = 0.7
+/** Cuántos trozos se mandan al lienzo por frase: el elegido y sus suplentes, por si aquel no está a la vista. */
+const MARK_CHOICES = 3
 
 /**
  * Qué trozo exacto de cada pieza conviene subrayar mientras se dice su frase. Se pregunta por todas las
- * piezas a la vez; el JEV elige entre los trozos de cada una (o ninguno). Devuelve un trozo por pieza
- * (`''`: ninguno).
+ * piezas a la vez; el JEV elige entre los trozos de cada una (o ninguno). Devuelve, por pieza, los trozos
+ * por orden de preferencia (vacío: ninguno): el lienzo subraya el primero que encuentra escrito en el nodo,
+ * que no enseña el código tal cual. Si el JEV no contesta o no se decide, vale lo que la frase delata sola.
  */
 export async function judgeMarks(
   decider: Decider,
   pieces: readonly { code: string; say: string }[],
-): Promise<{ marks: string[]; ms: number }> {
-  const options = pieces.map((piece) => (piece.say === '' ? [] : fragmentsOf(piece.code)))
+): Promise<{ marks: string[][]; ms: number }> {
+  const options = pieces.map((piece) => (piece.say === '' ? [] : partsOf(piece.code)))
   const questions: Record<string, JevQuestion> = {}
   pieces.forEach((piece, index) => {
-    const fragments = options[index] ?? []
-    if (fragments.length === 0) return
+    const parts = options[index] ?? []
+    if (parts.length === 0) return
     questions[`m${index + 1}`] = {
       type: 'choice',
-      instructions: `Se va a decir en voz alta: «${piece.say}», mientras se enseña este código: ${piece.code.split('\n')[0] ?? ''}\n¿De qué trozo exacto del código habla la frase? Es el que se subrayará.`,
+      instructions: `Se va a decir en voz alta: «${piece.say}», mientras se enseña este código: ${piece.code.split('\n').find((row) => row.trim() !== '' && !row.trimStart().startsWith('#')) ?? ''}\n¿Qué trozo del código conviene subrayar mientras se dice? El que mejor corresponde a lo que la frase destaca, aunque lo diga con otras palabras: la operación («pasamos a minúsculas» es lower, «sumamos» es sum), el dato o el valor del que habla. Casi siempre hay uno.`,
       criteria: {
-        ...Object.fromEntries(fragments.map((fragment, i) => [`f${i + 1}`, fragment])),
-        ninguno: 'La frase habla de la pieza entera, o de nada en concreto.',
+        ...Object.fromEntries(parts.map((part, i) => [`f${i + 1}`, `${part.text} — ${part.what}`])),
+        ninguno: 'La frase no destaca ninguna parte: habla de la pieza entera.',
       },
     }
   })
-  if (Object.keys(questions).length === 0) return { marks: pieces.map(() => ''), ms: 0 }
-  const { answers, ms } = await decider.decide({ state: {}, questions })
+  if (Object.keys(questions).length === 0) return { marks: pieces.map(() => []), ms: 0 }
+  const { answers, ms } = await decider
+    .decide({ state: {}, questions })
+    .catch(() => ({ answers: {} as Record<string, JevAnswer>, ms: 0 }))
   return {
     ms,
-    marks: pieces.map((_, index) => {
-      const answer = answers[`m${index + 1}`]
-      if (answer?.type !== 'choice' || answer.confidence < MARK_THRESHOLD) return ''
-      const picked = /^f(\d+)$/.exec(answer.choice)?.[1]
-      return picked === undefined ? '' : ((options[index] ?? [])[Number(picked) - 1] ?? '')
+    marks: pieces.map((piece, index) => {
+      const texts = (options[index] ?? []).map((part) => part.text)
+      if (texts.length === 0) return []
+      const at = (option: string) => {
+        const picked = /^f(\d+)$/.exec(option)?.[1]
+        return picked === undefined ? undefined : texts[Number(picked) - 1]
+      }
+      const given = answers[`m${index + 1}`]
+      const answer = given?.type === 'choice' ? given : undefined
+      const choice = answer?.choice ?? ''
+      const confidence = answer?.confidence ?? 0
+      // Está seguro de que no hay nada que destacar: no se subraya.
+      if (choice === 'ninguno' && confidence >= NO_MARK_THRESHOLD) return []
+      const ranked: string[] = []
+      const push = (text: string | undefined) => {
+        if (text !== undefined && !ranked.includes(text)) ranked.push(text)
+      }
+      if (confidence >= MARK_THRESHOLD) push(at(choice))
+      const hint = texts[hinted(piece.say, texts)]
+      // Sin una elección clara, manda lo que la frase delata; con ella, queda de suplente.
+      push(hint)
+      if (ranked.length > 0)
+        for (const [option, chance] of Object.entries(answer?.probabilities ?? {}).sort(
+          (a, b) => b[1] - a[1],
+        ))
+          if (chance >= 0.1) push(at(option))
+      return ranked.slice(0, MARK_CHOICES)
     }),
   }
 }

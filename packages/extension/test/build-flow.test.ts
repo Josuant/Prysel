@@ -508,7 +508,7 @@ describe('un bloque que se escribe entero (un if con sus elif) se explica rama a
         for (const [id, question] of Object.entries(request.questions)) {
           if (!/^m\d+$/.test(id) || question.type !== 'choice') continue
           const call = Object.entries(question.criteria).find(([, text]) =>
-            (text ?? '').startsWith('abs('),
+            (text ?? '').startsWith('abs(sum(pesos) - 1.0) —'),
           )
           answers[id] =
             call && question.instructions.includes('valor absoluto')
@@ -520,7 +520,7 @@ describe('un bloque que se escribe entero (un if con sus elif) se explica rama a
     }
     await build(host, { decider, provider }, small)
     const marked = steps(state).filter((event) => event.mark !== undefined)
-    expect(marked.map((event) => `L${event.line}: ${event.mark}`)).toEqual([
+    expect(marked.map((event) => `L${event.line}: ${event.mark?.[0]}`)).toEqual([
       'L5: abs(sum(pesos) - 1.0)',
     ])
   })

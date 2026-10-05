@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { Decider, JevAnswer } from '../src/jev/client.ts'
 import { localDecider } from '../src/jev/local.ts'
-import { bestMatch } from '../webview/src/marking.ts'
+import { bestMatch, locate } from '../webview/src/marking.ts'
 import {
   CodeStream,
   LineStream,
@@ -8,7 +9,9 @@ import {
   fragmentsOf,
   judgeChunk,
   judgeInterruption,
+  hinted,
   judgeMarks,
+  partsOf,
   sentenceOf,
   stageFromLine,
   type Chunk,
@@ -170,28 +173,86 @@ describe('una frase, una fórmula', () => {
 })
 
 describe('subrayar la parte exacta de la que habla una frase', () => {
-  it('los trozos de una pieza entre los que elige el JEV: llamadas, nombres, números y textos', () => {
+  it('los trozos de una pieza entre los que elige el JEV, cada uno con lo que es', () => {
     expect(fragmentsOf('elif abs(sum(pesos) - 1.0) > 0.001:')).toEqual([
-      'abs(sum(pesos) - 1.0)',
-      'sum(pesos)',
+      'abs(sum(pesos) - 1.0) > 0.001',
       'abs',
       'sum',
+      'abs(sum(pesos) - 1.0)',
+      'sum(pesos)',
+      'sum(pesos) - 1.0',
       'pesos',
       '1.0',
       '0.001',
     ])
-    expect(fragmentsOf('# comentario\ntotal = total + nota')).toEqual(['total', 'nota'])
-    expect(fragmentsOf('print("Hola")')).toEqual(['"Hola"'])
+    expect(fragmentsOf('# comentario\ntotal = total + nota')).toEqual([
+      'total + nota',
+      'total',
+      'nota',
+    ])
+    expect(fragmentsOf('print("Hola")')).toEqual(['print', '"Hola"'])
+    // La operación va con su nombre: es de lo que suele hablar la frase.
+    expect(partsOf('pregunta = pregunta.lower()')).toEqual([
+      { text: 'pregunta.lower()', what: 'el valor que se calcula' },
+      { text: 'pregunta', what: 'la variable donde se guarda' },
+      { text: 'lower', what: 'la operación que se aplica' },
+    ])
+    expect(fragmentsOf('for nota in notas[1:]:')).toEqual(['nota', 'notas[1:]', 'notas', '1'])
+    expect(fragmentsOf('return round(total / len(notas), 2)')).toEqual([
+      'round(total / len(notas), 2)',
+      'round',
+      'len',
+      'len(notas)',
+      'total / len(notas)',
+      '2',
+      'notas',
+      'total',
+    ])
+  })
+
+  it('lo que una frase delata sola: la operación dicha con otras palabras, o un nombre tal cual', () => {
+    const lower = ['pregunta.lower()', 'pregunta', 'lower']
+    expect(hinted('Convertimos el texto a minúsculas.', lower)).toBe(2)
+    expect(hinted('Guardamos la pregunta.', lower)).toBe(1)
+    expect(hinted('Y seguimos.', lower)).toBe(-1)
+    expect(hinted('Calculamos la longitud de la lista.', ['len(notas)', 'len', 'notas'])).toBe(1)
+    expect(hinted('Se suman los pesos.', ['sum', 'sum(pesos)', 'pesos'])).toBe(0)
   })
 
   it('el JEV elige uno por frase (o ninguno), todos en una petición', async () => {
     const { marks } = await judgeMarks(localDecider(), [
       { code: 'total = total + nota', say: 'Sumamos cada nota al total.' },
-      { code: 'print(total)', say: 'Y lo enseñamos.' },
+      { code: 'ok = True', say: 'Y seguimos adelante.' },
       { code: 'x = 1', say: '' },
+      { code: 'pregunta = pregunta.lower()', say: 'Convertimos el texto a minúsculas.' },
     ])
-    // El decisor local subraya el nombre que la frase dice tal cual.
-    expect(marks).toEqual(['total', '', ''])
+    expect(marks).toEqual([['total'], [], [], ['lower']])
+  })
+
+  it('si el JEV no se decide o no contesta, vale lo que la frase delata; y manda suplentes', async () => {
+    const piece = [
+      { code: 'pregunta = pregunta.lower()', say: 'Convertimos el texto a minúsculas.' },
+    ]
+    const answering = (answer: JevAnswer): Decider => ({
+      id: 'fijo',
+      decide: () => Promise.resolve({ answers: { m1: answer }, ms: 1 }),
+    })
+    const choice = (pick: string, confidence: number, probabilities = {}): JevAnswer => ({
+      type: 'choice',
+      choice: pick,
+      confidence,
+      probabilities,
+    })
+    // Dudoso de que no haya nada: se subraya lo que la frase delata.
+    expect((await judgeMarks(answering(choice('ninguno', 0.4)), piece)).marks).toEqual([['lower']])
+    // Seguro de que no hay nada: nada.
+    expect((await judgeMarks(answering(choice('ninguno', 0.9)), piece)).marks).toEqual([[]])
+    // Elige uno: va primero, y detrás los suplentes (lo que delata la frase, y lo siguiente más probable).
+    expect(
+      (await judgeMarks(answering(choice('f1', 0.5, { f1: 0.5, f2: 0.3, f3: 0.05 })), piece)).marks,
+    ).toEqual([['pregunta.lower()', 'lower', 'pregunta']])
+    const down: Decider = { id: 'caído', decide: () => Promise.reject(new Error('sin red')) }
+    expect((await judgeMarks(down, piece)).marks).toEqual([['lower']])
   })
 
   it('en el nodo, se subraya el campo que lleva ese trozo', () => {
@@ -202,6 +263,24 @@ describe('subrayar la parte exacta de la que habla una frase', () => {
     expect(bestMatch(['total', '=', 'total + nota'], 'sum(total + nota)')).toBe(2)
     expect(bestMatch(fields, 'media')).toBe(-1)
     expect(bestMatch(fields, '')).toBe(-1)
+    // El más ajustado: el nombre en su casilla antes que dentro de la expresión.
+    expect(bestMatch(['pregunta', '=', 'pregunta.lower()'], 'pregunta')).toBe(0)
+    expect(bestMatch(['pregunta', '=', 'pregunta.lower()'], 'lower')).toBe(2)
+  })
+
+  it('y dentro del campo, solo el tramo del que se habla', () => {
+    const cut = (text: string, fragment: string) => {
+      const span = locate(text, fragment)
+      return span ? text.slice(span.start, span.end) : null
+    }
+    expect(cut('pregunta.lower()', 'lower')).toBe('lower')
+    expect(cut('pregunta.lower()', 'pregunta')).toBe('pregunta')
+    expect(cut('abs(sum(pesos) − 1.0)', 'sum(pesos) - 1.0')).toBe('sum(pesos) − 1.0')
+    expect(cut('total  +  nota', 'total + nota')).toBe('total  +  nota')
+    // Un nombre no casa a medias, ni un número dentro de otro.
+    expect(cut('len(notas)', 'n')).toBeNull()
+    expect(cut('1.0 + x', '1')).toBeNull()
+    expect(cut('nota_final + nota', 'nota')).toBe('nota')
   })
 })
 

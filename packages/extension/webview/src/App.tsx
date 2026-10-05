@@ -32,6 +32,7 @@ import type { Forced } from '../../src/jev/engine.ts'
 import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { CommandBar } from './CommandBar.tsx'
+import { dragChips } from './dragging.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -204,7 +205,7 @@ export function App() {
     change?: 'changed' | 'leaving'
     wide?: boolean
     /** El trozo exacto de su código que se subraya mientras se habla de ella. */
-    mark?: string
+    mark?: string[]
   } | null>(null)
   /** Lo que se le ha preguntado a cada modelo y lo que contestó, y si se está mirando esa pestaña. */
   const [calls, setCalls] = useState<CallEntry[]>([])
@@ -965,19 +966,37 @@ export function App() {
   )
   // Mientras se habla de una pieza, se subraya —como con un rotulador— el trozo exacto del que habla la
   // frase. Se espera un momento a que el nodo esté pintado en su sitio; al pasar a otra cosa, se quita.
-  const spotMark = wanted?.mark
+  // Llegan varios candidatos, por orden: se subraya el primero que el nodo tenga escrito.
+  const spotMark = wanted?.mark?.join('\n')
   useEffect(() => {
     if (spotId === null || !spotMark) return
     let unmark: (() => void) | null = null
     const timer = setTimeout(() => {
       const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(spotId)}"]`)
-      unmark = node ? markIn(node, spotMark) : null
+      unmark = node ? markIn(node, spotMark.split('\n')) : null
     }, 450)
     return () => {
       clearTimeout(timer)
       unmark?.()
     }
   }, [spotId, spotMark, spotKey])
+  // Una pieza que acaba de aparecer y usa algo definido antes: se coge el chip de aquello y se arrastra
+  // hasta la casilla donde se usa, para que se vea que no sale de la nada. Se espera a que la cámara llegue.
+  useEffect(() => {
+    if (spotId === null || !spotBorn || reducedMotion || echo.length === 0) return
+    let stop: (() => void) | null = null
+    const find = (id: string) =>
+      document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+    const timer = setTimeout(() => {
+      const node = find(spotId)
+      const sources = echo.map(find).filter((source) => source !== null)
+      stop = node ? dragChips(node, sources) : null
+    }, 600)
+    return () => {
+      clearTimeout(timer)
+      stop?.()
+    }
+  }, [spotId, spotBorn, spotKey, echo, reducedMotion])
   // Lo que una orden quiere enseñar puede no estar a la vista: dentro de una función que no se está viendo
   // (se entra en ella) o de una etapa plegada (se abre). Vale también para lo que se acaba de crear.
   // Las etapas plegadas que hay que abrir: la del momento de la lección y la de lo que una orden enseña. Van
@@ -1112,7 +1131,7 @@ export function App() {
             ? {}
             : { born: true }),
         ...(message.wide ? { wide: true } : {}),
-        ...(message.mark ? { mark: message.mark } : {}),
+        ...(message.mark?.length ? { mark: message.mark } : {}),
       })
     }
     onGenerated.current = (message) => {

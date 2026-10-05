@@ -1786,9 +1786,18 @@ button.fn-menu__crumb:hover {
 }
 
 /* El rotulador: la parte exacta del nodo de la que habla la frase que se está diciendo, subrayada como en un
-   cuaderno. El trazo entra de izquierda a derecha, con los bordes irregulares de algo hecho a mano. */
+   cuaderno. El trazo entra de izquierda a derecha, con los bordes irregulares de algo hecho a mano.
+   Va con `!important` para ganar a cualquier fondo que el nodo le ponga a sus campos (los de una tarjeta de
+   una línea lo llevan transparente, los chips el suyo: con eso el trazo no se veía). Como lo importante no
+   se puede animar, lo que se anima es `--mark-grow`, cuánto del trazo va pintado.
+   Cuando el campo lleva más cosas que el trozo del que se habla (`lower` dentro de `pregunta.lower()`), el
+   trazo cubre solo su tramo: dónde empieza (`--mark-x`) y cuánto mide (`--mark-w`) lo pone quien lo marca. */
+@property --mark-grow {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
 [data-marked] {
-  border-radius: 0.6em 0.25em 0.7em 0.3em / 0.35em 0.7em 0.3em 0.6em;
   background-image: linear-gradient(
     100deg,
     transparent 0%,
@@ -1796,16 +1805,16 @@ button.fn-menu__crumb:hover {
     color-mix(in srgb, var(--state-warning) 44%, transparent) 55%,
     color-mix(in srgb, var(--state-warning) 58%, transparent) 97%,
     transparent 100%
-  );
-  background-repeat: no-repeat;
-  background-position: 0 62%;
-  background-size: 100% 82%;
+  ) !important;
+  background-repeat: no-repeat !important;
+  background-position: var(--mark-x, 0) 62% !important;
+  background-size: calc(var(--mark-w, 100%) * var(--mark-grow)) 82% !important;
   /* Gana a la animación de entrada de la pieza, si acaba de aparecer: el trazo se tiene que ver. */
   animation: prysel-marker 700ms cubic-bezier(0.3, 0.7, 0.2, 1) both !important;
 }
 @keyframes prysel-marker {
   from {
-    background-size: 0% 82%;
+    --mark-grow: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -1814,6 +1823,49 @@ button.fn-menu__crumb:hover {
   }
   .canvas-caption {
     animation: none;
+  }
+}
+/* Arrastrar un chip: cuando una pieza usa algo que ya estaba definido, una copia de su chip se coge de donde
+   está y se lleva hasta la casilla que lo usa, con el puntero que la arrastra. Dónde y cómo se mueve lo pone
+   quien la crea; aquí va su aspecto, el del origen mientras se coge y el de la casilla al recibirlo. */
+.chip-ghost {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  left: 0;
+  padding: 0.25em 0.7em;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: 9px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  transform-origin: center;
+}
+.chip-ghost__hand {
+  position: absolute;
+  right: -7px;
+  bottom: -11px;
+  fill: var(--ink);
+  stroke: var(--surface);
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+[data-picked] {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+}
+[data-dropped] {
+  animation: prysel-dropped 500ms ease-out !important;
+}
+@keyframes prysel-dropped {
+  from {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
   }
 }
 /* El subtítulo: lo que se está diciendo de la pieza, escrito a mano sobre el lienzo. */

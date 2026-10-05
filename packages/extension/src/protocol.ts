@@ -138,8 +138,11 @@ export interface StepMessage {
   line: number
   /** Si lo lleva, el lienzo avisa (`spoken`) cuando ha terminado de decir su frase. */
   seq?: number
-  /** El trozo exacto del código de la pieza que se subraya mientras se dice (lo elige el JEV). */
-  mark?: string
+  /**
+   * El trozo exacto del código de la pieza que se subraya mientras se dice (lo elige el JEV), con sus
+   * suplentes por orden: se subraya el primero que esté escrito en el nodo.
+   */
+  mark?: string[]
   /**
    * Qué le pasa: aparece (`born`, por defecto), llega su explicación (`told`: ya estaba), cambia
    * (`changed`) o está a punto de irse (`leaving`).
