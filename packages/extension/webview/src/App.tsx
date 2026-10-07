@@ -1427,6 +1427,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           {/* La pestaña «Consultas» va encima del diagrama, que sigue montado (no pierde su cámara). */}
           {tab === 'calls' && (
             <div className="calls-layer">
+              {features.chat && (
+                <div className="calls-layer__back">
+                  <Button
+                    onClick={() => {
+                      setTab('canvas')
+                    }}
+                  >
+                    Volver al diagrama
+                  </Button>
+                </div>
+              )}
               <CallsPanel
                 calls={calls}
                 onClear={() => {
@@ -1515,22 +1526,36 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   )}
                   {/* Sin barra de herramientas, el paso a paso se pide desde el lienzo: el reproductor no
                       está a la vista hasta entonces. */}
-                  {!replay && (
-                    <div className="canvas-float" data-at="top-right">
-                      <Button
-                        icon="step"
-                        disabled={version === null || recording?.status === 'running'}
-                        title={
-                          recording?.status === 'failed'
-                            ? recording.message
-                            : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
-                        }
-                        onClick={() => {
-                          if (version !== null) post({ type: 'trace', version })
-                        }}
-                      >
-                        {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
-                      </Button>
+                  {(!replay || features.calls) && (
+                    <div className="canvas-float canvas-float--row" data-at="top-right">
+                      {!replay && (
+                        <Button
+                          icon="step"
+                          disabled={version === null || recording?.status === 'running'}
+                          title={
+                            recording?.status === 'failed'
+                              ? recording.message
+                              : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
+                          }
+                          onClick={() => {
+                            if (version !== null) post({ type: 'trace', version })
+                          }}
+                        >
+                          {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
+                        </Button>
+                      )}
+                      {/* Sin pestañas (no hay barra de herramientas), las consultas se abren desde aquí. */}
+                      {features.calls && (
+                        <Button
+                          title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
+                          onClick={() => {
+                            setTab('calls')
+                          }}
+                        >
+                          Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
+                          {calls.some((call) => call.status === 'running') ? ' ·' : ''}
+                        </Button>
+                      )}
                     </div>
                   )}
                 </>

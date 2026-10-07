@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { App, type HostFeatures } from '../../../packages/extension/webview/src/App.tsx'
 import { ErrorBoundary } from '../../../packages/extension/webview/src/ErrorBoundary.tsx'
 import { CodeEditor } from './CodeEditor.tsx'
@@ -20,6 +20,25 @@ const WEB_FEATURES: HostFeatures = {
   chat: true,
   foldInsights: true,
   suggestions: ['Enséñame la recursión', 'Explícame este programa', 'Paso a paso'],
+}
+
+/** Dónde se recuerda, en este navegador, si se quieren ver las consultas a los modelos. */
+const CALLS = 'prysel.web.calls'
+
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+function writeFlag(key: string, on: boolean) {
+  try {
+    localStorage.setItem(key, on ? '1' : '0')
+  } catch {
+    // Sin almacenamiento (modo privado): vale para esta visita.
+  }
 }
 
 const WIDE = '(min-width: 960px)'
@@ -51,6 +70,9 @@ export function Shell({ host }: { host: WebHost }) {
   const [doc, setDoc] = useState(() => host.current)
   const [sheet, setSheet] = useState<Sheet>(null)
   const [code, setCode] = useState(false)
+  // Ver lo que se le pregunta a cada modelo y lo que contesta: una opción, apagada de entrada.
+  const [calls, setCalls] = useState(() => readFlag(CALLS))
+  const features = useMemo(() => ({ ...WEB_FEATURES, calls }), [calls])
   const wide = useWide()
   useSystemTheme(host)
 
@@ -102,7 +124,7 @@ export function Shell({ host }: { host: WebHost }) {
       <main className={wide && code ? 'web-main web-main--split' : 'web-main'}>
         <section className="web-canvas" aria-label="Diagrama">
           <ErrorBoundary label="el diagrama">
-            <App features={WEB_FEATURES} />
+            <App features={features} />
           </ErrorBoundary>
         </section>
         {code && (
@@ -166,6 +188,24 @@ export function Shell({ host }: { host: WebHost }) {
                   {host.aiSettings.anthropicKey
                     ? 'Clave guardada en este dispositivo'
                     : 'Falta tu clave de Anthropic'}
+                </span>
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                aria-pressed={calls}
+                onClick={() => {
+                  writeFlag(CALLS, !calls)
+                  setCalls(!calls)
+                  setSheet(null)
+                }}
+              >
+                <strong>Consultas a los modelos: {calls ? 'a la vista' : 'ocultas'}</strong>
+                <span>
+                  {calls
+                    ? 'Quitar el botón «Consultas» del diagrama'
+                    : 'Un botón en el diagrama para ver qué se le pregunta a cada IA y qué contesta'}
                 </span>
               </button>
             </li>

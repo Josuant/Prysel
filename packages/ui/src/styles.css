@@ -3664,6 +3664,19 @@ button.fn-menu__crumb:hover {
   position: absolute;
   z-index: 10;
 }
+/* Varios controles en fila. */
+.canvas-float--row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* En la interfaz de chat no hay pestañas: de las consultas se vuelve con un botón, arriba. */
+.calls-layer__back {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px 0;
+}
 .canvas-float[data-at='top-right'] {
   top: 12px;
   right: 14px;
