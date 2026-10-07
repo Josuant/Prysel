@@ -213,6 +213,34 @@ describe('algo pequeño: el código, tal cual, y cada sentencia en cuanto llega'
     expect(provider.requests.filter((item) => item.kind === 'tell').length).toBeLessThanOrEqual(1)
   })
 
+  it('al ritmo de la IA: las piezas entran sin esperar a la voz, y cada trozo se comenta al margen', async () => {
+    const provider = ai({ code: SUM })
+    const { host, state } = stage('')
+    let waited = 0
+    const outcome = await build(
+      {
+        ...host,
+        settle: () => {
+          waited++
+          return Promise.resolve()
+        },
+      },
+      { decider: localDecider(), provider },
+      { ...small, flow: 'stream' },
+    )
+    // Queda escrito lo mismo, pero nadie esperó a que se dijera nada.
+    expect(state.text).toBe(SUM_TEXT)
+    expect(outcome).toMatchObject({ written: 6, trouble: null })
+    expect(waited).toBe(0)
+    expect(steps(state).every((event) => event.say === '')).toBe(true)
+    // De cada trozo (no de cada línea) se pide una frase, y sale como comentario al margen.
+    const asides = state.shown.filter((event) => event.type === 'say' && event.aside)
+    expect(asides.length).toBeGreaterThanOrEqual(4)
+    for (const { request } of provider.requests.filter((item) => item.kind === 'tell')) {
+      expect(request.prompt).toContain('Las piezas que van a aparecer ahora (1):')
+    }
+  })
+
   it('cada pieza aparece con su frase, y la siguiente espera a que se haya dicho', async () => {
     const provider = ai({ code: SUM })
     const control: { waits: number[] } = { waits: [] }

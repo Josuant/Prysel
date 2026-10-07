@@ -17,6 +17,7 @@ import { WebKernel } from './engine.ts'
 import { Orders } from './orders.ts'
 import {
   deciderFrom,
+  loadFlow,
   loadSettings,
   providerFrom,
   saveSettings,
@@ -74,6 +75,7 @@ export class WebHost {
       write: (edits, remember = true) => this.writeFrom(edits, remember),
       refresh: () => this.refresh(),
       post: (message) => this.post(message),
+      flow: () => loadFlow(),
       provider: () => {
         const provider = providerFrom(this.settings)
         return provider ? this.calls.provider(provider) : null

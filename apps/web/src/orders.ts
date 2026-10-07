@@ -52,6 +52,8 @@ export interface OrderPort {
   post(message: WebviewMessage): void
   provider(): AiProvider | null
   decider(): Decider
+  /** A qué ritmo se construye: al de la IA (`stream`) o esperando a la voz (`voice`). */
+  flow(): 'voice' | 'stream'
   trace(): Promise<Trace | null>
   setLesson(lesson: Lesson): void
 }
@@ -456,7 +458,12 @@ export class Orders {
                 this.speaking.set(seq, resolve)
               })
         if (event.type === 'say') {
-          port.post({ type: 'say', text: event.say, ...(seq === undefined ? {} : { seq }) })
+          port.post({
+            type: 'say',
+            text: event.say,
+            ...(seq === undefined ? {} : { seq }),
+            ...(event.aside ? { aside: true } : {}),
+          })
           return
         }
         await port.refresh()
@@ -505,6 +512,7 @@ export class Orders {
                 where: effect.where,
                 outline: effect.outline,
                 ...(effect.teach ? { teach: true } : {}),
+                flow: port.flow(),
               },
             )
           : await modify(

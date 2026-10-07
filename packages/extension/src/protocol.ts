@@ -183,6 +183,11 @@ export interface SayMessage {
   focus?: string
   /** Si lo lleva, el lienzo avisa (`spoken`) cuando ha terminado de decirlo. */
   seq?: number
+  /**
+   * Un comentario al margen de lo que se está escribiendo: sale como subtítulo y se dice solo si no se está
+   * diciendo otra cosa (no corta a nadie, ni nadie espera por él).
+   */
+  aside?: boolean
 }
 
 export type WebviewMessage =

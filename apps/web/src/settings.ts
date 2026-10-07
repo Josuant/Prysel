@@ -54,6 +54,29 @@ const DEFAULTS: AiSettings = {
 }
 
 const KEY = 'prysel.web.ai'
+const FLOW = 'prysel.web.flow'
+
+/**
+ * A qué ritmo se construye lo que se le pide a la IA. `stream` (por defecto): al de la IA, cada pieza en
+ * cuanto llega. `voice`: como en una clase, cada pieza espera a que se haya dicho su frase.
+ */
+export type Flow = 'stream' | 'voice'
+
+export function loadFlow(): Flow {
+  try {
+    return localStorage.getItem(FLOW) === 'voice' ? 'voice' : 'stream'
+  } catch {
+    return 'stream'
+  }
+}
+
+export function saveFlow(flow: Flow) {
+  try {
+    localStorage.setItem(FLOW, flow)
+  } catch {
+    // Sin almacenamiento (modo privado): vale para esta visita… si la página no se recarga.
+  }
+}
 
 export function loadSettings(): AiSettings {
   try {

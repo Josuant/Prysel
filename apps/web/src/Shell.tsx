@@ -5,7 +5,14 @@ import { ErrorBoundary } from '../../../packages/extension/webview/src/ErrorBoun
 import { CodeEditor } from './CodeEditor.tsx'
 import { BLANK, EMPTY, EXAMPLES, type Example } from './examples.ts'
 import type { WebDocument, WebHost } from './host.ts'
-import { ANTHROPIC_MODELS, DEEPSEEK_MODELS, hasAiKey, type AiSettings } from './settings.ts'
+import {
+  ANTHROPIC_MODELS,
+  DEEPSEEK_MODELS,
+  hasAiKey,
+  loadFlow,
+  saveFlow,
+  type AiSettings,
+} from './settings.ts'
 import { loadDocument, saveDocument } from './store.ts'
 
 /**
@@ -74,6 +81,7 @@ export function Shell({ host }: { host: WebHost }) {
   // Ver lo que se le pregunta a cada modelo y lo que contesta: una opción, apagada de entrada.
   const [calls, setCalls] = useState(() => readFlag(CALLS))
   const features = useMemo(() => ({ ...WEB_FEATURES, calls }), [calls])
+  const [flow, setFlow] = useState(loadFlow)
   // Grabar cada explicación (vídeo de la pestaña y línea de tiempo) para revisarla después.
   const recording = useSyncExternalStore(
     (listener) => recorder.subscribe(listener),
@@ -224,6 +232,24 @@ export function Shell({ host }: { host: WebHost }) {
                   {calls
                     ? 'Quitar el botón «Consultas» del diagrama'
                     : 'Un botón en el diagrama para ver qué se le pregunta a cada IA y qué contesta'}
+                </span>
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = flow === 'stream' ? 'voice' : 'stream'
+                  saveFlow(next)
+                  setFlow(next)
+                  setSheet(null)
+                }}
+              >
+                <strong>Ritmo: {flow === 'stream' ? 'al de la IA' : 'al de la voz'}</strong>
+                <span>
+                  {flow === 'stream'
+                    ? 'Cada pieza aparece en cuanto llega. Pulsa para que espere a que se explique cada una'
+                    : 'Cada pieza espera a que se diga su frase. Pulsa para que vaya al ritmo de la IA'}
                 </span>
               </button>
             </li>

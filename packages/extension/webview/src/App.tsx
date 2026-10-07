@@ -1255,6 +1255,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       const heard = (spoke: boolean) => {
         if (message.seq !== undefined) post({ type: 'spoken', seq: message.seq, spoke })
       }
+      // Un comentario al margen: subtítulo, y voz solo si no pisa a otra frase.
+      if (message.aside) {
+        if (voice && !window.speechSynthesis?.speaking) speak(message.text, 'es', false, heard)
+        else heard(false)
+        setCaption(message.text)
+        return
+      }
       if (voice) speak(message.text, 'es', false, heard)
       else heard(false)
       setIntro(message.seq === undefined ? null : message.text)

@@ -112,7 +112,8 @@ export type Shown =
   /** En qué se está pensando ahora: lo que se lee mientras no hay nada nuevo que ver. */
   | { type: 'progress'; text: string }
   /** Algo que decir sin señalar ninguna pieza: el comentario de entrada. */
-  | { type: 'say'; say: string }
+  /** `aside`: un comentario al margen de lo que se va escribiendo: se lee y se dice sin parar nada. */
+  | { type: 'say'; say: string; aside?: boolean }
   | {
       type: 'step'
       index: number
@@ -232,6 +233,12 @@ export interface BuildRequest {
   outline: boolean
   /** Lo que se quiere es entender un tema: el programa es el medio. */
   teach?: boolean
+  /**
+   * A qué ritmo se construye. `voice` (por defecto): cada pieza espera a que se haya dicho su frase, como en
+   * una clase. `stream`: al ritmo de la IA; cada pieza aparece en cuanto llega su código y el JEV la da por
+   * buena, y de cada trozo se comenta una frase al margen, sin esperar a nadie.
+   */
+  flow?: 'voice' | 'stream'
 }
 
 /** Al acabar, el JEV juzga el conjunto. */
@@ -343,6 +350,8 @@ interface Prepared {
   moments: Moment[]
   /** La frase de cada momento, en su orden. */
   says: string[]
+  /** Al ritmo de la IA: la frase del trozo entero, que llega cuando llega. */
+  aside?: Promise<string>
   /** El trozo exacto del código que se subraya en cada momento (`''`: ninguno). Lo elige el JEV. */
   marks: string[][]
   formula: string | null
@@ -370,6 +379,8 @@ function momentsOf(chunk: Chunk): Moment[] {
 
 /** Entre dos piezas que aparecen sin frase: lo justo para que se vea llegar cada una. */
 const QUIET_PACE_MS = 900
+/** Al ritmo de la IA: lo que se deja entre pieza y pieza para que se vea entrar cada una. */
+const STREAM_PACE_MS = 260
 /** Tras decir una idea clave (lo decide el JEV): un respiro antes de seguir. */
 const KEY_PAUSE_MS = 500
 
@@ -386,6 +397,7 @@ export async function build(
 ): Promise<Outcome> {
   const { command, gen } = request
   const teach = request.teach === true
+  const streaming = request.flow === 'stream'
   const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null }
   const start = await host.program()
   const anchor = start.nodes.find((n) => n.id === (request.place.after ?? request.place.into))
@@ -423,7 +435,8 @@ export async function build(
     const opening = await intro
     if (opening !== '' && !host.signal.aborted) {
       await host.show({ type: 'say', say: opening })
-      await host.settle(paceOf({ level: 0, code: '', say: opening }, false))
+      // Al ritmo de la IA, el plan se dibuja mientras se dice.
+      if (!streaming) await host.settle(paceOf({ level: 0, code: '', say: opening }, false))
     }
     const skeleton = new BuildPlan(request.place)
     /** Una sola parte no es un plan: la primera espera a que llegue la segunda para dibujarse. */
@@ -443,12 +456,13 @@ export async function build(
         type: 'step',
         index: stages.length,
         // Del plan se dice solo el título de cada parte: lo demás se lee en su caja.
-        say: stage.title,
+        say: streaming ? '' : stage.title,
         line: placed.line,
         effect: 'born',
         wide: true,
       })
-      await host.settle(Math.min(2200, 500 + stage.title.length * 40))
+      if (streaming) await host.wait(STREAM_PACE_MS)
+      else await host.settle(Math.min(2200, 500 + stage.title.length * 40))
       return true
     }
     for (;;) {
@@ -571,18 +585,31 @@ export async function build(
               ? 'El JEV no contestó.'
               : 'JEV ✗ · este trozo no se escribe.',
         )
-        const [says, formula] = safe
-          ? await Promise.all([
-              tellAll(players, {
+        // Al ritmo de la IA no se espera a las frases: el trozo se escribe ya, y de él se pide una sola frase,
+        // que se dirá al margen cuando llegue.
+        const aside =
+          streaming && safe
+            ? tellAll(players, {
                 command,
-                pieces: moments.map((moment) => moment.code),
+                pieces: [chunk.code],
                 ...(planStage ? { stage: planStage } : {}),
                 written: seen.join('\n'),
                 teach,
-              }),
-              verdict?.aid ? formulaFor(players, chunk.code) : Promise.resolve(null),
-            ])
-          : [[], null]
+              }).then(([say]) => say ?? '')
+            : undefined
+        const [says, formula] =
+          safe && !streaming
+            ? await Promise.all([
+                tellAll(players, {
+                  command,
+                  pieces: moments.map((moment) => moment.code),
+                  ...(planStage ? { stage: planStage } : {}),
+                  written: seen.join('\n'),
+                  teach,
+                }),
+                verdict?.aid ? formulaFor(players, chunk.code) : Promise.resolve(null),
+              ])
+            : [[], null]
         seen.push(chunk.code)
         // Una lista de números se ve mejor dibujada: su ayuda sale del propio código.
         const [only] = chunk.steps
@@ -590,7 +617,7 @@ export async function build(
         if (series && only) only.visual = series
         // Y el JEV elige, de cada frase, de qué trozo exacto del código habla: es lo que se subrayará.
         let marks: string[][] = []
-        if (safe) {
+        if (safe && !streaming) {
           try {
             const chosen = await judgeMarks(
               players.decider,
@@ -602,7 +629,16 @@ export async function build(
             marks = []
           }
         }
-        ready.push({ chunk, verdict, stage: home, moments, says, marks, formula })
+        ready.push({
+          chunk,
+          verdict,
+          stage: home,
+          moments,
+          says,
+          marks,
+          formula,
+          ...(aside ? { aside } : {}),
+        })
         // Lo preparado y aún sin escribir: lo que hay «en la recámara» si el usuario interrumpe.
         host.buffer?.(ready.map((item) => item.chunk.code))
         // Tras un trozo que no se va a escribir no se prepara nada más.
@@ -645,6 +681,14 @@ export async function build(
       }
       if (planned) plans.set(current, plan)
       if (planned) used.add(current)
+      // El comentario del trozo se dice al margen en cuanto llega, sin parar lo que se está escribiendo.
+      void item.aside
+        ?.then((say) => {
+          if (say !== '' && !host.signal.aborted) {
+            return host.show({ type: 'say', say, aside: true })
+          }
+        })
+        .catch(() => undefined)
       // Cada pieza aparece con su frase, y la siguiente espera a que esa frase se haya dicho.
       let first: number | null = null
       for (const [index, step] of chunk.steps.entries()) {
@@ -694,8 +738,10 @@ export async function build(
             ...(mark.length === 0 ? {} : { mark }),
           })
           shown++
-          // Lo siguiente no aparece hasta que esto se haya dicho.
-          if (say === '') await host.wait(QUIET_PACE_MS)
+          // Lo siguiente no aparece hasta que esto se haya dicho… salvo al ritmo de la IA, que solo deja
+          // el tiempo justo para que se vea entrar cada pieza.
+          if (streaming) await host.wait(STREAM_PACE_MS)
+          else if (say === '') await host.wait(QUIET_PACE_MS)
           else {
             await host.settle(paceOf({ level: 0, code: moment.code, say }, false))
             // Una idea clave se deja reposar un momento.
