@@ -196,6 +196,23 @@ describe('algo pequeño: el código, tal cual, y cada sentencia en cuanto llega'
     ])
   })
 
+  it('cada respuesta de un modelo se nota: llega el código, el JEV da el visto bueno', async () => {
+    const { host, state } = stage('')
+    await build(host, { decider: localDecider(), provider: ai({ code: SUM }) }, small)
+    const notes = state.shown.flatMap((event) => (event.type === 'progress' ? [event.text] : []))
+    expect(notes).toContain('Llegó código: numero_1 = 3 · lo mira el JEV…')
+    expect(notes.filter((text) => text.startsWith('JEV ✓')).length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('un trozo que no se escribe corta la preparación de los siguientes', async () => {
+    const provider = ai({ code: `import os\nos.remove("datos.csv")\n${SUM}` })
+    const { host } = stage('')
+    const outcome = await build(host, { decider: localDecider(), provider }, small)
+    expect(outcome.trouble).toContain('no da por seguro')
+    // No se le pidió a la IA que contara nada de lo que venía detrás.
+    expect(provider.requests.filter((item) => item.kind === 'tell').length).toBeLessThanOrEqual(1)
+  })
+
   it('cada pieza aparece con su frase, y la siguiente espera a que se haya dicho', async () => {
     const provider = ai({ code: SUM })
     const control: { waits: number[] } = { waits: [] }

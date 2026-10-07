@@ -559,8 +559,9 @@ export class Orders {
       if (fill?.state === 'waiting') {
         fill.state = 'running'
         void this.runFill(gen)
-      } else if (!fill) {
-        // Una marca sin nadie que la esté redactando (se recargó la página a medias): se retira.
+      } else if (!fill && this.building === null) {
+        // Una marca sin nadie que la esté redactando (se recargó la página a medias): se retira. Mientras se
+        // construye, no: los huecos del plan llevan esa marca, y es por ella por donde entra el código.
         void this.change((current) => clearGenerating(current, gen).edits, false)
         return
       }

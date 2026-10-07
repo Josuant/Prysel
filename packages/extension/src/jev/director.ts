@@ -506,15 +506,23 @@ export async function build(
     // Mientras se enseña un trozo, el siguiente se prepara: el JEV lo juzga y la IA escribe lo que se va a
     // decir de cada una de sus piezas. Así nada aparece sin su explicación, y entre trozo y trozo no hay huecos.
     const ready: Prepared[] = []
-    const prep = { done: false }
+    // `stop`: ya no se va a escribir nada más (algo falló, o se llegó al tope): no se prepara más.
+    const prep = { done: false, stop: false }
+    /** Lo que se está preparando, dicho en el momento: cada respuesta de un modelo se nota en el lienzo. */
+    const note = (text: string) => host.show({ type: 'progress', text }).catch(() => undefined)
+    const titleOf = (code: string) => {
+      const row = code.split('\n').find((line) => line.trim() !== '') ?? ''
+      return row.trim().length > 44 ? `${row.trim().slice(0, 43)}…` : row.trim()
+    }
     const preparing = (async () => {
       const seen: string[] = []
       let stage = 0
       for (;;) {
         const chunk = await next(source, host)
-        if (chunk === null) break
+        if (chunk === null || prep.stop) break
         // Lo que no es Python (una frase suelta que el modelo puso alrededor) no es parte del programa.
         if (!host.parses(chunk.code)) continue
+        await note(`Llegó código: ${titleOf(chunk.code)} · lo mira el JEV…`)
         let verdict: ChunkVerdict | null = null
         try {
           verdict = await judgeChunk(
@@ -540,6 +548,16 @@ export async function build(
         }
         const planStage = planned ? stages[stage] : undefined
         const moments = momentsOf(chunk)
+        if (prep.stop) break
+        await note(
+          safe
+            ? planned
+              ? `JEV ✓ · va en «${stages[stage]?.title ?? ''}» · pensando cómo contarlo…`
+              : 'JEV ✓ · pensando cómo contarlo…'
+            : verdict === null
+              ? 'El JEV no contestó.'
+              : 'JEV ✗ · este trozo no se escribe.',
+        )
         const [says, formula] = safe
           ? await Promise.all([
               tellAll(players, {
@@ -666,8 +684,10 @@ export async function build(
       if (tally.trouble !== null) break
       tally.code.push(chunk.code)
     }
+    prep.stop = true
     await preparing
-    await source.finished
+    // Si algo falló, no se espera a que la IA acabe de dictar lo que ya no se va a escribir.
+    if (tally.trouble === null) await source.finished
     if (!host.signal.aborted && tally.trouble === null) {
       if (source.state.failure !== null) tally.trouble = source.state.failure
       else if (tally.written === 0) {
