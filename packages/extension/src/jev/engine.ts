@@ -712,14 +712,35 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
    * se entiende como algo que construir.
    */
   const doubtful = heard === undefined || heard === 'otra' || sure < THRESHOLDS.intent
+  // Cuando no está claro qué se pide y ya hay un programa, lo más probable no se ejecuta a ciegas si es
+  // escribir algo: añadir una plantilla «por si acaso» duplica lo que ya hay. Se le pasa a la IA con el
+  // programa entero delante, que es quien puede ver qué hace falta tocar (y si hay que tocar algo).
+  const WRITES: readonly Intent[] = [
+    'agregar',
+    'componer',
+    'modificar',
+    'etapa',
+    'mover',
+    'envolver',
+    'duplicar',
+    'juntar',
+    'extraer',
+    'renombrar',
+  ]
+  const hasCode = input.program.nodes.length > 0
+  // La lectura más probable, si la hay. Cuando es escribir algo y ya hay un programa, no se ejecuta a
+  // ciegas: decide la IA, con todo delante. Sin ninguna lectura, se entiende como algo nuevo que construir.
+  const reading = likely[0] ?? (heard === 'otra' ? undefined : heard)
   const guess: Intent | undefined =
-    !doubtful || input.genId === undefined
+    !doubtful || input.genId === undefined || reading === 'eliminar'
       ? undefined
-      : likely[0] !== undefined && likely[0] !== 'eliminar' && sure >= 0.25
-        ? likely[0]
-        : likely[0] === 'eliminar'
-          ? undefined
-          : 'componer'
+      : reading === undefined
+        ? 'componer'
+        : hasCode && WRITES.includes(reading)
+          ? 'modificar'
+          : sure >= 0.25
+            ? reading
+            : 'componer'
   const intent = guess ?? heard
   if (guess === undefined && (intent === undefined || sure < THRESHOLDS.intent)) {
     const options = likely.slice(0, 2)

@@ -1,3 +1,4 @@
+import { dedent } from './modify.ts'
 import { TEMPLATES, type TemplateId } from '@prysel/morphology'
 import type { Program, ProgramNode } from '@prysel/python'
 import { templateLines } from '@prysel/python/edits'
@@ -149,7 +150,8 @@ export async function generateFill(
     else if (typeof value?.code !== 'string' || typeof value.say !== 'string') {
       error = 'Faltan «code» o «say» (dos textos).'
     } else {
-      const code = value.code.replace(/\r\n/g, '\n').replace(/\s+$/, '')
+      // Si viene con la sangría del sitio donde va, se le quita aquí: no hace falta volver a pedirlo.
+      const code = dedent(value.code.replace(/\r\n/g, '\n').replace(/\s+$/, ''))
       const problem = checkFill(runtime, request.template, code)
       if (problem === null) {
         return { ok: true, code, say: value.say.trim().slice(0, MAX_SAY), attempts: attempt }

@@ -519,3 +519,56 @@ describe('cambiar línea a línea no se queda a medias por una línea que no es 
     expect(applyOp(parse(source), new LineMap(), { op: 'remove', line: 9, say: '' }).ok).toBe(false)
   })
 })
+
+describe('cuando el JEV no tiene clara la acción y ya hay un programa', () => {
+  it('no se añade una plantilla a ciegas: se le pasa a la IA con el programa entero', async () => {
+    const source = lines(
+      'class CajeroAutomatico:',
+      '    def __init__(self):',
+      '        self.estado = "Esperando Tarjeta"',
+      '',
+      '    def insertar_tarjeta(self):',
+      '        self.estado = "Pidiendo PIN"',
+      '',
+      '    def validar_pin(self, pin):',
+      "        if pin == '1234':",
+      "            self.estado = 'Menú Principal'",
+    )
+    const pick = (choice: string, confidence: number) => ({
+      type: 'choice' as const,
+      choice,
+      confidence,
+      probabilities: {},
+    })
+    // Lo que contestó el JEV de verdad: «agregar» al 31 %, y acabó duplicando `validar_pin` fuera de la clase.
+    const { directive } = await decideCommand(
+      {
+        text: 'Después de meter la tarjeta debe de validar el pin introducido',
+        program: parse(source),
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+        history: [{ order: 'Añade un método para validar el PIN.', did: 'Añado función.' }],
+      },
+      {
+        id: 'grabado',
+        decide: () =>
+          Promise.resolve({
+            ms: 1,
+            answers: {
+              sigue: { type: 'noul', noul: 0.54 },
+              accion: pick('agregar', 0.31),
+              varias: { type: 'noul', noul: 0.2 },
+              alcance: pick('directo', 0.92),
+              pieza: pick('function', 0.42),
+              donde: pick('despues', 0.86),
+              objetivo: pick('p8', 0.34),
+            },
+          }),
+      },
+    )
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+    expect(directive.kind === 'do' && directive.effect.type).toBe('modify')
+  })
+})
