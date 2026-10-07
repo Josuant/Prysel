@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import type { Program } from '@prysel/python'
 import type { Ask, TrackedSeries, Trail } from '../../src/lesson.ts'
 import { stateAt, type TraceIndex, type TraceState } from '../../src/trace.ts'
@@ -737,13 +737,49 @@ export function InsightDock({
 export function InsightToggles({
   ids,
   onToggle,
+  folded = false,
 }: {
   ids: readonly InsightId[]
   onToggle: (id: InsightId) => void
+  /** Empieza recogida: solo el botón «Entender», que la despliega. */
+  folded?: boolean
 }) {
+  // Si ya hay alguno encendido (de otra vez), se enseña abierta: hay que poder apagarlo.
+  const [open, setOpen] = useState(!folded || ids.length > 0)
+  if (!open) {
+    return (
+      <div role="group" aria-label="Nodos para entender" className="toggles">
+        <button
+          type="button"
+          className="toggle-pill"
+          aria-expanded={false}
+          title="Variables, pila, árbol de llamadas…"
+          onClick={() => {
+            setOpen(true)
+          }}
+        >
+          Entender…
+        </button>
+      </div>
+    )
+  }
   return (
     <div role="group" aria-label="Nodos para entender" className="toggles">
-      <span className="toggles__label">Entender</span>
+      {folded ? (
+        <button
+          type="button"
+          className="toggle-pill"
+          aria-expanded
+          title="Recoger"
+          onClick={() => {
+            setOpen(false)
+          }}
+        >
+          Entender
+        </button>
+      ) : (
+        <span className="toggles__label">Entender</span>
+      )}
       {(Object.keys(INSIGHT_LABELS) as InsightId[]).map((id) => (
         <button
           key={id}

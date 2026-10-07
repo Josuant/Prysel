@@ -18,6 +18,7 @@ const WEB_FEATURES: HostFeatures = {
   calls: false,
   editLesson: false,
   chat: true,
+  foldInsights: true,
   suggestions: ['Enséñame la recursión', 'Explícame este programa', 'Paso a paso'],
 }
 

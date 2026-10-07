@@ -157,6 +157,12 @@ export interface HostFeatures {
   chat?: boolean
   /** Sugerencias para empezar a hablar con la IA (en la interfaz de chat). */
   suggestions?: string[]
+  /**
+   * Los nodos para entender (variables, pila, árbol de llamadas…) empiezan recogidos: ni se enseñan los
+   * que pide la lección ni la fila para elegirlos, hasta que se pulsa «Entender». En una pantalla pequeña
+   * quitan sitio al diagrama, que es lo que se viene a ver.
+   */
+  foldInsights?: boolean
 }
 
 const ALL_FEATURES: HostFeatures = { orders: true, calls: true, editLesson: true }
@@ -438,14 +444,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [insightChoice, setInsightChoice] = useState<Record<string, InsightId[]>>(
     () => saved().insights ?? {},
   )
+  // Con los nodos recogidos de entrada, los de la lección no salen solos: se eligen.
+  const suggested = features.foldInsights ? undefined : lesson?.show
   const insightIds = useMemo(
-    () => insightChoice[file ?? ''] ?? lesson?.show ?? [],
-    [insightChoice, file, lesson],
+    () => insightChoice[file ?? ''] ?? suggested ?? [],
+    [insightChoice, file, suggested],
   )
   // Se enciende o apaga sobre lo que había en ese momento (dos pulsaciones seguidas no se pisan).
   const toggleInsight = (id: InsightId) => {
     setInsightChoice((previous) => {
-      const current = previous[file ?? ''] ?? lesson?.show ?? []
+      const current = previous[file ?? ''] ?? suggested ?? []
       const now = current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
       return { ...previous, [file ?? '']: INSIGHTS.filter((x) => now.includes(x)) }
     })
@@ -1588,7 +1596,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             player={player}
             truncated={replay.trace.truncated}
             failure={replay.trace.error}
-            extras={<InsightToggles ids={insightIds} onToggle={toggleInsight} />}
+            extras={
+              <InsightToggles
+                ids={insightIds}
+                onToggle={toggleInsight}
+                folded={features.foldInsights === true}
+              />
+            }
             narrate={narrate}
             onToggleNarrate={toggleNarrate}
             {...(lesson
