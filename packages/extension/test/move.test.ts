@@ -274,3 +274,27 @@ describe('otras cosas que se le hacen a lo que ya existe, cada una con su gesto'
     })
   })
 })
+
+describe('mirando una función por dentro, pedir otra función', () => {
+  const source = lines('def sumar(a, b):', '    return a + b')
+  const viewing = async (text: string) => {
+    const program = parse(source)
+    const fn = program.nodes.find((n) => n.range && n.line === 1)?.id ?? null
+    const { directive } = await decideCommand(
+      { text, program, selected: null, focus: fn, typed: true, genId: 'g1' },
+      localDecider(),
+    )
+    return directive.kind === 'do' ? directive.say : null
+  }
+
+  it('es algo aparte: va al programa, no dentro de la que se mira', async () => {
+    expect(await viewing('ahora crea una función restar')).toContain('al final del programa')
+    expect(await viewing('un programa que calcule la media de unas notas')).toContain(
+      'al final del programa',
+    )
+  })
+
+  it('si dice «aquí» o es un paso más, va dentro', async () => {
+    expect(await viewing('añade aquí un bucle')).toContain('al final de sumar')
+  })
+})

@@ -187,6 +187,12 @@ export function localDecider(): Decider {
             /\bfuncion\b|\bclase\b|\bmetodo\b|\bbucle\b|\bvariable\b|\blinea\b/.test(text) &&
             !/\bprograma\b|\balgoritmo/.test(text)
           answers[id] = pick(small ? 'directo' : 'esquema', SURE)
+        } else if (id === 'ambito') {
+          // Otra función u otra clase es algo aparte, salvo que diga «aquí» o «dentro».
+          const own =
+            /\bfuncion\b|\bclase\b|\bprograma\b|\balgoritmo/.test(text) &&
+            !/\baqui\b|\bdentro\b|\bmetodo\b/.test(text)
+          answers[id] = pick(own ? 'programa' : 'dentro', SURE)
         } else if (id === 'oyendo') {
           // Lo que se le va oyendo decir: la primera cosa que nombra.
           const heard = plain(textOf((request.state as { oido?: unknown }).oido))
