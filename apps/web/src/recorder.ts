@@ -14,8 +14,13 @@
  * un gesto del usuario); la captura queda abierta y cada grabación la aprovecha.
  */
 
-/** Sin nada nuevo durante este tiempo, la explicación se da por terminada. */
+/** Sin nada nuevo ni nada pendiente durante este tiempo, la explicación se da por terminada. */
 const IDLE_MS = 7000
+/**
+ * Con algo pendiente (una consulta sin contestar, una construcción sin acabar, una frase a medio decir) se
+ * sigue grabando aunque no pase nada… hasta este tope de silencio: por si algo se quedó colgado.
+ */
+const STALL_MS = 120_000
 /** Y pase lo que pase, una grabación no dura más que esto. */
 const MAX_MS = 10 * 60_000
 
@@ -112,6 +117,11 @@ export class SessionRecorder {
   private began = 0
   private order = ''
   private idle: ReturnType<typeof setTimeout> | null = null
+  /** Lo que está en marcha: mientras quede algo, la explicación no ha terminado. */
+  private calls = new Set<unknown>()
+  private gens = new Set<string>()
+  private speech = new Set<number>()
+  private last = 0
   private limit: ReturnType<typeof setTimeout> | null = null
   private listeners = new Set<() => void>()
 
@@ -180,11 +190,18 @@ export class SessionRecorder {
       type,
       ...digest(message),
     })
-    if (ALIVE.has(type) || type === 'command') this.rest()
+    this.track(dir, type, message)
+    if (ALIVE.has(type) || type === 'command') {
+      this.last = performance.now()
+      this.rest()
+    }
   }
 
   private begin(order: string) {
     this.moments = []
+    this.calls.clear()
+    this.gens.clear()
+    this.speech.clear()
     this.chunks = []
     this.began = performance.now()
     this.order = order
@@ -210,8 +227,31 @@ export class SessionRecorder {
   private rest() {
     if (this.idle) clearTimeout(this.idle)
     this.idle = setTimeout(() => {
-      this.finish()
+      // Entre el plan y el código, o mientras un modelo piensa, no pasa nada a la vista: eso no es el final.
+      const pending = this.calls.size + this.gens.size + this.speech.size > 0
+      if (pending && performance.now() - this.last < STALL_MS) this.rest()
+      else this.finish()
     }, IDLE_MS)
+  }
+
+  /** Lleva la cuenta de lo que hay en marcha: consultas a modelos, construcciones y frases diciéndose. */
+  private track(dir: 'in' | 'out', type: string, message: Record<string, unknown>) {
+    const { gen, seq } = message
+    if (dir === 'out' && type === 'call') {
+      const entry = (message.entry ?? {}) as { id?: unknown; status?: unknown }
+      if (entry.status === 'running') this.calls.add(entry.id)
+      else this.calls.delete(entry.id)
+    }
+    if (dir === 'out' && typeof gen === 'string') {
+      if (type === 'generated') this.gens.delete(gen)
+      else if (type === 'step' || type === 'progress') this.gens.add(gen)
+    }
+    // Lo que no es una construcción (generar la lección) avisa de que acabó con una frase suelta.
+    if (dir === 'out' && type === 'say' && typeof seq !== 'number') this.gens.clear()
+    if (typeof seq === 'number') {
+      if (dir === 'in' && type === 'spoken') this.speech.delete(seq)
+      else if (dir === 'out' && (type === 'step' || type === 'say')) this.speech.add(seq)
+    }
   }
 
   /** Termina la grabación en marcha (si la hay) y descarga el vídeo y la línea de tiempo. */
