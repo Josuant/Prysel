@@ -91,6 +91,87 @@ describe('mover algo que ya existe', () => {
   })
 })
 
+describe('al entrar una función en una clase, las llamadas que ya había siguen funcionando', () => {
+  const move = (source: string) =>
+    order('mueve la función sumar dentro de la clase Calculadora', undefined, source)
+
+  it('fuera de la clase, sin objeto a mano: se crea uno para llamarla', async () => {
+    const { moved } = await move(
+      lines(
+        'def sumar(a, b):',
+        '    return a + b',
+        '',
+        'class Calculadora:',
+        '    def doble(self, n):',
+        '        return sumar(n, n)',
+        '',
+        'print(sumar(1, 2))',
+      ),
+    )
+    expect(moved).toBe(
+      lines(
+        'class Calculadora:',
+        '    def doble(self, n):',
+        '        return self.sumar(n, n)',
+        '',
+        '    def sumar(self, a, b):',
+        '        return a + b',
+        '',
+        'print(Calculadora().sumar(1, 2))',
+      ),
+    )
+  })
+
+  it('si ya hay un objeto de esa clase, se llama por él', async () => {
+    const { moved } = await move(
+      lines(
+        'def sumar(a, b):',
+        '    return a + b',
+        '',
+        'class Calculadora:',
+        '    pass',
+        '',
+        'calc = Calculadora()',
+        'print(sumar(1, 2))  # sumar(…) en un comentario no se toca',
+      ),
+    )
+    expect(moved).toContain('print(calc.sumar(1, 2))  # sumar(…) en un comentario no se toca')
+    expect(moved).toContain('    def sumar(self, a, b):')
+  })
+
+  it('si crear un objeto pide datos que no se tienen, entra como función de la clase', async () => {
+    const { moved } = await move(
+      lines(
+        'def sumar(a, b):',
+        '    return a + b',
+        '',
+        'class Calculadora:',
+        '    def __init__(self, marca):',
+        '        self.marca = marca',
+        '',
+        'print(sumar(1, 2))',
+      ),
+    )
+    expect(moved).toContain(
+      lines('    @staticmethod', '    def sumar(a, b):', '        return a + b'),
+    )
+    expect(moved).toContain('print(Calculadora.sumar(1, 2))')
+  })
+
+  it('una función que se llama a sí misma sigue llamándose', async () => {
+    const { moved } = await move(
+      lines(
+        'def sumar(a, b):',
+        '    return a if b == 0 else sumar(a + 1, b - 1)',
+        '',
+        'class Calculadora:',
+        '    pass',
+      ),
+    )
+    expect(moved).toContain('        return a if b == 0 else self.sumar(a + 1, b - 1)')
+  })
+})
+
 describe('otras cosas que se le hacen a lo que ya existe, cada una con su gesto', () => {
   it('envolver: la sentencia pasa dentro de un bucle, una decisión o un intento', async () => {
     const loop = await order('envuelve esto en un bucle', 8)

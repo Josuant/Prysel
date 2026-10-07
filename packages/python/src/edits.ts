@@ -719,15 +719,37 @@ export function moveNode(
     .sort((x, y) => (y.range?.start ?? 0) - (x.range?.start ?? 0))[0]
   const becomesMethod = where.into !== undefined && target.kind === 'abstraction.class'
   const wasMethod = owner?.kind === 'abstraction.class'
+  /** Las llamadas que ya había a la función, reescritas para que sigan llegando a ella. */
+  let calls: TextEdit[] = []
   if (node.kind === 'abstraction.collapsed' && becomesMethod !== wasMethod) {
     const at = block.findIndex((row) => /^\s*(?:async\s+)?def\s+\w+\s*\(/.test(row))
     const header = block[at]
-    if (header !== undefined) {
-      block[at] = becomesMethod
-        ? header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*(?!self\b)/, (_, head: string) =>
+    if (header !== undefined && becomesMethod) {
+      const name = /def\s+(\w+)/.exec(header)?.[1] ?? ''
+      const moved = methodCalls(text, name, target.range, {
+        start: begin,
+        end: lineEnd(text, range.end),
+      })
+      calls = moved.edits
+      // Dentro de sí misma (si se llama a sí misma), también.
+      for (let i = at + 1; i < block.length; i++) {
+        block[i] = (block[i] ?? '').replace(
+          new RegExp(`(?<![\\w.])${name}(?=\\s*\\()`, 'g'),
+          `${moved.inner}${name}`,
+        )
+      }
+      if (moved.static) {
+        // No se puede crear un objeto solo para llamarla: se queda como función de la clase, sin `self`.
+        block.splice(at, 0, `${/^\s*/.exec(header)?.[0] ?? ''}@staticmethod`)
+      } else {
+        block[at] = header.replace(
+          /^(\s*(?:async\s+)?def\s+\w+\s*\()\s*(?!self\b)/,
+          (_, head: string) =>
             /^\s*(?:async\s+)?def\s+\w+\s*\(\s*\)/.test(header) ? `${head}self` : `${head}self, `,
-          )
-        : header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*self\s*,?\s*/, '$1')
+        )
+      }
+    } else if (header !== undefined) {
+      block[at] = header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*self\s*,?\s*/, '$1')
     }
   }
   // Un método no va pegado al anterior: una línea en blanco entre los dos.
@@ -748,7 +770,9 @@ export function moveNode(
   const placed = insertLines(program, where, (indent) => reindent(block, range.indent, indent))
   const insertion = placed.edits[0]
   if (!insertion) return { edits: [] }
-  let edits = [...removed, ...placed.edits]
+  let edits = [...removed, ...placed.edits, ...calls]
+  // Si reescribir las llamadas chocara con lo que se mueve, se mueve sin tocarlas.
+  if (calls.length > 0 && !validEdits(edits, text.length)) edits = [...removed, ...placed.edits]
   if (!validEdits(edits, text.length)) {
     // Sacar lo último de una función y ponerlo detrás de ella: el sitio de destino es justo el final
     // de lo que se quita. Se lleva el salto de línea de antes en vez del de después, y las dos
@@ -769,6 +793,61 @@ export function moveNode(
     }
   }
   return { edits, ...(placed.select ? { select: { line: placed.select.line - shift } } : {}) }
+}
+
+/**
+ * Una función suelta entra en una clase: las llamadas que ya había tienen que seguir llegando a ella.
+ *
+ * - Dentro de la clase se la llama por `self.`.
+ * - Fuera, por un objeto de esa clase que ya exista antes de la llamada (`calc = Calculadora()` →
+ *   `calc.sumar(…)`); si no hay ninguno, creando uno (`Calculadora().sumar(…)`).
+ * - Si crear uno pide datos que no se tienen (su `__init__` recibe argumentos sin valor por defecto), no se
+ *   inventan: la función entra como `@staticmethod` y se la llama por la clase (`Calculadora.sumar(…)`).
+ *
+ * `moved` es el tramo de la propia función, que no se mira aquí (se reescribe al moverla).
+ */
+function methodCalls(
+  text: string,
+  name: string,
+  owner: { start: number; end: number },
+  moved: { start: number; end: number },
+): { edits: TextEdit[]; static: boolean; inner: string } {
+  const className = /class\s+(\w+)/.exec(text.slice(owner.start, owner.end))?.[1] ?? ''
+  if (name === '' || className === '') return { edits: [], static: false, inner: 'self.' }
+  // Lo que va entre comillas o en un comentario no es código: se tapa, sin mover nada de sitio.
+  const bare = text.replace(/"[^"\n]*"|'[^'\n]*'|#[^\n]*/g, (found) => ' '.repeat(found.length))
+  const offsets: number[] = []
+  for (const match of bare.matchAll(new RegExp(`(?<![\\w.])${name}(?=\\s*\\()`, 'g'))) {
+    const at = match.index
+    if (at >= moved.start && at < moved.end) continue
+    if (/\bdef\s+$/.test(bare.slice(Math.max(0, at - 12), at))) continue
+    offsets.push(at)
+  }
+  const inside = (at: number) => at >= owner.start && at < owner.end
+  // El último objeto de la clase que se guardó en un nombre antes de la llamada.
+  const made = [
+    ...bare.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)\\s*=\\s*${className}\\s*\\(`, 'gm')),
+  ]
+  const instanceBefore = (at: number) => made.filter((match) => match.index < at).pop()?.[1]
+  const init = /def\s+__init__\s*\(\s*self\s*,?([^)]*)\)/.exec(bare.slice(owner.start, owner.end))
+  const needsData = (init?.[1] ?? '')
+    .split(',')
+    .some((param) => param.trim() !== '' && !param.includes('=') && !param.trim().startsWith('*'))
+  const orphan = offsets.some((at) => !inside(at) && instanceBefore(at) === undefined)
+  const asStatic = orphan && needsData
+  return {
+    static: asStatic,
+    inner: asStatic ? `${className}.` : 'self.',
+    edits: offsets.map((at) => ({
+      start: at,
+      end: at,
+      text: inside(at)
+        ? 'self.'
+        : asStatic
+          ? `${className}.`
+          : `${instanceBefore(at) ?? `${className}()`}.`,
+    })),
+  }
 }
 
 /**
