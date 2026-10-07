@@ -92,7 +92,30 @@ export function applyOp(program: Program, map: LineMap, op: ChangeOp): Applied {
   const at = map.now(op.line)
   const node = statementAt(program, at)
   if (!node) {
-    return { ok: false, error: `En la línea ${op.line} no empieza ninguna sentencia.` }
+    // En esa línea no empieza ninguna sentencia (un `pass`, una línea en blanco, una que ya no está): no
+    // es motivo para dejarlo todo a medias. Lo que se añade va a lo que envuelve esa línea —el cuerpo de
+    // la clase o la función, donde un `pass` se sustituye— o, si no la envuelve nada, al final. Y lo que
+    // se cambia o se quita ahí, si no hay nada que cambiar, se da por hecho.
+    const owner = program.nodes
+      .filter(
+        (other) =>
+          other.range?.head !== undefined && other.line < at && (other.lineEnd ?? other.line) >= at,
+      )
+      .sort((x, y) => y.line - x.line)[0]
+    const rows = program.source.split('\n')
+    const written = (rows[at - 1] ?? '').trim()
+    // Cambiar una línea que no existe, o que no es un hueco (`pass`, `...`), sí es un error: no hay qué.
+    const hole = written === 'pass' || written === '...'
+    if (at > rows.length || (op.op === 'change' && !(hole && owner))) {
+      return { ok: false, error: `En la línea ${op.line} no empieza ninguna sentencia.` }
+    }
+    if (op.op === 'remove') {
+      return { ok: true, change: { edits: [] }, line: owner?.line ?? at, effect: 'leaving' }
+    }
+    const change = addCode(program, owner ? { into: owner.id } : {}, op.code)
+    return change.edits.length > 0 && change.select
+      ? { ok: true, change, line: change.select.line, effect: 'born' }
+      : { ok: false, error: `En la línea ${op.line} no empieza ninguna sentencia.` }
   }
   if (op.op === 'change') {
     const change = replaceCode(program, node.id, op.code)

@@ -880,16 +880,33 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     })
   }
 
+  // «Mete sumar a una clase Calculadora»: la orden nombra una pieza que existe y dice, con todas las
+  // letras, que la meta en una clase. Eso es mover (o crear la clase a su alrededor), lo vea el JEV como
+  // lo vea: no se reescribe con la IA lo que se puede cambiar de sitio tal cual, viéndolo.
+  const carried = namedBy(input.text, targets).find(
+    (item) => item.node?.kind !== 'abstraction.class',
+  )
+  if (
+    forced.intent === undefined &&
+    carried !== undefined &&
+    classIn(input.text) !== null &&
+    (['componer', 'agregar', 'modificar', 'otra'] as Intent[]).includes(intent) &&
+    /\b(mete|meter|pon|poner|mueve|mover|lleva|llevar|pasa|pasar|coloca|colocar|incluye|incluir)\b.*\b(a|en|dentro de)\s+(una|la|esa|esta)\s+(nueva\s+)?clase\b/.test(
+      input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
+    )
+  ) {
+    return intoClass(carried)
+  }
+
   // Un retoque de lo que se acaba de hacer («pero usando la clase») no es una orden nueva, aunque suene a
-  // otra cosa: se cambia lo que hay. Lo dice el JEV, mirando la conversación. No pisa lo que solo mueve la
-  // vista, ejecuta o deshace.
+  // otra cosa: se cambia lo que hay. Lo dice el JEV, mirando la conversación. Solo pisa lo que iba a
+  // escribir algo nuevo: mover, envolver, juntar o extraer tienen su propia manera de hacerse (y de verse),
+  // y ver, ejecutar o deshacer no cambian nada.
   const follows = answers.sigue?.type === 'noul' ? answers.sigue.noul : 0
   if (
     forced.intent === undefined &&
     follows >= THRESHOLDS.followUp &&
-    (
-      ['componer', 'agregar', 'envolver', 'modificar', 'juntar', 'extraer', 'otra'] as Intent[]
-    ).includes(intent)
+    (['componer', 'agregar', 'modificar', 'otra'] as Intent[]).includes(intent)
   ) {
     return rework(true)
   }

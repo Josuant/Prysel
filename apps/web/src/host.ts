@@ -46,6 +46,25 @@ type Listener = (doc: WebDocument & { version: number }) => void
 /** Lo que el lienzo le pide a la página y no es del documento: abrir los ajustes de la IA. */
 export type ShellRequest = 'settings'
 
+/** Quién cambió el código: una orden a la IA, el lienzo, el editor de código, deshacer, u otro documento. */
+type ChangeBy = 'orden' | 'lienzo' | 'editor' | 'deshacer' | 'documento'
+
+interface CodeChange {
+  at: string
+  /** Milisegundos desde que se abrió la página. */
+  ms: number
+  version: number
+  by: ChangeBy
+  file: string
+  /** Lo que cambió: en qué línea, qué se quitó y qué se puso. Vacío si el texto cambió entero. */
+  edits: { line: number; removed: string; added: string }[]
+  /** El código entero, tal como quedó. */
+  after: string
+}
+
+/** Cuántos cambios se recuerdan. */
+const MAX_CHANGES = 600
+
 export class WebHost {
   private doc: WebDocument = { name: 'programa.py', text: '', lesson: null }
   private version = 1
@@ -59,6 +78,9 @@ export class WebHost {
   private requests = new Set<(request: ShellRequest) => void>()
   private settings: AiSettings = loadSettings()
   private calls = new CallLog((entry) => this.post({ type: 'call', entry }))
+  /** Cada cambio que se le ha hecho al código desde que se abrió la página. */
+  private changes: CodeChange[] = []
+  private started = performance.now()
   private orders: Orders
 
   constructor() {
@@ -152,16 +174,20 @@ export class WebHost {
     this.session.dispose()
     this.session = this.newSession()
     this.history.clear()
+    const before = this.doc.text
     this.doc = { ...doc }
     this.version++
+    this.noteChange('documento', before)
     void this.refresh()
   }
 
   /** El usuario escribió en el editor de código. */
   setText(text: string) {
     if (text === this.doc.text) return
+    const before = this.doc.text
     this.doc = { ...this.doc, text }
     this.version++
+    this.noteChange('editor', before)
     void this.refresh()
   }
 
@@ -308,20 +334,64 @@ export class WebHost {
   private writeFrom(edits: readonly TextEdit[], remember: boolean): boolean {
     if (!validEdits(edits, this.doc.text.length)) return false
     const before = this.doc.text
-    this.write(edits)
+    this.write(edits, 'orden')
     if (remember) this.history.applied(before, edits, this.version)
     this.notify()
     return true
   }
 
-  private write(edits: readonly TextEdit[]) {
-    let text = this.doc.text
+  private write(edits: readonly TextEdit[], by: ChangeBy = 'lienzo') {
+    const before = this.doc.text
+    let text = before
     // Se aplican de atrás adelante: así los desplazamientos de las primeras siguen valiendo.
     for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
       text = text.slice(0, edit.start) + edit.text + text.slice(edit.end)
     }
     this.doc = { ...this.doc, text }
     this.version++
+    this.noteChange(by, before, edits)
+  }
+
+  /** Apunta un cambio al código: quién lo hizo, qué líneas tocó y cómo quedó. */
+  private noteChange(by: ChangeBy, before: string, edits: readonly TextEdit[] = []) {
+    const lineOf = (offset: number) => before.slice(0, offset).split('\n').length
+    this.changes.push({
+      at: new Date().toISOString(),
+      ms: Math.round(performance.now() - this.started),
+      version: this.version,
+      by,
+      file: this.doc.name,
+      edits: [...edits]
+        .sort((a, b) => a.start - b.start)
+        .map((edit) => ({
+          line: lineOf(edit.start),
+          removed: before.slice(edit.start, edit.end),
+          added: edit.text,
+        })),
+      after: this.doc.text,
+    })
+    if (this.changes.length > MAX_CHANGES) this.changes.splice(0, this.changes.length - MAX_CHANGES)
+  }
+
+  /** Todo lo que se le ha preguntado a cada modelo y lo que contestó, para descargarlo. Sin claves. */
+  callsLog(): unknown {
+    return {
+      what: 'Prysel · consultas a los modelos',
+      at: new Date().toISOString(),
+      file: this.doc.name,
+      calls: this.calls.all(),
+    }
+  }
+
+  /** Cada cambio que se le ha hecho al código, en orden, con cómo quedó tras cada uno. */
+  changesLog(): unknown {
+    return {
+      what: 'Prysel · cambios al código',
+      at: new Date().toISOString(),
+      file: this.doc.name,
+      now: this.doc.text,
+      changes: this.changes,
+    }
   }
 
   private async applyEdits(edits: TextEdit[], version: number) {
@@ -353,7 +423,7 @@ export class WebHost {
       this.history.clear()
       return this.post({ type: 'history', ...this.history.sizes })
     }
-    this.write(edits)
+    this.write(edits, 'deshacer')
     if (direction === 'undo') this.history.undone(before, this.version)
     else this.history.redone(before, this.version)
     await this.refresh()

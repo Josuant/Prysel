@@ -30,6 +30,21 @@ const WEB_FEATURES: HostFeatures = {
   suggestions: ['Enséñame la recursión', 'Explícame este programa', 'Paso a paso'],
 }
 
+/** Descarga unos datos como un archivo `.json`, con la fecha en el nombre. */
+function save(data: unknown, name: string) {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
+  )
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${name}-${stamp}.json`
+  document.body.append(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
 /** Dónde se recuerda, en este navegador, si se quieren ver las consultas a los modelos. */
 const CALLS = 'prysel.web.calls'
 
@@ -77,7 +92,8 @@ type Sheet = 'menu' | 'settings' | null
 export function Shell({ host }: { host: WebHost }) {
   const [doc, setDoc] = useState(() => host.current)
   const [sheet, setSheet] = useState<Sheet>(null)
-  const [code, setCode] = useState(false)
+  // El código, a la vista de entrada donde cabe al lado del diagrama (en un móvil lo taparía).
+  const [code, setCode] = useState(() => window.matchMedia(WIDE).matches)
   // Ver lo que se le pregunta a cada modelo y lo que contesta: una opción, apagada de entrada.
   const [calls, setCalls] = useState(() => readFlag(CALLS))
   const features = useMemo(() => ({ ...WEB_FEATURES, calls }), [calls])
@@ -233,6 +249,32 @@ export function Shell({ host }: { host: WebHost }) {
                     ? 'Quitar el botón «Consultas» del diagrama'
                     : 'Un botón en el diagrama para ver qué se le pregunta a cada IA y qué contesta'}
                 </span>
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  save(host.callsLog(), 'prysel-consultas')
+                  setSheet(null)
+                }}
+              >
+                <strong>Descargar las consultas a los modelos</strong>
+                <span>
+                  Todo lo que se le preguntó a la IA y al JEV, y lo que contestaron (sin claves)
+                </span>
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  save(host.changesLog(), 'prysel-cambios')
+                  setSheet(null)
+                }}
+              >
+                <strong>Descargar los cambios al código</strong>
+                <span>Cada cambio, quién lo hizo y cómo quedó el código después</span>
               </button>
             </li>
             <li>

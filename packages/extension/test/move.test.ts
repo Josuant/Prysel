@@ -5,6 +5,7 @@ import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import { actionEdits, applyEdits } from '@prysel/python/edits'
 import { decideCommand } from '../src/jev/engine.ts'
 import { localDecider } from '../src/jev/local.ts'
+import { LineMap, applyOp } from '../src/jev/modify.ts'
 
 /**
  * Mover algo que ya existe: el JEV dice qué se mueve, adónde y cómo queda; el código cambia de sitio (y una
@@ -454,5 +455,67 @@ describe('la conversación: una orden puede retocar lo que se acaba de hacer', (
   it('una orden nueva sigue siendo una orden nueva', async () => {
     const { directive } = await ask('una función que reste dos números')
     expect(directive.kind === 'do' && directive.effect.type).toBe('compose')
+  })
+})
+
+describe('«Ahora mete sumar a una clase Calculadora», justo después de crear sumar', () => {
+  it('aunque suene a retoque de lo anterior, es meterla en una clase: se ve y no pasa por la IA', async () => {
+    const source = lines('def sumar(a, b):', '    return a + b')
+    const program = parse(source)
+    const local = localDecider()
+    const { directive } = await decideCommand(
+      {
+        text: 'Ahora mete sumar a una clase Calculadora',
+        program,
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+        last: { from: 1, to: 2 },
+        history: [{ order: 'Crea la función sumar', did: 'Lo escribo al final del programa.' }],
+      },
+      {
+        id: 'retoque',
+        async decide(request) {
+          const response = await local.decide(request)
+          // El JEV ve un retoque de lo de antes (como pasó de verdad).
+          return {
+            ...response,
+            answers: { ...response.answers, sigue: { type: 'noul', noul: 0.95 } },
+          }
+        },
+      },
+    )
+    expect(directive.kind === 'do' && directive.effect).toMatchObject({
+      type: 'action',
+      action: { type: 'wrap', with: 'class', name: 'Calculadora' },
+    })
+    expect(directive.kind === 'do' && directive.gesture?.kind).toBe('wrap')
+  })
+})
+
+describe('cambiar línea a línea no se queda a medias por una línea que no es una sentencia', () => {
+  const source = lines('class Calculadora:', '    pass')
+
+  it('añadir «junto a» un pass lo pone en el cuerpo que lo envuelve, en su lugar', () => {
+    const program = parse(source)
+    const applied = applyOp(program, new LineMap(), {
+      op: 'add',
+      line: 2,
+      inside: false,
+      code: 'def sumar(self, a, b):\n    return a + b',
+      say: '',
+    })
+    expect(applied.ok).toBe(true)
+    expect(applied.ok && applyEdits(source, applied.change.edits)).toBe(
+      lines('class Calculadora:', '    def sumar(self, a, b):', '        return a + b'),
+    )
+  })
+
+  it('quitar lo que ya no está se da por hecho', () => {
+    const applied = applyOp(parse(source), new LineMap(), { op: 'remove', line: 2, say: '' })
+    expect(applied).toMatchObject({ ok: true, change: { edits: [] } })
+    // Pero señalar una línea que no existe sigue siendo un error.
+    expect(applyOp(parse(source), new LineMap(), { op: 'remove', line: 9, say: '' }).ok).toBe(false)
   })
 })
