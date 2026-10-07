@@ -28,6 +28,7 @@ import {
   type Effect,
 } from '../../../packages/extension/src/jev/engine.ts'
 import { explainNode, generateFill } from '../../../packages/extension/src/jev/fill.ts'
+import { indentationOk } from '../../../packages/extension/src/jev/modify.ts'
 import {
   judgeHeard,
   judgeInterruption,
@@ -493,10 +494,12 @@ export class Orders {
         const before = port.text()
         const { edits } = change
         if (edits.length === 0) return null
-        if (
-          !validEdits(edits, before.length) ||
-          parser.parse(applyTextEdits(before, edits)).rootNode.hasError
-        ) {
+        if (!validEdits(edits, before.length)) {
+          return 'El siguiente paso no deja un programa válido: me detengo.'
+        }
+        // El analizador tolera una sangría sin sentido; Python no. Se comprueban las dos cosas.
+        const next = applyTextEdits(before, edits)
+        if (parser.parse(next).rootNode.hasError || !indentationOk(next)) {
           return 'El siguiente paso no deja un programa válido: me detengo.'
         }
         return port.write(edits) ? null : 'No se pudo escribir en el programa.'
@@ -585,6 +588,7 @@ export class Orders {
                 command,
                 ...(effect.lines ? { lines: effect.lines } : {}),
                 ...(effect.scope ? { scope: effect.scope } : {}),
+                whole: true,
               },
             )
     } catch (error) {

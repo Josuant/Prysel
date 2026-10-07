@@ -21,6 +21,178 @@ export type ChangeOp =
   | { op: 'add'; line: number; inside: boolean; code: string; say: string }
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
+
+/** Quita la sangría que comparten todas las líneas de un trozo de código: la deja pegada al margen. */
+export function dedent(code: string): string {
+  const rows = code.split('\n')
+  const depth = Math.min(
+    ...rows.filter((row) => row.trim() !== '').map((row) => row.length - row.trimStart().length),
+  )
+  return Number.isFinite(depth) && depth > 0
+    ? rows.map((row) => (row.trim() === '' ? '' : row.slice(depth))).join('\n')
+    : code
+}
+
+/**
+ * Si la sangría de un programa tiene sentido: ninguna línea va más metida que la anterior sin que esta
+ * abra un bloque (acabe en dos puntos). El analizador tolera eso sin quejarse, y Python no: es lo que
+ * delata un cambio mal colocado. No mira dentro de textos de varias líneas ni de paréntesis abiertos.
+ */
+export function indentationOk(source: string): boolean {
+  const QUOTES = '"'.repeat(3)
+  const TICKS = "'".repeat(3)
+  let depth = 0
+  let triple: string | null = null
+  let continued = false
+  let previous: { indent: number; opens: boolean } | null = null
+  for (const raw of source.split(/\r?\n/)) {
+    const inside = depth > 0 || triple !== null || continued
+    let code = ''
+    for (let i = 0; i < raw.length; i++) {
+      const three = raw.slice(i, i + 3)
+      if (triple !== null) {
+        if (three === triple) {
+          triple = null
+          i += 2
+        }
+        continue
+      }
+      const char = raw[i] ?? ''
+      if (three === QUOTES || three === TICKS) {
+        triple = three
+        i += 2
+        continue
+      }
+      if (char === '"' || char === "'") {
+        // Un texto de una línea: hasta su cierre (o el final de la línea).
+        let end = i + 1
+        while (end < raw.length && raw[end] !== char) end += raw[end] === '\\' ? 2 : 1
+        i = end
+        code += '""'
+        continue
+      }
+      if (char === '#') break
+      if ('([{'.includes(char)) depth++
+      else if (')]}'.includes(char)) depth = Math.max(0, depth - 1)
+      code += char
+    }
+    const written = code.trim()
+    continued = written.endsWith('\\')
+    const closed = depth === 0 && triple === null && !continued
+    if (inside) {
+      // Una línea de continuación: lo que cuenta es cómo acaba la sentencia entera.
+      if (previous && closed) previous.opens = written.endsWith(':')
+      continue
+    }
+    if (written === '') continue
+    const indent = raw.length - raw.trimStart().length
+    if (previous ? indent > previous.indent && !previous.opens : indent > 0) return false
+    previous = { indent, opens: closed && written.endsWith(':') }
+  }
+  return true
+}
+
+/** Un tramo que cambia entre dos versiones de un programa: dónde queda en la nueva y cuántas líneas trae. */
+export interface Hunk {
+  /** La línea donde queda en la versión nueva (desde 1). */
+  line: number
+  /** Cuántas líneas pone (0: solo quita). */
+  added: number
+  /** Cuántas quita de la versión anterior. */
+  removed: number
+}
+
+/**
+ * Qué cambia entre dos versiones de un programa, línea a línea: los tramos distintos (para enseñarlos uno a
+ * uno) y la edición única que lleva de una a otra (para escribirla de una vez, sin estados intermedios).
+ */
+export function changesBetween(
+  before: string,
+  after: string,
+): { edit: { start: number; end: number; text: string } | null; hunks: Hunk[] } {
+  const a = before.split('\n')
+  const b = after.split('\n')
+  // La subsecuencia común más larga, por líneas: los programas que caben aquí son pequeños.
+  const common: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  )
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      const row = common[i]
+      if (!row) continue
+      row[j] =
+        a[i] === b[j]
+          ? (common[i + 1]?.[j + 1] ?? 0) + 1
+          : Math.max(common[i + 1]?.[j] ?? 0, row[j + 1] ?? 0)
+    }
+  }
+  const hunks: Hunk[] = []
+  let i = 0
+  let j = 0
+  let open: Hunk | null = null
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      open = null
+      i++
+      j++
+      continue
+    }
+    if (!open) {
+      open = { line: j + 1, added: 0, removed: 0 }
+      hunks.push(open)
+    }
+    if (j < b.length && (i >= a.length || (common[i]?.[j + 1] ?? 0) >= (common[i + 1]?.[j] ?? 0))) {
+      open.added++
+      j++
+    } else {
+      open.removed++
+      i++
+    }
+  }
+  if (hunks.length === 0) return { edit: null, hunks }
+  // La edición: de la primera línea distinta a la última, con lo que hay igual por delante y por detrás.
+  let head = 0
+  while (head < a.length && head < b.length && a[head] === b[head]) head++
+  let tail = 0
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++
+  }
+  const offset = (rows: string[], count: number) =>
+    rows.slice(0, count).reduce((sum, row) => sum + row.length + 1, 0)
+  const start = offset(a, head)
+  const end = Math.min(before.length, offset(a, a.length - tail) - (tail === 0 ? 1 : 0))
+  const text =
+    b.slice(head, b.length - tail).join('\n') + (tail === 0 || head === b.length - tail ? '' : '\n')
+  return { edit: { start, end: Math.max(start, end), text }, hunks }
+}
+
+/** A la IA: el programa entero, con el cambio hecho. Sin formato: código, y nada más. */
+export function rewriteSystem(): string {
+  return [
+    'Te doy un programa en Python que ya está escrito y un cambio que alguien pide. Devuelve el programa ENTERO con ese cambio hecho.',
+    'Solo el código: Python tal cual iría en el archivo, sin explicaciones ni vallas de código alrededor.',
+    'Cambia lo mínimo necesario para cumplir lo que se pide, pero cúmplelo de verdad: si hace falta un dato nuevo, un método que no existe o tocar otra parte del programa para que funcione, hazlo. Todo lo demás déjalo idéntico, línea por línea, con su misma sangría y sus mismos comentarios.',
+    'No añadas ejemplos de uso, llamadas de prueba ni print que no se pidan. No leas ni escribas archivos, ni uses la red o el sistema, salvo que se pida expresamente.',
+  ].join('\n')
+}
+
+export function rewritePrompt(request: {
+  command: string
+  source: string
+  scope?: string
+}): string {
+  return [
+    `Lo que se pide: ${request.command}`,
+    request.scope ? `Se refiere sobre todo a ${request.scope}.` : '',
+    `El programa:\n${request.source}`,
+  ]
+    .filter((part) => part !== '')
+    .join('\n\n')
+}
 const lineOf = (value: unknown) =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
 
@@ -30,7 +202,9 @@ export function opOf(value: unknown): ChangeOp | null {
   const raw = value as Record<string, unknown>
   const op = text(raw.op).toLowerCase()
   const say = text(raw.say).trim().slice(0, 300)
-  const code = text(raw.code).replace(/\r\n/g, '\n').replace(/\s+$/, '')
+  // El modelo copia a veces la sangría que la línea tiene en el archivo: aquí va sin ella (se la pone
+  // quien la escribe, según dónde caiga). Con la suya y la nuestra, quedaba doble.
+  const code = dedent(text(raw.code).replace(/\r\n/g, '\n').replace(/\s+$/, ''))
   if (op === 'cambiar' || op === 'change') {
     const line = lineOf(raw.linea ?? raw.line)
     return line === null || line === 0 || code.trim() === ''

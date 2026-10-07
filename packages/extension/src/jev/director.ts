@@ -49,13 +49,17 @@ import {
 } from './plain.ts'
 import { formatVisual, seriesIn, visualOf } from './visual.ts'
 import {
+  applyOp,
+  changesBetween,
+  indentationOk,
+  lineDelta,
   LineMap,
   MAX_OPS,
-  applyOp,
-  lineDelta,
   modifyPrompt,
   modifySystem,
   opOf,
+  rewritePrompt,
+  rewriteSystem,
   type ChangeOp,
 } from './modify.ts'
 
@@ -824,6 +828,141 @@ export interface ModifyRequest {
   lines?: { from: number; to: number }
   /** Y cómo se dice eso («función sumar», «lo último que se construyó»). */
   scope?: string
+  /**
+   * Si el programa es pequeño, pedir a la IA el programa entero ya cambiado (código, sin formato) y
+   * escribirlo de una vez, en lugar de una lista de cambios línea a línea: no hay números de línea que
+   * fallen, ni sangrías que componer, ni estados a medias.
+   */
+  whole?: boolean
+}
+
+/** El código de una respuesta, sin la valla (```python … ```) que el modelo le pone a veces alrededor. */
+const unfenced = (text: string) => {
+  const fenced = /```(?:python|py)?[ \t]*\n([\s\S]*?)\n?```/.exec(text)
+  return (fenced?.[1] ?? text).replace(/\r\n/g, '\n').replace(/\s+$/, '')
+}
+
+/**
+ * Cambiar un programa pequeño reescribiéndolo: la IA devuelve el programa entero con el cambio hecho; se
+ * comprueba (que sea Python, que su sangría tenga sentido, que el JEV lo dé por seguro) y se escribe **de
+ * una vez**. Después se enseña cada tramo que cambió. Si algo no vale, no se toca nada.
+ */
+async function rewrite(
+  host: Stagehand,
+  players: Players,
+  request: ModifyRequest,
+  start: Program,
+): Promise<Outcome> {
+  const { command } = request
+  const before = start.source
+  const failed = (trouble: string, jevMs = 0): Outcome => ({
+    written: 0,
+    stopped: host.signal.aborted,
+    trouble,
+    doubt: false,
+    evidence: [],
+    jevMs,
+  })
+  await host.show({ type: 'progress', text: 'Pensando el cambio…' })
+  let answer = ''
+  try {
+    answer = await players.provider.generate({
+      system: rewriteSystem(),
+      prompt: rewritePrompt({
+        command,
+        source: before.replace(/\r\n/g, '\n'),
+        ...(request.scope ? { scope: request.scope } : {}),
+      }),
+      maxTokens: 3500,
+    })
+  } catch (error) {
+    return failed(`La IA no contestó. ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (host.signal.aborted) return failed('')
+  const eol = before.includes('\r\n') ? '\r\n' : '\n'
+  const body = unfenced(answer)
+  const after = (body === '' ? '' : `${body}\n`).replace(/\n/g, eol)
+  if (body === '') return failed('La IA no devolvió el programa.')
+  if (after.trimEnd() === before.trimEnd()) return failed('La IA no propuso ningún cambio.')
+  if (!host.parses(after) || !indentationOk(after)) {
+    return failed('El cambio que propuso la IA no deja un programa válido: no toco nada.')
+  }
+  await host.show({ type: 'progress', text: 'Llegó el cambio · lo mira el JEV…' })
+  let verdict: Awaited<ReturnType<typeof judgeCode>>
+  try {
+    verdict = await judgeCode(players.decider, command, after)
+  } catch {
+    return failed('El JEV dejó de responder: no toco nada.')
+  }
+  if (!safeEnough(after, verdict.safe)) {
+    return failed(
+      reachesOutside(after)
+        ? 'El JEV no da por seguro el cambio, que puede tocar archivos, la red o el sistema: no toco nada.'
+        : 'El JEV da por arriesgado el cambio: no toco nada.',
+      verdict.ms,
+    )
+  }
+  const { edit, hunks } = changesBetween(
+    before.replace(/\r\n/g, '\n'),
+    after.replace(/\r\n/g, '\n'),
+  )
+  if (!edit) return failed('La IA no propuso ningún cambio.', verdict.ms)
+  // Se escribe entero, de una vez: lo que cambia, cambia junto, y nunca queda a medias.
+  const refused = await host.write({
+    edits: [{ start: 0, end: before.length, text: after }],
+    select: { line: hunks[0]?.line ?? 1 },
+  })
+  if (refused !== null) return failed(refused, verdict.ms)
+  await host.show({ type: 'progress', text: 'JEV ✓ · cambio escrito' })
+  // Y ahora se ve: cada tramo que cambió, uno detrás de otro, donde ha quedado.
+  const now = await host.program()
+  let written = 0
+  for (const hunk of hunks) {
+    if (host.signal.aborted) break
+    if (hunk.added === 0) continue
+    const last = hunk.line + hunk.added - 1
+    const shown =
+      now.nodes
+        .filter((node) => node.range && node.line >= hunk.line && node.line <= last)
+        .sort((x, y) => x.line - y.line)[0] ??
+      now.nodes
+        .filter((node) => node.range && node.line <= hunk.line)
+        .sort((x, y) => y.line - x.line)[0]
+    if (!shown) continue
+    written++
+    await host.show({ type: 'step', index: written, say: '', line: shown.line, effect: 'changed' })
+    await host.wait(STREAM_PACE_MS)
+  }
+  // Una frase, al margen, de lo que se ha hecho.
+  const changed = after
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .filter((_, index) =>
+      hunks.some((hunk) => index + 1 >= hunk.line && index + 1 < hunk.line + hunk.added),
+    )
+    .join('\n')
+  try {
+    const say = sentenceOf(
+      await players.provider.generate({
+        system:
+          'Acabas de cambiar un programa. Di en UNA sola frase corta (menos de veinte palabras), en español y sin código, qué has cambiado. Solo la frase: se leerá en voz alta.',
+        prompt: `Lo que se pidió: ${command}\n\nLas líneas nuevas o cambiadas:\n${changed.slice(0, 1500)}`,
+        maxTokens: 120,
+      }),
+      220,
+    )
+    if (say !== '' && !host.signal.aborted) await host.show({ type: 'say', say, aside: true })
+  } catch {
+    // Sin frase, el cambio se queda igual de hecho.
+  }
+  return {
+    written: Math.max(1, written),
+    stopped: host.signal.aborted,
+    trouble: null,
+    doubt: verdict.fulfils < COMPOSE_THRESHOLDS.fulfils,
+    evidence: verdict.evidence,
+    jevMs: verdict.ms,
+  }
 }
 
 const lineAt = (source: string, offset: number) => source.slice(0, offset).split('\n').length
@@ -837,6 +976,10 @@ export async function modify(
   const { command } = request
   const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null, heads: [], chunks: 0 }
   const start = await host.program()
+  // Un programa que cabe entero se cambia reescribiéndolo: es más fiable que dictar cambios línea a línea.
+  if (request.whole && start.source.length <= WHOLE_BUDGET) {
+    return rewrite(host, players, request, start)
+  }
   await host.show({ type: 'progress', text: 'Leyendo lo que hay que cambiar…' })
   const context = await contextFor(players.decider, {
     command,
