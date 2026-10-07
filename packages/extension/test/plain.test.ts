@@ -8,6 +8,7 @@ import {
   formulaOf,
   fragmentsOf,
   judgeChunk,
+  judgeHeard,
   judgeInterruption,
   hinted,
   judgeMarks,
@@ -281,6 +282,17 @@ describe('subrayar la parte exacta de la que habla una frase', () => {
     expect(cut('len(notas)', 'n')).toBeNull()
     expect(cut('1.0 + x', '1')).toBeNull()
     expect(cut('nota_final + nota', 'nota')).toBe('nota')
+  })
+})
+
+describe('mientras se le oye: qué está pidiendo, palabra a palabra', () => {
+  it('con cada palabra, el JEV adelanta qué clase de cosa es', async () => {
+    const heard = async (text: string) => (await judgeHeard(localDecider(), text)).kind
+    expect(await heard('una')).toBe('nada')
+    expect(await heard('una función')).toBe('funcion')
+    expect(await heard('una función que sume dos números')).toBe('funcion')
+    expect(await heard('ahora una clase calculadora')).toBe('clase')
+    expect(await heard('un programa que juegue')).toBe('programa')
   })
 })
 

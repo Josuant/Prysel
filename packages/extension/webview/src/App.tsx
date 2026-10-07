@@ -233,6 +233,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     wide?: boolean
     /** Su parte del plan se deja plegada: se señala la tarjeta de la parte, no se abre. */
     folded?: boolean
+    /** La línea donde se queda la cámara: la cabecera de lo que se construye. */
+    anchor?: number
     /** El trozo exacto de su código que se subraya mientras se habla de ella. */
     mark?: string[]
   } | null>(null)
@@ -293,6 +295,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const voice = voiceOn && !micOpen
   /** Lo que se le está oyendo decir al usuario ahora mismo (`null`: nada). */
   const [hearing, setHearing] = useState<string | null>(null)
+  /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
+  const [preview, setPreview] = useState<{ kind: string; text: string } | null>(null)
+  const heardWords = useRef(0)
   /** El cambio de una orden ya está en el lienzo: en cuanto se pinte, se sabe cuánto tardó. */
   const markPainted = useCallback(() => {
     const from = awaitingPaint.current
@@ -369,8 +374,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             at < 0 ? [...previous, entry] : previous.map((call, i) => (i === at ? entry : call))
           return next.length > 150 ? next.slice(next.length - 150) : next
         })
+      } else if (message.type === 'preview') {
+        setPreview({ kind: message.kind, text: message.text })
       } else if (message.type === 'progress') {
         const text = message.text
+        setPreview(null)
         setThinking(text)
         setOrder((previous) =>
           previous.phase === 'done' ? { ...previous, note: text, building: true } : previous,
@@ -907,7 +915,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       })
       links.push({ from: shown.id, to: id, relation: 'transform' })
     }
-    const busy = thinking ?? (deciding ? 'Decidiendo qué hacer…' : null)
+    // Mientras se le oye, el hueco de lo que está pidiendo: «Una función · que sume dos…».
+    const guess = preview && preview.kind !== 'nada' ? (HEARD_LABELS[preview.kind] ?? null) : null
+    const busy =
+      thinking ?? (guess && preview ? preview.text : deciding ? 'Decidiendo qué hacer…' : null)
+    const busyTitle = thinking === null && guess ? guess : 'La IA está pensando'
     if (busy !== null) {
       // Donde trabaja: el hueco que espera contenido, lo último que tocó, lo seleccionado o el final.
       const hole = view.nodes.find((n) => byId.get(n.id)?.generating !== undefined)?.id
@@ -920,14 +932,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         nodes.push({
           id: 'prysel:thinking',
           kind: 'output.display',
-          label: 'La IA está pensando',
-          viewer: { title: 'La IA está pensando', text: [busy], busy: true },
+          label: busyTitle,
+          viewer: { title: busyTitle, text: [busy], busy: true },
         })
         links.push({ from: anchor, to: 'prysel:thinking', relation: 'transform' })
       }
     }
     return { nodes, links, busy }
-  }, [program, view.nodes, view.representative, thinking, deciding, wanted, selected])
+  }, [program, view.nodes, view.representative, thinking, deciding, wanted, selected, preview])
   const canvasNodes = useMemo(
     () => [...view.nodes, ...viewers.nodes, ...notes.nodes, ...extras.nodes],
     [view.nodes, viewers.nodes, notes.nodes, extras.nodes],
@@ -1030,6 +1042,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const spotBorn = wanted?.born === true && spotId === wantedId
   const spotChange = wanted?.change
   const spotWide = wanted?.wide === true
+  // La cámara puede quedarse en la caja que contiene la pieza (la función que se está escribiendo).
+  const anchorLine = wanted?.anchor
+  const anchorNode =
+    anchorLine === undefined
+      ? undefined
+      : program?.nodes.find((n) => n.range && n.line === anchorLine)?.id
+  const spotCamera =
+    anchorNode === undefined || anchorNode === spotId
+      ? undefined
+      : shownIds.has(anchorNode)
+        ? anchorNode
+        : (view.representative(anchorNode) ?? undefined)
   const spotlight = useMemo(
     () =>
       spotId !== null && spotKey !== undefined
@@ -1039,9 +1063,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             ...(spotBorn ? { born: true } : {}),
             ...(spotChange ? { change: spotChange } : {}),
             ...(spotWide ? { wide: true } : {}),
+            ...(spotCamera && spotCamera !== spotId ? { camera: spotCamera } : {}),
           }
         : null,
-    [spotId, spotKey, spotBorn, spotChange, spotWide],
+    [spotId, spotKey, spotBorn, spotChange, spotWide, spotCamera],
   )
   // Mientras se habla de una pieza, se subraya —como con un rotulador— el trozo exacto del que habla la
   // frase. Se espera un momento a que el nodo esté pintado en su sitio; al pasar a otra cosa, se quita.
@@ -1218,6 +1243,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             : { born: true }),
         ...(message.wide ? { wide: true } : {}),
         ...(message.folded ? { folded: true } : {}),
+        ...(message.anchor === undefined ? {} : { anchor: message.anchor }),
         ...(message.mark?.length ? { mark: message.mark } : {}),
       })
     }
@@ -1527,7 +1553,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               />
             </ErrorBoundary>
           ) : (
-            <EmptyState thinking={extras.busy} intro={intro} chat={features.chat === true} />
+            <EmptyState
+              thinking={extras.busy}
+              title={
+                thinking === null && preview && preview.kind !== 'nada'
+                  ? (HEARD_LABELS[preview.kind] ?? null)
+                  : null
+              }
+              intro={intro}
+              chat={features.chat === true}
+            />
           )}
           {program && (
             <>
@@ -1786,9 +1821,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           }}
           onHearing={(heard) => {
             // Al empezar a oírle, lo que se construye se queda quieto; si no dijo nada, sigue.
-            if ((heard !== null) !== (hearing !== null)) {
-              post({ type: 'listening', on: heard !== null })
+            // Con cada palabra nueva se manda lo que lleva dicho: el JEV va adelantando qué está pidiendo.
+            const words = heard === null ? 0 : heard.trim().split(/\s+/).length
+            if ((heard !== null) !== (hearing !== null) || words !== heardWords.current) {
+              post({
+                type: 'listening',
+                on: heard !== null,
+                ...(heard === null ? {} : { text: heard }),
+              })
             }
+            heardWords.current = words
+            // Si no llegó a frase (un ruido), su hueco se va con ella.
+            if (heard === null && order.phase !== 'deciding') setPreview(null)
             setHearing(heard)
           }}
         />
@@ -1894,12 +1938,28 @@ function baseName(file: string): string {
   return file.split(/[\\/]/).pop() ?? file
 }
 
+/** Cómo se nombra lo que el usuario parece estar pidiendo mientras aún habla. */
+const HEARD_LABELS: Record<string, string> = {
+  funcion: 'Una función',
+  clase: 'Una clase',
+  bucle: 'Un bucle',
+  decision: 'Una decisión',
+  variable: 'Un dato',
+  lista: 'Una lista',
+  programa: 'Un programa',
+  cambio: 'Un cambio',
+  explicacion: 'Una explicación',
+}
+
 function EmptyState({
   thinking,
+  title = null,
   intro,
   chat,
 }: {
   thinking: string | null
+  /** Si se sabe qué se está pidiendo (aún se le oye), su nombre en vez de «La IA está pensando». */
+  title?: string | null
   intro: string | null
   chat: boolean
 }) {
@@ -1915,7 +1975,9 @@ function EmptyState({
   if (thinking !== null) {
     return (
       <div className="flex h-full items-center justify-center p-6" role="status">
-        <div className="thinking-card">La IA está pensando · {thinking}</div>
+        <div className="thinking-card" data-preview={title ? '' : undefined}>
+          {title ?? 'La IA está pensando'} · {thinking}
+        </div>
       </div>
     )
   }

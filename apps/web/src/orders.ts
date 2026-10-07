@@ -28,7 +28,11 @@ import {
   type Effect,
 } from '../../../packages/extension/src/jev/engine.ts'
 import { explainNode, generateFill } from '../../../packages/extension/src/jev/fill.ts'
-import { judgeInterruption, type Interruption } from '../../../packages/extension/src/jev/plain.ts'
+import {
+  judgeHeard,
+  judgeInterruption,
+  type Interruption,
+} from '../../../packages/extension/src/jev/plain.ts'
 import type { Lesson } from '../../../packages/extension/src/lesson.ts'
 import type { CommandMessage, WebviewMessage } from '../../../packages/extension/src/protocol.ts'
 import type { Trace } from '../../../packages/extension/src/trace.ts'
@@ -92,6 +96,7 @@ export class Orders {
   private fills = new Map<string, Fill>()
   /** El usuario está hablando: lo que se construye se queda quieto. */
   private held = false
+  private heardSeq = 0
 
   constructor(private readonly port: OrderPort) {}
 
@@ -416,9 +421,17 @@ export class Orders {
     if (this.held && Date.now() >= patience) this.held = false
   }
 
-  /** El usuario empezó a hablar, o dejó de hacerlo sin decir nada. */
-  listening(on: boolean) {
+  /** El usuario empezó a hablar, sigue hablando (`text`: lo que lleva dicho) o lo dejó sin decir nada. */
+  listening(on: boolean, text?: string) {
     this.held = on && this.building !== null
+    if (!on || text === undefined) return
+    // Con cada palabra nueva, el JEV adelanta qué se está pidiendo. Si llega tarde (ya dijo más), no vale.
+    const turn = ++this.heardSeq
+    void judgeHeard(this.port.decider(), text)
+      .then(({ kind }) => {
+        if (turn === this.heardSeq) this.port.post({ type: 'preview', kind, text })
+      })
+      .catch(() => undefined)
   }
 
   /** Una orden compleja la lleva el director (`jev/director.ts`), por partes, mientras el diagrama cambia. */
@@ -496,6 +509,7 @@ export class Orders {
           ...(event.wide ? { wide: true } : {}),
           ...(event.mark ? { mark: event.mark } : {}),
           ...(event.folded ? { folded: true } : {}),
+          ...(event.anchor === undefined ? {} : { anchor: event.anchor }),
           ...(seq === undefined ? {} : { seq }),
         })
       },

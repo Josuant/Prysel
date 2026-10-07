@@ -153,9 +153,26 @@ export function localDecider(): Decider {
         } else if (id === 'alcance') {
           // Lo claramente pequeno va directo; lo demas, con su plan.
           const small =
-            /\bfuncion\b|\bbucle\b|\bvariable\b|\blinea\b/.test(text) &&
+            /\bfuncion\b|\bclase\b|\bmetodo\b|\bbucle\b|\bvariable\b|\blinea\b/.test(text) &&
             !/\bprograma\b|\balgoritmo/.test(text)
           answers[id] = pick(small ? 'directo' : 'esquema', SURE)
+        } else if (id === 'oyendo') {
+          // Lo que se le va oyendo decir: la primera cosa que nombra.
+          const heard = plain(textOf((request.state as { oido?: unknown }).oido))
+          const kind = (
+            [
+              ['programa', /\bprograma|\balgoritmo|\bjuego|\bsimula/],
+              ['clase', /\bclase\b/],
+              ['funcion', /\bfuncion|\bmetodo/],
+              ['bucle', /\bbucle|\brepit|\bpara cada|\bmientras/],
+              ['decision', /\bsi\b.*\b(entonces|es|son)\b|\bcondicion|\bcomprueb/],
+              ['lista', /\blista|\bdiccionario|\bcoleccion/],
+              ['variable', /\bvariable|\bguarda|\bconstante/],
+              ['explicacion', /\bexplic|\bensen|\bcomo funciona|\bque es\b/],
+              ['cambio', /\bcambia|\bahora\b|\ben vez|\ben lugar|\bquita|\bborra|\brenombra/],
+            ] as const
+          ).find(([, words]) => words.test(heard))
+          answers[id] = kind ? pick(kind[0], SURE) : pick('nada', SURE)
         } else if (/^r\d+$/.test(id) && question.type === 'noul') {
           // ¿Hace falta leer este trozo? Si la orden nombra algo de su título, sí.
           const title = plain(question.instructions.split('Líneas').pop() ?? '')

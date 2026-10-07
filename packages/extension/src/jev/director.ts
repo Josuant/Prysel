@@ -134,6 +134,11 @@ export type Shown =
       wide?: boolean
       /** Entra en una parte del plan que se deja plegada: se señala su tarjeta, no la línea. */
       folded?: boolean
+      /**
+       * La línea donde se queda la cámara mientras esta pieza entra: la cabecera de lo que se está
+       * construyendo (la caja de la función). Lo de dentro aparece sin que la vista salte de línea en línea.
+       */
+      anchor?: number
     }
 
 export interface Players {
@@ -382,7 +387,7 @@ function momentsOf(chunk: Chunk): Moment[] {
 /** Entre dos piezas que aparecen sin frase: lo justo para que se vea llegar cada una. */
 const QUIET_PACE_MS = 900
 /** Al ritmo de la IA: lo que se deja entre pieza y pieza para que se vea entrar cada una. */
-const STREAM_PACE_MS = 260
+const STREAM_PACE_MS = 480
 /** Tras decir una idea clave (lo decide el JEV): un respiro antes de seguir. */
 const KEY_PAUSE_MS = 500
 
@@ -739,6 +744,8 @@ export async function build(
             ...(verdict.wide && shown === 0 && index === 0 ? { wide: true } : {}),
             // Al ritmo de la IA se sigue el plan, no cada línea: se ve llenarse la tarjeta de cada parte.
             ...(streaming && planned ? { folded: true } : {}),
+            // Y la cámara no persigue cada línea: se queda en la caja de lo que se está construyendo.
+            ...(streaming && first !== placed.line ? { anchor: first } : {}),
             ...(mark.length === 0 ? {} : { mark }),
           })
           shown++

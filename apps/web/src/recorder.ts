@@ -49,7 +49,7 @@ function digest(message: Record<string, unknown>): Record<string, unknown> {
     }
     case 'step':
       return {
-        ...pick('gen', 'index', 'line', 'effect', 'wide', 'seq', 'mark', 'folded'),
+        ...pick('gen', 'index', 'line', 'effect', 'wide', 'seq', 'mark', 'folded', 'anchor'),
         say: clip(message.say),
       }
     case 'say':
@@ -79,7 +79,9 @@ function digest(message: Record<string, unknown>): Record<string, unknown> {
     case 'command':
       return { text: clip(message.text, 400) }
     case 'listening':
-      return pick('on')
+      return { ...pick('on'), text: clip(message.text) }
+    case 'preview':
+      return { ...pick('kind'), text: clip(message.text) }
     case 'spoken':
       return pick('seq', 'spoke')
     default:

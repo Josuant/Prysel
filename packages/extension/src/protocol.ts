@@ -155,6 +155,20 @@ export interface StepMessage {
    * no se abre para enseñar la línea. Quien quiera el detalle, abre la tarjeta.
    */
   folded?: boolean
+  /** La línea donde se queda la cámara mientras la pieza entra: la cabecera de lo que se construye. */
+  anchor?: number
+}
+
+/**
+ * Extensión → webview: lo que el usuario parece estar pidiendo, por lo que lleva dicho (aún no ha acabado
+ * la frase). El lienzo dibuja su hueco y lo va actualizando palabra a palabra.
+ */
+export interface PreviewMessage {
+  type: 'preview'
+  /** Qué clase de cosa es (`funcion`, `clase`, `programa`…; `nada`: aún no se sabe). */
+  kind: string
+  /** Lo que lleva dicho. */
+  text: string
 }
 
 /**
@@ -200,6 +214,7 @@ export type WebviewMessage =
   | GeneratedMessage
   | StepMessage
   | ProgressMessage
+  | PreviewMessage
   | CallMessage
   | ModelsMessage
   | SayMessage
@@ -314,6 +329,8 @@ export interface StopOrderMessage {
 export interface ListeningMessage {
   type: 'listening'
   on: boolean
+  /** Lo que lleva dicho hasta ahora: con ello se va adelantando qué está pidiendo. */
+  text?: string
 }
 
 /** Olvidar las consultas apuntadas. */
@@ -504,6 +521,12 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (typeof gen !== 'string' || typeof text !== 'string' || text === '') return null
     return { type: 'progress', gen, text }
   }
+  if (type === 'preview') {
+    const { kind, text } = value as Partial<PreviewMessage>
+    return typeof kind === 'string' && typeof text === 'string'
+      ? { type: 'preview', kind, text }
+      : null
+  }
   if (type === 'models') {
     const { ai, jev } = value as Partial<ModelsMessage>
     if (ai !== null && typeof ai !== 'string') return null
@@ -577,8 +600,11 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
   if (type === 'listening') {
-    const { on } = value as { on?: unknown }
-    return typeof on === 'boolean' ? { type: 'listening', on } : null
+    const { on, text } = value as { on?: unknown; text?: unknown }
+    if (typeof on !== 'boolean') return null
+    return typeof text === 'string' && text !== ''
+      ? { type: 'listening', on, text: text.slice(0, MAX_COMMAND) }
+      : { type: 'listening', on }
   }
   if (type === 'spoken') {
     const { seq, spoke } = value as { seq?: unknown; spoke?: unknown }

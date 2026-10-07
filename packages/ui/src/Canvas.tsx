@@ -266,6 +266,11 @@ export interface CanvasProps {
     change?: 'changed' | 'leaving'
     /** La cámara enseña el nodo con lo que lo rodea, más de lejos, en vez de acercarse a él. */
     wide?: boolean
+    /**
+     * Adónde mira la cámara, si no es al propio nodo: la caja que lo contiene. Lo de dentro aparece (con su
+     * animación) sin que la vista vaya saltando de pieza en pieza.
+     */
+    camera?: string
   } | null
   /**
    * Los nodos de los que saca sus datos la pieza que se está explicando: laten con ella, para que se vea de
@@ -2163,7 +2168,8 @@ function CanvasInner({
     const frame = frameRef.current
     const gesture = spotlight ? `${spotlight.key}:${spotlight.id}` : ''
     if (!frame || !spotlight || spotDone.current === gesture) return
-    const item = motionItems.find((entry) => entry.id === spotlight.id)
+    const target = spotlight.camera ?? spotlight.id
+    const item = motionItems.find((entry) => entry.id === target)
     if (!item) return
     spotDone.current = gesture
     const { w, h } = item.value.size
@@ -2190,7 +2196,8 @@ function CanvasInner({
       : item.position.y + frame.clientHeight / zoom / 2 - margin / zoom
     void setCenter(item.position.x + w / 2, centerY, {
       zoom,
-      duration: animate ? 450 : 0,
+      // Hacia una caja que crece, despacio: es un acompañar, no un salto.
+      duration: animate ? (spotlight.camera ? 700 : 450) : 0,
     })
   }, [spotlight, motionItems, setCenter, animate, fitKey])
 

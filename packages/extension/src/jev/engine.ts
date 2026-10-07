@@ -392,9 +392,9 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         instructions: 'Si la `orden` pide escribir código nuevo, ¿cuánto es?',
         criteria: {
           directo:
-            'Poco: una función sencilla o unas pocas sentencias (hasta unas seis). Se escribe directamente.',
+            'Una pieza: una función, una clase, un bucle, unas sentencias, o algo que se añade a lo que ya hay (aunque use o contenga lo que ya existe). Se escribe directamente.',
           esquema:
-            'Bastante: un programa o un algoritmo con varias fases. Conviene pensar primero sus etapas y luego detallar cada una.',
+            'Un programa o un algoritmo entero, con varias fases distintas. Conviene pensar primero sus etapas y luego detallar cada una.',
         },
       }
     }
@@ -642,9 +642,10 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         gen: input.genId,
         place: spot,
         where: phrase,
-        // Por defecto, primero el plan: solo lo claramente pequeño va directo a los pasos. Un tema que
-        // explicar empieza siempre por su plan: es el índice de la explicación.
-        outline: teach || !(size?.choice === 'directo' && size.confidence >= 0.6),
+        // El plan es para lo que de verdad es un programa entero: una pieza (una función, una clase que use
+        // lo que ya hay) se escribe directa, sin trocearla en etapas. Un tema que explicar empieza siempre
+        // por su plan: es el índice de la explicación.
+        outline: teach || (size?.choice === 'esquema' && size.confidence >= 0.6),
         ...(teach ? { teach: true } : {}),
       },
       say: teach

@@ -701,6 +701,62 @@ export async function judgeMarks(
   }
 }
 
+// ───────────────────────── mientras se le oye: ¿qué está pidiendo? ─────────────────────────
+
+/** Lo que el usuario puede estar pidiendo, por lo que lleva dicho. `nada`: aún no se sabe. */
+export const HEARD_KINDS = [
+  'funcion',
+  'clase',
+  'bucle',
+  'decision',
+  'variable',
+  'lista',
+  'programa',
+  'cambio',
+  'explicacion',
+  'nada',
+] as const
+export type HeardKind = (typeof HEARD_KINDS)[number]
+
+/**
+ * El usuario está hablando y aún no ha terminado. Con lo que lleva dicho, el JEV dice qué clase de cosa
+ * está pidiendo, para ir dibujando su hueco antes de que acabe la frase. Es barato (una pregunta cerrada) y
+ * se repite con cada palabra nueva.
+ */
+export async function judgeHeard(
+  decider: Decider,
+  heard: string,
+): Promise<{ kind: HeardKind; ms: number }> {
+  const { answers, ms } = await decider.decide({
+    state: { oido: heard },
+    questions: {
+      oyendo: {
+        type: 'choice',
+        instructions:
+          'El campo `oido` es lo que alguien lleva dicho de una orden para un programa en Python; aún no ha terminado la frase. Por lo que lleva dicho, ¿qué está pidiendo?',
+        criteria: {
+          funcion: 'Una función (o un método).',
+          clase: 'Una clase.',
+          bucle: 'Un bucle: repetir algo, recorrer algo.',
+          decision: 'Una decisión: si pasa esto, hacer aquello.',
+          variable: 'Una variable, un dato o una constante.',
+          lista: 'Una lista, un diccionario u otra colección.',
+          programa: 'Un programa, un algoritmo o un juego entero.',
+          cambio: 'Cambiar, quitar o renombrar algo que ya hay.',
+          explicacion: 'Que se le explique o se le enseñe algo.',
+          nada: 'Todavía no se sabe: no ha dicho bastante.',
+        },
+      },
+    },
+  })
+  const answer = answers.oyendo
+  const kind =
+    answer?.type === 'choice' && answer.confidence >= 0.4
+      ? (HEARD_KINDS.find((id) => id === answer.choice) ?? 'nada')
+      : 'nada'
+  return { kind, ms }
+}
+
 // ───────────────────────── si el usuario interrumpe: ¿vale lo que ya estaba preparado? ─────────────────────────
 
 /** Qué hacer con una orden que llega mientras se está construyendo otra cosa. */
@@ -769,6 +825,7 @@ export function codeSystem(teach: boolean): string {
       : 'Escribes un programa en Python que un editor va a dibujar como un diagrama, pieza a pieza.',
     'Escribe el código, y solo el código: Python tal cual iría en el archivo, sin explicaciones alrededor.',
     'Código claro, de principiante: nombres en español, valores de ejemplo concretos, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
+    'Si la orden pide algo nuevo que use lo que ya hay («una clase que use esa función»), escribe solo lo nuevo, con lo que ya existe dentro o llamándolo: no vuelvas a escribir el programa ni lo expliques por partes.',
     'Si hay un plan, sigue su orden al pie de la letra: primero TODO lo de la primera parte, luego lo de la segunda… y que cada parte tenga algo de código. Escribe cada función cuando llegue la parte del plan a la que pertenece, no antes. No pongas comentarios con los títulos de las partes: ya están puestos.',
     'No leas ni escribas archivos, no uses la red ni el sistema, ni pidas datos con input(), salvo que la orden lo pida expresamente. Como mucho unas 40 líneas.',
   ].join('\n')

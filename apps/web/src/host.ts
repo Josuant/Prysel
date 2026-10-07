@@ -233,7 +233,7 @@ export class WebHost {
         this.orders.stop()
         return
       case 'listening':
-        this.orders.listening(message.on)
+        this.orders.listening(message.on, message.text)
         return
       case 'clearCalls':
         this.calls.clear()
