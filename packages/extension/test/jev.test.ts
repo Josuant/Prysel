@@ -390,6 +390,7 @@ describe('la resolución: de las respuestas a la directiva', () => {
       kind: 'ask',
       question: '¿Elimino variable «limite = 10» (línea 2)?',
       options: [{ label: 'Sí, eliminar', force: { intent: 'eliminar', target: limit?.id } }],
+      plain: true,
     })
     const confirmed = await decideCommand(
       input('quita el límite', { forced: { intent: 'eliminar', target: limit?.id ?? '' } }),

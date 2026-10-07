@@ -3,7 +3,7 @@ import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import { actionEdits, applyEdits } from '@prysel/python/edits'
-import { decideCommand } from '../src/jev/engine.ts'
+import { decideCommand, namedBy, targetsOf } from '../src/jev/engine.ts'
 import { localDecider } from '../src/jev/local.ts'
 import { LineMap, applyOp } from '../src/jev/modify.ts'
 
@@ -569,6 +569,110 @@ describe('cuando el JEV no tiene clara la acción y ya hay un programa', () => {
       },
     )
     expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+    expect(directive.kind === 'do' && directive.effect.type).toBe('modify')
+  })
+})
+
+describe('de la tercera prueba del cajero: retoques, nombres dichos de palabra y pasos sueltos', () => {
+  const CAJERO = lines(
+    'class CajeroAutomatico:',
+    '    def __init__(self):',
+    '        self.estado = "Esperando Tarjeta"',
+    '',
+    '    def insertar_tarjeta(self):',
+    '        self.estado = "Pidiendo PIN"',
+    '',
+    '    def validar_pin(self, pin):',
+    "        if pin == '1234':",
+    '            self.estado = "Menú Principal"',
+    '',
+    '    def insertar_tarjeta_y_validar_pin(self, pin):',
+    '        self.insertar_tarjeta()',
+    '        self.validar_pin(pin)',
+  )
+  const pick = (choice: string, confidence: number) => ({
+    type: 'choice' as const,
+    choice,
+    confidence,
+    probabilities: {},
+  })
+  const noul = (value: number) => ({ type: 'noul' as const, noul: value })
+  const decide = async (text: string, answers: Record<string, unknown>, focusLine?: number) => {
+    const program = parse(CAJERO)
+    const at = (line: number) => program.nodes.find((n) => n.range && n.line === line)?.id ?? null
+    return (
+      await decideCommand(
+        {
+          text,
+          program,
+          selected: null,
+          focus: focusLine === undefined ? null : at(focusLine),
+          typed: true,
+          genId: 'g1',
+          last: { from: 12, to: 14 },
+          history: [
+            { order: 'Después de insertar la tarjeta, se debe validar el pin', did: 'Lo cambio.' },
+          ],
+        },
+        {
+          id: 'grabado',
+          decide: () => Promise.resolve({ ms: 1, answers: answers as never }),
+        },
+      )
+    ).directive
+  }
+
+  it('un retoque con un «mover» poco seguro es un retoque: no se mueve una función entera', async () => {
+    const directive = await decide(
+      'No pero se debe de validar el pin en la misma función de insertar tarjeta',
+      {
+        sigue: noul(0.91),
+        accion: pick('mover', 0.48),
+        mover_que: pick('p7', 0.56),
+        mover_donde: pick('p5', 0.91),
+      },
+    )
+    expect(directive.kind === 'do' && directive.effect.type).toBe('modify')
+  })
+
+  it('un nombre se dice como se oye, y el más largo gana a los que lleva dentro', async () => {
+    const targets = targetsOf(parse(CAJERO), null)
+    expect(
+      namedBy('ya no nos sirve la de insertar tarjeta y validar pin', targets).map((t) => t.head),
+    ).toEqual(['def insertar_tarjeta_y_validar_pin(self, pin):'])
+    expect(
+      namedBy('mueve validar pin después de insertar tarjeta', targets).map((t) => t.head),
+    ).toEqual(['def validar_pin(self, pin):', 'def insertar_tarjeta(self):'])
+  })
+
+  it('al borrar, si el JEV no sabe cuál, es la que la orden nombra; y se confirma sin enredar', async () => {
+    const directive = await decide(
+      'Perfe, ahora ya no nos sirve la de insertar tarjeta y validar pin',
+      {
+        sigue: noul(0.72),
+        accion: pick('eliminar', 0.53),
+        objetivo: pick('ultimo', 0.17),
+      },
+    )
+    expect(directive).toMatchObject({
+      kind: 'ask',
+      question: '¿Elimino función «def insertar_tarjeta_y_validar_pin(self, pin):» (línea 12)?',
+      plain: true,
+    })
+  })
+
+  it('mirando una clase, un paso suelto no se pone en su cuerpo: decide la IA', async () => {
+    const directive = await decide(
+      'Ahora falta un paso que es pedir al usuario su pin por el teclado',
+      {
+        sigue: noul(0.34),
+        accion: pick('agregar', 0.78),
+        pieza: pick('input', 1),
+        donde: pick('final', 0.69),
+        ambito: pick('dentro', 0.84),
+      },
+      1,
+    )
     expect(directive.kind === 'do' && directive.effect.type).toBe('modify')
   })
 })

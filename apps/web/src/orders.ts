@@ -398,6 +398,8 @@ export class Orders {
     const { port } = this
     const { directive } = decision
     if (!provider || (directive.kind !== 'ask' && directive.kind !== 'unknown')) return
+    // Una confirmación de sí o no ya es concreta: mejorarla solo la enreda.
+    if (directive.kind === 'ask' && directive.plain) return
     const version = port.version()
     const program = await port.analyse()
     const chosen = program.nodes.find((n) => n.id === message.selected)

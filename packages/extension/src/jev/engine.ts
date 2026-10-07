@@ -133,6 +133,8 @@ export const THRESHOLDS = {
   several: 0.6,
   /** Por encima, la orden retoca lo que se acaba de hacer: se cambia eso, no se empieza otra cosa. */
   followUp: 0.7,
+  /** Por debajo, mover o envolver no está claro: si además la orden es un retoque, se trata como tal. */
+  structural: 0.8,
 } as const
 
 /** Lo que el usuario ya aclaró al contestar una pregunta: no se le vuelve a preguntar a Jev. */
@@ -233,6 +235,8 @@ export type Directive =
   | {
       kind: 'ask'
       question: string
+      /** Es una confirmación de sí o no, ya concreta: no hay que pedirle a la IA que la mejore. */
+      plain?: boolean
       /** Cada salida aclara la orden (`force`) o es otra orden, ya completa (`order`). */
       options: { label: string; force?: Forced; order?: string }[]
     }
@@ -590,13 +594,37 @@ export function namedBy(text: string, targets: readonly Target[]): Target[] {
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
-    .split(/[^a-z0-9_]+/)
-  return targets
-    .flatMap((target) => {
-      const name = /^(?:(?:async\s+)?def|class)\s+(\w+)|^(\w+)\s*=(?!=)/.exec(target.head)
-      const at = words.indexOf((name?.[1] ?? name?.[2] ?? '').toLowerCase())
-      return target.node && at >= 0 ? [{ target, at }] : []
-    })
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word !== '')
+  // Un nombre se dice como se oye: `insertar_tarjeta` es «insertar tarjeta». Vale si sus palabras salen
+  // seguidas en la orden.
+  const found = targets.flatMap((target) => {
+    const name = /^(?:(?:async\s+)?def|class)\s+(\w+)|^(\w+)\s*=(?!=)/.exec(target.head)
+    const tokens = (name?.[1] ?? name?.[2] ?? '')
+      .toLowerCase()
+      .split('_')
+      .filter((token) => token !== '')
+    if (!target.node || tokens.length === 0) return []
+    for (let at = 0; at + tokens.length <= words.length; at++) {
+      if (tokens.every((token, k) => words[at + k] === token)) {
+        return [{ target, at, end: at + tokens.length }]
+      }
+    }
+    return []
+  })
+  // «insertar tarjeta y validar pin» nombra a `insertar_tarjeta_y_validar_pin`, no a las dos que lleva
+  // dentro: lo que cae dentro de un nombre más largo no cuenta.
+  return found
+    .filter(
+      (entry) =>
+        !found.some(
+          (other) =>
+            other !== entry &&
+            other.at <= entry.at &&
+            other.end >= entry.end &&
+            other.end - other.at > entry.end - entry.at,
+        ),
+    )
     .sort((a, b) => a.at - b.at)
     .map((entry) => entry.target)
 }
@@ -767,10 +795,14 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         ? chosen
         : (targets.find((target) => target.ref === named.choice) ?? null)
       : null
-  const target = forced.target !== undefined ? byId(forced.target) : (namedTarget ?? chosen)
-  /** Con cuánta certeza se sabe el objetivo: lo que el usuario eligió a mano es seguro. */
+  // Si el JEV no lo tiene claro y la orden nombra un elemento tal cual, es ese (antes que lo que quedara
+  // seleccionado de otra cosa).
+  const literal = namedTarget === null ? (namedBy(input.text, targets)[0] ?? null) : null
+  const target =
+    forced.target !== undefined ? byId(forced.target) : (namedTarget ?? literal ?? chosen)
+  /** Con cuánta certeza se sabe el objetivo: lo que el usuario eligió a mano, o nombró, es seguro. */
   const targetSure =
-    forced.target !== undefined || (namedTarget === null && chosen !== null)
+    forced.target !== undefined || (namedTarget === null && (literal !== null || chosen !== null))
       ? 1
       : (named?.confidence ?? 0)
   const viewing = byId(input.focus)
@@ -924,10 +956,17 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   // escribir algo nuevo: mover, envolver, juntar o extraer tienen su propia manera de hacerse (y de verse),
   // y ver, ejecutar o deshacer no cambian nada.
   const follows = answers.sigue?.type === 'noul' ? answers.sigue.noul : 0
+  // …salvo que el JEV no esté seguro de ellas: un «mover» al 48 % en una orden que retoca lo anterior
+  // («no, pero que se valide en la misma función») no es mover una función entera a otro sitio.
+  const structural = (['mover', 'envolver', 'juntar', 'extraer', 'duplicar'] as Intent[]).includes(
+    intent,
+  )
   if (
     forced.intent === undefined &&
+    input.genId !== undefined &&
     follows >= THRESHOLDS.followUp &&
-    (['componer', 'agregar', 'modificar', 'otra'] as Intent[]).includes(intent)
+    ((['componer', 'agregar', 'modificar', 'otra'] as Intent[]).includes(intent) ||
+      (structural && sure < THRESHOLDS.structural))
   ) {
     return rework(true)
   }
@@ -967,6 +1006,17 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
       // No es una pieza de las de siempre: si hay quien lo escriba, se escribe; si no, se pregunta cuál.
       if (piece === undefined && forced.piece === undefined && input.genId !== undefined) {
         return compose()
+      }
+      // Mirando una clase por dentro, lo que no es un método no va suelto en su cuerpo («pedir el PIN
+      // por teclado» es un paso de alguno de sus métodos): que decida la IA, con la clase delante.
+      if (
+        forced.piece === undefined &&
+        input.genId !== undefined &&
+        viewing?.node?.kind === 'abstraction.class' &&
+        target === null &&
+        piece !== 'function'
+      ) {
+        return rework(false)
       }
       if (piece === undefined) {
         const likely = ranked(answers.pieza, [NO_PIECE]).filter((id): id is TemplateId =>
@@ -1183,6 +1233,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
           kind: 'ask',
           question: `¿Elimino ${naming(target)} (línea ${target.line})?`,
           options: [{ label: 'Sí, eliminar', force: { intent: 'eliminar', target: target.id } }],
+          plain: true,
         })
       }
       return done({
