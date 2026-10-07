@@ -590,7 +590,11 @@ export class Orders {
       } else if (!fill && this.building === null) {
         // Una marca sin nadie que la esté redactando (se recargó la página a medias): se retira. Mientras se
         // construye, no: los huecos del plan llevan esa marca, y es por ella por donde entra el código.
-        void this.change((current) => clearGenerating(current, gen).edits, false)
+        // Y se vuelve a enseñar: si no, el lienzo se queda con la versión anterior del programa y rechaza
+        // todo lo que se le pida después («El programa cambió mientras tanto»).
+        void this.change((current) => clearGenerating(current, gen).edits, false).then((wrote) => {
+          if (wrote) return this.port.refresh()
+        })
         return
       }
     }
