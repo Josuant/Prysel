@@ -34,6 +34,47 @@ const solid = (color: string) => (color === 'transparent' || /,\s*0\)$/.test(col
  * Arrastra, uno detrás de otro, el chip de cada origen hasta donde la pieza lo usa. Los orígenes que la pieza
  * no nombra (o que no se ven) se saltan. Devuelve cómo cortar lo que quede.
  */
+/**
+ * Enseñar que algo **cambia de sitio**: su nombre se coge de donde está y viaja hasta el destino —dentro de
+ * él, o justo antes o después—, que lo espera señalado. El código cambia al llegar. Devuelve cuánto dura (0
+ * si no se pudo enseñar) y cómo cortarlo.
+ */
+export function flyNode(
+  source: Element,
+  target: Element,
+  how: 'into' | 'after' | 'before',
+): { ms: number; stop: () => void } {
+  const stage = target.closest<HTMLElement>('.react-flow')
+  const name =
+    namesOf(source)[0] ??
+    source.querySelector<HTMLElement>('.node, .vchip') ??
+    (source as HTMLElement)
+  if (!stage || !(target instanceof HTMLElement)) return { ms: 0, stop: () => undefined }
+  const box = target.querySelector<HTMLElement>('.node, .vchip') ?? target
+  box.setAttribute('data-receiving', how)
+  source.setAttribute('data-moving', '')
+  const stop = drag(
+    stage,
+    name,
+    box,
+    null,
+    how === 'into' ? 'center' : how === 'after' ? 'below' : 'above',
+  )
+  const done = setTimeout(() => {
+    box.removeAttribute('data-receiving')
+    source.removeAttribute('data-moving')
+  }, DRAG_MS + 200)
+  return {
+    ms: DRAG_MS,
+    stop: () => {
+      clearTimeout(done)
+      stop()
+      box.removeAttribute('data-receiving')
+      source.removeAttribute('data-moving')
+    },
+  }
+}
+
 export function dragChips(target: Element, sources: readonly Element[]): () => void {
   const stage = target.closest<HTMLElement>('.react-flow')
   if (!stage) return () => undefined
@@ -70,6 +111,8 @@ function drag(
   name: HTMLElement,
   field: HTMLElement,
   part: { x: number; w: number } | null,
+  /** Dónde se suelta: en medio del destino, o justo debajo o encima de él. */
+  land: 'center' | 'below' | 'above' = 'center',
 ): () => void {
   const frame = stage.getBoundingClientRect()
   const from = name.getBoundingClientRect()
@@ -98,7 +141,12 @@ function drag(
   const startY = clamp(from.top + from.height / 2 - frame.top, frame.height) - size.height / 2
   const landing = part ? to.left + (part.x + part.w / 2) * zoom : to.left + to.width / 2
   const endX = landing - frame.left - size.width / 2
-  const endY = to.top + to.height / 2 - frame.top - size.height / 2
+  const endY =
+    land === 'below'
+      ? to.bottom - frame.top + 6
+      : land === 'above'
+        ? to.top - frame.top - size.height - 6
+        : to.top + to.height / 2 - frame.top - size.height / 2
   // Va haciendo un poco de arco, como una mano: no en línea recta.
   const midX = (startX + endX) / 2
   const midY = (startY + endY) / 2 - Math.min(40, Math.abs(endX - startX) * 0.15 + 12)

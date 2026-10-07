@@ -34,7 +34,7 @@ import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { ChatDock, type ChatEntry } from './ChatDock.tsx'
 import { CommandBar } from './CommandBar.tsx'
-import { dragChips } from './dragging.ts'
+import { dragChips, flyNode } from './dragging.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -1216,7 +1216,32 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           return
         }
         orderCreates.current = effect.action.type === 'add'
-        act(effect.action)
+        const action = effect.action
+        const to =
+          action.type === 'move' ? (action.into ?? action.after ?? action.before) : undefined
+        if (action.type !== 'move' || to === undefined || reducedMotion) act(action)
+        else {
+          // Mover se ve: su nombre viaja hasta el destino, y al llegar cambia el código. Si alguno de los
+          // dos no está a la vista (se mira otra función), antes se sale al programa.
+          const how =
+            action.into !== undefined ? 'into' : action.after !== undefined ? 'after' : 'before'
+          const hidden = !shownIds.has(action.id) || !shownIds.has(to)
+          if (hidden) view.open(null)
+          setWanted({ id: to, key: ++spotSeq.current, wide: true })
+          const find = (id: string) =>
+            document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+          setTimeout(
+            () => {
+              const source = find(action.id)
+              const target = find(to)
+              const flight = source && target ? flyNode(source, target, how) : { ms: 0 }
+              setTimeout(() => {
+                act(action)
+              }, flight.ms)
+            },
+            hidden ? 900 : 550,
+          )
+        }
       } else if (effect.type === 'undo' || effect.type === 'redo') post({ type: effect.type })
       else if (effect.type === 'run') run(effect.ids)
       else if (effect.type === 'trace') post({ type: 'trace', version })

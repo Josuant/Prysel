@@ -24,6 +24,8 @@ const INTENT_WORDS: [Intent, RegExp][] = [
   ],
   ['paso_a_paso', /paso a paso|\btraza\b|\breproduce\b|\breproducir\b/],
   ['deshacer', /\bdesha[zc]/],
+  // Antes que «añadir» («pon… dentro de…» no crea nada: cambia de sitio lo que hay).
+  ['mover', /\bmueve|\bmover\b|\btraslada|\b(pon|mete|lleva) (el|la|este|esta|esto|ese|esa|eso)\b/],
   ['rehacer', /\breha[zc]/],
   ['etapa', /\betapa|\bseccion|\bfase\b/],
   ['narrar', /\bleccion|\bnarra|\banimacion|explicame el programa|explica el programa/],
@@ -105,6 +107,25 @@ const COMMON = new Set(
     'decision etapa paso linea este esta esto del los las una uno que con como por favor'
   ).split(' '),
 )
+
+/** Los elementos que la orden nombra, en el orden en que los nombra (sin repetir). */
+function namedIn(text: string, options: Record<string, string | null>): string[] {
+  const refs = Object.entries(options).filter(([ref]) => /^[pe]\d+$/.test(ref))
+  const heads = refs.map(([ref, description]) => ({
+    ref,
+    names: plain(/«(.*)»/.exec(description ?? '')?.[1] ?? '').split(/[^a-z0-9_]+/),
+    what: plain(description ?? '').split(' ')[0],
+  }))
+  const found: string[] = []
+  for (const word of text.split(/[^a-z0-9_]+/)) {
+    if (word.length < 3 || COMMON.has(word)) continue
+    const hits = heads.filter((entry) => entry.names.includes(word) && !found.includes(entry.ref))
+    const hit =
+      hits.find((entry) => entry.what !== undefined && text.includes(entry.what)) ?? hits[0]
+    if (hit) found.push(hit.ref)
+  }
+  return found
+}
 
 /** A qué opción de `objetivo` se refiere la orden: por su línea, o por una palabra de su texto. */
 function targetIn(text: string, options: Record<string, string | null>): JevAnswer {
@@ -252,6 +273,23 @@ export function localDecider(): Decider {
           answers[id] = place === undefined ? pick('final', UNSURE) : pick(place, SURE)
         } else if (id === 'objetivo' && question.type === 'choice') {
           answers[id] = targetIn(text, question.criteria)
+        } else if ((id === 'mover_que' || id === 'mover_donde') && question.type === 'choice') {
+          // Lo primero que nombra es lo que se mueve; lo segundo, adónde. «Esto» es lo seleccionado.
+          const named = namedIn(text, question.criteria)
+          const pointed =
+            'seleccionado' in question.criteria && /\b(esto|este|esta|aqui)\b/.test(text)
+          const ends = pointed && named.length < 2 ? ['seleccionado', ...named] : named
+          const ref = ends[id === 'mover_que' ? 0 : 1]
+          answers[id] = ref === undefined ? pick('ninguno', SURE) : pick(ref, SURE)
+        } else if (id === 'mover_como') {
+          answers[id] = pick(
+            /\bantes\b/.test(text)
+              ? 'antes'
+              : /\bdespues\b|\bdetras\b|\btras\b/.test(text)
+                ? 'despues'
+                : 'dentro',
+            SURE,
+          )
         }
       }
       return Promise.resolve({ answers, ms: 0 })

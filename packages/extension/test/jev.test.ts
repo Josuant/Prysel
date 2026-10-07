@@ -225,7 +225,16 @@ describe('lo que se le pregunta a Jev', () => {
     await decideCommand(input('añade un bucle'), jev)
     expect(jev.requests).toHaveLength(1)
     const { state, questions } = jev.requests[0] as JevRequest
-    expect(Object.keys(questions)).toEqual(['es_orden', 'accion', 'pieza', 'donde', 'objetivo'])
+    expect(Object.keys(questions)).toEqual([
+      'es_orden',
+      'accion',
+      'pieza',
+      'donde',
+      'objetivo',
+      'mover_que',
+      'mover_donde',
+      'mover_como',
+    ])
     expect((state as { orden: string }).orden).toBe('añade un bucle')
     const targets = questions.objetivo
     expect(targets?.type === 'choice' && Object.values(targets.criteria)).toContain(

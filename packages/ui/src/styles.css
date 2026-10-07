@@ -1892,6 +1892,25 @@ button.fn-menu__crumb:hover {
 [data-dropped] {
   animation: prysel-dropped 500ms ease-out !important;
 }
+/* Mover algo: lo que se va queda en sombra mientras su nombre viaja, y el destino lo espera abierto —un
+   marco discontinuo si va dentro; una raya debajo o encima si va después o antes. */
+[data-moving] {
+  opacity: 0.35;
+  transition: opacity 250ms ease;
+}
+[data-receiving] {
+  outline: 2px dashed var(--accent);
+  outline-offset: 6px;
+  transition: outline-offset 300ms ease;
+}
+[data-receiving='after'] {
+  outline: none;
+  box-shadow: 0 5px 0 -1px var(--accent);
+}
+[data-receiving='before'] {
+  outline: none;
+  box-shadow: 0 -5px 0 -1px var(--accent);
+}
 @keyframes prysel-dropped {
   from {
     box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 55%, transparent);

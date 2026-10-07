@@ -23,6 +23,7 @@ export const INTENTS = [
   'ensenar',
   'etapa',
   'eliminar',
+  'mover',
   'renombrar',
   'enfocar',
   'explicar',
@@ -45,6 +46,8 @@ const INTENT_MEANING: Record<Intent, string> = {
   etapa:
     'Empezar una etapa o sección con nombre en un punto del programa (un rótulo que agrupa pasos).',
   eliminar: 'Eliminar, borrar o quitar un elemento que ya existe.',
+  mover:
+    'Cambiar de sitio algo que YA existe, sin escribir código nuevo: meterlo dentro de otra cosa («pon esta función dentro de la clase», «mete esto en el bucle»), o ponerlo antes o después de otra («mueve esto después de aquello»).',
   modificar:
     'Cambiar código que YA está escrito: que haga otra cosa, corregirlo, refactorizarlo, simplificarlo, cambiar un valor o una operación («ahora que reste en lugar de sumar», «refactoriza esto»).',
   renombrar: 'Solo cambiar el nombre de una variable, una función o una etapa que ya existe.',
@@ -70,6 +73,7 @@ const INTENT_LABEL: Record<Intent, string> = {
   ensenar: 'Explicar el tema',
   etapa: 'Empezar una etapa',
   eliminar: 'Eliminar',
+  mover: 'Moverlo',
   modificar: 'Cambiar lo que hay',
   renombrar: 'Renombrar',
   enfocar: 'Ir a verlo',
@@ -440,6 +444,38 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         [NONE]: 'No nombra ningún elemento concreto.',
       },
     }
+    // Mover tiene dos extremos, y hay que saber cuál es cuál: se preguntan aparte (no cuesta nada).
+    if (forced.intent === undefined || forced.intent === 'mover') {
+      const elements = {
+        ...Object.fromEntries(targets.map((target) => [target.ref, target.description])),
+        ...(chosen
+          ? { [SELECTED]: 'Lo que está seleccionado: «esto», «este», «aquí», «el seleccionado».' }
+          : {}),
+        [NONE]: 'No lo dice.',
+      }
+      questions.mover_que = {
+        type: 'choice',
+        instructions:
+          'Si la `orden` pide cambiar algo de sitio, ¿QUÉ elemento es el que se mueve (el que viaja)?',
+        criteria: elements,
+      }
+      questions.mover_donde = {
+        type: 'choice',
+        instructions:
+          'Si la `orden` pide cambiar algo de sitio, ¿cuál es el DESTINO: el elemento dentro del cual, o junto al cual, va a quedar?',
+        criteria: elements,
+      }
+      questions.mover_como = {
+        type: 'choice',
+        instructions: 'Si la `orden` pide cambiar algo de sitio, ¿cómo queda respecto al destino?',
+        criteria: {
+          dentro:
+            'Dentro de él: pasa a ser parte de su interior (de la clase, de la función, del bucle).',
+          despues: 'Justo después de él, a su misma altura.',
+          antes: 'Justo antes de él, a su misma altura.',
+        },
+      }
+    }
   }
   return { state, questions }
 }
@@ -788,6 +824,35 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         },
         focus: target.id,
         say: `Empiezo la etapa «${title}» en ${naming(target)}.`,
+      })
+    }
+
+    case 'mover': {
+      const end = (id: string): Target | null => {
+        const answer = choice(answers[id])
+        if (!answer || answer.confidence < THRESHOLDS.target) return null
+        return answer.choice === SELECTED
+          ? chosen
+          : (targets.find((item) => item.ref === answer.choice) ?? null)
+      }
+      const what = end('mover_que') ?? (forced.target !== undefined ? byId(forced.target) : chosen)
+      const where = end('mover_donde')
+      if (!what?.node || !where?.node || what.id === where.id) {
+        return done({ kind: 'unknown', say: 'Dime qué muevo y adónde: nómbralos los dos.' })
+      }
+      const how = choice(answers.mover_como)?.choice ?? 'dentro'
+      const spot =
+        how === 'antes'
+          ? { before: where.id }
+          : how === 'despues'
+            ? { after: where.id }
+            : { into: where.id }
+      const phrase = how === 'antes' ? 'antes de' : how === 'despues' ? 'después de' : 'dentro de'
+      return done({
+        kind: 'do',
+        intent,
+        effect: { type: 'action', action: { type: 'move', id: what.id, ...spot } },
+        say: `Muevo ${naming(what)} ${phrase} ${naming(where)}.`,
       })
     }
 

@@ -680,6 +680,46 @@ export function moveNode(
 
   let removed = deleteNode(program, id).edits
   if (removed.length === 0) return { edits: [] }
+  // Una función que entra en una clase pasa a ser un método (recibe `self`); la que sale, deja de serlo.
+  // Dónde vive ahora: lo más pequeño que la envuelve, entre clases y funciones.
+  const owner = program.nodes
+    .filter(
+      (other) =>
+        other.id !== id &&
+        other.range !== undefined &&
+        (other.kind === 'abstraction.class' || other.kind === 'abstraction.collapsed') &&
+        other.range.start <= range.start &&
+        other.range.end >= range.end,
+    )
+    .sort((x, y) => (y.range?.start ?? 0) - (x.range?.start ?? 0))[0]
+  const becomesMethod = where.into !== undefined && target.kind === 'abstraction.class'
+  const wasMethod = owner?.kind === 'abstraction.class'
+  if (node.kind === 'abstraction.collapsed' && becomesMethod !== wasMethod) {
+    const at = block.findIndex((row) => /^\s*(?:async\s+)?def\s+\w+\s*\(/.test(row))
+    const header = block[at]
+    if (header !== undefined) {
+      block[at] = becomesMethod
+        ? header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*(?!self\b)/, (_, head: string) =>
+            /^\s*(?:async\s+)?def\s+\w+\s*\(\s*\)/.test(header) ? `${head}self` : `${head}self, `,
+          )
+        : header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*self\s*,?\s*/, '$1')
+    }
+  }
+  // Un método no va pegado al anterior: una línea en blanco entre los dos.
+  if (
+    becomesMethod &&
+    node.kind === 'abstraction.collapsed' &&
+    (target.contains?.length ?? 0) > 0
+  ) {
+    block.unshift('')
+  }
+  // La función que se va del principio del archivo no deja su hueco arriba.
+  const [head] = removed
+  if (becomesMethod && removed.length === 1 && head?.start === 0 && head.text === '') {
+    let end = head.end
+    while (text[end] === '\n' || text[end] === '\r') end++
+    removed = [{ ...head, end }]
+  }
   const placed = insertLines(program, where, (indent) => reindent(block, range.indent, indent))
   const insertion = placed.edits[0]
   if (!insertion) return { edits: [] }
