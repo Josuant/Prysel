@@ -104,11 +104,18 @@ export function ChatDock({
     if (node) node.scrollTop = node.scrollHeight
   }, [entries, open])
 
+  // El reconocimiento de voz vive más que un render: lo que llama tiene que ser lo de ahora, no lo de cuando
+  // se abrió el micrófono (una orden mandada con datos de entonces llega desfasada y se rechaza).
+  const live = useRef({ onSubmit, onHearing, onMic })
+  useEffect(() => {
+    live.current = { onSubmit, onHearing, onMic }
+  })
+
   const send = (value: string) => {
     const order = value.trim().slice(0, MAX_COMMAND)
     if (order === '') return
     setText('')
-    onSubmit(order)
+    live.current.onSubmit(order)
   }
 
   // El micrófono abierto: se escucha todo el rato. Cada frase que se termina de decir se manda como una
@@ -118,12 +125,12 @@ export function ChatDock({
   const hearing = (value: string | null) => {
     if (quiet.current) clearTimeout(quiet.current)
     quiet.current = null
-    onHearing?.(value)
+    live.current.onHearing?.(value)
     // Si lo oído no llega a frase (un ruido, una tos), se suelta solo.
     if (value !== null) {
       quiet.current = setTimeout(() => {
         setText('')
-        onHearing?.(null)
+        live.current.onHearing?.(null)
       }, HEARING_PATIENCE_MS)
     }
   }
@@ -160,7 +167,7 @@ export function ChatDock({
       // Sin permiso (o sin micrófono) no tiene sentido insistir.
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         wanted.current = false
-        onMic?.(false)
+        live.current.onMic?.(false)
       }
     }
     recognition.current = r
@@ -169,7 +176,7 @@ export function ChatDock({
     } catch {
       wanted.current = false
       setListening(false)
-      onMic?.(false)
+      live.current.onMic?.(false)
     }
   }
   const listen = () => {
@@ -179,13 +186,13 @@ export function ChatDock({
       recognition.current?.stop()
       hearing(null)
       setListening(false)
-      onMic?.(false)
+      live.current.onMic?.(false)
       return
     }
     wanted.current = true
     onTyping()
     setListening(true)
-    onMic?.(true)
+    live.current.onMic?.(true)
     open_()
   }
 
