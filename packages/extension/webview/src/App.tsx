@@ -158,9 +158,10 @@ export interface HostFeatures {
   /** Sugerencias para empezar a hablar con la IA (en la interfaz de chat). */
   suggestions?: string[]
   /**
-   * Los nodos para entender (variables, pila, árbol de llamadas…) empiezan recogidos: ni se enseñan los
-   * que pide la lección ni la fila para elegirlos, hasta que se pulsa «Entender». En una pantalla pequeña
-   * quitan sitio al diagrama, que es lo que se viene a ver.
+   * El reproductor y los nodos para entender (variables, pila, árbol de llamadas…) empiezan recogidos. Una
+   * lección no se pone a reproducir sola al abrirla: el reproductor aparece cuando se pide «Paso a paso»
+   * (con su botón, o hablando con la IA), y dentro de él los nodos se eligen pulsando «Entender». En una
+   * pantalla pequeña quitan sitio al diagrama, que es lo que se viene a ver.
    */
   foldInsights?: boolean
 }
@@ -463,13 +464,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const autoTraced = useRef<string | null>(null)
   useEffect(() => {
     if (version === null || !lesson?.show || lesson.show.length === 0) return
+    // Con el reproductor recogido de entrada, no se graba nada hasta que se pide.
+    if (features.foldInsights) return
     const key = `${file ?? ''}@${version}`
     if (autoTraced.current === key) return
     // Ya hay algo grabado (o en marcha) para esta versión: no hace falta pedirlo otra vez.
     if (recording && recording.version === version) return
     autoTraced.current = key
     post({ type: 'trace', version })
-  }, [lesson, version, file, recording])
+  }, [lesson, version, file, recording, features.foldInsights])
   useEffect(() => {
     vscode.setState({ ...saved(), insights: insightChoice } satisfies SavedState)
   }, [insightChoice])
@@ -1495,18 +1498,42 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 </div>
               )}
               {features.chat ? (
-                (view.functions.length > 0 || view.methods.length > 0 || view.focus !== null) && (
-                  <div className="canvas-float" data-at="top-left">
-                    <FunctionMenu
-                      functions={view.functions}
-                      methods={view.methods}
-                      focus={view.focus}
-                      trail={view.trail}
-                      onOpen={view.open}
-                      onCrumb={view.descend}
-                    />
-                  </div>
-                )
+                <>
+                  {(view.functions.length > 0 ||
+                    view.methods.length > 0 ||
+                    view.focus !== null) && (
+                    <div className="canvas-float" data-at="top-left">
+                      <FunctionMenu
+                        functions={view.functions}
+                        methods={view.methods}
+                        focus={view.focus}
+                        trail={view.trail}
+                        onOpen={view.open}
+                        onCrumb={view.descend}
+                      />
+                    </div>
+                  )}
+                  {/* Sin barra de herramientas, el paso a paso se pide desde el lienzo: el reproductor no
+                      está a la vista hasta entonces. */}
+                  {!replay && (
+                    <div className="canvas-float" data-at="top-right">
+                      <Button
+                        icon="step"
+                        disabled={version === null || recording?.status === 'running'}
+                        title={
+                          recording?.status === 'failed'
+                            ? recording.message
+                            : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
+                        }
+                        onClick={() => {
+                          if (version !== null) post({ type: 'trace', version })
+                        }}
+                      >
+                        {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
+                      </Button>
+                    </div>
+                  )}
+                </>
               ) : (
                 <>
                   <div className="canvas-float" data-at="top-right">
