@@ -172,6 +172,74 @@ describe('al entrar una función en una clase, las llamadas que ya había siguen
   })
 })
 
+describe('«mete la función sumar en una clase Calculadora»', () => {
+  const ALONE = lines('def sumar(a, b):', '    return a + b', '', 'print(sumar(1, 2))')
+
+  it('si la clase no existe, se crea alrededor de la función (nunca un try)', async () => {
+    const { directive, moved } = await order(
+      'mete la función sumar en una clase calculadora',
+      undefined,
+      ALONE,
+    )
+    expect(directive.kind === 'do' && directive.say).toBe(
+      'Creo la clase Calculadora con función «def sumar(a, b):» dentro.',
+    )
+    expect(moved).toBe(
+      lines(
+        'class Calculadora:',
+        '    def sumar(self, a, b):',
+        '        return a + b',
+        '',
+        'print(Calculadora().sumar(1, 2))',
+      ),
+    )
+  })
+
+  it('aunque el JEV conteste «intento» con poca seguridad, la orden dice «clase»', async () => {
+    const local = localDecider()
+    const program = parse(ALONE)
+    const { directive } = await decideCommand(
+      {
+        text: 'mete la función sumar en una clase calculadora',
+        program,
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+      },
+      {
+        id: 'dudoso',
+        async decide(request) {
+          const response = await local.decide(request)
+          return {
+            ...response,
+            answers: {
+              ...response.answers,
+              envolver_en: {
+                type: 'choice',
+                choice: 'intento',
+                confidence: 0.4,
+                probabilities: {},
+              },
+            },
+          }
+        },
+      },
+    )
+    expect(directive.kind === 'do' && directive.effect).toMatchObject({
+      type: 'action',
+      action: { type: 'wrap', with: 'class', name: 'Calculadora' },
+    })
+  })
+
+  it('si la clase ya existe, la función se mueve dentro de ella', async () => {
+    const { directive, moved } = await order('mete la función sumar en una clase calculadora')
+    expect(directive.kind === 'do' && directive.intent).toBe('mover')
+    expect(moved).toContain('    def sumar(self, a, b):')
+    expect(moved?.match(/class Calculadora/g)).toHaveLength(1)
+  })
+})
+
 describe('otras cosas que se le hacen a lo que ya existe, cada una con su gesto', () => {
   it('envolver: la sentencia pasa dentro de un bucle, una decisión o un intento', async () => {
     const loop = await order('envuelve esto en un bucle', 8)

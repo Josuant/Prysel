@@ -352,7 +352,13 @@ export function duplicateNode(program: Program, id: string): Change {
  * Envuelve una sentencia (con su cuerpo y los comentarios que lleva pegados) en un bucle, una decisión o un
  * intento: la cabecera ocupa su sitio y ella pasa dentro, un nivel más sangrada.
  */
-export function wrapNode(program: Program, id: string, wrapper: 'for' | 'if' | 'try'): Change {
+export function wrapNode(
+  program: Program,
+  id: string,
+  wrapper: 'for' | 'if' | 'try' | 'class',
+  /** Con `class`: cómo se llama la clase nueva. */
+  name = 'MiClase',
+): Change {
   const node = nodeById(program, id)
   const range = node?.range
   if (!node || !range) return { edits: [] }
@@ -363,12 +369,42 @@ export function wrapNode(program: Program, id: string, wrapper: 'for' | 'if' | '
   if (!blankBefore(text, begin, first)) return { edits: [] }
   const end = lineEnd(text, range.end)
   const pad = ' '.repeat(range.indent)
-  const body = reindent(text.slice(begin, end).split(/\r?\n/), range.indent, range.indent + 4)
-  const head = wrapper === 'for' ? 'for _ in range(3):' : wrapper === 'if' ? 'if True:' : 'try:'
+  const block = text.slice(begin, end).split(/\r?\n/)
+  // Una función que pasa a vivir en una clase nueva es su primer método: recibe `self`, y las llamadas
+  // que ya había se reescriben para que sigan llegando a ella.
+  let calls: TextEdit[] = []
+  const at = block.findIndex((row) => /^\s*(?:async\s+)?def\s+\w+\s*\(/.test(row))
+  const header = block[at]
+  if (wrapper === 'class' && node.kind === 'abstraction.collapsed' && header !== undefined) {
+    const fn = /def\s+(\w+)/.exec(header)?.[1] ?? ''
+    calls = methodCalls(text, fn, name, null, { start: begin, end }).edits
+    for (let i = at + 1; i < block.length; i++) {
+      block[i] = (block[i] ?? '').replace(
+        new RegExp(`(?<![\\w.])${fn}(?=\\s*\\()`, 'g'),
+        `self.${fn}`,
+      )
+    }
+    block[at] = header.replace(
+      /^(\s*(?:async\s+)?def\s+\w+\s*\()\s*(?!self\b)/,
+      (_, head: string) =>
+        /^\s*(?:async\s+)?def\s+\w+\s*\(\s*\)/.test(header) ? `${head}self` : `${head}self, `,
+    )
+  }
+  const body = reindent(block, range.indent, range.indent + 4)
+  const head =
+    wrapper === 'class'
+      ? `class ${name}:`
+      : wrapper === 'for'
+        ? 'for _ in range(3):'
+        : wrapper === 'if'
+          ? 'if True:'
+          : 'try:'
   const tail =
     wrapper === 'try' ? [`${pad}except Exception as error:`, `${pad}    print(error)`] : []
+  const wrapped = { start: begin, end, text: [`${pad}${head}`, ...body, ...tail].join(eolOf(text)) }
+  const edits = [wrapped, ...calls]
   return {
-    edits: [{ start: begin, end, text: [`${pad}${head}`, ...body, ...tail].join(eolOf(text)) }],
+    edits: validEdits(edits, text.length) ? edits : [wrapped],
     select: { line: lineOf(text, begin) },
   }
 }
@@ -726,7 +762,9 @@ export function moveNode(
     const header = block[at]
     if (header !== undefined && becomesMethod) {
       const name = /def\s+(\w+)/.exec(header)?.[1] ?? ''
-      const moved = methodCalls(text, name, target.range, {
+      const className =
+        /class\s+(\w+)/.exec(text.slice(target.range.start, target.range.end))?.[1] ?? ''
+      const moved = methodCalls(text, name, className, target.range, {
         start: begin,
         end: lineEnd(text, range.end),
       })
@@ -804,15 +842,16 @@ export function moveNode(
  * - Si crear uno pide datos que no se tienen (su `__init__` recibe argumentos sin valor por defecto), no se
  *   inventan: la función entra como `@staticmethod` y se la llama por la clase (`Calculadora.sumar(…)`).
  *
- * `moved` es el tramo de la propia función, que no se mira aquí (se reescribe al moverla).
+ * `moved` es el tramo de la propia función, que no se mira aquí (se reescribe al moverla). `owner` es la
+ * clase adonde va, o `null` si la clase se crea ahora para ella (aún no tiene nada dentro).
  */
 function methodCalls(
   text: string,
   name: string,
-  owner: { start: number; end: number },
+  className: string,
+  owner: { start: number; end: number } | null,
   moved: { start: number; end: number },
 ): { edits: TextEdit[]; static: boolean; inner: string } {
-  const className = /class\s+(\w+)/.exec(text.slice(owner.start, owner.end))?.[1] ?? ''
   if (name === '' || className === '') return { edits: [], static: false, inner: 'self.' }
   // Lo que va entre comillas o en un comentario no es código: se tapa, sin mover nada de sitio.
   const bare = text.replace(/"[^"\n]*"|'[^'\n]*'|#[^\n]*/g, (found) => ' '.repeat(found.length))
@@ -823,13 +862,15 @@ function methodCalls(
     if (/\bdef\s+$/.test(bare.slice(Math.max(0, at - 12), at))) continue
     offsets.push(at)
   }
-  const inside = (at: number) => at >= owner.start && at < owner.end
+  const inside = (at: number) => owner !== null && at >= owner.start && at < owner.end
   // El último objeto de la clase que se guardó en un nombre antes de la llamada.
   const made = [
     ...bare.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)\\s*=\\s*${className}\\s*\\(`, 'gm')),
   ]
   const instanceBefore = (at: number) => made.filter((match) => match.index < at).pop()?.[1]
-  const init = /def\s+__init__\s*\(\s*self\s*,?([^)]*)\)/.exec(bare.slice(owner.start, owner.end))
+  const init = owner
+    ? /def\s+__init__\s*\(\s*self\s*,?([^)]*)\)/.exec(bare.slice(owner.start, owner.end))
+    : null
   const needsData = (init?.[1] ?? '')
     .split(',')
     .some((param) => param.trim() !== '' && !param.includes('=') && !param.trim().startsWith('*'))
@@ -1144,7 +1185,7 @@ export function actionEdits(program: Program, action: NodeAction): Change {
     case 'duplicate':
       return duplicateNode(program, action.id)
     case 'wrap':
-      return wrapNode(program, action.id, action.with)
+      return wrapNode(program, action.id, action.with, action.name)
     case 'rename':
       return renameNode(program, action.id, action.to, action.from)
     case 'add': {

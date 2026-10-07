@@ -29,7 +29,7 @@ const INTENT_WORDS: [Intent, RegExp][] = [
   ['duplicar', /\bduplica|\bcopia\b/],
   [
     'envolver',
-    /\benvuelve|\benvolver\b|\brodea\b|\bmete\b.*\ben un[a]? (bucle|si\b|decision|if|intento|try)/,
+    /\benvuelve|\benvolver\b|\brodea\b|\bmete\b.*\ben un[a]? (bucle|si\b|decision|if|intento|try|clase)/,
   ],
   // Antes que «añadir» («pon… dentro de…» no crea nada: cambia de sitio lo que hay).
   ['mover', /\bmueve|\bmover\b|\btraslada|\b(pon|mete|lleva) (el|la|este|esta|esto|ese|esa|eso)\b/],
@@ -291,11 +291,13 @@ export function localDecider(): Decider {
         } else if (id === 'envolver_en') {
           // «Por si da error» es un intento, aunque lleve un «si».
           answers[id] = pick(
-            /\b(intento|try|error|falle)\b/.test(text)
-              ? 'intento'
-              : /\b(si|if|decision|condicion)\b/.test(text)
-                ? 'decision'
-                : 'bucle',
+            /\bclase\b/.test(text)
+              ? 'clase'
+              : /\b(intento|try|error|falle)\b/.test(text)
+                ? 'intento'
+                : /\b(si|if|decision|condicion)\b/.test(text)
+                  ? 'decision'
+                  : 'bucle',
             SURE,
           )
         } else if (id === 'mover_como') {

@@ -51,9 +51,9 @@ const INTENT_MEANING: Record<Intent, string> = {
     'Empezar una etapa o sección con nombre en un punto del programa (un rótulo que agrupa pasos).',
   eliminar: 'Eliminar, borrar o quitar un elemento que ya existe.',
   mover:
-    'Cambiar de sitio algo que YA existe, sin escribir código nuevo: meterlo dentro de otra cosa («pon esta función dentro de la clase», «mete esto en el bucle»), o ponerlo antes o después de otra («mueve esto después de aquello»).',
+    'Cambiar de sitio algo que YA existe, llevándolo a otra cosa que TAMBIÉN existe ya en el programa: meterlo dentro de ella («pon esta función dentro de la clase Animal», «mete esto en el bucle») o ponerlo antes o después («mueve esto después de aquello»).',
   envolver:
-    'Meter algo que YA existe dentro de una estructura nueva que lo contiene: un bucle que lo repita, una decisión que lo condicione o un intento que recoja su error («mete esto en un bucle», «envuélvelo en un si», «que no falle si da error»).',
+    'Meter algo que YA existe dentro de una estructura NUEVA, que se crea ahora para contenerlo: un bucle que lo repita, una decisión que lo condicione, un intento que recoja su error, o una clase nueva de la que pase a ser un método («mete esto en un bucle», «envuélvelo en un si», «que no falle si da error», «mete la función sumar en una clase Calculadora»).',
   duplicar:
     'Hacer una copia de algo que YA existe, justo debajo («duplica esto», «copia esa línea»).',
   juntar:
@@ -472,7 +472,8 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         criteria: {
           bucle: 'Un bucle: que se repita.',
           decision: 'Una decisión: que solo pase si se cumple una condición.',
-          intento: 'Un intento: que si da error no se caiga el programa.',
+          intento: 'Un intento (try/except): SOLO si la orden habla de errores o de que no falle.',
+          clase: 'Una clase: que pase a ser parte de ella (un método suyo).',
         },
       }
     }
@@ -528,6 +529,16 @@ export function nameIn(text: string): string | null {
   const name = tail?.[1] ?? last?.[1]
   if (!name || FILLER.has(name.toLowerCase()) || !isIdentifier(name)) return null
   return name
+}
+
+/** El nombre de la clase que nombra una orden («…en una clase calculadora» → `Calculadora`), o `null`. */
+export function classIn(text: string): string | null {
+  const found =
+    /\bclase\s+(?:nueva\s+)?(?:llamada\s+|que\s+se\s+llame\s+|de\s+nombre\s+)?([\p{L}_][\p{L}\p{N}_]*)/iu.exec(
+      text,
+    )?.[1]
+  if (!found || FILLER.has(found.toLowerCase()) || !isIdentifier(found)) return null
+  return found.charAt(0).toUpperCase() + found.slice(1)
 }
 
 /** El título de «empieza una etapa llamada Población inicial»: lo entrecomillado, o lo que va tras «llamada». */
@@ -725,6 +736,35 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     })
   }
 
+  /**
+   * Meter algo en la clase que nombra la orden: si ya existe, se mueve dentro; si no, se crea alrededor de
+   * ello, y pasa a ser su primer método.
+   */
+  const intoClass = (piece: Target): Decision => {
+    const name = classIn(input.text) ?? 'MiClase'
+    const existing = targets.find(
+      (item) =>
+        item.node?.kind === 'abstraction.class' &&
+        new RegExp(`^class\\s+${name}\\b`, 'i').test(item.head) &&
+        item.id !== piece.id,
+    )
+    if (existing) {
+      return done({
+        kind: 'do',
+        intent: 'mover',
+        effect: { type: 'action', action: { type: 'move', id: piece.id, into: existing.id } },
+        say: `Muevo ${naming(piece)} dentro de ${naming(existing)}.`,
+      })
+    }
+    return done({
+      kind: 'do',
+      intent: 'envolver',
+      effect: { type: 'action', action: { type: 'wrap', id: piece.id, with: 'class', name } },
+      gesture: { kind: 'wrap', id: piece.id },
+      say: `Creo la clase ${name} con ${naming(piece)} dentro.`,
+    })
+  }
+
   switch (intent) {
     case 'componer':
       return compose()
@@ -869,6 +909,8 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
       }
       const what = end('mover_que') ?? (forced.target !== undefined ? byId(forced.target) : chosen)
       const where = end('mover_donde')
+      // «Mete sumar en una clase Calculadora», y esa clase aún no existe: se crea alrededor de ella.
+      if (what?.node && !where && classIn(input.text) !== null) return intoClass(what)
       if (!what?.node || !where?.node || what.id === where.id) {
         return done({ kind: 'unknown', say: 'Dime qué muevo y adónde: nómbralos los dos.' })
       }
@@ -892,7 +934,13 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
       if (!target?.node) {
         return done({ kind: 'unknown', say: 'Dime qué envuelvo: selecciónalo o nómbralo.' })
       }
-      const kind = choice(answers.envolver_en)?.choice ?? 'bucle'
+      const into = choice(answers.envolver_en)
+      // Si la orden nombra una clase y el JEV no lo tiene claro, es una clase: es lo que dice.
+      const kind =
+        classIn(input.text) !== null && (into === undefined || into.confidence < 0.8)
+          ? 'clase'
+          : (into?.choice ?? 'bucle')
+      if (kind === 'clase') return intoClass(target)
       const wrapper = kind === 'decision' ? 'if' : kind === 'intento' ? 'try' : 'for'
       const name = wrapper === 'if' ? 'una decisión' : wrapper === 'try' ? 'un intento' : 'un bucle'
       return done({
