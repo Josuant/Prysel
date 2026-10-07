@@ -67,6 +67,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const STEP_PATIENCE_MS = 3000
+/** Cuántas órdenes atrás se recuerdan. */
+const MAX_TURNS = 5
 /** Lo más que se espera, quieto, a que el usuario acabe de hablar. */
 const HOLD_PATIENCE_MS = 12_000
 const STEP_PAUSE_MS = 700
@@ -96,14 +98,25 @@ export class Orders {
   private fills = new Map<string, Fill>()
   /** El usuario está hablando: lo que se construye se queda quieto. */
   private held = false
+  /** Las últimas órdenes y lo que se hizo con cada una: la conversación. */
+  private turns: { order: string; did: string }[] = []
   private heardSeq = 0
 
   constructor(private readonly port: OrderPort) {}
+
+  /**
+   * El lienzo escribió algo por su cuenta (una pieza añadida, algo movido): son las líneas de «lo último
+   * que se hizo», igual que lo que construye una orden compleja.
+   */
+  touched(from: number, to: number) {
+    this.lastWork = { from, to }
+  }
 
   /** El documento cambió por completo (otra lección, otro programa): lo que estaba en marcha ya no vale. */
   reset() {
     this.build?.abort()
     this.lastWork = null
+    this.turns = []
     this.fills.clear()
   }
 
@@ -265,6 +278,7 @@ export class Orders {
         ...(provider ? { genId: newGenId() } : {}),
         ...(single ? { single: true } : {}),
         ...(this.lastWork ? { last: this.lastWork } : {}),
+        ...(this.turns.length > 0 ? { history: this.turns } : {}),
       },
       decider,
     )
@@ -290,6 +304,11 @@ export class Orders {
       })
     }
     port.post({ type: 'decision', id: message.id, version: port.version(), ...decision })
+    // La conversación se recuerda: lo que se pidió y lo que se decidió hacer con ello.
+    const earlier = this.turns
+    if (directive.kind === 'do') {
+      this.turns = [...this.turns, { order: text, did: directive.say }].slice(-MAX_TURNS)
+    }
     if (directive.kind !== 'do') {
       if (!message.force) await this.askBetter(message, text, decision, decider, provider)
       return false
@@ -303,10 +322,20 @@ export class Orders {
       return false
     }
     if ((effect.type === 'compose' || effect.type === 'modify') && provider) {
+      // A la IA también se le cuenta lo de antes: «pero usando la clase» no dice nada por sí solo.
+      const before =
+        earlier.length === 0
+          ? ''
+          : `\n(Para situarte, esto es lo que se ha ido pidiendo antes, ya hecho, de lo más antiguo a lo más reciente:\n${earlier
+              .map((turn) => `- «${turn.order}» → ${turn.did}`)
+              .join(
+                '\n',
+              )}\nLa orden de ahora puede referirse a ello: haz lo necesario para que se cumpla de verdad —añadir un método que falte, usar el objeto que se creó—, tocando lo que haga falta del programa.)`
       const asked =
-        resume === undefined
+        (resume === undefined
           ? text
-          : `${text}\n(Se estaba construyendo «${resume}» y se dejó a medias al oír esto. Tenlo en cuenta: termina lo que falte o cámbialo, sin repetir lo que ya está escrito.)`
+          : `${text}\n(Se estaba construyendo «${resume}» y se dejó a medias al oír esto. Tenlo en cuenta: termina lo que falte o cámbialo, sin repetir lo que ya está escrito.)`) +
+        before
       return this.runDirected(decider, provider, asked, effect, text)
     }
     if (effect.type === 'lesson') {

@@ -187,6 +187,16 @@ export function localDecider(): Decider {
             /\bfuncion\b|\bclase\b|\bmetodo\b|\bbucle\b|\bvariable\b|\blinea\b/.test(text) &&
             !/\bprograma\b|\balgoritmo/.test(text)
           answers[id] = pick(small ? 'directo' : 'esquema', SURE)
+        } else if (id === 'sigue') {
+          // Lo que empieza llevando la contraria o matizando no se entiende sin lo de antes.
+          answers[id] = {
+            type: 'noul',
+            noul: /^(pero|no[, ]|mejor|en vez|en lugar|usando|que lo |y que |hazlo)/.test(
+              text.trim(),
+            )
+              ? SURE
+              : 0.1,
+          }
         } else if (id === 'ambito') {
           // Otra función u otra clase es algo aparte, salvo que diga «aquí» o «dentro».
           const own =

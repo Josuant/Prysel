@@ -331,6 +331,14 @@ export class WebHost {
     const before = this.doc.text
     this.write(edits)
     this.history.applied(before, edits, this.version)
+    // Lo que el lienzo acaba de escribir es «lo último que se hizo»: una orden puede referirse a ello.
+    const first = [...edits].sort((a, b) => a.start - b.start)[0]
+    if (first) {
+      const from =
+        before.slice(0, first.start).split('\n').length + (first.text.startsWith('\n') ? 1 : 0)
+      const added = first.text.replace(/^\r?\n|\r?\n$/g, '').split('\n').length
+      this.orders.touched(from, from + Math.max(0, added - 1))
+    }
     await this.refresh()
   }
 

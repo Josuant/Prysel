@@ -397,3 +397,62 @@ describe('mirando una función por dentro, pedir otra función', () => {
     expect(await viewing('añade aquí un bucle')).toContain('al final de sumar')
   })
 })
+
+describe('la conversación: una orden puede retocar lo que se acaba de hacer', () => {
+  const source = lines('class Calculadora:', '    pass', 'calc = Calculadora()', 'print(2 + 3)')
+  const history = [
+    {
+      order: 'Ahora instancia un objeto de Calculadora',
+      did: 'Añado llamada a función al final del programa.',
+    },
+    { order: 'Ahora imprime la suma de 2 y 3', did: 'Añado imprimir al final del programa.' },
+  ]
+  const ask = async (text: string) => {
+    const program = parse(source)
+    const local = localDecider()
+    const seen: unknown[] = []
+    const { directive } = await decideCommand(
+      {
+        text,
+        program,
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+        last: { from: 4, to: 4 },
+        history,
+      },
+      {
+        id: 'local',
+        decide(request) {
+          seen.push(request.state)
+          return local.decide(request)
+        },
+      },
+    )
+    return { directive, state: seen[0] as { antes?: string[] } }
+  }
+
+  it('al JEV se le cuenta lo de antes', async () => {
+    const { state } = await ask('Pero usando la clase calculadora')
+    expect(state.antes).toEqual([
+      '«Ahora instancia un objeto de Calculadora» → Añado llamada a función al final del programa.',
+      '«Ahora imprime la suma de 2 y 3» → Añado imprimir al final del programa.',
+    ])
+  })
+
+  it('«pero usando la clase calculadora» cambia lo último que se hizo; no envuelve nada en una clase', async () => {
+    const { directive } = await ask('Pero usando la clase calculadora')
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+    expect(directive.kind === 'do' && directive.effect).toMatchObject({
+      type: 'modify',
+      lines: { from: 4, to: 4 },
+      scope: 'lo último que se hizo',
+    })
+  })
+
+  it('una orden nueva sigue siendo una orden nueva', async () => {
+    const { directive } = await ask('una función que reste dos números')
+    expect(directive.kind === 'do' && directive.effect.type).toBe('compose')
+  })
+})

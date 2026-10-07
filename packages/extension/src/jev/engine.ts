@@ -131,6 +131,8 @@ export const THRESHOLDS = {
   destructive: 0.7,
   /** Por encima, la orden son varias órdenes seguidas: se parte y se decide cada una. */
   several: 0.6,
+  /** Por encima, la orden retoca lo que se acaba de hacer: se cambia eso, no se empieza otra cosa. */
+  followUp: 0.7,
 } as const
 
 /** Lo que el usuario ya aclaró al contestar una pregunta: no se le vuelve a preguntar a Jev. */
@@ -163,6 +165,11 @@ export interface EngineInput {
    * nada se toma como algo que construir, no como ruido.
    */
   typed?: boolean
+  /**
+   * La conversación hasta ahora: las últimas órdenes y lo que se hizo con cada una, de la más antigua a la
+   * más reciente. Sin ella, un «pero usando la clase» no se sabe a qué se refiere.
+   */
+  history?: readonly { order: string; did: string }[]
 }
 
 /** Dónde se escribe algo nuevo (lo mismo que admite la acción de añadir). */
@@ -379,12 +386,30 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
   const forced = input.forced ?? {}
   const chosen = targets.find((target) => target.id === input.selected)
   const viewing = targets.find((target) => target.id === input.focus)
+  const history = input.history ?? []
   const state = {
     orden: input.text,
     viendo: viewing ? `la función «${viewing.head}»` : 'el programa entero',
     seleccionado: chosen ? chosen.description : 'nada',
+    // Lo que se ha ido pidiendo antes, y lo que se hizo: la orden puede referirse a ello.
+    ...(history.length > 0
+      ? { antes: history.map((turn) => `«${turn.order}» → ${turn.did}`) }
+      : {}),
   }
   const questions: Record<string, JevQuestion> = {}
+  // ¿Es un retoque de lo que se acaba de hacer? Se pregunta siempre que haya un «antes».
+  if (forced.intent === undefined && history.length > 0 && input.genId !== undefined) {
+    questions.sigue = {
+      type: 'noul',
+      instructions:
+        'El campo `antes` es lo que se ha pedido y hecho justo antes. La `orden` de ahora, ¿corrige, matiza o completa ESO MISMO que se acaba de hacer, en vez de pedir una cosa nueva e independiente?',
+      criteria: {
+        true: 'Retoca lo que se acaba de hacer: «pero usando la clase», «no, que reste», «mejor con un bucle», «que lo haga con el objeto que creaste». Sola no se entendería.',
+        false:
+          'Pide algo nuevo, que se entiende por sí solo: otra función, otra clase, ver algo, borrar algo.',
+      },
+    }
+  }
   if (forced.intent === undefined) {
     // Lo que se escribe en la caja de órdenes va dirigido al editor: no hace falta preguntarlo.
     if (!input.typed) {
@@ -810,47 +835,70 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     })
   }
 
+  /**
+   * Cambiar lo que ya está escrito (lo redacta la IA generativa). `followUp`: la orden retoca lo que se
+   * acaba de hacer, así que es ahí donde se mira, diga lo que diga de pasada.
+   */
+  const rework = (followUp: boolean): Decision => {
+    if (input.genId === undefined) {
+      return done({
+        kind: 'unknown',
+        say: 'Para cambiar lo escrito hace falta una IA generativa: elige un modelo.',
+      })
+    }
+    // «Eso», «lo que acabas de hacer»: lo último que se hizo, antes que lo seleccionado.
+    const recent =
+      input.last !== undefined &&
+      forced.target === undefined &&
+      (followUp ||
+        (named?.choice === LAST && named.confidence >= THRESHOLDS.target) ||
+        target === null)
+    const lines = recent
+      ? input.last
+      : target && !followUp
+        ? { from: target.line, to: target.lineEnd }
+        : undefined
+    return done({
+      kind: 'do',
+      intent: 'modificar',
+      effect: {
+        type: 'modify',
+        gen: input.genId,
+        ...(lines ? { lines } : {}),
+        ...(recent
+          ? { scope: 'lo último que se hizo' }
+          : target && !followUp
+            ? { scope: naming(target) }
+            : {}),
+      },
+      ...(target && !recent && !followUp ? { focus: target.id } : {}),
+      say: recent
+        ? 'Lo cambio en lo último que se hizo.'
+        : target && !followUp
+          ? `Lo cambio en ${naming(target)}.`
+          : 'Miro qué hay que cambiar.',
+    })
+  }
+
+  // Un retoque de lo que se acaba de hacer («pero usando la clase») no es una orden nueva, aunque suene a
+  // otra cosa: se cambia lo que hay. Lo dice el JEV, mirando la conversación. No pisa lo que solo mueve la
+  // vista, ejecuta o deshace.
+  const follows = answers.sigue?.type === 'noul' ? answers.sigue.noul : 0
+  if (
+    forced.intent === undefined &&
+    follows >= THRESHOLDS.followUp &&
+    (
+      ['componer', 'agregar', 'envolver', 'modificar', 'juntar', 'extraer', 'otra'] as Intent[]
+    ).includes(intent)
+  ) {
+    return rework(true)
+  }
+
   switch (intent) {
     case 'componer':
       return compose()
-    case 'modificar': {
-      if (input.genId === undefined) {
-        return done({
-          kind: 'unknown',
-          say: 'Para cambiar lo escrito hace falta una IA generativa: elige un modelo.',
-        })
-      }
-      // «Eso», «lo que acabas de hacer»: lo último que se hizo, antes que lo seleccionado.
-      const recent =
-        input.last !== undefined &&
-        forced.target === undefined &&
-        ((named?.choice === LAST && named.confidence >= THRESHOLDS.target) || target === null)
-      const lines = recent
-        ? input.last
-        : target
-          ? { from: target.line, to: target.lineEnd }
-          : undefined
-      return done({
-        kind: 'do',
-        intent,
-        effect: {
-          type: 'modify',
-          gen: input.genId,
-          ...(lines ? { lines } : {}),
-          ...(recent
-            ? { scope: 'lo último que se hizo' }
-            : target
-              ? { scope: naming(target) }
-              : {}),
-        },
-        ...(target && !recent ? { focus: target.id } : {}),
-        say: recent
-          ? 'Lo cambio en lo último que se hizo.'
-          : target
-            ? `Lo cambio en ${naming(target)}.`
-            : 'Miro qué hay que cambiar.',
-      })
-    }
+    case 'modificar':
+      return rework(false)
     case 'ensenar':
       // Si lo que se quiere entender resulta ser algo de este programa, se explica ese elemento.
       if (namedTarget) {
@@ -962,7 +1010,14 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         null
       const where = end('mover_donde') ?? said.find((item) => item.id !== what?.id) ?? null
       // «Mete sumar en una clase Calculadora», y esa clase aún no existe: se crea alrededor de ella.
-      if (what?.node && !where && classIn(input.text) !== null) return intoClass(what)
+      if (
+        what?.node &&
+        what.node.kind !== 'abstraction.class' &&
+        !where &&
+        classIn(input.text) !== null
+      ) {
+        return intoClass(what)
+      }
       if (!what?.node || !where?.node || what.id === where.id) {
         return done({ kind: 'unknown', say: 'Dime qué muevo y adónde: nómbralos los dos.' })
       }
@@ -992,7 +1047,10 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         classIn(input.text) !== null && (into === undefined || into.confidence < 0.8)
           ? 'clase'
           : (into?.choice ?? 'bucle')
-      if (kind === 'clase') return intoClass(target)
+      // Una clase no se mete en una clase: si lo que se señala ya lo es, la orden pedía otra cosa.
+      if (kind === 'clase') {
+        return target.node.kind === 'abstraction.class' ? rework(true) : intoClass(target)
+      }
       const wrapper = kind === 'decision' ? 'if' : kind === 'intento' ? 'try' : 'for'
       const name = wrapper === 'if' ? 'una decisión' : wrapper === 'try' ? 'un intento' : 'un bucle'
       return done({
