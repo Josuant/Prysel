@@ -708,14 +708,15 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
       : (named?.confidence ?? 0)
   const viewing = byId(input.focus)
   // Mirando una función por dentro, «crea otra función» no la mete dentro de la que se mira: lo dice el
-  // JEV. Solo cuenta si la orden no señaló un sitio ni hay nada seleccionado.
+  // JEV. Solo cuenta si la orden no señala ningún elemento (ni lo nombra, ni hay nada seleccionado): un
+  // «después» o un «final» sin nada a lo que referirse no apunta a ningún sitio de lo que se mira.
   const ambit = choice(answers.ambito)
-  const apartFrom = (place: PlaceId | null) =>
-    viewing !== null &&
-    place === null &&
-    chosen === null &&
-    ambit?.choice === 'programa' &&
-    ambit.confidence >= 0.5
+  const apartSpot = (place: PlaceId | null): Placed | null =>
+    viewing !== null && target === null && ambit?.choice === 'programa' && ambit.confidence >= 0.5
+      ? place === 'principio'
+        ? { at: 'start', phrase: 'al principio del programa' }
+        : { phrase: 'al final del programa' }
+      : null
 
   /** Una orden compleja: se decide dónde, y el código lo redacta la IA generativa (y lo juzga el JEV). */
   const compose = (teach = false): Decision => {
@@ -736,10 +737,9 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     // Sin un sitio claro, lo que la orden nombra de pasada («la media de las notas») no es dónde ponerlo.
     // La explicacion de un tema no va dentro de lo que este seleccionado ni de la funcion que se mira:
     // es un trozo nuevo, al final.
-    const { phrase, ...spot } =
-      teach || apartFrom(place)
-        ? { phrase: 'al final del programa' }
-        : placeOf(place, place === null ? chosen : target, viewing)
+    const { phrase, ...spot }: Placed = teach
+      ? { phrase: 'al final del programa' }
+      : (apartSpot(place) ?? placeOf(place, place === null ? chosen : target, viewing))
     return done({
       kind: 'do',
       intent: 'componer',
@@ -882,9 +882,8 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         where && where.confidence >= THRESHOLDS.place
           ? (PLACES.find((id) => id === where.choice) ?? null)
           : null
-      const { phrase, ...at }: Placed = apartFrom(place)
-        ? { phrase: 'al final del programa' }
-        : placeOf(place, place === null ? chosen : target, viewing)
+      const { phrase, ...at }: Placed =
+        apartSpot(place) ?? placeOf(place, place === null ? chosen : target, viewing)
       // Un `return` o un `break` no tienen contenido que escribir: son lo que son.
       const writable = !(['break', 'continue'] as TemplateId[]).includes(piece)
       const pending = input.genId !== undefined && writable ? input.genId : undefined

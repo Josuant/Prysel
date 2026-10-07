@@ -294,6 +294,52 @@ describe('mirando una función por dentro, pedir otra función', () => {
     )
   })
 
+  it('aunque el JEV conteste un «después» a medias, sin nada a lo que referirse', async () => {
+    // Lo que contestó el JEV de verdad a «Ahora crea la función restar» mirando `sumar`.
+    const program = parse(source)
+    const fn = program.nodes.find((n) => n.range && n.line === 1)?.id ?? null
+    const pick = (choice: string, confidence: number) => ({
+      type: 'choice' as const,
+      choice,
+      confidence,
+      probabilities: {},
+    })
+    const { directive } = await decideCommand(
+      {
+        text: 'Ahora crea la función restar',
+        program,
+        selected: null,
+        focus: fn,
+        typed: true,
+        genId: 'g1',
+      },
+      {
+        id: 'grabado',
+        decide: () =>
+          Promise.resolve({
+            ms: 1,
+            answers: {
+              accion: pick('componer', 0.76),
+              varias: { type: 'noul', noul: 0.07 },
+              ambito: pick('programa', 0.98),
+              alcance: pick('directo', 1),
+              pieza: pick('function', 0.99),
+              donde: pick('despues', 0.47),
+              objetivo: pick('ninguno', 0.45),
+              envolver_en: pick('clase', 0.9),
+              mover_que: pick('ninguno', 0.99),
+              mover_donde: pick('ninguno', 0.82),
+            },
+          }),
+      },
+    )
+    expect(directive.kind === 'do' && directive.say).toBe('Lo escribo al final del programa.')
+    expect(directive.kind === 'do' && directive.effect).toMatchObject({
+      type: 'compose',
+      place: {},
+    })
+  })
+
   it('si dice «aquí» o es un paso más, va dentro', async () => {
     expect(await viewing('añade aquí un bucle')).toContain('al final de sumar')
   })
