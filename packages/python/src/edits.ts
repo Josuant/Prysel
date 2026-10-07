@@ -786,8 +786,40 @@ export function moveNode(
             /^\s*(?:async\s+)?def\s+\w+\s*\(\s*\)/.test(header) ? `${head}self` : `${head}self, `,
         )
       }
-    } else if (header !== undefined) {
-      block[at] = header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*self\s*,?\s*/, '$1')
+    } else if (header !== undefined && owner?.range) {
+      // Un método que sale de su clase: deja de llamarse por un objeto. Si por dentro usa el objeto (sus
+      // datos, otros métodos), lo sigue recibiendo, ahora como un argumento más: `calc.sumar(1, 2)` pasa a
+      // ser `sumar(calc, 1, 2)`. Si no lo usa, pierde el `self` y se la llama sin él: `sumar(1, 2)`.
+      const name = /def\s+(\w+)/.exec(header)?.[1] ?? ''
+      const className =
+        /class\s+(\w+)/.exec(text.slice(owner.range.start, owner.range.end))?.[1] ?? ''
+      const itself = new RegExp(`\\bself\\.${name}(?=\\s*\\()`, 'g')
+      const body = block
+        .slice(at + 1)
+        .join('\n')
+        .replace(/"[^"\n]*"|'[^'\n]*'|#[^\n]*/g, '')
+      const keepsSelf = /\bself\b/.test(body.replace(itself, ''))
+      // Adónde va: dentro de otra función solo se la puede llamar desde ahí; si no, desde todo el archivo.
+      const reach =
+        where.into !== undefined && target.kind === 'abstraction.collapsed' ? target.range : null
+      calls = functionCalls(
+        text,
+        name,
+        className,
+        { start: begin, end: lineEnd(text, range.end) },
+        keepsSelf,
+        reach,
+      )
+      for (let i = at + 1; i < block.length; i++) {
+        block[i] = (block[i] ?? '').replace(
+          new RegExp(`\\bself\\.${name}\\s*\\(\\s*(\\)?)`, 'g'),
+          (_, closes: string) =>
+            keepsSelf ? `${name}(self${closes === ')' ? ')' : ', '}` : `${name}(${closes}`,
+        )
+      }
+      if (!keepsSelf) {
+        block[at] = header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*self\s*,?\s*/, '$1')
+      }
     }
   }
   // Un método no va pegado al anterior: una línea en blanco entre los dos.
@@ -889,6 +921,63 @@ function methodCalls(
           : `${instanceBefore(at) ?? `${className}()`}.`,
     })),
   }
+}
+
+/**
+ * Un método sale de su clase y pasa a ser una función suelta: las llamadas que ya había tienen que seguir
+ * llegando a ella. Solo se tocan las que se hacen sobre un objeto de esa clase —`self`, la propia clase
+ * (`Clase.metodo(…)`, `Clase().metodo(…)`) o un nombre al que se le asignó uno—: otro objeto que tenga un
+ * método con el mismo nombre no tiene nada que ver.
+ *
+ * `keepsSelf`: la función sigue necesitando el objeto, y lo recibe delante. `reach`: si va a quedar dentro
+ * de otra función, solo se reescriben las llamadas de ahí dentro (desde fuera ya no se la puede alcanzar).
+ */
+function functionCalls(
+  text: string,
+  name: string,
+  className: string,
+  moved: { start: number; end: number },
+  keepsSelf: boolean,
+  reach: { start: number; end: number } | null,
+): TextEdit[] {
+  if (name === '' || className === '') return []
+  // Lo que va entre comillas o en un comentario no es código: se tapa, sin mover nada de sitio.
+  const bare = text.replace(/"[^"\n]*"|'[^'\n]*'|#[^\n]*/g, (found) => ' '.repeat(found.length))
+  const instances = new Set(
+    [...bare.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)\\s*=\\s*${className}\\s*\\(`, 'gm'))].map(
+      (match) => match[1] ?? '',
+    ),
+  )
+  const edits: TextEdit[] = []
+  const call = new RegExp(
+    `(?<![\\w.])([A-Za-z_]\\w*(?:\\([^()\\n]*\\))?)\\.${name}\\s*\\(\\s*(\\)?)`,
+    'g',
+  )
+  for (const match of bare.matchAll(call)) {
+    const at = match.index
+    if (at >= moved.start && at < moved.end) continue
+    if (reach && (at < reach.start || at >= reach.end)) continue
+    const receiver = match[1] ?? ''
+    const known =
+      receiver === 'self' ||
+      receiver === className ||
+      receiver.startsWith(`${className}(`) ||
+      instances.has(receiver)
+    if (!known) continue
+    // El receptor se lee del texto de verdad (en el tapado, un argumento con comillas saldría en blanco).
+    const passed = text.slice(at, at + receiver.length)
+    const closes = match[2] ?? ''
+    edits.push({
+      start: at,
+      end: at + match[0].length,
+      // `Clase.metodo(…)` ya no pasa un objeto: no hay qué pasarle.
+      text:
+        keepsSelf && receiver !== className
+          ? `${name}(${passed}${closes === ')' ? ')' : ', '}`
+          : `${name}(${closes}`,
+    })
+  }
+  return edits
 }
 
 /**

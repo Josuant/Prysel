@@ -676,3 +676,76 @@ describe('de la tercera prueba del cajero: retoques, nombres dichos de palabra y
     expect(directive.kind === 'do' && directive.effect.type).toBe('modify')
   })
 })
+
+describe('al salir un método de su clase, las llamadas que ya había siguen funcionando', () => {
+  const out = (source: string) =>
+    order('mueve la función sumar después de la clase Calculadora', undefined, source)
+
+  it('si no usa el objeto, pierde el self y se la llama sin él', async () => {
+    const { moved } = await out(
+      lines(
+        'class Calculadora:',
+        '    def sumar(self, a, b):',
+        '        return a + b',
+        '',
+        '    def doble(self, n):',
+        '        return self.sumar(n, n)',
+        '',
+        'calc = Calculadora()',
+        'print(calc.sumar(1, 2))',
+        'print(Calculadora().sumar(3, 4))',
+        'otra.sumar(5, 6)  # de otro objeto: no se toca. calc.sumar(…) en un comentario, tampoco',
+      ),
+    )
+    expect(moved).toContain(lines('def sumar(a, b):', '    return a + b'))
+    expect(moved).toContain('        return sumar(n, n)')
+    expect(moved).toContain('print(sumar(1, 2))')
+    expect(moved).toContain('print(sumar(3, 4))')
+    expect(moved).toContain(
+      'otra.sumar(5, 6)  # de otro objeto: no se toca. calc.sumar(…) en un comentario, tampoco',
+    )
+  })
+
+  it('si usa el objeto, lo sigue recibiendo: ahora como un argumento más', async () => {
+    const { moved } = await out(
+      lines(
+        'class Calculadora:',
+        '    def __init__(self):',
+        '        self.total = 0',
+        '',
+        '    def sumar(self, a, b):',
+        '        self.total = a + b',
+        '        return self.total',
+        '',
+        '    def doble(self, n):',
+        '        return self.sumar(n, n)',
+        '',
+        '    def nada(self):',
+        '        return self.sumar()',
+        '',
+        'calc = Calculadora()',
+        'print(calc.sumar(1, 2))',
+      ),
+    )
+    expect(moved).toContain(lines('def sumar(self, a, b):', '    self.total = a + b'))
+    expect(moved).toContain('        return sumar(self, n, n)')
+    expect(moved).toContain('        return sumar(self)')
+    expect(moved).toContain('print(sumar(calc, 1, 2))')
+  })
+
+  it('una que se llama a sí misma sigue llamándose', async () => {
+    const { moved } = await out(
+      lines(
+        'class Calculadora:',
+        '    def sumar(self, a, b):',
+        '        return a if b == 0 else self.sumar(a + 1, b - 1)',
+        '',
+        '    def otra(self):',
+        '        return 1',
+      ),
+    )
+    expect(moved).toContain(
+      lines('def sumar(a, b):', '    return a if b == 0 else sumar(a + 1, b - 1)'),
+    )
+  })
+})
