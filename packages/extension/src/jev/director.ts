@@ -282,6 +282,8 @@ async function tellAll(
       .split('\n')
       .map((line) => sentenceOf(line.replace(/^\s*(?:\[\d+\]|\d+[.):-]|[-*•])\s*/, '')))
       .filter((line) => line !== '')
+      // Si contesta de más, es que ha repasado antes lo ya escrito: las de estas piezas son las últimas.
+      .slice(-request.pieces.length)
     return request.pieces.map((_, index) => said[index] ?? '')
   } catch {
     return request.pieces.map(() => '')
@@ -480,6 +482,7 @@ export async function build(
   let current = 0
   let plan = planned ? new BuildPlan({}, stageGen(gen, 0)) : new BuildPlan(request.place)
   const used = new Set<number>()
+  const plans = new Map<number, BuildPlan>()
   if (!host.signal.aborted) {
     await host.show({
       type: 'progress',
@@ -546,13 +549,23 @@ export async function build(
         ) {
           stage = verdict.stage
         }
-        const planStage = planned ? stages[stage] : undefined
+        // Salvo una función o una clase: se puede definir en cualquier parte del archivo, así que si el modelo
+        // la dicta fuera de orden vuelve a la parte del plan que le toca, en vez de quedarse esa parte vacía.
+        const back =
+          planned &&
+          verdict?.stage != null &&
+          verdict.stage < stage &&
+          /^(?:@|def |async def |class )/.test(
+            chunk.code.split('\n').find((row) => row.trim() !== '' && !row.startsWith('#')) ?? '',
+          )
+        const home = back && verdict?.stage != null ? verdict.stage : stage
+        const planStage = planned ? stages[home] : undefined
         const moments = momentsOf(chunk)
         if (prep.stop) break
         await note(
           safe
             ? planned
-              ? `JEV ✓ · va en «${stages[stage]?.title ?? ''}» · pensando cómo contarlo…`
+              ? `JEV ✓ · va en «${stages[home]?.title ?? ''}» · pensando cómo contarlo…`
               : 'JEV ✓ · pensando cómo contarlo…'
             : verdict === null
               ? 'El JEV no contestó.'
@@ -589,7 +602,7 @@ export async function build(
             marks = []
           }
         }
-        ready.push({ chunk, verdict, stage, moments, says, marks, formula })
+        ready.push({ chunk, verdict, stage: home, moments, says, marks, formula })
         // Lo preparado y aún sin escribir: lo que hay «en la recámara» si el usuario interrumpe.
         host.buffer?.(ready.map((item) => item.chunk.code))
         // Tras un trozo que no se va a escribir no se prepara nada más.
@@ -627,13 +640,16 @@ export async function build(
       }
       if (planned && item.stage !== current) {
         current = item.stage
-        plan = new BuildPlan({}, stageGen(gen, current))
+        // Cada parte del plan guarda por dónde iba: se puede volver a una que ya tenía algo escrito.
+        plan = plans.get(current) ?? new BuildPlan({}, stageGen(gen, current))
       }
+      if (planned) plans.set(current, plan)
       if (planned) used.add(current)
       // Cada pieza aparece con su frase, y la siguiente espera a que esa frase se haya dicho.
       let first: number | null = null
       for (const [index, step] of chunk.steps.entries()) {
-        const placed = plan.place(await host.program(), step)
+        const before = await host.program()
+        const placed = plan.place(before, step)
         if (!placed.ok) {
           tally.trouble = placed.error
           break
@@ -643,6 +659,13 @@ export async function build(
           if (refused !== null) {
             tally.trouble = refused
             break
+          }
+          // Lo escrito empuja hacia abajo lo que las otras partes del plan tenían más abajo.
+          for (const edit of placed.change.edits) {
+            const lines = (text: string) => text.split('\n').length - 1
+            const at = lines(before.source.slice(0, edit.start)) + 1
+            const delta = lines(edit.text) - lines(before.source.slice(edit.start, edit.end))
+            for (const other of plans.values()) if (other !== plan) other.shift(at, delta)
           }
         }
         plan.commit(step, placed)
@@ -666,7 +689,8 @@ export async function build(
             say,
             line: placed.line + moment.offset,
             effect: shown === 0 ? 'born' : 'told',
-            ...(verdict.wide && shown === 0 ? { wide: true } : {}),
+            // El conjunto se enseña al llegar el trozo (su cabecera); lo de dentro, de cerca.
+            ...(verdict.wide && shown === 0 && index === 0 ? { wide: true } : {}),
             ...(mark.length === 0 ? {} : { mark }),
           })
           shown++

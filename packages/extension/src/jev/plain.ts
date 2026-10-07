@@ -769,7 +769,7 @@ export function codeSystem(teach: boolean): string {
       : 'Escribes un programa en Python que un editor va a dibujar como un diagrama, pieza a pieza.',
     'Escribe el código, y solo el código: Python tal cual iría en el archivo, sin explicaciones alrededor.',
     'Código claro, de principiante: nombres en español, valores de ejemplo concretos, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
-    'Si hay un plan, sigue su orden: primero lo de la primera parte, luego lo de la segunda… No pongas comentarios con los títulos de las partes: ya están puestos.',
+    'Si hay un plan, sigue su orden al pie de la letra: primero TODO lo de la primera parte, luego lo de la segunda… y que cada parte tenga algo de código. Escribe cada función cuando llegue la parte del plan a la que pertenece, no antes. No pongas comentarios con los títulos de las partes: ya están puestos.',
     'No leas ni escribas archivos, no uses la red ni el sistema, ni pidas datos con input(), salvo que la orden lo pida expresamente. Como mucho unas 40 líneas.',
   ].join('\n')
 }
@@ -801,7 +801,7 @@ export function tellSystem(teach: boolean): string {
     teach
       ? 'Estás explicando un tema a alguien mientras construyes, pieza a pieza, un programa que lo modela. De cada pieza, di qué ocurre en la realidad y cómo lo representa; no describas la sintaxis.'
       : 'Estás construyendo un programa pieza a pieza mientras lo explicas a alguien que aprende. De cada pieza, di qué es y por qué se pone ahí, como quien piensa en voz alta.',
-    'Te doy las piezas en el orden en que van a aparecer. Di una frase por cada pieza, en español y sin código: una por línea, en el mismo orden, tantas líneas como piezas. Solo las frases: se leerán en voz alta, cada una al aparecer su pieza.',
+    'Te doy las piezas en el orden en que van a aparecer. Di una frase por cada pieza, en español y sin código: una por línea, en el mismo orden, tantas líneas como piezas. Solo las frases: se leerán en voz alta, cada una al aparecer su pieza. De lo que ya está escrito no digas nada: ya se explicó.',
     'Frases MUY cortas: como mucho doce palabras cada una, directas, sin rodeos ni muletillas («en este paso», «aquí»). Una idea por frase.',
   ].join('\n')
 }
@@ -830,7 +830,7 @@ export function introSystem(teach: boolean): string {
     teach
       ? 'Alguien quiere entender un tema y se lo vas a explicar construyendo, pieza a pieza, un pequeño programa que lo modela.'
       : 'Alguien te ha pedido un programa y lo vas a construir delante de él, pieza a pieza, explicándolo.',
-    'Antes de empezar, dile en una o dos frases cortas (menos de treinta palabras en total) qué vais a hacer y cómo lo vais a abordar. Cercano y directo, en español, sin código ni listas. Solo esas frases: se leerán en voz alta.',
+    'Antes de empezar, dile en UNA sola frase corta (menos de dieciocho palabras) qué vais a hacer. Cercano y directo, en español, sin código ni listas. Solo esa frase: se leerá en voz alta, y hasta que acabe no se ve nada.',
   ].join('\n')
 }
 

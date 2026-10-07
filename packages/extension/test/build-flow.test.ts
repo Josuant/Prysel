@@ -425,6 +425,40 @@ describe('algo grande: una lista de partes, y el JEV reparte el código entre el
     // «media = …» no tenía etapa clara: se quedó en la que se estaba.
   })
 
+  it('una función dictada fuera de orden sí vuelve a su parte, y lo de debajo no se descoloca', async () => {
+    // El modelo dicta la función al final, cuando ya se estaba en la parte 3; y aún sigue con la 3.
+    const code = lines(
+      'notas = [7, 4, 9]',
+      'print(notas)',
+      'def media_de(lista):',
+      '    return sum(lista) / len(lista)',
+      'print(media_de(notas))',
+    )
+    const stages = (chunk: string) =>
+      chunk.startsWith('notas') ? 'e1' : chunk.startsWith('def') ? 'e2' : 'e3'
+    const { host, state } = stage('')
+    const outcome = await build(
+      host,
+      { decider: assigning(stages), provider: ai({ plan: PLAN, code }) },
+      request,
+    )
+    expect(outcome.trouble).toBeNull()
+    expect(state.text).toBe(
+      lines(
+        '# Preparar las notas: guarda las notas de la clase',
+        'notas = [7, 4, 9]  # prysel:ver serie «notas» 7 4 9',
+        '',
+        '# Calcular la media: suma las notas y divide',
+        'def media_de(lista):',
+        '    return sum(lista) / len(lista)',
+        '',
+        '# Mostrar el resultado: imprime la media',
+        'print(notas)',
+        'print(media_de(notas))',
+      ),
+    )
+  })
+
   it('el código va hacia delante: un trozo no vuelve a una parte anterior', async () => {
     const provider = ai({ plan: PLAN, code: 'total = 0\nnotas = [1]\nprint(total)\n' })
     const { host, state } = stage('')
