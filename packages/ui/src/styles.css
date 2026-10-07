@@ -1731,6 +1731,38 @@ button.fn-menu__crumb:hover {
 .viewer[data-aid] {
   border-style: dashed;
 }
+/* El hueco de lo que se está pidiendo: aún no existe, pero ya se ve qué va a ser. Borde discontinuo y el
+   color de su clase de pieza (el de las funciones, el de los bucles…), que cambia suave si cambia de idea. */
+.viewer[data-ghost] {
+  --ghost: var(--accent);
+  border: 2px dashed var(--ghost);
+  background: color-mix(in srgb, var(--ghost) 9%, var(--surface));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ghost) 14%, transparent);
+  transition:
+    border-color 350ms ease,
+    background-color 350ms ease,
+    box-shadow 350ms ease;
+}
+.viewer[data-ghost] .viewer__head {
+  color: var(--ghost);
+  font-weight: 700;
+}
+.viewer[data-ghost='function'],
+.viewer[data-ghost='class'] {
+  --ghost: var(--value-fn-fg);
+}
+.viewer[data-ghost='loop'] {
+  --ghost: var(--value-iter-fg);
+}
+.viewer[data-ghost='condition'] {
+  --ghost: var(--state-warning);
+}
+.viewer[data-ghost='value'] {
+  --ghost: var(--value-number-fg);
+}
+.viewer[data-ghost='list'] {
+  --ghost: var(--value-list-fg);
+}
 .node[data-modifier='generating'] {
   animation: node-breathe 1.6s ease-in-out infinite;
 }

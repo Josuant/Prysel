@@ -586,6 +586,7 @@ export class Orders {
       ...(outcome.evidence.length > 0 ? { evidence: outcome.evidence } : {}),
       jevMs: outcome.jevMs,
       done: true,
+      ...(outcome.enter === undefined ? {} : { enter: outcome.enter }),
     })
     return outcome.written > 0
   }

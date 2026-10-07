@@ -39,7 +39,10 @@ const INTENT_WORDS: [Intent, RegExp][] = [
     /\bplieg|\bplega|\bdesplieg|\bdesplega|\babre\b|\babrir\b|\bcierra|\bcolapsa|\bexpande/,
   ],
   ['ejecutar', /\bejecut|\bcorre\b|\blanza el/],
-  ['enfocar', /\benfoc|\bve a\b|\bir a\b|\bmuestra|\bensena|\bllevame|\bbusca|\bdonde esta/],
+  [
+    'enfocar',
+    /\benfoc|\bve a\b|\bir a\b|\bver (el|la|los|las)\b|\bentra\b|\bsal\b|\bsalir\b|\bmuestra|\bensena|\bllevame|\bbusca|\bdonde esta/,
+  ],
   [
     'componer',
     /\balgoritmo|\bprograma que|\bfuncion que|\bbucle que|\bque (sume|calcule|cuente|busque|ordene|imprima|devuelva)/,

@@ -19,6 +19,19 @@ export interface ViewerNodeData extends Record<string, unknown> {
 
 export type ViewerFlowNode = Node<ViewerNodeData, 'viewer'>
 
+/** El icono de cada clase de hueco: el mismo que llevará la pieza cuando exista. */
+const GHOST_ICON = {
+  function: 'function',
+  class: 'package',
+  loop: 'loop',
+  condition: 'branch',
+  value: 'hash',
+  list: 'list',
+  program: 'flag',
+  change: 'pencil',
+  talk: 'book',
+} as const
+
 export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
   const { content, size } = data
   const image = viewerImageSize(content, size.w)
@@ -28,6 +41,7 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
       data-selected={selected ? '' : undefined}
       data-stale={content.stale ? '' : undefined}
       data-busy={content.busy ? '' : undefined}
+      data-ghost={content.ghost}
       data-aid={content.aid ? '' : undefined}
       style={{ width: size.w, height: size.h }}
     >
@@ -38,7 +52,7 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
         isConnectable={false}
       />
       <header className="viewer__head">
-        <Icon name="chart" size={13} />
+        <Icon name={content.ghost ? GHOST_ICON[content.ghost] : 'chart'} size={13} />
         <span className="viewer__title" title={content.title}>
           {content.title}
         </span>

@@ -7,6 +7,7 @@ import {
   Button,
   Canvas,
   type CanvasNode,
+  type ViewerContent,
   type NodeMenuItem,
   FunctionMenu,
   Icon,
@@ -298,6 +299,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
   const [preview, setPreview] = useState<{ kind: string; text: string } | null>(null)
   const heardWords = useRef(0)
+  /** La línea de la función o la clase en la que hay que entrar en cuanto el programa la traiga. */
+  const [enterLine, setEnterLine] = useState<number | null>(null)
   /** El cambio de una orden ya está en el lienzo: en cuanto se pinte, se sabe cuánto tardó. */
   const markPainted = useCallback(() => {
     const from = awaitingPaint.current
@@ -327,6 +330,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   }, [])
   /** Lo que llega del motor JEV se atiende con lo que el lienzo sabe ahora (ver más abajo). */
   const onDecision = useRef<(message: DecisionMessage) => void>(() => undefined)
+  const onPreview = useRef<(kind: string, text: string) => void>(() => undefined)
   const onGenerated = useRef<(message: GeneratedMessage) => void>(() => undefined)
   const onSay = useRef<(message: SayMessage) => void>(() => undefined)
   const onStep = useRef<(message: StepMessage) => void>(() => undefined)
@@ -376,6 +380,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         })
       } else if (message.type === 'preview') {
         setPreview({ kind: message.kind, text: message.text })
+        onPreview.current(message.kind, message.text)
       } else if (message.type === 'progress') {
         const text = message.text
         setPreview(null)
@@ -933,7 +938,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           id: 'prysel:thinking',
           kind: 'output.display',
           label: busyTitle,
-          viewer: { title: busyTitle, text: [busy], busy: true },
+          viewer: {
+            title: busyTitle,
+            text: [busy],
+            busy: true,
+            ...(thinking === null && guess && preview ? { ghost: HEARD_GHOST[preview.kind] } : {}),
+          },
         })
         links.push({ from: anchor, to: 'prysel:thinking', relation: 'transform' })
       }
@@ -1068,6 +1078,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         : null,
     [spotId, spotKey, spotBorn, spotChange, spotWide, spotCamera],
   )
+  // Entrar en lo que se acaba de construir (una función, una clase), cuando el programa ya lo trae.
+  const functions = view.functions
+  const methods = view.methods
+  useEffect(() => {
+    if (enterLine === null || !program) return
+    const head = program.nodes.find((n) => n.range && n.line === enterLine)
+    if (!head) return
+    if (functions.some((fn) => fn.id === head.id) || methods.some((fn) => fn.id === head.id)) {
+      openView(head.id)
+    }
+    setEnterLine(null)
+  }, [enterLine, program, functions, methods, openView])
   // Mientras se habla de una pieza, se subraya —como con un rotulador— el trozo exacto del que habla la
   // frase. Se espera un momento a que el nodo esté pintado en su sitio; al pasar a otra cosa, se quita.
   // Llegan varios candidatos, por orden: se subraya el primero que el nodo tenga escrito.
@@ -1193,7 +1215,20 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       else if (effect.type === 'run') run(effect.ids)
       else if (effect.type === 'trace') post({ type: 'trace', version })
       else if (effect.type === 'fold') view.enter(effect.id)
-      if (directive.focus !== undefined) goTo(directive.focus)
+      if (directive.kind === 'do' && directive.home) {
+        // «Ver el programa principal»: se sale de lo que se estuviera viendo.
+        view.open(null)
+      } else if (directive.focus !== undefined) {
+        const seen = directive.focus
+        // «Ver la clase Animal»: si es algo con interior, se entra; si no, la cámara va a ello.
+        if (
+          directive.kind === 'do' &&
+          directive.intent === 'enfocar' &&
+          (view.functions.some((fn) => fn.id === seen) || view.methods.some((fn) => fn.id === seen))
+        ) {
+          view.open(seen)
+        } else goTo(seen)
+      }
       setOrder({
         phase: 'done',
         text,
@@ -1210,6 +1245,20 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       // Lo que cambia el código se mide cuando vuelve reanalizado; lo demás ya está en el lienzo.
       if (effect.type !== 'action' && effect.type !== 'undo' && effect.type !== 'redo')
         markPainted()
+    }
+    // Mientras se le oye hablar de algo que ya existe («vamos a cambiar la función sumar»), se señala, a la
+    // espera de saber qué quiere hacer con ello.
+    onPreview.current = (kind, text) => {
+      if (kind !== 'cambio' && kind !== 'explicacion') return
+      const said = text
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .split(/[^a-z0-9_]+/)
+      const named = [...view.functions, ...view.methods].find((fn) =>
+        said.includes((fn.name.split('.').pop() ?? fn.name).toLowerCase()),
+      )
+      if (named && wanted?.id !== named.id) setWanted({ id: named.id, key: ++spotSeq.current })
     }
     onStep.current = (message) => {
       setThinking(null)
@@ -1252,6 +1301,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setThinking(null)
         setCaption(null)
         setIntro(null)
+        setPreview(null)
+        // Lo construido es una función o una clase: la vista entra en ella, que es donde se va a seguir.
+        if (message.enter !== undefined) setEnterLine(message.enter)
       }
       const note = message.done
         ? (message.say ?? message.error ?? '')
@@ -1936,6 +1988,19 @@ function DensityControl({
 /** El nombre del archivo, sin su carpeta. */
 function baseName(file: string): string {
   return file.split(/[\\/]/).pop() ?? file
+}
+
+/** Con qué aspecto se dibuja el hueco de cada cosa que se puede pedir. */
+const HEARD_GHOST: Record<string, NonNullable<ViewerContent['ghost']>> = {
+  funcion: 'function',
+  clase: 'class',
+  bucle: 'loop',
+  decision: 'condition',
+  variable: 'value',
+  lista: 'list',
+  programa: 'program',
+  cambio: 'change',
+  explicacion: 'talk',
 }
 
 /** Cómo se nombra lo que el usuario parece estar pidiendo mientras aún habla. */

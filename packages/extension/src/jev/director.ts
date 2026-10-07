@@ -156,6 +156,11 @@ export interface Outcome {
   doubt: boolean
   evidence: Evidence[]
   jevMs: number
+  /**
+   * Lo que se construyó es una sola cosa con interior (una función, una clase): la línea de su cabecera. Al
+   * acabar, la vista entra en ella: es donde se va a seguir trabajando.
+   */
+  enter?: number
 }
 
 /** Lo que se dice al acabar. */
@@ -228,6 +233,9 @@ interface Tally {
   code: string[]
   jevMs: number
   trouble: string | null
+  /** Las cabeceras de las funciones y clases escritas (su línea), y cuántos trozos se escribieron en total. */
+  heads: number[]
+  chunks: number
 }
 
 export interface BuildRequest {
@@ -275,6 +283,9 @@ async function conclude(
     doubt,
     evidence,
     jevMs: tally.jevMs,
+    ...(tally.chunks === 1 && tally.heads.length === 1 && tally.heads[0] !== undefined
+      ? { enter: tally.heads[0] }
+      : {}),
   }
 }
 
@@ -405,7 +416,7 @@ export async function build(
   const { command, gen } = request
   const teach = request.teach === true
   const streaming = request.flow === 'stream'
-  const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null }
+  const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null, heads: [], chunks: 0 }
   const start = await host.program()
   const anchor = start.nodes.find((n) => n.id === (request.place.after ?? request.place.into))
   await host.show({ type: 'progress', text: 'Leyendo lo que ya hay…' })
@@ -764,6 +775,15 @@ export async function build(
       }
       if (tally.trouble !== null) break
       tally.code.push(chunk.code)
+      tally.chunks++
+      if (
+        first !== null &&
+        /^(?:@|def |async def |class )/.test(
+          chunk.code.split('\n').find((row) => row.trim() !== '' && !row.startsWith('#')) ?? '',
+        )
+      ) {
+        tally.heads.push(first)
+      }
     }
     prep.stop = true
     await preparing
@@ -815,7 +835,7 @@ export async function modify(
   request: ModifyRequest,
 ): Promise<Outcome> {
   const { command } = request
-  const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null }
+  const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null, heads: [], chunks: 0 }
   const start = await host.program()
   await host.show({ type: 'progress', text: 'Leyendo lo que hay que cambiar…' })
   const context = await contextFor(players.decider, {

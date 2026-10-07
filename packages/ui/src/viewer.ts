@@ -14,6 +14,12 @@ export interface ViewerContent {
   stale?: boolean
   /** No enseña un valor: dice que la IA está trabajando ahí. Late mientras dura. */
   busy?: boolean
+  /**
+   * Es el hueco de algo que aún no existe (lo que el usuario está pidiendo): qué clase de cosa va a ser. Se
+   * dibuja con su icono y su color, para que se reconozca antes de que haya código.
+   */
+  ghost?:
+    'function' | 'class' | 'loop' | 'condition' | 'value' | 'list' | 'program' | 'change' | 'talk'
   /** Es una ayuda para entender (una curva, una tabla), no algo que el programa haya calculado. */
   aid?: boolean
   table?: {

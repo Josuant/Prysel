@@ -48,7 +48,8 @@ const INTENT_MEANING: Record<Intent, string> = {
   modificar:
     'Cambiar código que YA está escrito: que haga otra cosa, corregirlo, refactorizarlo, simplificarlo, cambiar un valor o una operación («ahora que reste en lugar de sumar», «refactoriza esto»).',
   renombrar: 'Solo cambiar el nombre de una variable, una función o una etapa que ya existe.',
-  enfocar: 'Ir a un elemento, mostrarlo, buscarlo o llevar la vista hasta él, sin cambiar nada.',
+  enfocar:
+    'Mover la vista, sin cambiar nada: ver, ir a, entrar en o buscar algo que ya existe («ver la clase Animal», «entra en sumar»), o volver al programa principal («ver el programa», «sal de aquí»).',
   ensenar:
     'Querer entender un tema, un concepto o cómo funciona algo que NO es un elemento de este programa («explícame cómo funciona la reproducción humana», «qué es una red neuronal», «cómo se calcula el interés compuesto»).',
   explicar:
@@ -194,6 +195,8 @@ export type Directive =
       pending?: { id: string; template: TemplateId }
       /** Hay que explicar este elemento (lo redacta la IA generativa, después). */
       explain?: string
+      /** La vista vuelve al programa principal: se sale de la función o la clase que se estuviera viendo. */
+      home?: boolean
     }
   | {
       kind: 'ask'
@@ -864,6 +867,23 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         input.genId !== undefined
       ) {
         return compose(true)
+      }
+      // «Ver el programa principal», «sal de aquí»: no señala un elemento, pide salir a la vista general.
+      if (
+        intent === 'enfocar' &&
+        !namedTarget &&
+        forced.target === undefined &&
+        /\b(programa|principal|main|general|inicio|sal|salir|salgamos|fuera|atras|vuelve|volver|todo)\b/.test(
+          input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
+        )
+      ) {
+        return done({
+          kind: 'do',
+          intent,
+          effect: { type: 'focus' },
+          home: true,
+          say: 'Volvemos al programa principal.',
+        })
       }
       if (!target) {
         return done({ kind: 'unknown', say: 'Dime a qué te refieres: selecciónalo o nómbralo.' })

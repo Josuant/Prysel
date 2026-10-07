@@ -122,6 +122,8 @@ export interface GeneratedMessage {
   jevMs?: number
   /** Ya no queda nada en marcha de esa orden. */
   done?: boolean
+  /** Lo construido es una sola función o clase (la línea de su cabecera): la vista entra en ella. */
+  enter?: number
 }
 
 /**

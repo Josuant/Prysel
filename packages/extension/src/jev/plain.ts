@@ -824,7 +824,10 @@ export function codeSystem(teach: boolean): string {
       ? `${TEACH} Sé riguroso con el tema: no inventes datos; si usas valores aproximados, que sean razonables.`
       : 'Escribes un programa en Python que un editor va a dibujar como un diagrama, pieza a pieza.',
     'Escribe el código, y solo el código: Python tal cual iría en el archivo, sin explicaciones alrededor.',
-    'Código claro, de principiante: nombres en español, valores de ejemplo concretos, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
+    'Código claro, de principiante: nombres en español, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
+    teach
+      ? 'Usa valores de ejemplo concretos, y enseña el resultado.'
+      : 'Escribe EXACTAMENTE lo que se pide y nada más. Si se pide una clase, solo la clase (con su constructor y lo que la orden nombre): no le inventes métodos. Si se pide una función, solo la función. No añadas ejemplos de uso, llamadas de prueba ni print que la orden no pida: quien lo pidió irá diciendo lo siguiente.',
     'Si la orden pide algo nuevo que use lo que ya hay («una clase que use esa función»), escribe solo lo nuevo, con lo que ya existe dentro o llamándolo: no vuelvas a escribir el programa ni lo expliques por partes.',
     'Si hay un plan, sigue su orden al pie de la letra: primero TODO lo de la primera parte, luego lo de la segunda… y que cada parte tenga algo de código. Escribe cada función cuando llegue la parte del plan a la que pertenece, no antes. No pongas comentarios con los títulos de las partes: ya están puestos.',
     'No leas ni escribas archivos, no uses la red ni el sistema, ni pidas datos con input(), salvo que la orden lo pida expresamente. Como mucho unas 40 líneas.',

@@ -241,6 +241,29 @@ describe('algo pequeño: el código, tal cual, y cada sentencia en cuanto llega'
     }
   })
 
+  it('si lo construido es una sola función o clase, al acabar se entra en ella', async () => {
+    const code = lines(
+      'class Animal:',
+      '    def __init__(self, nombre):',
+      '        self.nombre = nombre',
+    )
+    const one = stage(lines('x = 1'))
+    const built = await build(
+      one.host,
+      { decider: localDecider(), provider: ai({ code }) },
+      { ...small, command: 'una clase animal', flow: 'stream' },
+    )
+    expect(built.trouble).toBeNull()
+    // La cabecera de la clase quedó en la línea 2: ahí entra la vista.
+    expect(built.enter).toBe(2)
+    // Varias cosas sueltas no son un sitio donde entrar.
+    const many = stage('')
+    expect(
+      (await build(many.host, { decider: localDecider(), provider: ai({ code: SUM }) }, small))
+        .enter,
+    ).toBeUndefined()
+  })
+
   it('cada pieza aparece con su frase, y la siguiente espera a que se haya dicho', async () => {
     const provider = ai({ code: SUM })
     const control: { waits: number[] } = { waits: [] }
