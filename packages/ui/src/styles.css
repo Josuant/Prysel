@@ -1885,6 +1885,15 @@ button.fn-menu__crumb:hover {
   stroke-width: 1.2;
   stroke-linejoin: round;
 }
+/* Lo que queda cuando dos piezas se juntan: una sola, con los dos nombres, a la espera de su código. */
+.chip-ghost--fused {
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-raised));
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent),
+    var(--shadow-raised);
+  font-weight: 700;
+}
 [data-picked] {
   outline: 2px dashed var(--accent);
   outline-offset: 3px;

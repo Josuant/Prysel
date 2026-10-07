@@ -93,13 +93,97 @@ export function gesture(
   other?: Element | null,
 ): number {
   if (kind === 'copy') return flyNode(source, source, 'after').ms
-  if (kind === 'merge') return other ? flyNode(source, other, 'into').ms : 0
+  if (kind === 'merge') return other ? fuse(source, other) : 0
   const box = source.querySelector<HTMLElement>('.node, .vchip') ?? (source as HTMLElement)
   box.setAttribute('data-gesture', kind)
   setTimeout(() => {
     box.removeAttribute('data-gesture')
   }, GESTURE_MS + 150)
   return GESTURE_MS
+}
+
+/** Lo que tarda cada pieza en llegar al punto de encuentro, y lo que dura la que queda. */
+const FUSE_MS = 900
+const FUSED_MS = 2200
+
+/**
+ * Dos piezas se juntan en una: el nombre de cada una sale de donde está y van a encontrarse a medio camino;
+ * al tocarse, queda una sola —con los dos nombres—, latiendo, mientras se escribe la que las reúne. Las
+ * originales se quedan en sombra. Devuelve cuánto dura el encuentro.
+ */
+function fuse(first: Element, second: Element): number {
+  const stage = first.closest<HTMLElement>('.react-flow')
+  if (!stage) return 0
+  const frame = stage.getBoundingClientRect()
+  const pieces = [first, second].map((piece) => {
+    const name =
+      namesOf(piece)[0] ??
+      piece.querySelector<HTMLElement>('.node, .vchip') ??
+      (piece as HTMLElement)
+    const box = name.getBoundingClientRect()
+    return {
+      piece,
+      name,
+      text: textOf(name).slice(0, 28),
+      x: box.left + box.width / 2 - frame.left,
+      y: box.top + box.height / 2 - frame.top,
+    }
+  })
+  const [a, b] = pieces
+  if (!a || !b) return 0
+  // Se encuentran entre las dos, un poco más abajo: donde va a nacer la que las reúne.
+  const meetX = Math.max(60, Math.min((a.x + b.x) / 2, frame.width - 60))
+  const meetY = Math.max(40, Math.min((a.y + b.y) / 2 + 54, frame.height - 40))
+  const ghosts = pieces.map((item) => {
+    const holder = item.name.closest<HTMLElement>('.vchip') ?? item.name
+    const look = getComputedStyle(holder)
+    const ghost = document.createElement('div')
+    ghost.className = 'chip-ghost'
+    ghost.textContent = item.text
+    const paint = solid(look.backgroundColor)
+    if (paint) ghost.style.background = paint
+    ghost.style.color = look.color
+    stage.append(ghost)
+    const size = ghost.getBoundingClientRect()
+    const from = `translate(${(item.x - size.width / 2).toFixed(1)}px, ${(item.y - size.height / 2).toFixed(1)}px)`
+    const to = `translate(${(meetX - size.width / 2).toFixed(1)}px, ${(meetY - size.height / 2).toFixed(1)}px)`
+    ghost.animate(
+      [
+        { transform: `${from} scale(1)`, opacity: 0, offset: 0 },
+        { transform: `${from} scale(1.12)`, opacity: 1, offset: 0.2 },
+        { transform: `${to} scale(1.05)`, opacity: 1, offset: 0.9 },
+        { transform: `${to} scale(0.8)`, opacity: 0, offset: 1 },
+      ],
+      { duration: FUSE_MS, easing: 'ease-in-out', fill: 'both' },
+    )
+    item.piece.setAttribute('data-moving', '')
+    return ghost
+  })
+  setTimeout(() => {
+    for (const ghost of ghosts) ghost.remove()
+    const fused = document.createElement('div')
+    fused.className = 'chip-ghost chip-ghost--fused'
+    fused.textContent = `${a.text} + ${b.text}`
+    stage.append(fused)
+    const size = fused.getBoundingClientRect()
+    const at = `translate(${(meetX - size.width / 2).toFixed(1)}px, ${(meetY - size.height / 2).toFixed(1)}px)`
+    fused.animate(
+      [
+        { transform: `${at} scale(0.6)`, opacity: 0, offset: 0 },
+        { transform: `${at} scale(1.18)`, opacity: 1, offset: 0.14 },
+        { transform: `${at} scale(1)`, opacity: 1, offset: 0.28 },
+        { transform: `${at} scale(1.05)`, opacity: 1, offset: 0.6 },
+        { transform: `${at} scale(1)`, opacity: 1, offset: 0.85 },
+        { transform: `${at} scale(1)`, opacity: 0, offset: 1 },
+      ],
+      { duration: FUSED_MS, easing: 'ease-in-out', fill: 'both' },
+    )
+    setTimeout(() => {
+      fused.remove()
+      for (const item of pieces) item.piece.removeAttribute('data-moving')
+    }, FUSED_MS)
+  }, FUSE_MS)
+  return FUSE_MS
 }
 
 export function dragChips(target: Element, sources: readonly Element[]): () => void {

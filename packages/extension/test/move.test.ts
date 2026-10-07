@@ -240,6 +240,59 @@ describe('«mete la función sumar en una clase Calculadora»', () => {
   })
 })
 
+describe('«Ahora fusiona sumar y restar», con el JEV sin decidirse entre las piezas', () => {
+  it('la acción la dice el JEV; las dos piezas, la propia orden, que las nombra', async () => {
+    const source = lines(
+      'def sumar(a, b):',
+      '    return a + b',
+      'def restar(a, b):',
+      '    return a - b',
+    )
+    const program = parse(source)
+    const pick = (choice: string, confidence: number) => ({
+      type: 'choice' as const,
+      choice,
+      confidence,
+      probabilities: {},
+    })
+    // Lo que contestó el JEV de verdad, mirando `restar` por dentro.
+    const { directive } = await decideCommand(
+      {
+        text: 'Ahora fusiona sumar y restar',
+        program,
+        selected: null,
+        focus: program.nodes.find((n) => n.range && n.line === 3)?.id ?? null,
+        typed: true,
+        genId: 'g1',
+      },
+      {
+        id: 'grabado',
+        decide: () =>
+          Promise.resolve({
+            ms: 1,
+            answers: {
+              accion: pick('juntar', 0.98),
+              varias: { type: 'noul', noul: 0.15 },
+              ambito: pick('programa', 0.22),
+              objetivo: pick('ninguno', 0.36),
+              mover_que: pick('ninguno', 0.19),
+              mover_donde: pick('p3', 0.26),
+              mover_como: pick('dentro', 0.55),
+            },
+          }),
+      },
+    )
+    expect(directive.kind === 'do' && directive.say).toBe(
+      'Junto función «def sumar(a, b):» con función «def restar(a, b):».',
+    )
+    expect(directive.kind === 'do' && directive.gesture?.kind).toBe('merge')
+    expect(directive.kind === 'do' && directive.effect).toMatchObject({
+      type: 'modify',
+      lines: { from: 1, to: 4 },
+    })
+  })
+})
+
 describe('otras cosas que se le hacen a lo que ya existe, cada una con su gesto', () => {
   it('envolver: la sentencia pasa dentro de un bucle, una decisión o un intento', async () => {
     const loop = await order('envuelve esto en un bucle', 8)

@@ -1145,14 +1145,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   useEffect(() => {
     reveal(revealIds)
   }, [revealIds, reveal])
+  // Se va una vez por cada cosa que se quiere enseñar: después, el usuario puede irse a otra parte (abrir
+  // otra función, volver al programa) sin que la vista lo devuelva a lo último que se construyó.
+  const wentFor = useRef<number | undefined>(undefined)
   useEffect(() => {
     if (!program || wantedId === undefined || spotId !== null) return
+    if (spotKey === undefined || wentFor.current === spotKey) return
     const node = program.nodes.find((n) => n.id === wantedId)
     if (!node) return
+    wentFor.current = spotKey
     const fn = node.kind === 'abstraction.collapsed' ? node : enclosingFunctionNode(program, node)
     const home = fn ? homeOf(fn.id) : null
     if (home !== focusId) openView(home)
-  }, [program, wantedId, spotId, homeOf, focusId, openView])
+  }, [program, wantedId, spotId, spotKey, homeOf, focusId, openView])
   const sendOrder = (text: string, force?: Forced) => {
     if (version === null) return
     hush()
@@ -1264,13 +1269,21 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         // Juntar o extraer: el código lo reescribe la IA (tarda); mientras, se ve qué se va a hacer.
         const shown = directive.gesture
         if (!reducedMotion) {
-          setWanted({ id: shown.id, key: ++spotSeq.current, wide: true })
-          setTimeout(() => {
-            const find = (id: string) =>
-              document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
-            const piece = find(shown.id)
-            if (piece) gesture(shown.kind, piece, shown.to === undefined ? null : find(shown.to))
-          }, 550)
+          // Las piezas tienen que estar a la vista las dos: si se mira otra cosa (una de ellas por
+          // dentro), antes se sale al programa.
+          const hidden =
+            !shownIds.has(shown.id) || (shown.to !== undefined && !shownIds.has(shown.to))
+          if (hidden) view.open(null)
+          else setWanted({ id: shown.id, key: ++spotSeq.current, wide: true })
+          setTimeout(
+            () => {
+              const find = (id: string) =>
+                document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+              const piece = find(shown.id)
+              if (piece) gesture(shown.kind, piece, shown.to === undefined ? null : find(shown.to))
+            },
+            hidden ? 950 : 550,
+          )
         }
       } else if (effect.type === 'run') run(effect.ids)
       else if (effect.type === 'trace') post({ type: 'trace', version })

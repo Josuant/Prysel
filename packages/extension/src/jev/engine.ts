@@ -555,6 +555,27 @@ export function classIn(text: string): string | null {
   return found.charAt(0).toUpperCase() + found.slice(1)
 }
 
+/**
+ * Los elementos que la orden nombra **tal cual** (una función, una clase o una variable por su nombre), en
+ * el orden en que los dice. Es el respaldo de cuando el JEV no se decide entre ellos: si la orden dice
+ * «sumar y restar» y hay una función `sumar` y otra `restar`, son esas.
+ */
+export function namedBy(text: string, targets: readonly Target[]): Target[] {
+  const words = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/)
+  return targets
+    .flatMap((target) => {
+      const name = /^(?:(?:async\s+)?def|class)\s+(\w+)|^(\w+)\s*=(?!=)/.exec(target.head)
+      const at = words.indexOf((name?.[1] ?? name?.[2] ?? '').toLowerCase())
+      return target.node && at >= 0 ? [{ target, at }] : []
+    })
+    .sort((a, b) => a.at - b.at)
+    .map((entry) => entry.target)
+}
+
 /** El título de «empieza una etapa llamada Población inicial»: lo entrecomillado, o lo que va tras «llamada». */
 export function titleIn(text: string): string | null {
   const quoted = /[«"“]([^«»"”]{1,80})[»"”]/u.exec(text)
@@ -932,8 +953,14 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
           ? chosen
           : (targets.find((item) => item.ref === answer.choice) ?? null)
       }
-      const what = end('mover_que') ?? (forced.target !== undefined ? byId(forced.target) : chosen)
-      const where = end('mover_donde')
+      // Lo mismo que al juntar: si el JEV no se decide, valen las que la orden nombra (la primera viaja).
+      const said = namedBy(input.text, targets)
+      const what =
+        end('mover_que') ??
+        (forced.target !== undefined ? byId(forced.target) : chosen) ??
+        said[0] ??
+        null
+      const where = end('mover_donde') ?? said.find((item) => item.id !== what?.id) ?? null
       // «Mete sumar en una clase Calculadora», y esa clase aún no existe: se crea alrededor de ella.
       if (what?.node && !where && classIn(input.text) !== null) return intoClass(what)
       if (!what?.node || !where?.node || what.id === where.id) {
@@ -1022,8 +1049,11 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
           say: `Saco ${naming(target)} a una función propia.`,
         })
       }
-      const one = end('mover_que') ?? target
-      const other = end('mover_donde')
+      // Qué dos piezas: las que el JEV tenga claras y, si no, las que la orden nombra tal cual.
+      const said = namedBy(input.text, targets)
+      const one = end('mover_que') ?? said[0] ?? target
+      const other =
+        [end('mover_donde'), ...said].find((item) => item && item.id !== one?.id) ?? null
       if (!one?.node || !other?.node || one.id === other.id) {
         return done({ kind: 'unknown', say: 'Dime qué dos cosas junto: nómbralas.' })
       }
