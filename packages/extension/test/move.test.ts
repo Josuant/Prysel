@@ -37,10 +37,13 @@ const SOURCE = lines(
   'y = 2',
 )
 
-async function order(text: string, source = SOURCE) {
+/** `line`: lo que está seleccionado en el lienzo al dar la orden («esto»). */
+async function order(text: string, line?: number, source = SOURCE) {
   const program = parse(source)
+  const selected =
+    line === undefined ? null : (program.nodes.find((n) => n.range && n.line === line)?.id ?? null)
   const { directive } = await decideCommand(
-    { text, program, selected: null, focus: null, typed: true },
+    { text, program, selected, focus: null, typed: true, genId: 'g1' },
     localDecider(),
   )
   const effect = directive.kind === 'do' ? directive.effect : null
@@ -85,5 +88,40 @@ describe('mover algo que ya existe', () => {
   it('sin saber qué o adónde, lo pregunta en vez de inventarlo', async () => {
     const { directive } = await order('mueve la función sumar')
     expect(directive.kind).toBe('unknown')
+  })
+})
+
+describe('otras cosas que se le hacen a lo que ya existe, cada una con su gesto', () => {
+  it('envolver: la sentencia pasa dentro de un bucle, una decisión o un intento', async () => {
+    const loop = await order('envuelve esto en un bucle', 8)
+    expect(loop.directive.kind === 'do' && loop.directive.gesture?.kind).toBe('wrap')
+    expect(loop.moved).toContain(lines('for _ in range(3):', '    x = 1', 'y = 2'))
+    const guard = await order('mete esto en un intento por si da error', 8)
+    expect(guard.moved).toContain(
+      lines('try:', '    x = 1', 'except Exception as error:', '    print(error)', 'y = 2'),
+    )
+  })
+
+  it('duplicar: una copia justo debajo', async () => {
+    const { directive, moved } = await order('duplica la función sumar')
+    expect(directive.kind === 'do' && directive.gesture?.kind).toBe('copy')
+    expect(moved?.match(/def sumar\(a, b\):/g)).toHaveLength(2)
+  })
+
+  it('juntar y extraer los reescribe la IA; el JEV dice con qué piezas, y qué gesto toca', async () => {
+    const merge = await order('junta la función sumar con la clase Calculadora')
+    expect(merge.directive.kind === 'do' && merge.directive.gesture).toMatchObject({
+      kind: 'merge',
+    })
+    expect(merge.directive.kind === 'do' && merge.directive.effect).toMatchObject({
+      type: 'modify',
+      lines: { from: 1, to: 6 },
+    })
+    const extract = await order('extrae esto a una función', 8)
+    expect(extract.directive.kind === 'do' && extract.directive.gesture?.kind).toBe('extract')
+    expect(extract.directive.kind === 'do' && extract.directive.effect).toMatchObject({
+      type: 'modify',
+      lines: { from: 8, to: 8 },
+    })
   })
 })

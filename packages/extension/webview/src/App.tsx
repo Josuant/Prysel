@@ -34,7 +34,7 @@ import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { ChatDock, type ChatEntry } from './ChatDock.tsx'
 import { CommandBar } from './CommandBar.tsx'
-import { dragChips, flyNode } from './dragging.ts'
+import { dragChips, flyNode, gesture } from './dragging.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -1219,7 +1219,24 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         const action = effect.action
         const to =
           action.type === 'move' ? (action.into ?? action.after ?? action.before) : undefined
-        if (action.type !== 'move' || to === undefined || reducedMotion) act(action)
+        const shown = directive.kind === 'do' ? directive.gesture : undefined
+        if (shown && !reducedMotion && action.type !== 'move') {
+          // Envolver o duplicar: primero se ve lo que se le va a hacer; el código cambia al acabar el gesto.
+          if (!shownIds.has(shown.id)) view.open(null)
+          setWanted({ id: shown.id, key: ++spotSeq.current })
+          setTimeout(
+            () => {
+              const piece = document.querySelector(
+                `.react-flow__node[data-id="${CSS.escape(shown.id)}"]`,
+              )
+              const ms = piece ? gesture(shown.kind, piece) : 0
+              setTimeout(() => {
+                act(action)
+              }, ms)
+            },
+            shownIds.has(shown.id) ? 550 : 900,
+          )
+        } else if (action.type !== 'move' || to === undefined || reducedMotion) act(action)
         else {
           // Mover se ve: su nombre viaja hasta el destino, y al llegar cambia el código. Si alguno de los
           // dos no está a la vista (se mira otra función), antes se sale al programa.
@@ -1243,7 +1260,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           )
         }
       } else if (effect.type === 'undo' || effect.type === 'redo') post({ type: effect.type })
-      else if (effect.type === 'run') run(effect.ids)
+      else if (effect.type === 'modify' && directive.kind === 'do' && directive.gesture) {
+        // Juntar o extraer: el código lo reescribe la IA (tarda); mientras, se ve qué se va a hacer.
+        const shown = directive.gesture
+        if (!reducedMotion) {
+          setWanted({ id: shown.id, key: ++spotSeq.current, wide: true })
+          setTimeout(() => {
+            const find = (id: string) =>
+              document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+            const piece = find(shown.id)
+            if (piece) gesture(shown.kind, piece, shown.to === undefined ? null : find(shown.to))
+          }, 550)
+        }
+      } else if (effect.type === 'run') run(effect.ids)
       else if (effect.type === 'trace') post({ type: 'trace', version })
       else if (effect.type === 'fold') view.enter(effect.id)
       if (directive.kind === 'do' && directive.home) {

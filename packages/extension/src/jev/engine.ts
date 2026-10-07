@@ -24,6 +24,10 @@ export const INTENTS = [
   'etapa',
   'eliminar',
   'mover',
+  'envolver',
+  'duplicar',
+  'juntar',
+  'extraer',
   'renombrar',
   'enfocar',
   'explicar',
@@ -48,6 +52,14 @@ const INTENT_MEANING: Record<Intent, string> = {
   eliminar: 'Eliminar, borrar o quitar un elemento que ya existe.',
   mover:
     'Cambiar de sitio algo que YA existe, sin escribir código nuevo: meterlo dentro de otra cosa («pon esta función dentro de la clase», «mete esto en el bucle»), o ponerlo antes o después de otra («mueve esto después de aquello»).',
+  envolver:
+    'Meter algo que YA existe dentro de una estructura nueva que lo contiene: un bucle que lo repita, una decisión que lo condicione o un intento que recoja su error («mete esto en un bucle», «envuélvelo en un si», «que no falle si da error»).',
+  duplicar:
+    'Hacer una copia de algo que YA existe, justo debajo («duplica esto», «copia esa línea»).',
+  juntar:
+    'Unir dos cosas que YA existen en una sola («junta estas dos funciones», «une esto con aquello», «fusiónalas»).',
+  extraer:
+    'Sacar algo que YA existe a una función propia, y dejar en su sitio la llamada («extrae esto a una función», «convierte este trozo en una función»).',
   modificar:
     'Cambiar código que YA está escrito: que haga otra cosa, corregirlo, refactorizarlo, simplificarlo, cambiar un valor o una operación («ahora que reste en lugar de sumar», «refactoriza esto»).',
   renombrar: 'Solo cambiar el nombre de una variable, una función o una etapa que ya existe.',
@@ -74,6 +86,10 @@ const INTENT_LABEL: Record<Intent, string> = {
   etapa: 'Empezar una etapa',
   eliminar: 'Eliminar',
   mover: 'Moverlo',
+  envolver: 'Envolverlo',
+  duplicar: 'Duplicarlo',
+  juntar: 'Juntarlos',
+  extraer: 'Extraerlo a una función',
   modificar: 'Cambiar lo que hay',
   renombrar: 'Renombrar',
   enfocar: 'Ir a verlo',
@@ -201,6 +217,11 @@ export type Directive =
       explain?: string
       /** La vista vuelve al programa principal: se sale de la función o la clase que se estuviera viendo. */
       home?: boolean
+      /**
+       * Cómo se enseña lo que se va a hacer, antes de que cambie el código: lo que se envuelve se enmarca, lo
+       * que se copia se desdobla, lo que se junta viaja hasta lo otro, lo que se extrae se levanta.
+       */
+      gesture?: { kind: 'wrap' | 'copy' | 'merge' | 'extract'; id: string; to?: string }
     }
   | {
       kind: 'ask'
@@ -444,8 +465,19 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         [NONE]: 'No nombra ningún elemento concreto.',
       },
     }
-    // Mover tiene dos extremos, y hay que saber cuál es cuál: se preguntan aparte (no cuesta nada).
-    if (forced.intent === undefined || forced.intent === 'mover') {
+    if (forced.intent === undefined || forced.intent === 'envolver') {
+      questions.envolver_en = {
+        type: 'choice',
+        instructions: 'Si la `orden` pide meter algo dentro de una estructura nueva, ¿en cuál?',
+        criteria: {
+          bucle: 'Un bucle: que se repita.',
+          decision: 'Una decisión: que solo pase si se cumple una condición.',
+          intento: 'Un intento: que si da error no se caiga el programa.',
+        },
+      }
+    }
+    // Mover y juntar tienen dos extremos, y hay que saber cuál es cuál: se preguntan aparte (no cuesta nada).
+    if (forced.intent === undefined || forced.intent === 'mover' || forced.intent === 'juntar') {
       const elements = {
         ...Object.fromEntries(targets.map((target) => [target.ref, target.description])),
         ...(chosen
@@ -456,13 +488,13 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
       questions.mover_que = {
         type: 'choice',
         instructions:
-          'Si la `orden` pide cambiar algo de sitio, ¿QUÉ elemento es el que se mueve (el que viaja)?',
+          'Si la `orden` pide cambiar algo de sitio o juntarlo con otra cosa, ¿QUÉ elemento es el que se mueve (el que viaja)?',
         criteria: elements,
       }
       questions.mover_donde = {
         type: 'choice',
         instructions:
-          'Si la `orden` pide cambiar algo de sitio, ¿cuál es el DESTINO: el elemento dentro del cual, o junto al cual, va a quedar?',
+          'Si la `orden` pide cambiar algo de sitio o juntarlo con otra cosa, ¿cuál es el DESTINO: el elemento dentro del cual, junto al cual o con el cual va a quedar?',
         criteria: elements,
       }
       questions.mover_como = {
@@ -853,6 +885,90 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         intent,
         effect: { type: 'action', action: { type: 'move', id: what.id, ...spot } },
         say: `Muevo ${naming(what)} ${phrase} ${naming(where)}.`,
+      })
+    }
+
+    case 'envolver': {
+      if (!target?.node) {
+        return done({ kind: 'unknown', say: 'Dime qué envuelvo: selecciónalo o nómbralo.' })
+      }
+      const kind = choice(answers.envolver_en)?.choice ?? 'bucle'
+      const wrapper = kind === 'decision' ? 'if' : kind === 'intento' ? 'try' : 'for'
+      const name = wrapper === 'if' ? 'una decisión' : wrapper === 'try' ? 'un intento' : 'un bucle'
+      return done({
+        kind: 'do',
+        intent,
+        effect: { type: 'action', action: { type: 'wrap', id: target.id, with: wrapper } },
+        gesture: { kind: 'wrap', id: target.id },
+        say: `Meto ${naming(target)} dentro de ${name}.`,
+      })
+    }
+
+    case 'duplicar': {
+      if (!target?.node) {
+        return done({ kind: 'unknown', say: 'Dime qué duplico: selecciónalo o nómbralo.' })
+      }
+      return done({
+        kind: 'do',
+        intent,
+        effect: { type: 'action', action: { type: 'duplicate', id: target.id } },
+        gesture: { kind: 'copy', id: target.id },
+        say: `Duplico ${naming(target)}.`,
+      })
+    }
+
+    case 'juntar':
+    case 'extraer': {
+      if (input.genId === undefined) {
+        return done({
+          kind: 'unknown',
+          say: 'Para eso hace falta una IA generativa: elige un modelo.',
+        })
+      }
+      const end = (id: string): Target | null => {
+        const answer = choice(answers[id])
+        if (!answer || answer.confidence < THRESHOLDS.target) return null
+        return answer.choice === SELECTED
+          ? chosen
+          : (targets.find((item) => item.ref === answer.choice) ?? null)
+      }
+      if (intent === 'extraer') {
+        if (!target?.node) {
+          return done({ kind: 'unknown', say: 'Dime qué extraigo: selecciónalo o nómbralo.' })
+        }
+        return done({
+          kind: 'do',
+          intent,
+          effect: {
+            type: 'modify',
+            gen: input.genId,
+            lines: { from: target.line, to: target.lineEnd },
+            scope: naming(target),
+          },
+          gesture: { kind: 'extract', id: target.id },
+          say: `Saco ${naming(target)} a una función propia.`,
+        })
+      }
+      const one = end('mover_que') ?? target
+      const other = end('mover_donde')
+      if (!one?.node || !other?.node || one.id === other.id) {
+        return done({ kind: 'unknown', say: 'Dime qué dos cosas junto: nómbralas.' })
+      }
+      // Las dos piezas, y lo que haya entre ellas: es lo que la IA tiene que reescribir como una sola.
+      return done({
+        kind: 'do',
+        intent,
+        effect: {
+          type: 'modify',
+          gen: input.genId,
+          lines: {
+            from: Math.min(one.line, other.line),
+            to: Math.max(one.lineEnd, other.lineEnd),
+          },
+          scope: `${naming(one)} y ${naming(other)}`,
+        },
+        gesture: { kind: 'merge', id: one.id, to: other.id },
+        say: `Junto ${naming(one)} con ${naming(other)}.`,
       })
     }
 

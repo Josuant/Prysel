@@ -52,7 +52,8 @@ export function flyNode(
   if (!stage || !(target instanceof HTMLElement)) return { ms: 0, stop: () => undefined }
   const box = target.querySelector<HTMLElement>('.node, .vchip') ?? target
   box.setAttribute('data-receiving', how)
-  source.setAttribute('data-moving', '')
+  // Lo que se copia no se va de su sitio.
+  if (source !== target) source.setAttribute('data-moving', '')
   const stop = drag(
     stage,
     name,
@@ -73,6 +74,32 @@ export function flyNode(
       source.removeAttribute('data-moving')
     },
   }
+}
+
+/** Lo que dura un gesto que no viaja: lo que se enmarca, lo que se levanta. */
+export const GESTURE_MS = 950
+
+/**
+ * Enseñar lo que se le va a hacer a una pieza antes de que cambie el código:
+ * - `wrap`: algo nuevo la va a contener: un marco se abre a su alrededor;
+ * - `extract`: se va a sacar a una función propia: se levanta de donde está;
+ * - `copy`: se va a duplicar: su nombre se desdobla y cae justo debajo;
+ * - `merge`: se va a juntar con otra: viaja hasta ella.
+ * Devuelve cuánto dura (0 si no se pudo enseñar).
+ */
+export function gesture(
+  kind: 'wrap' | 'copy' | 'merge' | 'extract',
+  source: Element,
+  other?: Element | null,
+): number {
+  if (kind === 'copy') return flyNode(source, source, 'after').ms
+  if (kind === 'merge') return other ? flyNode(source, other, 'into').ms : 0
+  const box = source.querySelector<HTMLElement>('.node, .vchip') ?? (source as HTMLElement)
+  box.setAttribute('data-gesture', kind)
+  setTimeout(() => {
+    box.removeAttribute('data-gesture')
+  }, GESTURE_MS + 150)
+  return GESTURE_MS
 }
 
 export function dragChips(target: Element, sources: readonly Element[]): () => void {

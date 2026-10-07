@@ -231,6 +231,7 @@ describe('lo que se le pregunta a Jev', () => {
       'pieza',
       'donde',
       'objetivo',
+      'envolver_en',
       'mover_que',
       'mover_donde',
       'mover_como',

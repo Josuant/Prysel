@@ -24,6 +24,13 @@ const INTENT_WORDS: [Intent, RegExp][] = [
   ],
   ['paso_a_paso', /paso a paso|\btraza\b|\breproduce\b|\breproducir\b/],
   ['deshacer', /\bdesha[zc]/],
+  ['extraer', /\bextrae|\bextraer\b|\bsaca\b.*\bfuncion|\bconvierte\b.*\ben una funcion/],
+  ['juntar', /\bjunta|\bune\b|\bunir\b|\bfusiona|\bcombina/],
+  ['duplicar', /\bduplica|\bcopia\b/],
+  [
+    'envolver',
+    /\benvuelve|\benvolver\b|\brodea\b|\bmete\b.*\ben un[a]? (bucle|si\b|decision|if|intento|try)/,
+  ],
   // Antes que «añadir» («pon… dentro de…» no crea nada: cambia de sitio lo que hay).
   ['mover', /\bmueve|\bmover\b|\btraslada|\b(pon|mete|lleva) (el|la|este|esta|esto|ese|esa|eso)\b/],
   ['rehacer', /\breha[zc]/],
@@ -281,6 +288,16 @@ export function localDecider(): Decider {
           const ends = pointed && named.length < 2 ? ['seleccionado', ...named] : named
           const ref = ends[id === 'mover_que' ? 0 : 1]
           answers[id] = ref === undefined ? pick('ninguno', SURE) : pick(ref, SURE)
+        } else if (id === 'envolver_en') {
+          // «Por si da error» es un intento, aunque lleve un «si».
+          answers[id] = pick(
+            /\b(intento|try|error|falle)\b/.test(text)
+              ? 'intento'
+              : /\b(si|if|decision|condicion)\b/.test(text)
+                ? 'decision'
+                : 'bucle',
+            SURE,
+          )
         } else if (id === 'mover_como') {
           answers[id] = pick(
             /\bantes\b/.test(text)

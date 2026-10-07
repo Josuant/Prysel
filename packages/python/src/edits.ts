@@ -349,6 +349,31 @@ export function duplicateNode(program: Program, id: string): Change {
 }
 
 /**
+ * Envuelve una sentencia (con su cuerpo y los comentarios que lleva pegados) en un bucle, una decisión o un
+ * intento: la cabecera ocupa su sitio y ella pasa dentro, un nivel más sangrada.
+ */
+export function wrapNode(program: Program, id: string, wrapper: 'for' | 'if' | 'try'): Change {
+  const node = nodeById(program, id)
+  const range = node?.range
+  if (!node || !range) return { edits: [] }
+  const text = program.source
+  const first = range.lead ?? range.start
+  const begin = lineStart(text, first)
+  // Una sentencia que comparte línea con otra no es una línea suya: no se envuelve.
+  if (!blankBefore(text, begin, first)) return { edits: [] }
+  const end = lineEnd(text, range.end)
+  const pad = ' '.repeat(range.indent)
+  const body = reindent(text.slice(begin, end).split(/\r?\n/), range.indent, range.indent + 4)
+  const head = wrapper === 'for' ? 'for _ in range(3):' : wrapper === 'if' ? 'if True:' : 'try:'
+  const tail =
+    wrapper === 'try' ? [`${pad}except Exception as error:`, `${pad}    print(error)`] : []
+  return {
+    edits: [{ start: begin, end, text: [`${pad}${head}`, ...body, ...tail].join(eolOf(text)) }],
+    select: { line: lineOf(text, begin) },
+  }
+}
+
+/**
  * Las líneas de cada plantilla. Es el Python que aparece al añadir un nodo. Con `fill` (el nombre
  * de una variable que llega por un cable), el primer campo que admite un valor lo lee de ella.
  */
@@ -1039,6 +1064,8 @@ export function actionEdits(program: Program, action: NodeAction): Change {
       return deleteNode(program, action.id)
     case 'duplicate':
       return duplicateNode(program, action.id)
+    case 'wrap':
+      return wrapNode(program, action.id, action.with)
     case 'rename':
       return renameNode(program, action.id, action.to, action.from)
     case 'add': {
