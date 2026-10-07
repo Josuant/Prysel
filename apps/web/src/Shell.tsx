@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { recorder } from './recorder.ts'
 import { App, type HostFeatures } from '../../../packages/extension/webview/src/App.tsx'
 import { ErrorBoundary } from '../../../packages/extension/webview/src/ErrorBoundary.tsx'
 import { CodeEditor } from './CodeEditor.tsx'
@@ -73,6 +74,12 @@ export function Shell({ host }: { host: WebHost }) {
   // Ver lo que se le pregunta a cada modelo y lo que contesta: una opción, apagada de entrada.
   const [calls, setCalls] = useState(() => readFlag(CALLS))
   const features = useMemo(() => ({ ...WEB_FEATURES, calls }), [calls])
+  // Grabar cada explicación (vídeo de la pestaña y línea de tiempo) para revisarla después.
+  const recording = useSyncExternalStore(
+    (listener) => recorder.subscribe(listener),
+    () => `${recorder.state.on}|${recorder.state.video}|${recorder.state.recording}`,
+  )
+  const [recOn, recVideo, recNow] = recording.split('|').map((flag) => flag === 'true')
   const wide = useWide()
   useSystemTheme(host)
 
@@ -112,6 +119,17 @@ export function Shell({ host }: { host: WebHost }) {
           <span className="web-bar__brand">Prysel</span>
           <span className="web-bar__doc">{title}</span>
         </div>
+        {recNow && (
+          <button
+            type="button"
+            className="web-rec"
+            title="Grabando esta explicación. Pulsa para terminar y guardarla ya."
+            onClick={() => recorder.finish()}
+          >
+            <span className="web-rec__dot" aria-hidden />
+            Grabando
+          </button>
+        )}
         <IconButton
           label={code ? 'Ocultar el código' : 'Ver el código'}
           pressed={code}
@@ -206,6 +224,28 @@ export function Shell({ host }: { host: WebHost }) {
                   {calls
                     ? 'Quitar el botón «Consultas» del diagrama'
                     : 'Un botón en el diagrama para ver qué se le pregunta a cada IA y qué contesta'}
+                </span>
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                aria-pressed={recOn}
+                onClick={() => {
+                  // Desde el propio clic: el navegador solo deja pedir la captura tras un gesto.
+                  if (recOn) recorder.disarm()
+                  else void recorder.arm()
+                  setSheet(null)
+                }}
+              >
+                <strong>
+                  Grabar las explicaciones:{' '}
+                  {recOn ? (recVideo ? 'vídeo y línea de tiempo' : 'solo línea de tiempo') : 'no'}
+                </strong>
+                <span>
+                  {recOn
+                    ? 'Dejar de grabar y soltar la captura de la pestaña'
+                    : 'Al pedir algo a la IA se graba la pestaña hasta que termina, y se descarga con su línea de tiempo'}
                 </span>
               </button>
             </li>

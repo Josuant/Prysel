@@ -42,6 +42,31 @@ body {
   border-bottom: 1px solid var(--border-card);
   background: var(--surface);
 }
+/* El aviso de que se está grabando una explicación: pulsarlo la termina y la guarda. */
+.web-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--state-error) 45%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--state-error) 10%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.web-rec__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state-error);
+  animation: web-rec 1.2s ease-in-out infinite;
+}
+@keyframes web-rec {
+  50% {
+    opacity: 0.25;
+  }
+}
 .web-bar__title {
   display: flex;
   flex: 1;

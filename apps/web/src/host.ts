@@ -3,6 +3,7 @@ import { validEdits, type TextEdit } from '@prysel/python/edits'
 import runtimeWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm?url'
 import pythonWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm?url'
 import { CallLog } from '../../../packages/extension/src/calls.ts'
+import { recorder } from './recorder.ts'
 import { EditHistory } from '../../../packages/extension/src/history.ts'
 import { moveNoteIn, readLesson, type Lesson } from '../../../packages/extension/src/lesson.ts'
 import {
@@ -172,10 +173,14 @@ export class WebHost {
   /** Lo que manda el lienzo (su `vscode.postMessage`). Se valida igual que en la extensión. */
   receive(value: unknown) {
     const message = parseHostMessage(value)
-    if (message) void this.handle(message)
+    if (message) {
+      recorder.note('in', message)
+      void this.handle(message)
+    }
   }
 
   private post(message: WebviewMessage) {
+    recorder.note('out', message)
     // Como un `postMessage` de verdad: llega después, nunca dentro de la llamada que lo provocó.
     setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: message })), 0)
   }
