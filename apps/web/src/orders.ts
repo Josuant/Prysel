@@ -63,6 +63,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 const STEP_PATIENCE_MS = 3000
+/** Lo más que se espera, quieto, a que el usuario acabe de hablar. */
+const HOLD_PATIENCE_MS = 12_000
 const STEP_PAUSE_MS = 700
 const SPEECH_PATIENCE_MS = 25_000
 const AFTER_SPEECH_MS = 280
@@ -88,6 +90,8 @@ export class Orders {
   private speaking = new Map<number, (spoke: boolean) => void>()
   private speechSeq = 0
   private fills = new Map<string, Fill>()
+  /** El usuario está hablando: lo que se construye se queda quieto. */
+  private held = false
 
   constructor(private readonly port: OrderPort) {}
 
@@ -114,7 +118,10 @@ export class Orders {
    */
   async receive(message: CommandMessage) {
     const active = this.building
-    if (!active) return this.handle(message)
+    if (!active) {
+      this.held = false
+      return this.handle(message)
+    }
     let what: Interruption = 'otra'
     try {
       what = (
@@ -127,6 +134,8 @@ export class Orders {
     } catch {
       what = 'otra'
     }
+    // Ya se sabe qué hacer con lo que dijo: lo que estaba quieto sigue, o se corta.
+    this.held = false
     if (what === 'seguir') {
       this.port.post({
         type: 'decision',
@@ -400,6 +409,16 @@ export class Orders {
   private async pauseFor(ms: number, signal: AbortSignal) {
     const until = Date.now() + ms
     while (!signal.aborted && Date.now() < until) await sleep(Math.min(40, ms))
+    // El usuario está hablando: lo que se construye espera a oír qué dice (con un tope, por si el micrófono
+    // se quedó abierto sin nadie).
+    const patience = Date.now() + HOLD_PATIENCE_MS
+    while (this.held && !signal.aborted && Date.now() < patience) await sleep(60)
+    if (this.held && Date.now() >= patience) this.held = false
+  }
+
+  /** El usuario empezó a hablar, o dejó de hacerlo sin decir nada. */
+  listening(on: boolean) {
+    this.held = on && this.building !== null
   }
 
   /** Una orden compleja la lleva el director (`jev/director.ts`), por partes, mientras el diagrama cambia. */
@@ -476,6 +495,7 @@ export class Orders {
           effect: event.effect,
           ...(event.wide ? { wide: true } : {}),
           ...(event.mark ? { mark: event.mark } : {}),
+          ...(event.folded ? { folded: true } : {}),
           ...(seq === undefined ? {} : { seq }),
         })
       },

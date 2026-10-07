@@ -40,18 +40,30 @@ export interface ChatDockProps {
   onToggleVoice: () => void
   onSettings: () => void
   onTyping: () => void
+  /** El micrófono se abrió o se cerró (abierto: se escucha todo el rato, sin pulsar para cada frase). */
+  onMic?: (open: boolean) => void
+  /** Lo que se le está oyendo decir ahora mismo (`null`: nada, o ya acabó). */
+  onHearing?: (text: string | null) => void
 }
 
 interface Recognition {
   lang: string
   interimResults: boolean
   continuous: boolean
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
+  onresult:
+    | ((event: {
+        resultIndex: number
+        results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }>
+      }) => void)
+    | null
   onend: (() => void) | null
-  onerror: (() => void) | null
+  onerror: ((event: { error?: string }) => void) | null
   start(): void
   stop(): void
 }
+
+/** Tras empezar a oír algo, lo que se espera a que se convierta en una frase antes de darlo por ruido. */
+const HEARING_PATIENCE_MS = 4000
 
 /** El reconocimiento de voz del navegador (Chrome, Safari), si lo hay. */
 function recognitionClass(): (new () => Recognition) | null {
@@ -74,6 +86,8 @@ export function ChatDock({
   onToggleVoice,
   onSettings,
   onTyping,
+  onMic,
+  onHearing,
 }: ChatDockProps) {
   const [text, setText] = useState('')
   const [open, setOpen] = useState(false)
@@ -90,8 +104,6 @@ export function ChatDock({
     if (node) node.scrollTop = node.scrollHeight
   }, [entries, open])
 
-  useEffect(() => () => recognition.current?.stop(), [])
-
   const send = (value: string) => {
     const order = value.trim().slice(0, MAX_COMMAND)
     if (order === '') return
@@ -99,36 +111,92 @@ export function ChatDock({
     onSubmit(order)
   }
 
-  const listen = () => {
-    if (!Speech) return
-    if (listening) {
-      recognition.current?.stop()
-      return
+  // El micrófono abierto: se escucha todo el rato. Cada frase que se termina de decir se manda como una
+  // orden; mientras se está diciendo, se avisa (lo que se construye se queda quieto a oírla).
+  const wanted = useRef(false)
+  const quiet = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hearing = (value: string | null) => {
+    if (quiet.current) clearTimeout(quiet.current)
+    quiet.current = null
+    onHearing?.(value)
+    // Si lo oído no llega a frase (un ruido, una tos), se suelta solo.
+    if (value !== null) {
+      quiet.current = setTimeout(() => {
+        setText('')
+        onHearing?.(null)
+      }, HEARING_PATIENCE_MS)
     }
+  }
+  const open_ = () => {
+    if (!Speech) return
     const r = new Speech()
     r.lang = 'es-ES'
     r.interimResults = true
-    r.continuous = false
-    let heard = ''
+    r.continuous = true
     r.onresult = (event) => {
-      heard = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? '')
-        .join('')
-      setText(heard)
+      let said = ''
+      let partial = ''
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i]
+        const transcript = result?.[0]?.transcript ?? ''
+        if (result?.isFinal) said += transcript
+        else partial += transcript
+      }
+      if (said.trim() !== '') {
+        hearing(null)
+        send(said)
+      } else if (partial.trim() !== '') {
+        setText(partial)
+        hearing(partial)
+      }
     }
+    // El navegador corta la escucha cada cierto tiempo (o tras un silencio): mientras se quiera, se reabre.
     r.onend = () => {
-      setListening(false)
       recognition.current = null
-      if (heard.trim()) send(heard)
+      if (wanted.current) open_()
+      else setListening(false)
     }
-    r.onerror = () => {
-      setListening(false)
+    r.onerror = (event) => {
+      // Sin permiso (o sin micrófono) no tiene sentido insistir.
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        wanted.current = false
+        onMic?.(false)
+      }
     }
     recognition.current = r
+    try {
+      r.start()
+    } catch {
+      wanted.current = false
+      setListening(false)
+      onMic?.(false)
+    }
+  }
+  const listen = () => {
+    if (!Speech) return
+    if (listening) {
+      wanted.current = false
+      recognition.current?.stop()
+      hearing(null)
+      setListening(false)
+      onMic?.(false)
+      return
+    }
+    wanted.current = true
     onTyping()
     setListening(true)
-    r.start()
+    onMic?.(true)
+    open_()
   }
+
+  // Al desmontarse, el micrófono se cierra.
+  useEffect(
+    () => () => {
+      wanted.current = false
+      recognition.current?.stop()
+    },
+    [],
+  )
 
   const preview = lastAi ? lastLine(lastAi) : null
 
@@ -226,12 +294,33 @@ export function ChatDock({
           enterKeyHint="send"
           autoComplete="off"
           aria-label="Mensaje para la IA"
-          placeholder={listening ? 'Te escucho…' : 'Pregunta o pide algo…'}
+          placeholder={listening ? 'Te escucho: di lo que quieras…' : 'Pregunta o pide algo…'}
           onChange={(event) => {
             setText(event.target.value)
             onTyping()
           }}
         />
+        {Speech && (
+          <button
+            type="button"
+            className="chat__icon chat__mic"
+            data-listening={listening || undefined}
+            aria-pressed={listening}
+            aria-label={
+              listening
+                ? 'Micrófono abierto: pulsa para cerrarlo'
+                : 'Abrir el micrófono: hablar sin pulsar para cada frase'
+            }
+            title={
+              listening
+                ? 'Micrófono abierto: te escucho todo el rato. Pulsa para cerrarlo.'
+                : 'Abrir el micrófono y hablar con la IA sin pulsar nada más'
+            }
+            onClick={listen}
+          >
+            <Icon name="mic" size={18} />
+          </button>
+        )}
         {building ? (
           <button
             type="button"
@@ -241,16 +330,6 @@ export function ChatDock({
             onClick={onStop}
           >
             <Icon name="stop" size={16} />
-          </button>
-        ) : text.trim() === '' && Speech ? (
-          <button
-            type="button"
-            className="chat__send"
-            data-listening={listening || undefined}
-            aria-label={listening ? 'Dejar de escuchar' : 'Dictar'}
-            onClick={listen}
-          >
-            <Icon name="mic" size={18} />
           </button>
         ) : (
           <button

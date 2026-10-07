@@ -232,6 +232,9 @@ export class WebHost {
       case 'stopOrder':
         this.orders.stop()
         return
+      case 'listening':
+        this.orders.listening(message.on)
+        return
       case 'clearCalls':
         this.calls.clear()
         return

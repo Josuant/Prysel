@@ -224,12 +224,20 @@
 .chat__send[data-listening] {
   animation: chat-pulse 1.2s ease-in-out infinite;
 }
+/* El micrófono abierto: encendido y latiendo, para que no se olvide que escucha. */
+.chat__mic[data-listening] {
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink, var(--surface));
+  animation: chat-pulse 1.6s ease-in-out infinite;
+}
 @keyframes chat-pulse {
   50% {
     box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 25%, transparent);
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .chat__mic[data-listening],
   .chat__send[data-listening] {
     animation: none;
   }

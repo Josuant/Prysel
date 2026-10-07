@@ -150,6 +150,11 @@ export interface StepMessage {
   effect?: 'born' | 'told' | 'changed' | 'leaving'
   /** La cámara enseña el conjunto, no solo la pieza (lo decide el JEV). */
   wide?: boolean
+  /**
+   * La pieza entra en una parte del plan que se deja plegada: se señala la tarjeta de esa parte (la intención),
+   * no se abre para enseñar la línea. Quien quiera el detalle, abre la tarjeta.
+   */
+  folded?: boolean
 }
 
 /**
@@ -302,6 +307,15 @@ export interface StopOrderMessage {
   type: 'stopOrder'
 }
 
+/**
+ * El usuario ha empezado a hablar (`on`) o ha dejado de hacerlo sin decir nada que valga. Mientras habla, lo
+ * que se esté construyendo se queda quieto: va a decir algo, y puede cambiarlo todo.
+ */
+export interface ListeningMessage {
+  type: 'listening'
+  on: boolean
+}
+
 /** Olvidar las consultas apuntadas. */
 export interface ClearCallsMessage {
   type: 'clearCalls'
@@ -316,6 +330,7 @@ export type HostMessage =
   | CommandMessage
   | JevKeyMessage
   | StopOrderMessage
+  | ListeningMessage
   | SpokenMessage
   | ClearCallsMessage
   | PickModelMessage
@@ -561,6 +576,10 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   }
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
+  if (type === 'listening') {
+    const { on } = value as { on?: unknown }
+    return typeof on === 'boolean' ? { type: 'listening', on } : null
+  }
   if (type === 'spoken') {
     const { seq, spoke } = value as { seq?: unknown; spoke?: unknown }
     return Number.isInteger(seq) && typeof spoke === 'boolean'

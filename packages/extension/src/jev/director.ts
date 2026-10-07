@@ -132,6 +132,8 @@ export type Shown =
       mark?: string[]
       /** La cámara enseña el conjunto, no solo la pieza. */
       wide?: boolean
+      /** Entra en una parte del plan que se deja plegada: se señala su tarjeta, no la línea. */
+      folded?: boolean
     }
 
 export interface Players {
@@ -735,6 +737,8 @@ export async function build(
             effect: shown === 0 ? 'born' : 'told',
             // El conjunto se enseña al llegar el trozo (su cabecera); lo de dentro, de cerca.
             ...(verdict.wide && shown === 0 && index === 0 ? { wide: true } : {}),
+            // Al ritmo de la IA se sigue el plan, no cada línea: se ve llenarse la tarjeta de cada parte.
+            ...(streaming && planned ? { folded: true } : {}),
             ...(mark.length === 0 ? {} : { mark }),
           })
           shown++

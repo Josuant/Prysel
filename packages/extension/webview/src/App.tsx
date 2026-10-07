@@ -231,6 +231,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     born?: boolean
     change?: 'changed' | 'leaving'
     wide?: boolean
+    /** Su parte del plan se deja plegada: se señala la tarjeta de la parte, no se abre. */
+    folded?: boolean
     /** El trozo exacto de su código que se subraya mientras se habla de ella. */
     mark?: string[]
   } | null>(null)
@@ -284,7 +286,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   /** La IA que redacta y el motor que decide ahora: lo dice la extensión. */
   const [models, setModels] = useState<{ ai: string | null; jev: string | null } | null>(null)
   const spotSeq = useRef(0)
-  const [voice, setVoice] = useState<boolean>(() => saved().voice ?? true)
+  const [voiceOn, setVoice] = useState<boolean>(() => saved().voice ?? true)
+  // Con el micrófono abierto no se habla en voz alta: se oiría a sí mismo y lo tomaría por una orden. Lo que
+  // se iba a decir se lee (el subtítulo, el chat).
+  const [micOpen, setMicOpen] = useState(false)
+  const voice = voiceOn && !micOpen
+  /** Lo que se le está oyendo decir al usuario ahora mismo (`null`: nada). */
+  const [hearing, setHearing] = useState<string | null>(null)
   /** El cambio de una orden ya está en el lienzo: en cuanto se pinte, se sabe cuánto tardó. */
   const markPainted = useCallback(() => {
     const from = awaitingPaint.current
@@ -1017,7 +1025,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         ? wantedId
         : view.representative(wantedId)
   const spotKey = wanted?.key
-  const spotBorn = wanted?.born === true
+  const wantedFolded = wanted?.folded === true
+  // Solo «nace» lo que se ve nacer: si lo que se señala es la tarjeta que lo guarda, esa ya estaba.
+  const spotBorn = wanted?.born === true && spotId === wantedId
   const spotChange = wanted?.change
   const spotWide = wanted?.wide === true
   const spotlight = useMemo(
@@ -1074,9 +1084,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const revealIds = useMemo(
     () => [
       ...(revealMoment === null ? [] : [revealMoment]),
-      ...(wantedId === undefined ? [] : [wantedId]),
+      // Lo que entra en una parte del plan que se deja plegada no la abre: se señala su tarjeta.
+      ...(wantedId === undefined || wantedFolded ? [] : [wantedId]),
     ],
-    [revealMoment, wantedId],
+    [revealMoment, wantedId, wantedFolded],
   )
   useEffect(() => {
     reveal(revealIds)
@@ -1206,6 +1217,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             ? {}
             : { born: true }),
         ...(message.wide ? { wide: true } : {}),
+        ...(message.folded ? { folded: true } : {}),
         ...(message.mark?.length ? { mark: message.mark } : {}),
       })
     }
@@ -1430,7 +1442,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       )}
 
       <div className={`flex min-h-0 flex-1 ${wide ? 'flex-row' : 'flex-col'}`}>
-        <main className="relative min-h-0 min-w-0 flex-1">
+        <main
+          className="relative min-h-0 min-w-0 flex-1"
+          data-hearing={hearing !== null ? '' : undefined}
+        >
+          {/* Le estamos oyendo: se ve, grande, y con lo que va diciendo. Lo que se construía está quieto. */}
+          {hearing !== null && (
+            <div className="canvas-hearing" role="status" aria-live="polite">
+              <span className="canvas-hearing__dot" aria-hidden />
+              <span className="canvas-hearing__label">Te escucho</span>
+              <span className="canvas-hearing__text">{hearing}</span>
+            </div>
+          )}
           {/* La pestaña «Consultas» va encima del diagrama, que sigue montado (no pierde su cámara). */}
           {tab === 'calls' && (
             <div className="calls-layer">
@@ -1583,8 +1606,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     voice={voice}
                     onToggleVoice={() => {
                       if (voice) hush()
-                      vscode.setState({ ...saved(), voice: !voice } satisfies SavedState)
-                      setVoice(!voice)
+                      vscode.setState({ ...saved(), voice: !voiceOn } satisfies SavedState)
+                      setVoice(!voiceOn)
                     }}
                     onSubmit={(text) => {
                       sendOrder(text)
@@ -1749,13 +1772,25 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           }}
           onToggleVoice={() => {
             if (voice) hush()
-            vscode.setState({ ...saved(), voice: !voice } satisfies SavedState)
-            setVoice(!voice)
+            vscode.setState({ ...saved(), voice: !voiceOn } satisfies SavedState)
+            setVoice(!voiceOn)
           }}
           onSettings={() => {
             post({ type: 'pickModel' })
           }}
           onTyping={hush}
+          onMic={(open) => {
+            if (open) hush()
+            setMicOpen(open)
+            if (!open) setHearing(null)
+          }}
+          onHearing={(heard) => {
+            // Al empezar a oírle, lo que se construye se queda quieto; si no dijo nada, sigue.
+            if ((heard !== null) !== (hearing !== null)) {
+              post({ type: 'listening', on: heard !== null })
+            }
+            setHearing(heard)
+          }}
         />
       )}
     </div>
