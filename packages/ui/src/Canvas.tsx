@@ -1686,6 +1686,8 @@ function CanvasInner({
             size,
             ...(chip ? { chip } : {}),
             ...(fn ? { fn } : {}),
+            // Doble clic en el chip de una función: se va a su definición.
+            ...(fn && onOpen ? { onOpen } : {}),
             // La cajita en columna numera sus chips como los pasos: la línea en la que se definen.
             ...(aside && context === MODULE && (chip?.line ?? fn?.line) !== undefined
               ? { line: chip?.line ?? fn?.line }

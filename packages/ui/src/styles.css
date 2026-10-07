@@ -3770,6 +3770,12 @@ button.fn-menu__crumb:hover {
   position: absolute;
   z-index: 10;
 }
+/* Volver de la función que se está viendo, junto a las migas. */
+.canvas-float--trail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 /* Varios controles en fila. */
 .canvas-float--row {
   display: flex;

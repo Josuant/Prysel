@@ -1032,6 +1032,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
 
   // ── Órdenes: lo que se escribe o se dicta lo decide el motor JEV, y aquí se ejecuta (docs/voz.md). ──
   const shownIds = useMemo(() => new Set(view.nodes.map((node) => node.id)), [view.nodes])
+  /** Volver de la función que se ve: a la anterior del camino, o al programa. */
+  const goBack = () => {
+    const previous = view.trail[view.trail.length - 1]
+    if (previous) view.descend(previous.id)
+    else view.open(null)
+  }
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
   const goTo = (id: string) => {
     setSelected(id)
@@ -1375,6 +1381,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 {file ? baseName(file) : 'Sin archivo Python'}
               </span>
             </span>
+            {view.focus !== null && (
+              <Button
+                icon="undo"
+                title="Volver a donde estabas antes de entrar aquí"
+                onClick={goBack}
+              >
+                Volver
+              </Button>
+            )}
             <FunctionMenu
               functions={view.functions}
               methods={view.methods}
@@ -1630,7 +1645,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   {(view.functions.length > 0 ||
                     view.methods.length > 0 ||
                     view.focus !== null) && (
-                    <div className="canvas-float" data-at="top-left">
+                    <div className="canvas-float canvas-float--trail" data-at="top-left">
+                      {view.focus !== null && (
+                        <Button
+                          icon="undo"
+                          title="Volver a donde estabas antes de entrar aquí"
+                          onClick={goBack}
+                        >
+                          Volver
+                        </Button>
+                      )}
                       <FunctionMenu
                         functions={view.functions}
                         methods={view.methods}
