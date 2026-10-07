@@ -263,6 +263,13 @@ const GENERIC_ARG = /^(arg\d+|valor)$/
 export const labelsArgs = (args: readonly { name: string }[]): boolean =>
   args.length > 1 && args.some((arg) => !GENERIC_ARG.test(arg.name))
 
+/**
+ * Si un argumento lleva su rótulo en la línea: no cuando lo que se le pasa se llama igual que él
+ * (`poblacion=poblacion`), que sería leer dos veces lo mismo y quitarle sitio a lo demás.
+ */
+export const labelsArg = (arg: { name: string; value: string }): boolean =>
+  arg.name !== arg.value.trim()
+
 /** Cuántos argumentos se enseñan en la línea: los de siempre, y los conectados nunca se esconden. */
 export function lineArgs<T extends { name: string }>(
   args: readonly T[],
@@ -319,7 +326,10 @@ export function lineWidth(
       10 +
       shown.reduce(
         (sum, arg) =>
-          sum + lineField(arg.value, 60) + (label ? Math.ceil(arg.name.length * 6.4) + 4 : 0) + gap,
+          sum +
+          lineField(arg.value, 60) +
+          (label && labelsArg(arg) ? Math.ceil(arg.name.length * 6.4) + 4 : 0) +
+          gap,
         0,
       ) +
       (hidden > 0 ? 26 : 0) +
@@ -327,7 +337,9 @@ export function lineWidth(
   }
   // Varias pastillas abren la línea con más sitio: sin él, sus campos se aprietan hasta no leerse. Lo que va
   // aparte (el chevron, las pastillas de los subprocesos) no le quita sitio a los campos.
-  const cap = (names.length > 1 ? 800 : 560) + extra
+  // El tope es alto a propósito: una llamada con varios argumentos largos tiene que caber entera. Más
+  // estrecha, sus casillas se montan unas sobre otras y el nombre de la función se corta.
+  const cap = (names.length > 1 ? 1200 : 1100) + extra
   return Math.min(cap, Math.max(180, 30 + icon + gap + chip + title + inner + extra))
 }
 
