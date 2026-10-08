@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { recorder } from './recorder.ts'
+import { SCRIPTS, runScript } from './script.ts'
 import { App, type HostFeatures } from '../../../packages/extension/webview/src/App.tsx'
 import { ErrorBoundary } from '../../../packages/extension/webview/src/ErrorBoundary.tsx'
 import { CodeEditor } from './CodeEditor.tsx'
@@ -87,7 +88,7 @@ function useSystemTheme(host: WebHost) {
   }, [host])
 }
 
-type Sheet = 'menu' | 'settings' | null
+type Sheet = 'menu' | 'settings' | 'script' | null
 
 export function Shell({ host }: { host: WebHost }) {
   const [doc, setDoc] = useState(() => host.current)
@@ -98,6 +99,24 @@ export function Shell({ host }: { host: WebHost }) {
   const [calls, setCalls] = useState(() => readFlag(CALLS))
   const features = useMemo(() => ({ ...WEB_FEATURES, calls }), [calls])
   const [flow, setFlow] = useState(loadFlow)
+  // Un guion de prueba en marcha: qué frase va diciendo.
+  const [running, setRunning] = useState<string | null>(null)
+  const stopper = useRef<AbortController | null>(null)
+  const play = async (text: string) => {
+    stopper.current?.abort()
+    const control = new AbortController()
+    stopper.current = control
+    setRunning('Empezando…')
+    const run = await runScript(host, text, {
+      signal: control.signal,
+      onLine: (line, index, total) => setRunning(`${index + 1}/${total} · ${line}`),
+    })
+    setRunning(null)
+    // Lo que pasó, en tres archivos: lo dicho y sus tiempos, las consultas y los cambios al código.
+    const result = { script: text, run, calls: host.callsLog(), changes: host.changesLog() }
+    ;(globalThis as { __pryselRun?: unknown }).__pryselRun = result
+    save(result, 'prysel-guion')
+  }
   // Grabar cada explicación (vídeo de la pestaña y línea de tiempo) para revisarla después.
   const recording = useSyncExternalStore(
     (listener) => recorder.subscribe(listener),
@@ -252,6 +271,14 @@ export function Shell({ host }: { host: WebHost }) {
               </button>
             </li>
             <li>
+              <button type="button" onClick={() => setSheet('script')}>
+                <strong>Ejecutar un guion de prueba</strong>
+                <span>
+                  Una sesión de voz escrita: la página dice las frases por ti y guarda los registros
+                </span>
+              </button>
+            </li>
+            <li>
               <button
                 type="button"
                 onClick={() => {
@@ -321,6 +348,30 @@ export function Shell({ host }: { host: WebHost }) {
         </Drawer>
       )}
 
+      {sheet === 'script' && (
+        <ScriptSheet
+          onRun={(text) => {
+            setSheet(null)
+            void play(text)
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
+      {running !== null && (
+        <div className="web-script" role="status">
+          <span className="web-script__dot" aria-hidden />
+          <span className="web-script__line">{running}</span>
+          <button
+            type="button"
+            className="web-text-button"
+            onClick={() => stopper.current?.abort()}
+          >
+            Parar
+          </button>
+        </div>
+      )}
+
       {sheet === 'settings' && (
         <SettingsSheet
           initial={host.aiSettings}
@@ -385,6 +436,71 @@ function Drawer({
     <div className="web-sheet" role="dialog" aria-modal="true" aria-label={label}>
       <button type="button" className="web-sheet__scrim" aria-label="Cerrar" onClick={onClose} />
       <div className="web-sheet__panel">{children}</div>
+    </div>
+  )
+}
+
+/** Elegir (o escribir) el guion de una sesión de prueba y ponerlo en marcha. */
+function ScriptSheet({ onRun, onClose }: { onRun: (text: string) => void; onClose: () => void }) {
+  const [text, setText] = useState(SCRIPTS[0]?.text ?? '')
+  useEscape(onClose)
+  return (
+    <div
+      className="web-sheet"
+      data-side="bottom"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Guion de prueba"
+    >
+      <button type="button" className="web-sheet__scrim" aria-label="Cerrar" onClick={onClose} />
+      <form
+        className="web-sheet__panel web-settings"
+        onSubmit={(event) => {
+          event.preventDefault()
+          onRun(text)
+        }}
+      >
+        <h2>Guion de prueba</h2>
+        <p className="web-settings__hint">
+          Una frase por línea: la página las dice por ti, palabra a palabra, como si hablaras. «…»
+          es una pausa a mitad de frase; «&gt; espera 3», segundos en silencio; «&gt; nuevo»,
+          empezar con el programa vacío. Al acabar se descarga un archivo con lo dicho, las
+          consultas y los cambios.
+        </p>
+        <label className="web-settings__field">
+          <span>Guiones de serie</span>
+          <select
+            onChange={(event) => {
+              const chosen = SCRIPTS.find((script) => script.id === event.target.value)
+              if (chosen) setText(chosen.text)
+            }}
+          >
+            {SCRIPTS.map((script) => (
+              <option key={script.id} value={script.id}>
+                {script.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="web-settings__field">
+          <span>El guion</span>
+          <textarea
+            className="web-script__text"
+            rows={11}
+            spellCheck={false}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+        </label>
+        <div className="web-settings__actions">
+          <button type="button" className="web-text-button" onClick={onClose}>
+            Cancelar
+          </button>
+          <button type="submit" className="web-primary" disabled={text.trim() === ''}>
+            Ejecutar
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

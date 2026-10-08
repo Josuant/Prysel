@@ -92,8 +92,10 @@ function recognitionClass(): (new () => Recognition) | null {
   const scope = globalThis as unknown as {
     SpeechRecognition?: new () => Recognition
     webkitSpeechRecognition?: new () => Recognition
+    /** Un guion de prueba pone aquí el suyo: dicta las frases en vez de escucharlas. */
+    __pryselSpeech?: new () => Recognition
   }
-  return scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null
+  return scope.__pryselSpeech ?? scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null
 }
 
 export function ChatDock({
@@ -164,8 +166,10 @@ export function ChatDock({
     }
   }
   const open_ = () => {
-    if (!Speech) return
-    const r = new Speech()
+    // Se mira ahora, no al dibujar: un guion de prueba puede haber puesto el suyo entre medias.
+    const Source = recognitionClass()
+    if (!Source) return
+    const r = new Source()
     r.lang = 'es-ES'
     r.interimResults = true
     r.continuous = true

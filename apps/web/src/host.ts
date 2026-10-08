@@ -392,6 +392,11 @@ export class WebHost {
     if (this.changes.length > MAX_CHANGES) this.changes.splice(0, this.changes.length - MAX_CHANGES)
   }
 
+  /** Si hay algo en marcha: una orden construyendo, o una consulta a un modelo sin contestar. */
+  get busy(): boolean {
+    return this.orders.busy || this.calls.all().some((call) => call.status === 'running')
+  }
+
   /** Todo lo que se le ha preguntado a cada modelo y lo que contestó, para descargarlo. Sin claves. */
   callsLog(): unknown {
     return {

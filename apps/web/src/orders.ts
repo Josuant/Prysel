@@ -121,6 +121,13 @@ export class Orders {
     this.fills.clear()
   }
 
+  /** Si hay una orden construyendo algo o una pieza redactándose. */
+  get busy(): boolean {
+    return (
+      this.building !== null || [...this.fills.values()].some((fill) => fill.state === 'running')
+    )
+  }
+
   /** El lienzo terminó de decir lo que se le mandó con ese número. */
   spoken(seq: number, spoke: boolean) {
     this.speaking.get(seq)?.(spoke)

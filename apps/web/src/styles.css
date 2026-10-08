@@ -355,6 +355,51 @@ body {
   gap: 8px;
 }
 
+/* Un guion de prueba: dónde se escribe, y el aviso de cuál frase va diciendo mientras corre. */
+.web-script__text {
+  min-height: 200px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.web-script {
+  position: fixed;
+  z-index: 40;
+  top: 58px;
+  left: 50%;
+  display: flex;
+  max-width: min(720px, calc(100% - 24px));
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  transform: translateX(-50%);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  font-size: 13px;
+}
+.web-script__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: web-rec 1.2s ease-in-out infinite;
+}
+.web-script__line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── el lienzo dentro de la web ────────────────────────────────────────── */
 
 /* Limpio: sin botones de zoom (en el móvil se pellizca) ni avisos de construcciones sueltas. */
