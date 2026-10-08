@@ -51,12 +51,31 @@ export type GistPiece =
   /** Una cuenta que se va llevando (una suma, un máximo). `running`: lo que lleva tras cada paso. */
   | { type: 'fold'; label: string; symbol: string; running?: readonly string[] }
   | { type: 'error'; text: string }
+  /**
+   * Las vueltas de un bucle, como una tabla que se va llenando: una fila por vuelta con lo que tomó (las
+   * columnas de la cabecera) y cómo quedaron las variables que lleva (`changed`: cambió en esa vuelta).
+   * `start` son los valores al entrar (vacío en las columnas de la cabecera). Con recorrido, la vuelta `k`
+   * aparece en el paso `k`. `skipped`: cuántas vueltas no se enseñan y antes de qué fila.
+   */
+  | {
+      type: 'laps'
+      label: string
+      columns: string[]
+      /** Cuántas de las columnas son lo que toma la cabecera (las demás, lo que lleva el bucle). */
+      takes: number
+      start?: LapCell[]
+      rows: { cells: LapCell[]; changed: boolean[]; exit?: 'break' | 'continue' }[]
+      skipped?: { count: number; at: number }
+      end: string
+    }
   /** Una frase suelta: «no recibe nada», o por qué no hay muestra. */
   | { type: 'note'; text: string }
 
 export interface GistScene {
-  /** El nombre de la función. */
+  /** El nombre de la función (o la cabecera del bloque). */
   name: string
+  /** Qué bloque cuenta: una función (por defecto) o un bucle. Cambia el icono y cómo se nombra. */
+  block?: 'function' | 'loop'
   /** Lo que hace, en una frase. */
   title?: string
   /** La entrada no estaba en el programa: se propuso para probar. */
@@ -65,6 +84,8 @@ export interface GistScene {
   stale?: boolean
   /** Cuántos pasos tiene el recorrido (elemento a elemento); sin ellos, la escena no se recorre. */
   beats?: number
+  /** Lo que dura cada paso, si no el de serie: una vuelta de un bucle se cuenta más despacio que una celda. */
+  stepMs?: number
   lanes: GistPiece[][]
 }
 
@@ -242,6 +263,38 @@ export function gistCases(piece: Extract<GistPiece, { type: 'rule' }>) {
     .map((entry) => ({ when: clip(entry.when, 44), gives: clip(entry.gives, 12) }))
 }
 
+/**
+ * Una celda de la tabla de vueltas: un texto, o una lista corta dibujada como celdas, con las posiciones que
+ * cambiaron respecto de la vuelta anterior (así se ve un intercambio de una ordenación).
+ */
+export type LapCell = string | { items: string[]; changed: boolean[] }
+
+/** Lo que se enseña de una celda de la tabla de vueltas: corto, que la fila quepa. */
+export const lapText = (text: string) => clip(text.replace(/\n/g, ' ').trim(), 14)
+
+/** Lo que mide cada elemento de una lista dentro de la tabla de vueltas. */
+export const lapItemWidth = (text: string) =>
+  Math.max(16, Math.ceil(clip(text, 6).length * GIST.char) + 8)
+
+const lapCellWidth = (cell: LapCell): number =>
+  typeof cell === 'string'
+    ? Math.ceil(lapText(cell).length * GIST.char) + 14
+    : cell.items.reduce((sum, item) => sum + lapItemWidth(item) + 1, 3)
+
+/** El ancho de cada columna de la tabla de vueltas: la del número de vuelta y las de los datos. */
+export function gistLapColumns(piece: Extract<GistPiece, { type: 'laps' }>): number[] {
+  const cells = (at: number): LapCell[] => [
+    piece.columns[at] ?? '',
+    piece.start?.[at] ?? '',
+    ...piece.rows.map((row) => row.cells[at] ?? ''),
+  ]
+  // La primera columna: el número de vuelta (y «antes», si está esa fila).
+  return [
+    piece.start ? 42 : GIST.cell + 10,
+    ...piece.columns.map((_, at) => Math.max(GIST.cell, ...cells(at).map(lapCellWidth))),
+  ]
+}
+
 export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
   if (piece.type === 'datum') {
     const box = shapeSize(gistShape(piece.value))
@@ -294,6 +347,18 @@ export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
   }
   if (piece.type === 'error')
     return { w: textWidth(clip(piece.text, 40)), h: GIST.label + GIST.cell }
+  if (piece.type === 'laps') {
+    const widths = gistLapColumns(piece)
+    const rows = 1 + (piece.start ? 1 : 0) + piece.rows.length + (piece.skipped ? 1 : 0) + 1
+    return {
+      w: Math.max(
+        Math.ceil(piece.label.length * 6.4),
+        widths.reduce((sum, width) => sum + width, 0) + (widths.length - 1) * GIST.cellGap,
+        Math.ceil(clip(piece.end, 44).length * 6.6) + 4,
+      ),
+      h: GIST.label + rows * GIST.row,
+    }
+  }
   return { w: Math.ceil(clip(piece.text, 44).length * 6.6) + 4, h: GIST.cell }
 }
 

@@ -1,7 +1,8 @@
 import type { Program } from '@prysel/python'
 import type { AiProvider } from '../ai/provider.ts'
-import { indexOf, type Trace } from '../trace.ts'
+import { indexOf, type Trace, type TraceIndex } from '../trace.ts'
 import { functionsIn, reaches, type Facts } from './facts.ts'
+import { bestLaps, loopsIn, type Laps } from './laps.ts'
 import { ruleFor, type Rule } from './patterns.ts'
 import { bestSample, samplesIn, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
@@ -34,6 +35,10 @@ export interface Gist {
   rule?: Rule
   /** Con otro estado que `ok`: por qué no hay muestra. */
   why?: string
+  /** Qué bloque es: una función (por defecto) o un bucle. */
+  block?: 'function' | 'loop'
+  /** En un bucle: sus vueltas, tal como se ejecutaron. */
+  laps?: Laps
 }
 
 /** Por qué un programa no se ejecuta solo para sacar muestras; `null` si se puede. */
@@ -65,13 +70,39 @@ const base = (facts: Facts): Omit<Gist, 'status' | 'sample'> => ({
 export function gistsOf(program: Program, trace: Trace | null): Gist[] {
   const blocked = unrunnable(program.source)
   const index = trace ? indexOf(trace) : null
-  return functionsIn(program).map((facts) => {
+  const functions = functionsIn(program).map((facts): Gist => {
     const sample = trace && index ? bestSample(samplesIn(trace, facts, { index })) : null
     if (sample) return proven(facts, sample)
     if (blocked !== null)
       return { ...base(facts), status: 'no-ejecutable', sample: null, why: blocked }
     const why = trace?.error ? `${trace.error.name}: ${trace.error.message}` : 'Nadie la llama.'
     return { ...base(facts), status: 'sin-muestra', sample: null, why }
+  })
+  return [...functions, ...loopGists(program, trace, index)]
+}
+
+/**
+ * Los bucles que llegaron a dar alguna vuelta, con la ejecución que mejor los enseña. Los que no se
+ * ejecutaron no llevan tarjeta: se ven como siempre, con su diagrama.
+ */
+function loopGists(program: Program, trace: Trace | null, index: TraceIndex | null): Gist[] {
+  if (!trace || !index) return []
+  return loopsIn(program).flatMap((facts) => {
+    const laps = bestLaps(trace, facts, index)
+    if (!laps) return []
+    return [
+      {
+        id: facts.id,
+        name: facts.head,
+        owner: null,
+        hash: facts.hash,
+        title: null,
+        status: 'ok' as const,
+        sample: null,
+        block: 'loop' as const,
+        laps,
+      },
+    ]
   })
 }
 

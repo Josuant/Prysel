@@ -1,8 +1,19 @@
-import { createContext, type CSSProperties, useContext, useEffect, useState } from 'react'
+import {
+  createContext,
+  type CSSProperties,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useState,
+} from 'react'
 import {
   GIST,
   gistCases,
   gistConsole,
+  gistLapColumns,
+  lapItemWidth,
+  lapText,
+  type LapCell,
   gistShape,
   gistStateRows,
   type GistPiece,
@@ -34,12 +45,12 @@ const still = () =>
 /** El paso por el que va el recorrido: −1 antes de empezar, e infinito cuando ya acabó (o no lo hay). */
 const Beat = createContext(Number.POSITIVE_INFINITY)
 
-function useTour(beats: number): number {
+function useTour(beats: number, stepMs?: number): number {
   const none = beats <= 0 || still()
   const [beat, setBeat] = useState(none ? Number.POSITIVE_INFINITY : -1)
   useEffect(() => {
     if (none) return
-    const step = Math.min(280, Math.max(45, TOUR_MS / beats))
+    const step = stepMs ?? Math.min(280, Math.max(45, TOUR_MS / beats))
     let at = -1
     let timer = setTimeout(function tick() {
       at++
@@ -49,7 +60,7 @@ function useTour(beats: number): number {
     return () => {
       clearTimeout(timer)
     }
-  }, [beats, none])
+  }, [beats, none, stepMs])
   return beat
 }
 
@@ -293,6 +304,7 @@ function Piece({ piece }: { piece: GistPiece }) {
       </div>
     )
   }
+  if (piece.type === 'laps') return <LapsTable piece={piece} />
   if (piece.type === 'error')
     return (
       <div className="gist-piece">
@@ -309,9 +321,132 @@ function Piece({ piece }: { piece: GistPiece }) {
   )
 }
 
+/** Una celda de la tabla de vueltas: su texto, o una lista corta como fila de celdas. */
+function LapContent({ cell }: { cell: LapCell }) {
+  if (typeof cell === 'string') return <>{lapText(cell)}</>
+  return (
+    <span className="gist-laps__items">
+      {cell.items.map((item, at) => (
+        <span
+          key={at}
+          className="gist-laps__item"
+          data-changed={cell.changed[at] ? '' : undefined}
+          style={{ width: lapItemWidth(item) }}
+        >
+          {item.length > 6 ? `${item.slice(0, 5)}…` : item}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/**
+ * Las vueltas de un bucle: una tabla que se llena vuelta a vuelta. En cada una se enciende lo que tomó y lo
+ * que cambió; al acabar, por qué acabó. Sin recorrido (o sin movimiento), se ve entera.
+ */
+function LapsTable({ piece }: { piece: Extract<GistPiece, { type: 'laps' }> }) {
+  const beat = useContext(Beat)
+  const widths = gistLapColumns(piece)
+  const template = widths.map((width) => `${width}px`).join(' ')
+  const row = (key: string, cells: ReactNode[], more: Record<string, string | undefined> = {}) => (
+    <div
+      key={key}
+      className="gist-laps__row"
+      style={{ gridTemplateColumns: template, height: GIST.row, gap: GIST.cellGap }}
+      {...more}
+    >
+      {cells}
+    </div>
+  )
+  const finished = !Number.isFinite(beat) || beat >= piece.rows.length
+  return (
+    <div className="gist-piece">
+      <span className="gist-label">{piece.label}</span>
+      <div className="gist-laps" role="table" aria-label="Vuelta a vuelta">
+        {row('head', [
+          <span key="n" className="gist-laps__head" style={{ textAlign: 'right', paddingRight: 6 }}>
+            #
+          </span>,
+          ...piece.columns.map((name, at) => (
+            <span
+              key={at}
+              className="gist-laps__head"
+              data-takes={at < piece.takes ? '' : undefined}
+            >
+              {lapText(name)}
+            </span>
+          )),
+        ])}
+        {piece.start &&
+          row('start', [
+            <span key="n" className="gist-laps__n">
+              antes
+            </span>,
+            ...piece.columns.map((_, at) => (
+              <span key={at} className="gist-laps__cell" data-start="">
+                <LapContent cell={piece.start?.[at] ?? ''} />
+              </span>
+            )),
+          ])}
+        {piece.rows.flatMap((lap, k) => {
+          const number =
+            k >= (piece.skipped?.at ?? Number.POSITIVE_INFINITY)
+              ? k + (piece.skipped?.count ?? 0) + 1
+              : k + 1
+          const state = beat < k ? 'wait' : beat === k ? 'now' : 'done'
+          return [
+            ...(piece.skipped && piece.skipped.at === k
+              ? [
+                  row(
+                    'skip',
+                    [
+                      <span key="n" className="gist-laps__skip" style={{ gridColumn: '1 / -1' }}>
+                        … {piece.skipped.count} vueltas más
+                      </span>,
+                    ],
+                    beat < k ? { 'data-wait': '' } : {},
+                  ),
+                ]
+              : []),
+            row(
+              `lap${k}`,
+              [
+                <span key="n" className="gist-laps__n">
+                  {number}
+                  {lap.exit === 'break' ? ' ⏹' : lap.exit === 'continue' ? ' ↷' : ''}
+                </span>,
+                ...lap.cells.map((cell, at) => (
+                  <span
+                    key={at}
+                    className="gist-laps__cell"
+                    data-takes={at < piece.takes ? '' : undefined}
+                    data-changed={lap.changed[at] ? '' : undefined}
+                  >
+                    <LapContent cell={cell} />
+                  </span>
+                )),
+              ],
+              { [`data-${state}`]: '' },
+            ),
+          ]
+        })}
+        {row(
+          'end',
+          [
+            <span key="end" className="gist-laps__end" style={{ gridColumn: '1 / -1' }}>
+              {piece.end}
+            </span>,
+          ],
+          finished ? {} : { 'data-wait': '' },
+        )}
+      </div>
+    </div>
+  )
+}
+
 /** Los carriles de la escena, con su recorrido. Montarlo de nuevo (otra `key`) lo cuenta desde el principio. */
 function Lanes({ scene, onReplay }: { scene: GistScene; onReplay: () => void }) {
-  const beat = useTour(scene.beats ?? 0)
+  const beat = useTour(scene.beats ?? 0, scene.stepMs)
   return (
     <Beat.Provider value={beat}>
       <div
@@ -365,14 +500,15 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
       style={{ width: size.w, height: size.h, padding: GIST.pad }}
       data-stale={scene.stale ? '' : undefined}
       role="group"
-      aria-label={`Qué hace ${scene.name}${scene.title ? `: ${scene.title}` : ''}`}
+      data-block={scene.block}
+      aria-label={`${scene.block === 'loop' ? 'Cómo funciona' : 'Qué hace'} ${scene.name}${scene.title ? `: ${scene.title}` : ''}`}
       // Como un nodo: alcanzable por teclado para recorrer el diagrama con un lector de pantalla.
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
     >
       <header className="gist-card__head" style={{ height: GIST.head }}>
         <span className="gist-card__icon" aria-hidden>
-          <Icon name="folder" size={13} />
+          <Icon name={scene.block === 'loop' ? 'loop' : 'folder'} size={13} />
         </span>
         <span className="gist-card__name">{scene.name}</span>
         {scene.example && (
@@ -387,8 +523,8 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
           <button
             type="button"
             className="node__action gist-card__toggle nodrag"
-            aria-label={`Ver cómo lo hace ${scene.name}`}
-            title="Ver cómo lo hace"
+            aria-label={`Ver el diagrama de ${scene.name}`}
+            title="Ver el diagrama"
             aria-expanded={false}
             onClick={(event) => {
               event.stopPropagation()

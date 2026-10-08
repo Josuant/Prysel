@@ -1,7 +1,8 @@
-import type { GistPiece, GistScene } from '@prysel/ui'
+import type { GistPiece, GistScene, LapCell } from '@prysel/ui'
 import type { Gist } from '../../src/gist/gist.ts'
 import { bare, type FoldRule, type Rule } from '../../src/gist/patterns.ts'
 import type { Sample } from '../../src/gist/sample.ts'
+import type { Laps } from '../../src/gist/laps.ts'
 import { showValue, type Value } from '../../src/gist/value.ts'
 
 /**
@@ -143,8 +144,109 @@ function ruleScene(sample: Sample, rule: Rule): Pick<GistScene, 'lanes' | 'beats
   return { lanes: [inputs, [middle], outputs], ...(tour ? { beats: steps } : {}) }
 }
 
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+
+/** Por qué acabó un bucle, dicho para quien lo lee. */
+function endOf(laps: Laps, head: string): string {
+  const total = plural(laps.total, 'vuelta', 'vueltas')
+  if (laps.ended === 'break') return `Salió con break en la vuelta ${laps.total}.`
+  if (laps.ended === 'return')
+    return `Devolvió algo en la vuelta ${laps.total} y salió de la función.`
+  if (laps.ended === 'error') return `Falló en la vuelta ${laps.total}: ${laps.error ?? 'error'}`
+  if (laps.ended === 'cut') return `${total}… y la ejecución se cortó aquí.`
+  const test = /^while\s+(.+)$/.exec(head)?.[1]
+  return test
+    ? `${total}; luego «${test}» dejó de cumplirse.`
+    : `${total}; no quedaban más elementos.`
+}
+
+/**
+ * La escena de un bucle: sus vueltas, una a una, como una tabla que se llena. Lo que toma la cabecera en cada
+ * vuelta, cómo van quedando las variables que lleva, lo que imprime, y por qué acaba.
+ */
+export function loopScene(gist: Gist): GistScene | null {
+  const laps = gist.laps
+  if (gist.status !== 'ok' || !laps || laps.laps.length === 0) return null
+  const takes = laps.laps[0]?.takes.map((take) => take.name) ?? []
+  const carried = laps.laps[0]?.leaves.map((leave) => leave.name) ?? []
+  const prints = laps.laps.some((lap) => lap.printed)
+  // Una lista corta de valores sueltos se dibuja como celdas: así se ve qué posiciones cambió cada vuelta.
+  const short = (value: Value): string[] | null =>
+    value.kind === 'list' &&
+    !value.more &&
+    value.items.length <= 10 &&
+    value.items.every((item) => item.kind === 'atom')
+      ? value.items.map((item) => showValue(item))
+      : null
+  const cell = (value: Value, was: Value | undefined): LapCell => {
+    const items = short(value)
+    if (!items) return showValue(value)
+    const before = was ? short(was) : null
+    return {
+      items,
+      changed: items.map(
+        (item, at) => before !== null && before.length === items.length && before[at] !== item,
+      ),
+    }
+  }
+  const columns = [...takes, ...carried, ...(prints ? ['imprime'] : [])]
+  const start =
+    laps.carried.length > 0
+      ? [
+          ...takes.map(() => ''),
+          ...carried.map((name): LapCell => {
+            const was = laps.carried.find((c) => c.name === name)
+            return was ? cell(was.value, undefined) : '—'
+          }),
+          ...(prints ? [''] : []),
+        ]
+      : undefined
+  const previous = (k: number, name: string): Value | undefined =>
+    k === 0
+      ? laps.carried.find((c) => c.name === name)?.value
+      : laps.laps[k - 1]?.leaves.find((leave) => leave.name === name)?.value
+  const rows = laps.laps.map((lap, k) => ({
+    cells: [
+      ...lap.takes.map((take): LapCell => showValue(take.value)),
+      ...lap.leaves.map((leave) => cell(leave.value, previous(k, leave.name))),
+      ...(prints ? [lap.printed ?? ''] : []),
+    ],
+    changed: [
+      ...lap.takes.map(() => false),
+      ...lap.leaves.map((leave) => leave.changed),
+      ...(prints ? [Boolean(lap.printed)] : []),
+    ],
+    ...(lap.exit ? { exit: lap.exit } : {}),
+  }))
+  return {
+    name: gist.name,
+    block: 'loop',
+    title:
+      carried.length > 0
+        ? `Repite ${plural(laps.total, 'vez', 'veces')}, llevando ${carried.join(', ')}`
+        : `Repite ${plural(laps.total, 'vez', 'veces')}`,
+    beats: rows.length,
+    stepMs: 650,
+    lanes: [
+      [
+        {
+          type: 'laps',
+          label: 'vuelta a vuelta',
+          columns,
+          takes: takes.length,
+          ...(start ? { start } : {}),
+          rows,
+          ...(laps.skipped ? { skipped: laps.skipped } : {}),
+          end: endOf(laps, gist.name),
+        },
+      ],
+    ],
+  }
+}
+
 /** La escena de una función con muestra; `null` si no la tiene (entonces se ve su diagrama, como siempre). */
 export function sampleScene(gist: Gist): GistScene | null {
+  if (gist.block === 'loop') return loopScene(gist)
   if (gist.status !== 'ok' || !gist.sample) return null
   return {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,

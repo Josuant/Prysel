@@ -69,6 +69,7 @@ import {
 import { currentMoment, lessonNotes, momentsOf, noteNodeId, resolveBeats } from './lessons.ts'
 import { speakableNote, useNarration } from './useNarration.ts'
 import { functionsIn } from '../../src/gist/facts.ts'
+import { loopsIn } from '../../src/gist/laps.ts'
 import type { Gist } from '../../src/gist/gist.ts'
 import { sampleScene } from './gisting.ts'
 import { usePlayer } from './usePlayer.ts'
@@ -749,7 +750,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // eso en vez de su diagrama. Solo mientras su texto sea el mismo del que salió la muestra.
   const gisted = useMemo(() => {
     if (!program || gists.length === 0) return source
-    const hashes = new Map(functionsIn(program).map((fact) => [fact.id, fact.hash]))
+    const hashes = new Map(
+      [...functionsIn(program), ...loopsIn(program)].map((fact) => [fact.id, fact.hash]),
+    )
     const scenes = new Map(
       gists.flatMap((gist) => {
         const scene = hashes.get(gist.id) === gist.hash ? sampleScene(gist) : null

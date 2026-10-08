@@ -5543,9 +5543,139 @@ button.fn-menu__crumb:hover {
   font-weight: 600;
   animation: gist-in 160ms ease-out both;
 }
+/* Las vueltas de un bucle: una tabla que se llena fila a fila mientras se cuenta. */
+.gist-laps {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.gist-laps__row {
+  display: grid;
+  align-items: center;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+.gist-laps__row[data-wait] {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.gist-laps__head {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-laps__head[data-takes] {
+  color: var(--accent);
+}
+.gist-laps__n {
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding-right: 6px;
+  white-space: nowrap;
+}
+.gist-laps__cell {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 20px;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 6px;
+  border: 1px solid var(--border-card);
+  border-radius: 6px;
+  background: var(--surface);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.gist-laps__cell[data-takes] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.gist-laps__cell[data-start] {
+  border-style: dashed;
+  color: var(--ink-faint);
+}
+.gist-laps__row[data-done] .gist-laps__cell:not([data-takes]):not([data-changed]) {
+  color: var(--ink-faint);
+}
+.gist-laps__row[data-now] .gist-laps__cell[data-takes] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+.gist-laps__row[data-now] .gist-laps__cell[data-changed] {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 18%, var(--surface));
+  animation: gist-pulse 420ms ease-out;
+}
+.gist-laps__row[data-done] .gist-laps__cell[data-changed] {
+  border-color: color-mix(in srgb, var(--state-success) 45%, transparent);
+}
+.gist-laps__cell:has(.gist-laps__items) {
+  padding: 0 1px;
+  border-color: transparent;
+  background: transparent;
+}
+.gist-laps__items {
+  display: inline-flex;
+  gap: 1px;
+}
+.gist-laps__item {
+  display: inline-grid;
+  box-sizing: border-box;
+  height: 18px;
+  place-items: center;
+  border: 1px solid var(--border-card);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.gist-laps__item[data-changed] {
+  border-color: color-mix(in srgb, var(--state-success) 55%, transparent);
+  background: color-mix(in srgb, var(--state-success) 14%, var(--surface));
+}
+.gist-laps__row[data-now] .gist-laps__item[data-changed] {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 30%, var(--surface));
+  animation: gist-pulse 420ms ease-out;
+}
+.gist-laps__skip,
+.gist-laps__end {
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.gist-laps__end {
+  color: var(--ink);
+  font-weight: 600;
+}
+@keyframes gist-pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .gist-arrow,
   .gist-lane * {
+    animation: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-laps__row,
+  .gist-laps__cell {
+    transition: none;
     animation: none !important;
   }
 }
