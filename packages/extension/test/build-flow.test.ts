@@ -264,6 +264,33 @@ describe('algo pequeño: el código, tal cual, y cada sentencia en cuanto llega'
     ).toBeUndefined()
   })
 
+  it('los rótulos de intención dentro de una función se conservan, y el lienzo los agrupa', async () => {
+    const code = lines(
+      'def actualizar(pajaro):',
+      '    # Aplicar física',
+      '    pajaro.velocidad = pajaro.velocidad + 1',
+      '    pajaro.y = pajaro.y + pajaro.velocidad',
+      '',
+      '    # Comprobar choques',
+      '    if pajaro.y > 100:',
+      '        pajaro.vivo = False',
+      '    pajaro.pasos = pajaro.pasos + 1',
+    )
+    const { host, state } = stage('')
+    const outcome = await build(
+      host,
+      { decider: localDecider(), provider: ai({ code }) },
+      { ...small, command: 'una función que actualice el pájaro', flow: 'stream' },
+    )
+    expect(outcome.trouble).toBeNull()
+    expect(state.text).toBe(code)
+    // Cada rótulo es una etapa del cuerpo de la función: un nodo de intención.
+    expect(parse(state.text).sections?.map((section) => section.title)).toEqual([
+      'Aplicar física',
+      'Comprobar choques',
+    ])
+  })
+
   it('cada pieza aparece con su frase, y la siguiente espera a que se haya dicho', async () => {
     const provider = ai({ code: SUM })
     const control: { waits: number[] } = { waits: [] }

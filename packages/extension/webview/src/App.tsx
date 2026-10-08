@@ -34,7 +34,8 @@ import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { ChatDock, type ChatEntry } from './ChatDock.tsx'
 import { CommandBar } from './CommandBar.tsx'
-import { dragChips, flyNode, gesture } from './dragging.ts'
+import { dissolve, dragChips, flyNode, gesture } from './dragging.ts'
+import { draftOf } from './drafting.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -942,7 +943,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             title: busyTitle,
             text: [busy],
             busy: true,
-            ...(thinking === null && guess && preview ? { ghost: HEARD_GHOST[preview.kind] } : {}),
+            // Mientras se le oye: no una nota, la caja de la pieza, rellenándose con lo que va diciendo.
+            ...(thinking === null && guess && preview
+              ? { ghost: HEARD_GHOST[preview.kind], draft: draftOf(preview.kind, preview.text) }
+              : {}),
           },
         })
         links.push({ from: anchor, to: 'prysel:thinking', relation: 'transform' })
@@ -1112,6 +1116,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       unmark?.()
     }
   }, [spotId, spotMark, spotKey])
+  // Lo que está a punto de quitarse se deshace en partículas: no desaparece de golpe.
+  useEffect(() => {
+    if (spotId === null || spotChange !== 'leaving' || reducedMotion) return
+    const timer = setTimeout(() => {
+      const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(spotId)}"]`)
+      if (node) dissolve(node)
+    }, 250)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [spotId, spotChange, spotKey, reducedMotion])
   // Una pieza que acaba de aparecer y usa algo definido antes: se coge el chip de aquello y se arrastra
   // hasta la casilla donde se usa, para que se vea que no sale de la nada. Se espera a que la cámara llegue.
   useEffect(() => {
@@ -1225,7 +1240,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         const to =
           action.type === 'move' ? (action.into ?? action.after ?? action.before) : undefined
         const shown = directive.kind === 'do' ? directive.gesture : undefined
-        if (shown && !reducedMotion && action.type !== 'move') {
+        const gone =
+          action.type === 'delete' && !reducedMotion
+            ? document.querySelector(`.react-flow__node[data-id="${CSS.escape(action.id)}"]`)
+            : null
+        if (gone) {
+          // Borrar se ve: la pieza se deshace en partículas, y entonces se va del código.
+          dissolve(gone)
+          gone.setAttribute('data-moving', '')
+          setTimeout(() => {
+            act(action)
+          }, 420)
+        } else if (shown && !reducedMotion && action.type !== 'move') {
           // Envolver o duplicar: primero se ve lo que se le va a hacer; el código cambia al acabar el gesto.
           if (!shownIds.has(shown.id)) view.open(null)
           setWanted({ id: shown.id, key: ++spotSeq.current })

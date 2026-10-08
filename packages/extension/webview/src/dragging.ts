@@ -1,3 +1,4 @@
+import { burst, centerOf, dissolve, focus, ring, trail } from './effects.ts'
 import { findIn } from './marking.ts'
 
 /**
@@ -54,6 +55,8 @@ export function flyNode(
   box.setAttribute('data-receiving', how)
   // Lo que se copia no se va de su sitio.
   if (source !== target) source.setAttribute('data-moving', '')
+  // Se mira esto: lo demás se desenfoca mientras dura.
+  focus([source, target], DRAG_MS + 250)
   const stop = drag(
     stage,
     name,
@@ -79,6 +82,8 @@ export function flyNode(
 /** Lo que dura un gesto que no viaja: lo que se enmarca, lo que se levanta. */
 export const GESTURE_MS = 950
 
+export { dissolve }
+
 /**
  * Enseñar lo que se le va a hacer a una pieza antes de que cambie el código:
  * - `wrap`: algo nuevo la va a contener: un marco se abre a su alrededor;
@@ -96,6 +101,28 @@ export function gesture(
   if (kind === 'merge') return other ? fuse(source, other) : 0
   const box = source.querySelector<HTMLElement>('.node, .vchip') ?? (source as HTMLElement)
   box.setAttribute('data-gesture', kind)
+  focus([source], GESTURE_MS + 150)
+  const stage = source.closest<HTMLElement>('.react-flow')
+  if (stage) {
+    const frame = stage.getBoundingClientRect()
+    const edge = box.getBoundingClientRect()
+    if (kind === 'wrap') {
+      // Lo que la envuelve se cierra por sus cuatro esquinas.
+      setTimeout(() => {
+        for (const [x, y] of [
+          [edge.left - 14, edge.top - 14],
+          [edge.right + 14, edge.top - 14],
+          [edge.left - 14, edge.bottom + 14],
+          [edge.right + 14, edge.bottom + 14],
+        ] as const) {
+          burst(stage, { x: x - frame.left, y: y - frame.top }, 'accent', 6)
+        }
+      }, GESTURE_MS * 0.7)
+    } else {
+      // Lo que se extrae se levanta dejando estela.
+      trail(stage, box, GESTURE_MS, 'accent')
+    }
+  }
   setTimeout(() => {
     box.removeAttribute('data-gesture')
   }, GESTURE_MS + 150)
@@ -103,13 +130,31 @@ export function gesture(
 }
 
 /** Lo que tarda cada pieza en llegar al punto de encuentro, y lo que dura la que queda. */
-const FUSE_MS = 900
-const FUSED_MS = 2200
+const FUSE_MS = 1000
+const FUSED_MS = 2400
+
+/** Una tarjeta pequeña con el nombre de una pieza y las líneas de su cuerpo: es la que viaja. */
+function boxGhost(stage: HTMLElement, name: string, fused = false): HTMLElement {
+  const box = document.createElement('div')
+  box.className = fused ? 'box-ghost box-ghost--fused' : 'box-ghost'
+  const title = document.createElement('span')
+  title.className = 'box-ghost__name'
+  title.textContent = name
+  box.append(title)
+  for (let i = 0; i < (fused ? 3 : 2); i++) {
+    const line = document.createElement('span')
+    line.className = 'box-ghost__line'
+    box.append(line)
+  }
+  stage.append(box)
+  return box
+}
 
 /**
- * Dos piezas se juntan en una: el nombre de cada una sale de donde está y van a encontrarse a medio camino;
- * al tocarse, queda una sola —con los dos nombres—, latiendo, mientras se escribe la que las reúne. Las
- * originales se quedan en sombra. Devuelve cuánto dura el encuentro.
+ * Dos piezas se juntan en una: de cada una sale su caja —su nombre y su cuerpo—, viajan dejando estela y
+ * chocan a medio camino; del golpe (un anillo, un estallido) queda una sola caja, más grande, con los dos
+ * nombres, latiendo mientras se escribe la que las reúne. Lo demás del lienzo se desenfoca: se mira esto.
+ * Devuelve cuánto dura el encuentro.
  */
 function fuse(first: Element, second: Element): number {
   const stage = first.closest<HTMLElement>('.react-flow')
@@ -120,66 +165,61 @@ function fuse(first: Element, second: Element): number {
       namesOf(piece)[0] ??
       piece.querySelector<HTMLElement>('.node, .vchip') ??
       (piece as HTMLElement)
-    const box = name.getBoundingClientRect()
-    return {
-      piece,
-      name,
-      text: textOf(name).slice(0, 28),
-      x: box.left + box.width / 2 - frame.left,
-      y: box.top + box.height / 2 - frame.top,
-    }
+    const at = centerOf(stage, name)
+    return { piece, text: textOf(name).slice(0, 26), ...at }
   })
   const [a, b] = pieces
   if (!a || !b) return 0
+  const release = focus([first, second], FUSE_MS + FUSED_MS)
   // Se encuentran entre las dos, un poco más abajo: donde va a nacer la que las reúne.
-  const meetX = Math.max(60, Math.min((a.x + b.x) / 2, frame.width - 60))
-  const meetY = Math.max(40, Math.min((a.y + b.y) / 2 + 54, frame.height - 40))
-  const ghosts = pieces.map((item) => {
-    const holder = item.name.closest<HTMLElement>('.vchip') ?? item.name
-    const look = getComputedStyle(holder)
-    const ghost = document.createElement('div')
-    ghost.className = 'chip-ghost'
-    ghost.textContent = item.text
-    const paint = solid(look.backgroundColor)
-    if (paint) ghost.style.background = paint
-    ghost.style.color = look.color
-    stage.append(ghost)
+  const meetX = Math.max(130, Math.min((a.x + b.x) / 2, frame.width - 130))
+  const meetY = Math.max(60, Math.min((a.y + b.y) / 2 + 70, frame.height - 60))
+  const ghosts = pieces.map((item, index) => {
+    const ghost = boxGhost(stage, item.text)
     const size = ghost.getBoundingClientRect()
     const from = `translate(${(item.x - size.width / 2).toFixed(1)}px, ${(item.y - size.height / 2).toFixed(1)}px)`
-    const to = `translate(${(meetX - size.width / 2).toFixed(1)}px, ${(meetY - size.height / 2).toFixed(1)}px)`
+    // Llegan una por cada lado, y se solapan al tocarse.
+    const side = index === 0 ? -1 : 1
+    const to = `translate(${(meetX - size.width / 2 + side * 26).toFixed(1)}px, ${(meetY - size.height / 2).toFixed(1)}px)`
     ghost.animate(
       [
-        { transform: `${from} scale(1)`, opacity: 0, offset: 0 },
-        { transform: `${from} scale(1.12)`, opacity: 1, offset: 0.2 },
-        { transform: `${to} scale(1.05)`, opacity: 1, offset: 0.9 },
-        { transform: `${to} scale(0.8)`, opacity: 0, offset: 1 },
+        { transform: `${from} scale(0.5)`, opacity: 0, filter: 'blur(4px)', offset: 0 },
+        { transform: `${from} scale(1)`, opacity: 1, filter: 'blur(0)', offset: 0.22 },
+        {
+          transform: `${to} scale(1) rotate(${side * -4}deg)`,
+          opacity: 1,
+          filter: 'blur(0)',
+          offset: 0.9,
+        },
+        { transform: `${to} scale(0.86)`, opacity: 0, filter: 'blur(3px)', offset: 1 },
       ],
-      { duration: FUSE_MS, easing: 'ease-in-out', fill: 'both' },
+      { duration: FUSE_MS, easing: 'cubic-bezier(0.5, 0, 0.2, 1)', fill: 'both' },
     )
+    trail(stage, ghost, FUSE_MS * 0.9)
     item.piece.setAttribute('data-moving', '')
     return ghost
   })
   setTimeout(() => {
     for (const ghost of ghosts) ghost.remove()
-    const fused = document.createElement('div')
-    fused.className = 'chip-ghost chip-ghost--fused'
-    fused.textContent = `${a.text} + ${b.text}`
-    stage.append(fused)
+    ring(stage, { x: meetX, y: meetY })
+    burst(stage, { x: meetX, y: meetY }, 'accent', 20)
+    const fused = boxGhost(stage, `${a.text} + ${b.text}`, true)
     const size = fused.getBoundingClientRect()
     const at = `translate(${(meetX - size.width / 2).toFixed(1)}px, ${(meetY - size.height / 2).toFixed(1)}px)`
     fused.animate(
       [
-        { transform: `${at} scale(0.6)`, opacity: 0, offset: 0 },
-        { transform: `${at} scale(1.18)`, opacity: 1, offset: 0.14 },
-        { transform: `${at} scale(1)`, opacity: 1, offset: 0.28 },
-        { transform: `${at} scale(1.05)`, opacity: 1, offset: 0.6 },
-        { transform: `${at} scale(1)`, opacity: 1, offset: 0.85 },
-        { transform: `${at} scale(1)`, opacity: 0, offset: 1 },
+        { transform: `${at} scale(0.5)`, opacity: 0, filter: 'blur(6px)', offset: 0 },
+        { transform: `${at} scale(1.14)`, opacity: 1, filter: 'blur(0)', offset: 0.14 },
+        { transform: `${at} scale(1)`, opacity: 1, offset: 0.26 },
+        { transform: `${at} scale(1.04)`, opacity: 1, offset: 0.6 },
+        { transform: `${at} scale(1)`, opacity: 1, offset: 0.86 },
+        { transform: `${at} scale(0.96)`, opacity: 0, filter: 'blur(4px)', offset: 1 },
       ],
       { duration: FUSED_MS, easing: 'ease-in-out', fill: 'both' },
     )
     setTimeout(() => {
       fused.remove()
+      release()
       for (const item of pieces) item.piece.removeAttribute('data-moving')
     }, FUSED_MS)
   }, FUSE_MS)
@@ -276,6 +316,13 @@ function drag(
     ],
     { duration: DRAG_MS, easing: 'ease-in-out', fill: 'both' },
   )
+  // Deja estela mientras viaja, y al soltarlo hay golpe: un anillo y un estallido donde cae.
+  const untrail = trail(stage, ghost, DRAG_MS * 0.86)
+  const impact = setTimeout(() => {
+    const at = centerOf(stage, ghost)
+    ring(stage, at)
+    burst(stage, at, 'accent', 10)
+  }, DRAG_MS * 0.86)
   // Al soltarlo, la casilla que lo recibe lo acusa.
   const landed = setTimeout(() => {
     holder.removeAttribute('data-picked')
@@ -288,6 +335,8 @@ function drag(
   return () => {
     clearTimeout(landed)
     clearTimeout(done)
+    clearTimeout(impact)
+    untrail()
     motion.cancel()
     ghost.remove()
     holder.removeAttribute('data-picked')

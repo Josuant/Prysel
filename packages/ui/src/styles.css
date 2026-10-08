@@ -1747,6 +1747,223 @@ button.fn-menu__crumb:hover {
   color: var(--ghost);
   font-weight: 700;
 }
+/* La caja de lo que se está pidiendo: no una nota, la pieza misma a medio hacer. Su insignia y su nombre
+   arriba, lo que recibe en pastillas, lo que se va diciendo de ella con un cursor, y debajo las líneas de un
+   cuerpo que aún no existe, latiendo. */
+.ghost-box {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border-radius: 16px;
+  transition:
+    border-color 350ms ease,
+    background-color 350ms ease,
+    box-shadow 350ms ease,
+    min-height 300ms ease;
+}
+.ghost-box__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.ghost-box__badge {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ghost) 22%, transparent);
+  color: var(--ghost);
+}
+.ghost-box__kind {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.ghost-box__name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: ghost-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.ghost-box__name[data-empty] {
+  color: var(--ink-faint);
+}
+.ghost-box__takes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ghost-box__chip {
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--ghost) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ghost) 12%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  animation: ghost-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.ghost-box__does {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.ghost-box__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--ghost);
+  vertical-align: text-bottom;
+  animation: ghost-caret 900ms steps(1, end) infinite;
+}
+.ghost-box__lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ghost-box__lines > span {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ghost) 10%, transparent),
+    color-mix(in srgb, var(--ghost) 30%, transparent),
+    color-mix(in srgb, var(--ghost) 10%, transparent)
+  );
+  background-size: 200% 100%;
+  animation: ghost-shimmer 1400ms linear infinite;
+}
+.ghost-box__lines > span:nth-child(1) {
+  width: 78%;
+}
+.ghost-box__lines > span:nth-child(2) {
+  width: 54%;
+  animation-delay: 160ms;
+}
+.ghost-box__lines > span:nth-child(3) {
+  width: 66%;
+  animation-delay: 320ms;
+}
+@keyframes ghost-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+    filter: blur(3px);
+  }
+}
+@keyframes ghost-caret {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes ghost-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ghost-box__name,
+  .ghost-box__chip,
+  .ghost-box__caret,
+  .ghost-box__lines > span {
+    animation: none;
+  }
+}
+
+/* ── Efectos del lienzo: lo que acompaña a un gesto ── */
+/* Una partícula y un anillo: van sobre el lienzo, los coloca y los mueve quien los crea. */
+.fx-dot,
+.fx-ring {
+  position: absolute;
+  z-index: 9;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.fx-dot {
+  box-shadow: 0 0 8px 1px currentColor;
+  mix-blend-mode: screen;
+}
+.fx-ring {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--accent);
+}
+/* El foco: mientras dura un gesto, lo que no participa se desenfoca y se apaga un poco. */
+.react-flow[data-focusing] .react-flow__node,
+.react-flow[data-focusing] .react-flow__edge {
+  transition:
+    filter 260ms ease,
+    opacity 260ms ease;
+}
+.react-flow[data-focusing] .react-flow__node:not([data-fx]) {
+  opacity: 0.45;
+  filter: blur(2.5px) saturate(0.6);
+}
+.react-flow[data-focusing] .react-flow__edge {
+  opacity: 0.25;
+}
+@media (prefers-reduced-motion: reduce) {
+  .react-flow[data-focusing] .react-flow__node:not([data-fx]) {
+    opacity: 1;
+    filter: none;
+  }
+}
+/* La caja que viaja al juntar dos piezas: una tarjeta pequeña con su nombre y las líneas de su cuerpo. */
+.box-ghost {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  left: 0;
+  display: flex;
+  box-sizing: border-box;
+  width: 168px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px 12px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  pointer-events: none;
+}
+.box-ghost__name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.box-ghost__line {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+}
+.box-ghost__line:nth-child(3) {
+  width: 62%;
+}
+.box-ghost--fused {
+  width: 232px;
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+  box-shadow:
+    0 0 0 7px color-mix(in srgb, var(--accent) 16%, transparent),
+    var(--shadow-raised);
+}
+
 .viewer[data-ghost='function'],
 .viewer[data-ghost='class'] {
   --ghost: var(--value-fn-fg);

@@ -176,6 +176,7 @@ export function rewriteSystem(): string {
     'Te doy un programa en Python que ya está escrito y un cambio que alguien pide. Devuelve el programa ENTERO con ese cambio hecho.',
     'Solo el código: Python tal cual iría en el archivo, sin explicaciones ni vallas de código alrededor.',
     'Cambia lo mínimo necesario para cumplir lo que se pide, pero cúmplelo de verdad: si hace falta un dato nuevo, un método que no existe o tocar otra parte del programa para que funcione, hazlo. Todo lo demás déjalo idéntico, línea por línea, con su misma sangría y sus mismos comentarios.',
+    'Los comentarios cortos que encabezan un grupo de pasos («# Aplicar la física») son los nombres de las cajas del diagrama: consérvalos, y si lo que cambias añade un grupo de pasos nuevo a un cuerpo que ya los tiene, ponle el suyo. Si se pide agrupar u ordenar por intención, eso es justo lo que hay que hacer: una línea en blanco y un comentario así delante de cada grupo, sin cambiar el código.',
     'No añadas ejemplos de uso, llamadas de prueba ni print que no se pidan. No leas ni escribas archivos, ni uses la red o el sistema, salvo que se pida expresamente.',
   ].join('\n')
 }

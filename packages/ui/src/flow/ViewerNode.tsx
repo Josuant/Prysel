@@ -35,6 +35,51 @@ const GHOST_ICON = {
 export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
   const { content, size } = data
   const image = viewerImageSize(content, size.w)
+  // La caja de algo que se está pidiendo: con la forma de lo que va a ser, rellenándose al hablar.
+  if (content.ghost && content.draft) {
+    const { name, takes = [], does } = content.draft
+    return (
+      <div
+        className="viewer ghost-box"
+        data-ghost={content.ghost}
+        style={{ width: size.w, minHeight: size.h }}
+      >
+        <Handle
+          type="target"
+          id="in"
+          position={data.aside ? Position.Right : Position.Left}
+          isConnectable={false}
+        />
+        <header className="ghost-box__head">
+          <span className="ghost-box__badge">
+            <Icon name={GHOST_ICON[content.ghost]} size={15} />
+          </span>
+          <span className="ghost-box__kind">{content.title}</span>
+          <span className="ghost-box__name" data-empty={name ? undefined : ''} key={name ?? ''}>
+            {name ?? '…'}
+          </span>
+        </header>
+        {takes.length > 0 && (
+          <div className="ghost-box__takes">
+            {takes.map((item) => (
+              <span className="ghost-box__chip" key={item}>
+                {item}
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="ghost-box__does">
+          {does}
+          <span className="ghost-box__caret" aria-hidden />
+        </p>
+        <div className="ghost-box__lines" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    )
+  }
   return (
     <div
       className="viewer"
