@@ -140,6 +140,8 @@ export interface CanvasNode {
   renamable?: boolean
   /** Su línea en el archivo. */
   line?: number
+  /** Su última línea, si abarca varias (un bloque). */
+  lineEnd?: number
   /** Los nombres que se pueden usar en sus campos (las variables definidas antes): son las sugerencias. */
   scope?: readonly string[]
   /** El nombre que el nodo deja definido: lo que sale por su puerto de salida, si sale algo. */

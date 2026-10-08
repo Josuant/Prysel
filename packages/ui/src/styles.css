@@ -5791,6 +5791,134 @@ button.fn-menu__crumb:hover {
     animation: none !important;
   }
 }
+.gist-switch {
+  position: relative;
+  font-size: 11.5px;
+}
+.gist-switch__arm {
+  position: absolute;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-start;
+  border-radius: 8px;
+  transition: background-color 200ms ease;
+}
+.gist-switch__arm[data-taken] {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Las agujas: una vía a la izquierda de la que sale cada brazo. */
+.gist-switch__part {
+  flex: none;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 3px 12px 0 0;
+  border-right: 2px solid var(--border-card);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+.gist-switch__arm[data-taken] .gist-switch__part {
+  border-right-color: var(--accent);
+  color: var(--accent);
+}
+.gist-switch__body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 0 0 10px;
+}
+.gist-switch__head {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-switch__arm[data-straight] .gist-switch__part {
+  border-right-style: dashed;
+}
+.gist-switch__test {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+}
+.gist-switch__test code {
+  font-family: var(--font-mono);
+}
+.gist-switch__verdict {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-error) 12%, transparent);
+  color: var(--state-error);
+  font-weight: 600;
+}
+.gist-switch__verdict[data-yes] {
+  background: color-mix(in srgb, var(--state-success) 16%, transparent);
+  color: var(--state-success);
+}
+.gist-switch__count {
+  flex: none;
+  padding-top: 3px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+.gist-switch__arm[data-taken] .gist-switch__count {
+  color: var(--accent);
+}
+.gist-switch__ball {
+  position: absolute;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 50%, transparent);
+  animation: switch-fall 460ms cubic-bezier(0.55, 0, 0.75, 0.2) both;
+}
+.gist-switch__ball[data-still] {
+  animation: none;
+}
+@keyframes switch-fall {
+  from {
+    top: var(--from);
+  }
+  to {
+    top: var(--to);
+  }
+}
+.gist-switch__end {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: opacity 220ms ease;
+}
+.gist-switch__end[data-wait] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-switch__ball,
+  .gist-switch__arm,
+  .gist-switch__end {
+    transition: none !important;
+    animation: none !important;
+  }
+}
 @keyframes gist-pulse {
   0% {
     transform: scale(1);

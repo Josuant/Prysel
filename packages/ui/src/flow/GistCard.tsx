@@ -19,6 +19,10 @@ import {
   netHead,
   netRowHeight,
   NET_PART_W,
+  SWITCH_COUNT_W,
+  SWITCH_PART_W,
+  SWITCH_ROW,
+  switchText,
   type LapCell,
   gistShape,
   gistStateRows,
@@ -312,6 +316,7 @@ function Piece({ piece }: { piece: GistPiece }) {
   }
   if (piece.type === 'laps') return <LapsTable piece={piece} />
   if (piece.type === 'net') return <NetPiece piece={piece} />
+  if (piece.type === 'switch') return <SwitchPiece piece={piece} />
   if (piece.type === 'error')
     return (
       <div className="gist-piece">
@@ -548,6 +553,109 @@ function NetPiece({ piece }: { piece: Extract<GistPiece, { type: 'net' }> }) {
   )
 }
 
+/**
+ * Un `if` como unas agujas de tren: una fila por brazo. En cada visita, las condiciones se rellenan con los
+ * valores de ese momento y dicen sí o no, y una bola cae hasta el brazo por el que siguió (o de largo, si no
+ * entró en ninguno). Cada brazo lleva la cuenta. Sin recorrido (o sin movimiento), se ve la última visita y
+ * los totales.
+ */
+function SwitchPiece({ piece }: { piece: Extract<GistPiece, { type: 'switch' }> }) {
+  const beat = useContext(Beat)
+  const finished = !Number.isFinite(beat) || beat >= piece.visits.length
+  const at = finished ? piece.visits.length - 1 : Math.max(beat, 0)
+  const visit = beat < 0 ? undefined : piece.visits[at]
+  const straight = piece.none > 0 || piece.visits.some((v) => v.arm < 0)
+  const lanes = piece.arms.length + (straight ? 1 : 0)
+  const height = piece.arms.length * SWITCH_ROW + (straight ? SWITCH_ROW / 2 : 0)
+  const count = (arm: number) =>
+    finished
+      ? arm < 0
+        ? piece.none
+        : (piece.totals[arm] ?? 0)
+      : piece.visits.slice(0, at + 1).filter((v) => v.arm === arm).length
+  const ballTop = (arm: number) =>
+    arm < 0 ? piece.arms.length * SWITCH_ROW + 4 : arm * SWITCH_ROW + 5
+  return (
+    <div className="gist-piece">
+      <span className="gist-label">{piece.label}</span>
+      <div
+        className="gist-switch"
+        style={{ width: gistPieceSize(piece).w, height: height + GIST.row }}
+        data-lanes={lanes}
+      >
+        {piece.arms.map((arm, k) => {
+          const test = visit?.tests[k] ?? null
+          const verdict = visit?.verdicts[k] ?? null
+          return (
+            <div
+              key={k}
+              className="gist-switch__arm"
+              data-taken={visit?.arm === k ? '' : undefined}
+              style={{ top: k * SWITCH_ROW, height: SWITCH_ROW }}
+            >
+              <span className="gist-switch__part" style={{ width: SWITCH_PART_W }}>
+                {arm.part}
+              </span>
+              <span className="gist-switch__body">
+                <code className="gist-switch__head">{switchText(arm.head)}</code>
+                <span className="gist-switch__test">
+                  {test !== null && <code>{switchText(test)}</code>}
+                  {verdict !== null && (
+                    <span className="gist-switch__verdict" data-yes={verdict ? '' : undefined}>
+                      {verdict ? 'sí' : 'no'}
+                    </span>
+                  )}
+                </span>
+              </span>
+              <span className="gist-switch__count" style={{ width: SWITCH_COUNT_W }}>
+                ×{count(k)}
+              </span>
+            </div>
+          )
+        })}
+        {straight && (
+          <div
+            className="gist-switch__arm"
+            data-straight=""
+            data-taken={visit?.arm === -1 ? '' : undefined}
+            style={{ top: piece.arms.length * SWITCH_ROW, height: SWITCH_ROW / 2 }}
+          >
+            <span className="gist-switch__part" style={{ width: SWITCH_PART_W }}>
+              de largo
+            </span>
+            <span className="gist-switch__body" />
+            <span className="gist-switch__count" style={{ width: SWITCH_COUNT_W }}>
+              ×{count(-1)}
+            </span>
+          </div>
+        )}
+        {visit && (
+          <span
+            key={at}
+            className="gist-switch__ball"
+            data-still={finished ? '' : undefined}
+            style={
+              {
+                left: SWITCH_PART_W - 6,
+                top: ballTop(visit.arm),
+                '--from': '0px',
+                '--to': `${ballTop(visit.arm)}px`,
+              } as CSSProperties
+            }
+          />
+        )}
+        <span
+          className="gist-switch__end"
+          data-wait={finished ? undefined : ''}
+          style={{ top: height, height: GIST.row }}
+        >
+          {piece.end}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 /** Los carriles de la escena, con su recorrido. Montarlo de nuevo (otra `key`) lo cuenta desde el principio. */
 function Lanes({ scene, onReplay }: { scene: GistScene; onReplay: () => void }) {
   const beat = useTour(scene.beats ?? 0, scene.stepMs)
@@ -620,7 +728,9 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
                   ? 'shield'
                   : scene.block === 'class'
                     ? 'package'
-                    : 'folder'
+                    : scene.block === 'condition'
+                      ? 'branch'
+                      : 'folder'
             }
             size={13}
           />

@@ -301,6 +301,55 @@ export function classScene(gist: Gist): GistScene | null {
   }
 }
 
+/** Cómo se nombra cada brazo de un `if` en la tarjeta. */
+const armPart = (kind: 'if' | 'elif' | 'else') =>
+  kind === 'if' ? 'si' : kind === 'elif' ? 'si no, si' : 'si no'
+
+/**
+ * La escena de un `if`: las agujas del tren. Una fila por brazo; en cada visita, las condiciones con los valores
+ * de ese momento, lo que dieron y por dónde siguió; y cuántas veces fue por cada brazo.
+ */
+export function conditionScene(gist: Gist): GistScene | null {
+  const result = gist.branches
+  if (gist.status !== 'ok' || !result || result.visits.length === 0) return null
+  const counted = [
+    ...result.arms.flatMap((arm, k) =>
+      (result.totals[k] ?? 0) > 0 ? [`${result.totals[k]} por «${armPart(arm.kind)}»`] : [],
+    ),
+    ...(result.none > 0 ? [`${result.none} de largo`] : []),
+  ]
+  const used = result.totals.filter((count) => count > 0).length + (result.none > 0 ? 1 : 0)
+  const title =
+    result.total === 1
+      ? 'Comprueba y elige un camino'
+      : used === 1
+        ? `Pasó ${plural(result.total, 'vez', 'veces')}, siempre por el mismo camino`
+        : `Pasó ${plural(result.total, 'vez', 'veces')} y repartió por ${used} caminos`
+  return {
+    name: gist.name,
+    block: 'condition',
+    title,
+    beats: result.visits.length,
+    stepMs: 800,
+    lanes: [
+      [
+        {
+          type: 'switch',
+          label:
+            result.total > result.visits.length
+              ? `las primeras ${result.visits.length} veces`
+              : 'cada vez',
+          arms: result.arms.map((arm) => ({ part: armPart(arm.kind), head: arm.head })),
+          visits: result.visits,
+          totals: result.totals,
+          none: result.none,
+          end: `${plural(result.total, 'vez', 'veces')}: ${counted.join(', ')}.`,
+        },
+      ],
+    ],
+  }
+}
+
 /** Lo que se cuenta debajo de una parte de un `try`: la línea que falló, o lo que hizo. */
 function netDetail(part: NetPart): string | undefined {
   if (part.state === 'raised') return part.at ? `falla en: ${part.at}` : undefined
@@ -374,6 +423,7 @@ export function sampleScene(gist: Gist): GistScene | null {
   if (gist.block === 'loop') return loopScene(gist)
   if (gist.block === 'try') return tryScene(gist)
   if (gist.block === 'class') return classScene(gist)
+  if (gist.block === 'condition') return conditionScene(gist)
   if (gist.status !== 'ok' || !gist.sample) return null
   return {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,

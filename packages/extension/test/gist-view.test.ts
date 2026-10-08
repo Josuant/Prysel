@@ -227,3 +227,59 @@ describe('el programa, cuando de una función se sabe qué hace', () => {
     expect(before?.hash).not.toBe(after?.hash)
   })
 })
+
+describe('un if con tarjeta se pliega en ella (solo en la vista)', () => {
+  const SOURCE = lines(
+    'for nota in [9, 5]:',
+    '    if nota >= 9:',
+    '        print("a")',
+    '    elif nota >= 5:',
+    '        print("b")',
+    '    else:',
+    '        print("c")',
+    'print("fin")',
+  )
+  const card: GistScene = {
+    name: 'if nota >= 9',
+    block: 'condition',
+    lanes: [[{ type: 'note', text: 'agujas' }]],
+  }
+
+  function shown(density: Density, flipped: readonly string[] = []) {
+    const program = parse(SOURCE)
+    const nodes = toCanvasNodes(program.nodes).map((node) =>
+      node.id === 'if:2:4' ? { ...node, gist: card } : node,
+    )
+    const all = withSections(nodes, program.edges, program.sections ?? [])
+    return viewOf(all, program.edges, functionsOf(all, program.edges), {
+      focus: null,
+      flow: true,
+      density,
+      flipped: new Set(flipped),
+    }).view
+  }
+
+  it('plegado: se ve la tarjeta y no sus ramas, y lo de después sigue enganchado', () => {
+    const view = shown('normal')
+    const ids = view.nodes.map((node) => node.id)
+    expect(ids).toContain('if:2:4')
+    expect(ids).not.toContain('elif:4:4')
+    expect(ids).not.toContain('expr:5:8')
+    expect(ids).toContain('expr:8:0')
+    const fold = view.nodes.find((node) => node.id === 'if:2:4')
+    expect(fold?.gist).toBe(card)
+    expect(fold?.openable).toBe(true)
+    // Ninguna arista apunta ya a una rama recogida.
+    const gone = new Set(['expr:3:8', 'elif:4:4', 'expr:5:8', 'expr:7:8'])
+    expect(view.edges.some((edge) => gone.has(edge.from) || gone.has(edge.to))).toBe(false)
+  })
+
+  it('abierto: el rombo de siempre, sin tarjeta, con su chevron para volver a plegarlo', () => {
+    const view = shown('normal', ['if:2:4'])
+    const ids = view.nodes.map((node) => node.id)
+    expect(ids).toContain('elif:4:4')
+    const open = view.nodes.find((node) => node.id === 'if:2:4')
+    expect(open?.gist).toBeUndefined()
+    expect(open?.openable).toBe(true)
+  })
+})

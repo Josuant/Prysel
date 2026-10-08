@@ -1083,7 +1083,9 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
                 ? { toggleLabel: `Ver la función de ${node.label}` }
                 : container
                   ? {}
-                  : { toggleLabel: `Abrir ${node.label}` }),
+                  : node.kind === 'control.condition'
+                    ? { toggleLabel: 'Ver cómo funciona' }
+                    : { toggleLabel: `Abrir ${node.label}` }),
             }
           : {})}
       />

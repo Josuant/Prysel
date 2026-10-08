@@ -83,6 +83,21 @@ export type GistPiece =
       fall?: { error: string; to: number | null }
       end: string
     }
+  /**
+   * Un `if` como unas agujas de tren: una fila por brazo (el `if`, cada `elif`, el `else`). En cada visita (un
+   * paso del recorrido), las condiciones con los valores de ese momento, lo que dieron, y una bola que cae
+   * hasta el brazo por el que siguió (`arm` −1: por ninguno, de largo). Cada brazo cuenta sus visitas.
+   * `totals`/`none`: el recuento de todas las veces, también las que no se cuentan una a una.
+   */
+  | {
+      type: 'switch'
+      label: string
+      arms: { part: string; head: string }[]
+      visits: { arm: number; tests: (string | null)[]; verdicts: (boolean | null)[] }[]
+      totals: number[]
+      none: number
+      end: string
+    }
   /** Una frase suelta: «no recibe nada», o por qué no hay muestra. */
   | { type: 'note'; text: string }
 
@@ -90,7 +105,7 @@ export interface GistScene {
   /** El nombre de la función (o la cabecera del bloque). */
   name: string
   /** Qué bloque cuenta: una función (por defecto), un bucle, un `try` o una clase. Cambia el icono y el nombre. */
-  block?: 'function' | 'loop' | 'try' | 'class'
+  block?: 'function' | 'loop' | 'try' | 'class' | 'condition'
   /** Lo que hace, en una frase. */
   title?: string
   /** La entrada no estaba en el programa: se propuso para probar. */
@@ -302,6 +317,13 @@ export const netDetail = (text: string) => clip(text.replace(/\n+$/, '').replace
 /** El error que cae, corto: su tipo y el principio del mensaje. */
 export const netError = (text: string) => clip(text.replace(/\s+/g, ' ').trim(), 28)
 export const netErrorWidth = (text: string) => Math.ceil(netError(text).length * 6.4) + 18
+/** Lo que mide cada fila de un `if`: la cabecera y, debajo, la condición con sus valores. */
+export const SWITCH_ROW = 40
+/** El ancho de la columna del nombre de cada brazo y de su contador. */
+export const SWITCH_PART_W = 64
+export const SWITCH_COUNT_W = 36
+export const switchText = (text: string) => clip(text, 34)
+
 /** Lo que mide cada fila de un `try`: su cabecera y, si lo tiene, su detalle debajo. */
 export const netRowHeight = (row: NetRow) => GIST.row + (row.detail ? GIST.line : 0) + 4
 
@@ -393,6 +415,26 @@ export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
         Math.ceil(clip(piece.end, 44).length * 6.6) + 4,
       ),
       h: GIST.label + rows * GIST.row,
+    }
+  }
+  if (piece.type === 'switch') {
+    const widest = Math.max(
+      ...piece.arms.map((arm) => switchText(arm.head).length),
+      ...piece.visits.flatMap((visit) =>
+        visit.tests.map((test) => switchText(test ?? '').length + 4),
+      ),
+    )
+    return {
+      w: Math.max(
+        Math.ceil(piece.label.length * 6.4),
+        SWITCH_PART_W + Math.ceil(widest * GIST.char) + 44 + SWITCH_COUNT_W,
+        Math.ceil(clip(piece.end, 60).length * 6.6) + 4,
+      ),
+      h:
+        GIST.label +
+        piece.arms.length * SWITCH_ROW +
+        (piece.visits.some((v) => v.arm < 0) ? SWITCH_ROW / 2 : 0) +
+        GIST.row,
     }
   }
   if (piece.type === 'net') {

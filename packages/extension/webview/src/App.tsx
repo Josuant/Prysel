@@ -72,6 +72,7 @@ import { functionsIn } from '../../src/gist/facts.ts'
 import { loopsIn } from '../../src/gist/laps.ts'
 import { triesIn } from '../../src/gist/net.ts'
 import { classesIn } from '../../src/gist/blueprint.ts'
+import { conditionsIn } from '../../src/gist/branch.ts'
 import type { Gist } from '../../src/gist/gist.ts'
 import { sampleScene } from './gisting.ts'
 import { usePlayer } from './usePlayer.ts'
@@ -758,6 +759,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         ...loopsIn(program),
         ...triesIn(program),
         ...classesIn(program),
+        ...conditionsIn(program),
       ].map((fact) => [fact.id, fact.hash]),
     )
     const scenes = new Map(

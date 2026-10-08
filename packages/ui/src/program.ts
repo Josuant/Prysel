@@ -34,6 +34,8 @@ export interface SourceNode {
   label: string
   code: string
   line: number
+  /** Su última línea, si abarca varias. */
+  lineEnd?: number
   contains?: string[]
   ops?: number
   control?: ControlModel
@@ -166,6 +168,7 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
     // Cualquier nodo se puede escribir como código; un título que es un nombre se puede renombrar.
     ...(node.text === undefined ? {} : { text: node.text }),
     line: node.line,
+    ...(node.lineEnd === undefined ? {} : { lineEnd: node.lineEnd }),
     ...(node.names?.[node.label] !== undefined && IDENTIFIER.test(node.label)
       ? { renamable: true }
       : {}),
@@ -459,6 +462,27 @@ export function resolveSectionAction(
 /** Una función con cuerpo: es la que aparece en el menú «Funciones» y la que se ve aparte. */
 function isFunction(node: CanvasNode): boolean {
   return getKind(node.kind).role === 'abstraction' && (node.contains?.length ?? 0) > 0
+}
+
+/**
+ * Los `if` que tienen tarjeta «Cómo funciona», con lo que abarcan: los nodos cuya línea cae dentro (sus ramas y
+ * sus `elif`). En el modelo un `if` no contiene sus ramas (son nodos sueltos unidos por aristas); para plegarlo
+ * en su tarjeta, la vista las agrupa.
+ */
+export function branchScopes(nodes: readonly CanvasNode[]): Map<string, string[]> {
+  const scopes = new Map<string, string[]>()
+  for (const node of nodes) {
+    if (node.kind !== 'control.condition' || !node.gist || node.lineEnd === undefined) continue
+    const from = node.line
+    const to = node.lineEnd
+    if (from === undefined) continue
+    const members = nodes
+      .filter((other) => other.id !== node.id && other.line !== undefined)
+      .filter((other) => (other.line as number) > from && (other.line as number) <= to)
+      .map((other) => other.id)
+    if (members.length > 0) scopes.set(node.id, members)
+  }
+  return scopes
 }
 
 /** Un ámbito plegable: una función con cuerpo o un bucle con cuerpo (no una decisión). */
@@ -960,8 +984,12 @@ export function viewOf(
   const { focus, flow, density } = options
   const shown = programView(all, edges, focus)
   const base = focus === null && flow ? inlineCalls(all, edges, shown, functions) : shown
+  // Un `if` con tarjeta se pliega como un ámbito más: sus ramas se agrupan solo aquí, en la vista.
+  const branched = branchScopes(base.nodes)
   // La función que se está viendo nunca se pliega: sería quedarse sin ver lo que se pidió ver.
-  const scopes = base.nodes.filter((node) => isFoldable(node) && node.id !== focus)
+  const scopes = base.nodes.filter(
+    (node) => (isFoldable(node) || branched.has(node.id)) && node.id !== focus,
+  )
   const leaves = leafSections(base.nodes)
   // En normal, una función de la que se sabe qué hace empieza plegada en su tarjeta: se abre para ver cómo.
   const gisted = new Set(base.nodes.filter((node) => node.gist).map((node) => node.id))
@@ -976,7 +1004,20 @@ export function viewOf(
           (options.flipped?.has(id) ?? false),
       ),
   )
-  const collapsed = foldScopes(base.nodes, base.edges, folded)
+  // Plegado, el `if` recoge sus ramas (y se ve su tarjeta); abierto, es el rombo de siempre, con su chevron
+  // para volver a plegarlo.
+  const prepared =
+    branched.size === 0
+      ? base.nodes
+      : base.nodes.map((node) => {
+          const members = branched.get(node.id)
+          if (!members) return node
+          if (folded.has(node.id)) return { ...node, contains: members, openable: true }
+          const open = { ...node, openable: true }
+          delete open.gist
+          return open
+        })
+  const collapsed = foldScopes(prepared, base.edges, folded)
   const returns = foldReturns(collapsed.nodes, collapsed.edges, { hide: !flow })
   return { base, folded, view: flow ? enterSections(returns, folded) : returns, byDefault }
 }

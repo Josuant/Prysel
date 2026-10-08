@@ -5,6 +5,7 @@ import { functionsIn, reaches, type Facts } from './facts.ts'
 import { bestLaps, loopsIn, type Laps } from './laps.ts'
 import { bestNet, triesIn, type Net } from './net.ts'
 import { bestLife, classesIn, type Life } from './blueprint.ts'
+import { bestSwitch, conditionsIn, type Switch } from './branch.ts'
 import { ruleFor, type Rule } from './patterns.ts'
 import { bestSample, samplesIn, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
@@ -38,13 +39,15 @@ export interface Gist {
   /** Con otro estado que `ok`: por qué no hay muestra. */
   why?: string
   /** Qué bloque es: una función (por defecto), un bucle, un `try` o una clase. */
-  block?: 'function' | 'loop' | 'try' | 'class'
+  block?: 'function' | 'loop' | 'try' | 'class' | 'condition'
   /** En un bucle: sus vueltas, tal como se ejecutaron. */
   laps?: Laps
   /** En un `try`: qué se intentó, si saltó un error y qué red lo atrapó. */
   net?: Net
   /** En una clase: la vida de uno de sus objetos, llamada a llamada. */
   life?: Life
+  /** En un `if`: por qué rama siguió cada vez, y con qué valores. */
+  branches?: Switch
 }
 
 /** Por qué un programa no se ejecuta solo para sacar muestras; `null` si se puede. */
@@ -89,6 +92,7 @@ export function gistsOf(program: Program, trace: Trace | null): Gist[] {
     ...loopGists(program, trace, index),
     ...tryGists(program, trace, index),
     ...classGists(program, trace, index),
+    ...conditionGists(program, trace, index),
   ]
 }
 
@@ -165,6 +169,28 @@ function classGists(program: Program, trace: Trace | null, index: TraceIndex | n
         sample: null,
         block: 'class' as const,
         life,
+      },
+    ]
+  })
+}
+
+/** Los `if` a los que llegó la ejecución, con cada visita. Los que no se ejecutaron, con su diagrama. */
+function conditionGists(program: Program, trace: Trace | null, index: TraceIndex | null): Gist[] {
+  if (!trace || !index) return []
+  return conditionsIn(program).flatMap((facts) => {
+    const branches = bestSwitch(trace, facts, index)
+    if (!branches) return []
+    return [
+      {
+        id: facts.id,
+        name: facts.arms[0]?.head ?? 'if',
+        owner: null,
+        hash: facts.hash,
+        title: null,
+        status: 'ok' as const,
+        sample: null,
+        block: 'condition' as const,
+        branches,
       },
     ]
   })
