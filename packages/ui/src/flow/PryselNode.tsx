@@ -27,6 +27,7 @@ import { TrayBox } from './ChipNode.tsx'
 import { LapsStrip } from './LapsStrip.tsx'
 import { LAPS_HEADROOM } from '../laps.ts'
 import { GistCard } from './GistCard.tsx'
+import { markOpening, openingNow, unrollDelay } from './opening.ts'
 import { SectionCard, SectionFrame } from './SectionCard.tsx'
 import { TRAY, resultNames, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
@@ -169,7 +170,7 @@ function railPath(w: number, h: number, top: number): string {
   ].join(' ')
 }
 
-export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
+export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<PryselFlowNode>) {
   const {
     node,
     density,
@@ -184,6 +185,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
     phase,
   } = data
   const [slots, setSlots] = useState<MeasuredSlot[]>([])
+  // Si nace mientras una función se abre desde su tarjeta, se despliega a su turno (los de arriba, antes).
+  // Se decide una vez, al nacer: después ya es un nodo como cualquier otro.
+  const [unroll] = useState(() => unrollDelay(id, positionAbsoluteY))
+  const arriving =
+    unroll === null
+      ? {}
+      : { 'data-unroll': '', style: { '--unroll': `${unroll}ms` } as React.CSSProperties }
   const updateNodeInternals = useUpdateNodeInternals()
 
   const spec = getKind(node.kind)
@@ -333,6 +341,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         data-change={data.change}
         data-hinted={data.hinted ? '' : undefined}
         data-modifier={modifier}
+        {...arriving}
       >
         <Handle
           type="source"
@@ -374,6 +383,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
           onToggle={
             data.onEnter
               ? () => {
+                  markOpening({ id, w: size.w, h: size.h, y: positionAbsoluteY })
                   data.onEnter?.(id)
                 }
               : undefined
@@ -382,6 +392,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       </div>
     )
   }
+
+  // La función que se acaba de abrir desde su tarjeta: su marco crece desde lo que medía la tarjeta.
+  const from = container ? openingNow() : null
+  const opened =
+    from?.id === id
+      ? ({ '--from-w': `${from.w}px`, '--from-h': `${from.h}px` } as React.CSSProperties)
+      : null
 
   // Una etapa (o un bucle que encabeza una, plegado): su tarjeta o su marco, no una tarjeta de sentencia.
   const stage = node.section
@@ -410,6 +427,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         data-change={data.change}
         data-hinted={data.hinted ? '' : undefined}
         data-modifier={modifier}
+        {...arriving}
       >
         <Handle
           type="source"
@@ -505,6 +523,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-echo={data.echoed ? '' : undefined}
       data-change={data.change}
       data-hinted={data.hinted ? '' : undefined}
+      {...(opened ? { 'data-opened': '', style: opened } : arriving)}
     >
       {/* De aquí sale la flecha de una nota: existe en todo nodo (también en un territorio, que no tiene salida). */}
       <Handle

@@ -1087,14 +1087,57 @@
 
 /* ── Movimiento: el diagrama se mueve, no salta ── */
 .flow-node {
-  transition: opacity 180ms ease-out;
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
 }
 /* Un nodo que entra aparece; uno que sale se desvanece. */
 .flow-node[data-phase='entering'] {
   animation: node-enter 260ms cubic-bezier(0.16, 1, 0.3, 1);
 }
+/* Lo que sale se recoge hacia arriba: hacia la cabecera de lo que se pliega. */
 .flow-node[data-phase='leaving'] {
   opacity: 0;
+  transform: translateY(-10px) scale(0.94);
+}
+/*
+ * De la tarjeta «Qué hace» al diagrama, y vuelta. Al abrir, el marco de la función crece desde lo que medía
+ * la tarjeta (`--from-w`, `--from-h`) y lo de dentro se desenrolla de arriba abajo (`--unroll`: lo que espera
+ * cada nodo, según lo abajo que esté). Al plegar, lo de dentro se recoge y la tarjeta se asienta. Así se ve
+ * que son la misma cosa, contada con más o menos detalle.
+ */
+.flow-node[data-unroll] {
+  animation: node-unroll 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--unroll, 0ms);
+}
+@keyframes node-unroll {
+  from {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.95);
+  }
+}
+.flow-node[data-opened] {
+  animation: node-open 420ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+@keyframes node-open {
+  from {
+    clip-path: inset(
+      0 calc((100% - var(--from-w)) / 2) calc(100% - var(--from-h)) calc((100% - var(--from-w)) / 2)
+        round 16px
+    );
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 16px);
+  }
+}
+.gist-card {
+  animation: gist-settle 340ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+@keyframes gist-settle {
+  from {
+    opacity: 0;
+    transform: scale(1.07);
+  }
 }
 @keyframes node-enter {
   from {
@@ -1109,7 +1152,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .flow-node,
-  .flow-node[data-phase='entering'] {
+  .flow-node[data-phase='entering'],
+  .flow-node[data-unroll],
+  .flow-node[data-opened],
+  .gist-card {
     animation: none;
     transition: none;
   }
