@@ -8,6 +8,8 @@ import {
   unrunnable,
   type Gist,
 } from '../../../packages/extension/src/gist/gist.ts'
+import { pickRule, verifiedRules } from '../../../packages/extension/src/gist/patterns.ts'
+import type { Decider } from '../../../packages/extension/src/jev/client.ts'
 import type { Trace } from '../../../packages/extension/src/trace.ts'
 
 /**
@@ -25,6 +27,8 @@ export interface GistsPort {
   /** Ejecuta un programa entero grabando su traza; `null` si no se pudo. */
   trace(code: string): Promise<Trace | null>
   provider(): AiProvider | null
+  /** Quien elige entre varias reglas que la muestra confirma por igual. */
+  decider(): Decider
   /** Hay una orden construyendo o una consulta en marcha: se espera a que acabe. */
   busy(): boolean
   post(gists: Gist[], version: number): void
@@ -117,6 +121,19 @@ export class Gists {
       })
       this.cache.set(tried)
       gists[at] = tried
+    }
+    // Casi siempre hay una regla o ninguna. Si la muestra confirma varias, el JEV dice cuál es la intención.
+    for (const [at, gist] of gists.entries()) {
+      const fact = facts.find((candidate) => candidate.id === gist.id)
+      if (!fact || !gist.sample) continue
+      const rules = verifiedRules(fact.code, gist.sample)
+      if (rules.length < 2) continue
+      try {
+        const rule = await pickRule(this.port.decider(), fact, rules)
+        if (rule) gists[at] = { ...gist, rule }
+      } catch {
+        // Sin respuesta queda la más concreta, que también es verdad.
+      }
     }
     return gists
   }

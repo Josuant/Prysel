@@ -7,7 +7,7 @@ import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import type { AiProvider } from '../src/ai/provider.ts'
 import { functionsIn } from '../src/gist/facts.ts'
 import { GistCache, gistsOf, invent, unrunnable, validCall, withCall } from '../src/gist/gist.ts'
-import { candidateRules } from '../src/gist/patterns.ts'
+import { candidateRules, pickRule, testOf, verifiedRules } from '../src/gist/patterns.ts'
 import { bestSample, samplesIn } from '../src/gist/sample.ts'
 import {
   matrixOf,
@@ -17,6 +17,7 @@ import {
   valueOf,
   type Value,
 } from '../src/gist/value.ts'
+import type { Decider } from '../src/jev/client.ts'
 import { Kernel } from '../src/kernel.ts'
 import { sampleScene } from '../webview/src/gisting.ts'
 import type { Trace } from '../src/trace.ts'
@@ -247,6 +248,17 @@ describe('las reglas que deja leer el código', () => {
     ])
   })
 
+  it('una condición sencilla se sabe evaluar; lo demás, no se adivina', () => {
+    expect(testOf('n % 2 == 0')?.('4')).toBe(true)
+    expect(testOf('n % 2 == 0')?.('-3')).toBe(false)
+    expect(testOf('x > 3')?.('3')).toBe(false)
+    expect(testOf('celda == 1')?.('1')).toBe(true)
+    expect(testOf("letra != 'a'")?.('b')).toBe(true)
+    expect(testOf('not x')?.('0')).toBe(true)
+    expect(testOf('es_primo(n)')).toBeNull()
+    expect(testOf('a > 1 and a < 5')).toBeNull()
+  })
+
   it('si las ramas no hacen lo mismo, o hacen más de una cosa, no es una regla', () => {
     expect(candidateRules(lines('if a == 1:', '    x = 1', 'else:', '    y = 2'))).toEqual([])
     expect(
@@ -336,6 +348,8 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     const program = parse(TABLERO)
     const gist = await invent(program, one(program, 'mostrar_tablero'), port())
     expect(gist.rule).toEqual({
+      kind: 'cases',
+      via: [1, 0, 1, 0, 0, 1, 1, 1, 0],
       subject: 'celda',
       cases: [
         { when: '1', gives: '"*"' },
@@ -361,7 +375,7 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
       ...port(),
       provider: { id: 'm', generate: () => Promise.resolve('simbolos([1, 0, 1])') },
     })
-    expect(gist.rule?.cases).toEqual([
+    expect(gist.rule?.kind === 'cases' && gist.rule.cases).toEqual([
       { when: '1', gives: '"#"' },
       { when: null, gives: '" "' },
     ])
@@ -375,6 +389,111 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     expect(gist.status).toBe('ok')
     expect(gist.rule).toBeUndefined()
     expect(sampleScene(gist)?.lanes).toHaveLength(2)
+  })
+
+  const ruled = async (source: string, name: string, call: string) => {
+    const program = parse(source)
+    return invent(program, one(program, name), {
+      ...port(),
+      provider: { id: 'm', generate: () => Promise.resolve(call) },
+    })
+  }
+
+  it('quedarse con algunos: lo que sale es parte de lo que entró, y se sabe cuáles', async () => {
+    const gist = await ruled(SIN_TECLADO, 'pares', 'pares([1, 2, 3, 4, 5, 6])')
+    expect(gist.rule).toEqual({
+      kind: 'filter',
+      input: 'numeros',
+      condition: 'n % 2 == 0',
+      keeps: [false, true, false, true, false, true],
+    })
+    // El recorrido: cada elemento pasa la prueba, y los que se quedan aparecen en la salida a su paso.
+    const scene = sampleScene(gist)
+    expect(scene?.beats).toBe(6)
+    expect(scene?.lanes[1]).toMatchObject([{ type: 'test', text: 'n % 2 == 0' }])
+    expect(scene?.lanes[2]).toMatchObject([{ type: 'datum', beats: [1, 3, 5], arrives: true }])
+  })
+
+  it('sumar, contar los que cumplen algo, y el mayor: la cuenta que se va llevando', async () => {
+    const source = lines(
+      'def total(precios):',
+      '    suma = 0',
+      '    for precio in precios:',
+      '        suma += precio',
+      '    return suma',
+      '',
+      '',
+      'def contar_vivas(tablero):',
+      '    vivas = 0',
+      '    for fila in tablero:',
+      '        for celda in fila:',
+      '            if celda == 1:',
+      '                vivas += 1',
+      '    return vivas',
+      '',
+      '',
+      'def mayor(numeros):',
+      '    mejor = numeros[0]',
+      '    for n in numeros:',
+      '        if n > mejor:',
+      '            mejor = n',
+      '    return mejor',
+    )
+    const total = await ruled(source, 'total', 'total([3, 4, 5])')
+    expect(total.rule).toMatchObject({ kind: 'fold', op: 'sum', running: ['3', '7', '12'] })
+    const vivas = await ruled(source, 'contar_vivas', 'contar_vivas([[0, 1, 0], [1, 1, 0]])')
+    expect(vivas.rule).toMatchObject({
+      kind: 'fold',
+      op: 'count-if',
+      condition: '== 1',
+      running: ['0', '1', '1', '2', '3', '3'],
+      counts: [false, true, false, true, true, false],
+    })
+    const mayor = await ruled(source, 'mayor', 'mayor([3, 9, 2, 7])')
+    expect(mayor.rule).toMatchObject({ kind: 'fold', op: 'max', running: ['3', '9', '9', '9'] })
+    expect(sampleScene(mayor)?.lanes[2]).toMatchObject([{ beats: [3], arrives: true }])
+  })
+
+  it('con varias reglas que la muestra confirma por igual, elige el JEV', async () => {
+    // De una lista de un solo elemento, su suma es también su mayor: los datos no deciden.
+    const source = lines(
+      'def raro(numeros):',
+      '    mejor = 0',
+      '    for n in numeros:',
+      '        if n > mejor:',
+      '            mejor += n - mejor',
+      '    return mejor',
+    )
+    const gist = await ruled(source, 'raro', 'raro([5])')
+    const rules = verifiedRules(must(functionsIn(parse(source))[0]).code, must(gist.sample))
+    expect(rules.map((rule) => rule.kind === 'fold' && rule.op)).toEqual(['sum', 'max'])
+    const asked: string[] = []
+    const jev = (choice: string, confidence: number): Decider => ({
+      id: 'grabado',
+      decide: (request) => {
+        const question = request.questions['regla']
+        asked.push(...Object.values(question?.type === 'choice' ? question.criteria : {}))
+        return Promise.resolve({
+          ms: 1,
+          answers: { regla: { type: 'choice', choice, confidence, probabilities: {} } },
+        })
+      },
+    })
+    const fn = { name: 'raro', code: source }
+    expect(await pickRule(jev('r2', 0.9), fn, rules)).toMatchObject({ op: 'max' })
+    expect(asked).toEqual(['Suma todos los elementos.', 'Busca el mayor.'])
+    // Si duda, queda la primera, que también es verdad.
+    expect(await pickRule(jev('r2', 0.3), fn, rules)).toMatchObject({ op: 'sum' })
+  })
+
+  it('el recorrido del tablero: cada celda por su caso, y su símbolo en su sitio', async () => {
+    const program = parse(TABLERO)
+    const scene = sampleScene(await invent(program, one(program, 'mostrar_tablero'), port()))
+    expect(scene?.beats).toBe(9)
+    expect(scene?.lanes[0]).toMatchObject([{ type: 'datum', beats: [0, 1, 2, 3, 4, 5, 6, 7, 8] }])
+    expect(scene?.lanes[1]).toMatchObject([{ type: 'rule', via: [1, 0, 1, 0, 0, 1, 1, 1, 0] }])
+    // El `print()` del final deja una línea en blanco: no descuadra el recorrido.
+    expect(scene?.lanes[2]).toMatchObject([{ type: 'console', beats: true }])
   })
 
   it('un método enseña el objeto antes y después', async () => {

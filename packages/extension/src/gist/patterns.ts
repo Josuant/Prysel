@@ -1,23 +1,56 @@
+import type { Decider } from '../jev/client.ts'
 import type { Sample } from './sample.ts'
 import { showValue, type Value } from './value.ts'
 
 /**
- * La **regla** de una función que convierte por casos: «si es 1, un asterisco; si no, un punto». Es lo que
- * dice de verdad qué hace `mostrar_tablero`, más que sus dos bucles.
+ * La **regla** de una función: lo que hace con lo que recibe, dicho en una línea. «Cada celda: si es 1, un
+ * asterisco; si no, un punto», «se queda con los pares», «suma». Es lo que dice de verdad qué hace
+ * `mostrar_tablero`, más que sus dos bucles.
  *
- * Se lee del código (una decisión cuyas ramas hacen lo mismo con un literal distinto, o un `a if x == 1 else
- * b`) y **se comprueba con la muestra**: aplicada a lo que entró, tiene que dar lo que salió. Si no lo da, no
- * hay regla: se enseña la muestra sola, que siempre es verdad.
+ * Se lee del código (su forma) y **se comprueba con la muestra** (sus datos): aplicada a lo que entró, tiene
+ * que dar lo que salió. Si no lo da, no hay regla: se enseña la muestra sola, que siempre es verdad. Además
+ * de la regla, queda dicho **qué pasó con cada elemento** (por qué caso fue, si se quedó, cuánto llevaba la
+ * cuenta): es lo que permite contarlo paso a paso.
  */
-export interface Rule {
+export type Rule = CasesRule | FilterRule | FoldRule
+
+interface Applied {
+  /** La entrada a la que se aplica (su nombre entre lo que recibe la función). */
+  input: string
+}
+
+/** Convierte por casos: cada elemento, según lo que valga, da una cosa. */
+export interface CasesRule extends Applied {
+  kind: 'cases'
   /** Lo que se mira para decidir (`celda`). */
   subject: string
   /** Cada caso: con qué valor, qué da. `when: null` es «en otro caso». */
   cases: { when: string | null; gives: string }[]
-  /** La entrada a la que se aplica (su nombre entre lo que recibe la función). */
-  input: string
   /** Se aplica a cada elemento de esa entrada (y no a la entrada entera). */
   each: boolean
+  /** Por qué caso fue cada elemento de la muestra, en orden. */
+  via: number[]
+}
+
+/** Se queda con algunos: lo que sale son elementos de lo que entró, en su orden. */
+export interface FilterRule extends Applied {
+  kind: 'filter'
+  /** La condición, como está escrita en el código (si se encontró). */
+  condition: string | null
+  /** Qué elementos de la muestra se quedaron, en orden. */
+  keeps: boolean[]
+}
+
+/** Reduce a un número: la suma, cuántos hay, cuántos cumplen algo, el mayor o el menor. */
+export interface FoldRule extends Applied {
+  kind: 'fold'
+  op: 'sum' | 'count' | 'count-if' | 'max' | 'min'
+  /** Con `count-if`: qué se cuenta, como está en el código (`== 1`, `> 3`). */
+  condition?: string
+  /** Lo que llevaba la cuenta tras cada elemento de la muestra. */
+  running: string[]
+  /** Qué elementos cambiaron la cuenta (los que suman, los que cuentan, los que baten el récord). */
+  counts: boolean[]
 }
 
 const LIT = String.raw`-?\d+(?:\.\d+)?|"[^"\n]*"|'[^'\n]*'|\bTrue\b|\bFalse\b|\bNone\b`
@@ -36,7 +69,7 @@ export function bare(literal: string): string {
   return /^-?\d/.test(text) && Number.isFinite(Number(text)) ? String(Number(text)) : text
 }
 
-type Candidate = Pick<Rule, 'subject' | 'cases'>
+type Candidate = Pick<CasesRule, 'subject' | 'cases'>
 
 /** Lo que hacen las ramas, si todas hacen lo mismo cambiando un solo literal: ese literal, por rama. */
 function varying(bodies: readonly string[]): string[] | null {
@@ -125,39 +158,269 @@ function atoms(value: Value): string[] | null {
 /** Un texto sin lo que solo es forma (espacios, saltos, comas, corchetes, comillas): queda lo que dice. */
 const essence = (text: string) => text.replace(/[\s,[\]()'"]/g, '')
 
-/**
- * La regla de la función, si tiene una y la muestra la confirma: aplicada a una de sus entradas (elemento a
- * elemento), da exactamente lo que imprimió, devolvió o dejó cambiado.
- */
-export function ruleFor(code: string, sample: Sample): Rule | null {
-  if (sample.error !== undefined) return null
-  const outputs = [
+/** Lo que salió, como textos sin forma: lo impreso, lo devuelto y lo que quedó cambiado. */
+const outputsOf = (sample: Sample) =>
+  [
     ...(sample.printed !== undefined ? [sample.printed] : []),
     ...(sample.returned ? [showValue(sample.returned)] : []),
     ...(sample.changed ?? []).map((change) => showValue(change.after)),
   ].map(essence)
-  if (outputs.length === 0) return null
+
+function casesRules(code: string, sample: Sample): CasesRule[] {
+  const outputs = outputsOf(sample)
+  const found: CasesRule[] = []
   for (const candidate of candidateRules(code)) {
-    const table = new Map(
-      candidate.cases.flatMap((entry) =>
-        entry.when === null ? [] : [[bare(entry.when), bare(entry.gives)] as const],
-      ),
-    )
-    const fallback = candidate.cases.find((entry) => entry.when === null)
+    const whens = candidate.cases.map((entry) => (entry.when === null ? null : bare(entry.when)))
+    const fallback = whens.indexOf(null)
     for (const input of sample.inputs) {
       const entering = atoms(input.value)
       if (!entering || entering.length === 0) continue
-      const produced: string[] = []
-      for (const item of entering) {
-        const gives = table.get(item) ?? (fallback ? bare(fallback.gives) : undefined)
-        if (gives === undefined) break
-        produced.push(gives)
-      }
-      if (produced.length !== entering.length) continue
-      const said = essence(produced.join(''))
+      const via = entering.map((item) => {
+        const at = whens.indexOf(item)
+        return at >= 0 ? at : fallback
+      })
+      if (via.includes(-1)) continue
+      const said = essence(via.map((at) => bare(candidate.cases[at]?.gives ?? '')).join(''))
       if (said !== '' && outputs.includes(said))
-        return { ...candidate, input: input.name, each: input.value.kind === 'list' }
+        found.push({
+          kind: 'cases',
+          ...candidate,
+          input: input.name,
+          each: input.value.kind === 'list',
+          via,
+        })
     }
   }
+  return found
+}
+
+/** Dos valores sueltos comparados como Python los compararía: como números si lo son, si no como textos. */
+function compare(a: string, op: string, b: string): boolean | null {
+  const [x, y] = [Number(a), Number(b)]
+  const numeric = a !== '' && b !== '' && Number.isFinite(x) && Number.isFinite(y)
+  if (op === '==') return numeric ? x === y : a === b
+  if (op === '!=') return numeric ? x !== y : a !== b
+  if (!numeric) return null
+  if (op === '<') return x < y
+  if (op === '<=') return x <= y
+  if (op === '>') return x > y
+  if (op === '>=') return x >= y
   return null
+}
+
+/**
+ * Una condición sencilla sobre un elemento (`n % 2 == 0`, `x > 3`, `celda == 1`, `not x`), hecha función: lo
+ * que da para un valor. `null` si no es de las que se saben evaluar: entonces no se evalúa, no se adivina.
+ */
+export function testOf(condition: string): ((item: string) => boolean | null) | null {
+  const text = condition.trim()
+  const name = String.raw`[A-Za-z_][\w.\[\]]*`
+  const modulo = new RegExp(String.raw`^${name}\s*%\s*(\d+)\s*(==|!=)\s*(\d+)$`).exec(text)
+  if (modulo) {
+    const [, by = '1', op = '==', rest = '0'] = modulo
+    return (item) =>
+      Number.isInteger(Number(item)) && item !== ''
+        ? compare(String(((Number(item) % Number(by)) + Number(by)) % Number(by)), op, rest)
+        : null
+  }
+  const plain = new RegExp(String.raw`^${name}\s*(==|!=|<=|>=|<|>)\s*(${LIT})$`).exec(text)
+  if (plain) {
+    const [, op = '==', literal = ''] = plain
+    return (item) => compare(item, op, bare(literal))
+  }
+  const truthy = new RegExp(String.raw`^(not\s+)?${name}$`).exec(text)
+  if (truthy) {
+    const negated = truthy[1] !== undefined
+    return (item) => !['0', '', 'False', 'None'].includes(item) !== negated
+  }
+  return null
+}
+
+/** Las condiciones que el código pone para quedarse con algo o para contarlo. */
+function conditionsIn(code: string): string[] {
+  const found: string[] = []
+  // `[x for x in xs if COND]`, y `if COND:` en un bucle.
+  for (const match of code.matchAll(/\bfor\s+[\w, ]+\s+in\s+[^\]\n]+?\s+if\s+([^\]\n]+?)\s*[\])]/g))
+    found.push(match[1] ?? '')
+  for (const match of code.matchAll(/^\s*if\s+(.+?)\s*:\s*$/gm)) found.push(match[1] ?? '')
+  return found.filter((condition) => condition !== '')
+}
+
+function filterRules(code: string, sample: Sample): FilterRule[] {
+  const out = sample.returned ?? sample.changed?.[0]?.after
+  if (!out || out.kind !== 'list' || !out.items.every((item) => item.kind === 'atom')) return []
+  const left = atoms(out)
+  if (!left) return []
+  const conditions = conditionsIn(code)
+  // Sin una condición en el código no es «quedarse con algunos»: sería otra cosa que se le parece.
+  if (conditions.length === 0) return []
+  const found: FilterRule[] = []
+  for (const input of sample.inputs) {
+    const entering = atoms(input.value)
+    if (!entering || input.value.kind !== 'list' || left.length >= entering.length) continue
+    // Lo que salió tiene que ser parte de lo que entró, en su orden.
+    const keeps: boolean[] = []
+    let next = 0
+    for (const item of entering) {
+      const kept = next < left.length && left[next] === item
+      keeps.push(kept)
+      if (kept) next++
+    }
+    if (next !== left.length) continue
+    // La condición es la que, evaluada, da justo esos; si ninguna se sabe evaluar, la primera, como texto.
+    const exact = conditions.find((condition) => {
+      const test = testOf(condition)
+      return test !== null && entering.every((item, at) => test(item) === keeps[at])
+    })
+    const unknown = conditions.find((condition) => testOf(condition) === null)
+    if (exact === undefined && unknown === undefined) continue
+    found.push({ kind: 'filter', input: input.name, condition: exact ?? unknown ?? null, keeps })
+  }
+  return found
+}
+
+function foldRules(code: string, sample: Sample): FoldRule[] {
+  const out = sample.returned
+  if (!out || out.kind !== 'atom' || out.type !== 'number') return []
+  const result = Number(out.text)
+  const bareCode = code.replace(/"[^"\n]*"|'[^'\n]*'/g, '""').replace(/#.*$/gm, '')
+  const found: FoldRule[] = []
+  const show = (value: number) => String(Math.round(value * 1e6) / 1e6)
+  for (const input of sample.inputs) {
+    const entering = atoms(input.value)
+    if (!entering || input.value.kind !== 'list' || entering.length === 0) continue
+    const add = (
+      op: FoldRule['op'],
+      steps: { value: number; counts: boolean }[],
+      condition?: string,
+    ) => {
+      if (steps.at(-1)?.value !== result) return
+      found.push({
+        kind: 'fold',
+        input: input.name,
+        op,
+        ...(condition !== undefined ? { condition } : {}),
+        running: steps.map((step) => show(step.value)),
+        counts: steps.map((step) => step.counts),
+      })
+    }
+    // Cuántos cumplen algo: la condición es del código, y la cuenta tiene que salir.
+    if (/\+=\s*1\b|\.count\(|\bsum\(|\blen\(/.test(bareCode)) {
+      for (const condition of conditionsIn(code)) {
+        const test = testOf(condition)
+        if (!test) continue
+        let total = 0
+        const steps = entering.map((item) => {
+          const counts = test(item) === true
+          if (counts) total++
+          return { value: total, counts }
+        })
+        add('count-if', steps, condition.replace(/^[A-Za-z_][\w.[\]]*\s*(?=[=!<>%])/, ''))
+      }
+    }
+    const numbers = entering.map(Number)
+    if (numbers.every((n, at) => entering[at] !== '' && Number.isFinite(n))) {
+      if (/\bsum\(|\+=\s*(?!1\b)/.test(bareCode)) {
+        let total = 0
+        add(
+          'sum',
+          numbers.map((n) => ({ value: (total += n), counts: n !== 0 })),
+        )
+      }
+      for (const [op, better, hint] of [
+        ['max', (n: number, best: number) => n > best, /\bmax\(|>/],
+        ['min', (n: number, best: number) => n < best, /\bmin\(|</],
+      ] as const) {
+        if (!hint.test(bareCode)) continue
+        let best = Number.NaN
+        add(
+          op,
+          numbers.map((n) => {
+            const counts = Number.isNaN(best) || better(n, best)
+            if (counts) best = n
+            return { value: best, counts }
+          }),
+        )
+      }
+    }
+    if (/\blen\(|\+=\s*1\b/.test(bareCode))
+      add(
+        'count',
+        entering.map((_, at) => ({ value: at + 1, counts: true })),
+      )
+  }
+  return found
+}
+
+/**
+ * Todas las reglas que el código deja leer **y** la muestra confirma, de la más concreta a la menos. Casi
+ * siempre es una o ninguna; con varias (una lista de un solo elemento: su suma es también su mayor), hay que
+ * elegir.
+ */
+export function verifiedRules(code: string, sample: Sample): Rule[] {
+  if (sample.error !== undefined) return []
+  const all: Rule[] = [
+    ...casesRules(code, sample),
+    ...filterRules(code, sample),
+    ...foldRules(code, sample),
+  ]
+  // La misma regla leída dos veces (dos condiciones iguales) no es una duda.
+  const seen = new Set<string>()
+  return all.filter((rule) => {
+    const key = JSON.stringify([rule.kind, rule.input, 'op' in rule ? rule.op : '', ruleSays(rule)])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/** La regla de la función, si tiene una y la muestra la confirma. Con varias, la más concreta. */
+export function ruleFor(code: string, sample: Sample): Rule | null {
+  return verifiedRules(code, sample)[0] ?? null
+}
+
+/** La regla dicha en una frase: es lo que se le da a elegir al JEV, y lo que se lee en la tarjeta. */
+export function ruleSays(rule: Rule): string {
+  if (rule.kind === 'cases') {
+    const cases = rule.cases
+      .map((entry) => `${entry.when === null ? 'otro' : bare(entry.when)} → ${bare(entry.gives)}`)
+      .join(', ')
+    return `Convierte ${rule.each ? 'cada elemento' : 'el valor'} por casos: ${cases}.`
+  }
+  if (rule.kind === 'filter')
+    return `Se queda con algunos elementos${rule.condition ? `: los que cumplen ${rule.condition}` : ''}.`
+  if (rule.op === 'sum') return 'Suma todos los elementos.'
+  if (rule.op === 'count') return 'Cuenta cuántos elementos hay.'
+  if (rule.op === 'count-if') return `Cuenta cuántos elementos cumplen ${rule.condition ?? 'algo'}.`
+  return rule.op === 'max' ? 'Busca el mayor.' : 'Busca el menor.'
+}
+
+/** Con cuánta certeza del JEV se le hace caso al elegir; con menos, queda la más concreta. */
+export const RULE_THRESHOLD = 0.5
+
+/**
+ * Entre varias reglas que la muestra confirma por igual, el JEV dice cuál describe lo que hace la función
+ * (ha visto su código). Todas son verdad para esa muestra: lo que elige es cuál es la intención.
+ */
+export async function pickRule(
+  decider: Decider,
+  fn: { name: string; code: string },
+  rules: readonly Rule[],
+): Promise<Rule | null> {
+  const [first] = rules
+  if (rules.length < 2 || !first) return first ?? null
+  const { answers } = await decider.decide({
+    state: { funcion: fn.name, codigo: fn.code },
+    questions: {
+      regla: {
+        type: 'choice',
+        instructions:
+          'El campo `codigo` es una función de Python. ¿Cuál de estas frases describe lo que hace?',
+        criteria: Object.fromEntries(rules.map((rule, at) => [`r${at + 1}`, ruleSays(rule)])),
+      },
+    },
+  })
+  const answer = answers['regla']
+  if (answer?.type !== 'choice' || answer.confidence < RULE_THRESHOLD) return first
+  return rules[Number(answer.choice.slice(1)) - 1] ?? first
 }

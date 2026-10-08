@@ -103,6 +103,7 @@ export class WebHost {
         return provider ? this.calls.provider(provider) : null
       },
       busy: () => this.working,
+      decider: () => this.calls.decider(deciderFrom(this.settings)),
       post: (gists, version) => this.post({ type: 'gists', version, gists }),
     })
     this.orders = new Orders({

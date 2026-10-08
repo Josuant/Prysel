@@ -5364,6 +5364,109 @@ button.fn-menu__crumb:hover {
   color: var(--accent);
   font-weight: 600;
 }
+/*
+ * El recorrido: la regla aplicada elemento a elemento, con los datos de verdad. Al elemento que le toca se le
+ * ve (un anillo y un pequeño salto); el caso por el que pasa se enciende; su resultado aparece en su sitio; lo
+ * que se queda fuera se apaga. Todo son estados (`data-now`, `data-wait`, `data-out`) que pone la tarjeta paso
+ * a paso: aquí solo se dice cómo se ve cada uno.
+ */
+.gist-cell,
+.gist-text,
+.gist-case,
+.gist-char {
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+.gist-cell[data-wait],
+.gist-text[data-wait] {
+  opacity: 0.1;
+  transform: scale(0.8);
+}
+.gist-cell[data-now],
+.gist-text[data-now] {
+  z-index: 1;
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.18);
+}
+.gist-cell[data-out] {
+  opacity: 0.28;
+}
+.gist-case {
+  border-radius: 7px;
+}
+.gist-case[data-now] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+  transform: translateX(3px);
+}
+.gist-char {
+  font-style: normal;
+}
+.gist-char[data-wait] {
+  opacity: 0;
+}
+.gist-test {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 7px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+  animation: gist-in 260ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-test__mark {
+  color: var(--ink-faint);
+  font-weight: 700;
+}
+.gist-test[data-verdict='yes'] {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 14%, var(--surface));
+}
+.gist-test[data-verdict='yes'] .gist-test__mark {
+  color: var(--state-success);
+}
+.gist-test[data-verdict='no'] {
+  border-color: color-mix(in srgb, var(--ink-faint) 60%, transparent);
+}
+.gist-fold {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  animation: gist-in 260ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-fold__symbol {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--surface);
+  font-weight: 700;
+}
+.gist-fold__value {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  animation: gist-in 160ms ease-out both;
+}
 @media (prefers-reduced-motion: reduce) {
   .gist-arrow,
   .gist-lane * {

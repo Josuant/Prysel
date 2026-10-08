@@ -16,10 +16,22 @@ export type GistValue =
   | { kind: 'opaque'; text: string }
 
 export type GistPiece =
-  /** Un dato con su nombre. `changed`: es como quedó algo que entró de otra manera. */
-  | { type: 'datum'; label?: string; value: GistValue; changed?: boolean }
-  /** Lo que se imprimió. */
-  | { type: 'console'; text: string }
+  /**
+   * Un dato con su nombre. `changed`: es como quedó algo que entró de otra manera. Con recorrido: `beats`
+   * dice en qué paso le toca a cada elemento (en orden de lectura; `null`: no participa); `arrives`, que
+   * no está hasta que le toca (es un resultado); `fades`, qué elementos se quedan fuera tras su paso.
+   */
+  | {
+      type: 'datum'
+      label?: string
+      value: GistValue
+      changed?: boolean
+      beats?: readonly (number | null)[]
+      arrives?: boolean
+      fades?: readonly boolean[]
+    }
+  /** Lo que se imprimió. `beats`: cada carácter (sin contar los saltos) aparece en el paso de su número. */
+  | { type: 'console'; text: string; beats?: boolean }
   /** Un objeto: sus campos, y cómo quedaron los que cambiaron. */
   | {
       type: 'state'
@@ -27,7 +39,17 @@ export type GistPiece =
       rows: { name: string; before?: GistValue; after: GistValue; changed: boolean }[]
     }
   /** Una regla por casos: con qué valor, qué da (`1 → *`, `otro → .`). */
-  | { type: 'rule'; label: string; cases: { when: string; gives: string }[] }
+  /** `via`: en cada paso del recorrido, qué caso se aplica. */
+  | {
+      type: 'rule'
+      label: string
+      cases: { when: string; gives: string }[]
+      via?: readonly number[]
+    }
+  /** Una condición que cada elemento pasa o no (`n % 2 == 0`). `verdicts`: qué sale en cada paso. */
+  | { type: 'test'; label: string; text: string; verdicts?: readonly boolean[] }
+  /** Una cuenta que se va llevando (una suma, un máximo). `running`: lo que lleva tras cada paso. */
+  | { type: 'fold'; label: string; symbol: string; running?: readonly string[] }
   | { type: 'error'; text: string }
   /** Una frase suelta: «no recibe nada», o por qué no hay muestra. */
   | { type: 'note'; text: string }
@@ -41,6 +63,8 @@ export interface GistScene {
   example?: boolean
   /** El código cambió después: se está volviendo a comprobar. */
   stale?: boolean
+  /** Cuántos pasos tiene el recorrido (elemento a elemento); sin ellos, la escena no se recorre. */
+  beats?: number
   lanes: GistPiece[][]
 }
 
@@ -97,7 +121,15 @@ export function gistMatrix(value: GistValue): string[][] | null {
 
 /** Cómo se dibuja un valor: una rejilla, una fila de celdas, unas filas de clave y valor, o un texto. */
 export type GistShape =
-  | { as: 'grid'; rows: string[][]; cellW: number; moreRows: number; moreCols: number }
+  | {
+      as: 'grid'
+      rows: string[][]
+      /** Cuántas columnas tiene de verdad (las que se enseñan pueden ser menos). */
+      cols: number
+      cellW: number
+      moreRows: number
+      moreCols: number
+    }
   | { as: 'cells'; cells: string[]; widths: number[]; more: boolean }
   | { as: 'pairs'; rows: string[]; more: boolean }
   | { as: 'text'; text: string }
@@ -113,6 +145,7 @@ export function gistShape(value: GistValue): GistShape {
     return {
       as: 'grid',
       rows,
+      cols: matrix[0]?.length ?? 0,
       cellW: Math.max(...rows.flat().map(cellWidth)),
       moreRows: Math.max(0, matrix.length - GIST.maxRows),
       moreCols: Math.max(0, (matrix[0]?.length ?? 0) - GIST.maxCells),
@@ -168,12 +201,22 @@ function shapeSize(shape: GistShape): { w: number; h: number } {
   return { w: textWidth(shape.text), h: GIST.cell }
 }
 
-/** Las líneas de la consola que se enseñan, y cuántas quedan fuera. */
-export function gistConsole(text: string): { lines: string[]; more: number } {
+/**
+ * Las líneas de la consola que se enseñan, y cuántas quedan fuera. `offsets`: cuántos caracteres hay antes
+ * de cada línea (sin contar los saltos), para saber en qué paso del recorrido aparece cada uno.
+ */
+export function gistConsole(text: string): { lines: string[]; more: number; offsets: number[] } {
   const all = text.replace(/\n$/, '').split('\n')
+  const offsets: number[] = []
+  let before = 0
+  for (const line of all.slice(0, GIST.maxLines)) {
+    offsets.push(before)
+    before += line.length
+  }
   return {
     lines: all.slice(0, GIST.maxLines).map((line) => clip(line, 34)),
     more: Math.max(0, all.length - GIST.maxLines),
+    offsets,
   }
 }
 
@@ -235,6 +278,18 @@ export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
         ...cases.map((entry) => cellWidth(entry.when) + 22 + cellWidth(entry.gives)),
       ),
       h: GIST.label + cases.length * GIST.cell + (cases.length - 1) * GIST.cellGap * 2,
+    }
+  }
+  if (piece.type === 'test')
+    return {
+      w: Math.max(Math.ceil(piece.label.length * 6.4), textWidth(clip(piece.text, 22)) + 22),
+      h: GIST.label + GIST.cell,
+    }
+  if (piece.type === 'fold') {
+    const longest = Math.max(1, ...(piece.running ?? []).map((value) => value.length))
+    return {
+      w: Math.max(Math.ceil(piece.label.length * 6.4), 30 + Math.ceil(longest * GIST.char) + 14),
+      h: GIST.label + GIST.cell,
     }
   }
   if (piece.type === 'error')
