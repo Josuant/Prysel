@@ -30,6 +30,11 @@ export interface CasesRule extends Applied {
   each: boolean
   /** Por qué caso fue cada elemento de la muestra, en orden. */
   via: number[]
+  /**
+   * Los casos no son valores sino **caminos**: qué condiciones se cumplieron (`esta_viva y no
+   * debe_sobrevivir`). Salen de la traza (por dónde fue cada vuelta), no de leer literales.
+   */
+  spoken?: boolean
 }
 
 /** Se queda con algunos: lo que sale son elementos de lo que entró, en su orden. */
@@ -352,6 +357,88 @@ function foldRules(code: string, sample: Sample): FoldRule[] {
   return found
 }
 
+/** Una condición, dicha corta: una llamada queda en su nombre (`esta_viva(t, f, c)` → `esta_viva`). */
+const short = (condition: string) => {
+  const text = condition.trim().replace(/\b([A-Za-z_]\w*)\((?:[^()]|\([^()]*\))*\)/g, '$1')
+  return text.length > 26 ? `${text.slice(0, 25)}…` : text
+}
+
+/** Cuántos caminos distintos puede tener una regla para seguir siendo una regla y no un listado. */
+const MAX_PATHS = 6
+
+/**
+ * La regla que cuenta la traza cuando las decisiones no comparan con un literal (llaman a otra función, o
+ * miran varias cosas): cada vuelta del bucle fue por un camino —unas condiciones sí, otras no— y dejó un
+ * resultado. Si **el mismo camino da siempre lo mismo**, eso es una regla por casos, y es verdad para toda
+ * la muestra: `esta_viva y debe_sobrevivir → 1`, `no esta_viva y debe_nacer → 1`…
+ */
+function pathRules(code: string, sample: Sample): CasesRule[] {
+  const paths = sample.paths
+  if (!paths) return []
+  const steps = paths.length
+  // Lo que sale tiene que ser un resultado por vuelta: una rejilla o una lista del mismo tamaño, o un
+  // carácter impreso por cada una.
+  const results = [
+    ...(sample.returned ? [atoms(sample.returned)] : []),
+    ...(sample.changed ?? []).map((change) => atoms(change.after)),
+    ...(sample.printed !== undefined ? [[...sample.printed.replace(/\n/g, '')]] : []),
+  ].find((items) => items?.length === steps)
+  const input = sample.inputs.find(
+    (candidate) => candidate.value.kind === 'list' && atoms(candidate.value)?.length === steps,
+  )
+  if (!results || !input) return []
+  const rows = code.split('\n')
+  const indentOf = (row: string) => row.length - row.trimStart().length
+  /** Lo que dice un camino: de cada decisión por la que pasó, si se cumplió. */
+  const say = (path: readonly number[]) => {
+    const parts = path.flatMap((line) => {
+      const row = rows[line] ?? ''
+      const condition = /^\s*(?:if|elif)\s+(.+?)\s*:\s*(?:#.*)?$/.exec(row)?.[1]
+      if (condition === undefined) return []
+      // Se cumplió si la vuelta entró en lo que cuelga de ella.
+      let end = line
+      for (let at = line + 1; at < rows.length; at++) {
+        const below = rows[at] ?? ''
+        if (below.trim() === '') continue
+        if (indentOf(below) <= indentOf(row)) break
+        end = at
+      }
+      const held = path.some((other) => other > line && other <= end)
+      return [`${held ? '' : 'no '}${short(condition)}`]
+    })
+    return parts.length > 0 ? parts.join(' y ') : 'siempre'
+  }
+  const cases: { key: string; when: string; gives: string }[] = []
+  const via: number[] = []
+  for (const [at, path] of paths.entries()) {
+    const key = path.join(',')
+    const gives = results[at] ?? ''
+    let index = cases.findIndex((entry) => entry.key === key)
+    if (index < 0) {
+      if (cases.length >= MAX_PATHS) return []
+      index = cases.push({ key, when: say(path), gives }) - 1
+    }
+    // El mismo camino con otro resultado: el camino no lo explica. No hay regla.
+    else if (cases[index]?.gives !== gives) return []
+    via.push(index)
+  }
+  // Con un solo camino, o si todos dan lo mismo, no hay nada que contar.
+  if (cases.length < 2 || new Set(cases.map((entry) => entry.gives)).size < 2) return []
+  // Dos caminos que se dicen igual (difieren en algo que no es una decisión) confundirían.
+  if (new Set(cases.map((entry) => entry.when)).size < cases.length) return []
+  return [
+    {
+      kind: 'cases',
+      subject: 'elemento',
+      cases: cases.map(({ when, gives }) => ({ when, gives })),
+      input: input.name,
+      each: true,
+      via,
+      spoken: true,
+    },
+  ]
+}
+
 /**
  * Todas las reglas que el código deja leer **y** la muestra confirma, de la más concreta a la menos. Casi
  * siempre es una o ninguna; con varias (una lista de un solo elemento: su suma es también su mayor), hay que
@@ -359,8 +446,11 @@ function foldRules(code: string, sample: Sample): FoldRule[] {
  */
 export function verifiedRules(code: string, sample: Sample): Rule[] {
   if (sample.error !== undefined) return []
+  const literal = casesRules(code, sample)
   const all: Rule[] = [
-    ...casesRules(code, sample),
+    ...literal,
+    // Por caminos solo si no hay ya una regla por valores: dirían lo mismo, peor.
+    ...(literal.length === 0 ? pathRules(code, sample) : []),
     ...filterRules(code, sample),
     ...foldRules(code, sample),
   ]

@@ -33,12 +33,45 @@ export interface Sample {
   lines: number
   /** La entrada no estaba en el programa: se propuso para probar. La salida es igual de real. */
   invented: boolean
+  /**
+   * Por dónde fue cada vuelta del bucle más interior de la función: las líneas de su cuerpo que se
+   * ejecutaron, en orden (contadas desde la línea del `def`, que es la 0). Es lo que dice qué rama tomó cada
+   * elemento, también cuando la decisión la toma otra función. Sin bucle (o con demasiadas vueltas), no está.
+   */
+  paths?: number[][]
   /** Con `invented`: la llamada que se probó. */
   call?: string
 }
 
 /** Cuántas llamadas se miran como mucho: de sobra para elegir, y no cuesta en un bucle largo. */
 const MAX_CALLS = 60
+/** Hasta cuántas vueltas se guarda por dónde fue cada una. */
+const MAX_LAPS = 400
+
+const indentOf = (row: string) => row.length - row.trimStart().length
+
+/**
+ * El bucle más interior de una función (el más sangrado; entre iguales, el primero): la línea de su cabecera
+ * y hasta dónde llega su cuerpo, contadas desde la del `def`. `null` si no tiene ninguno.
+ */
+export function innerLoop(code: string): { head: number; to: number } | null {
+  const rows = code.split('\n')
+  let head = -1
+  for (const [at, row] of rows.entries()) {
+    if (!/^\s*(?:for|while)\b.*:\s*(?:#.*)?$/.test(row)) continue
+    if (head < 0 || indentOf(row) > indentOf(rows[head] ?? '')) head = at
+  }
+  if (head < 0) return null
+  const indent = indentOf(rows[head] ?? '')
+  let to = head
+  for (let at = head + 1; at < rows.length; at++) {
+    const row = rows[at] ?? ''
+    if (row.trim() === '') continue
+    if (indentOf(row) <= indent) break
+    to = at
+  }
+  return to > head ? { head, to } : null
+}
 
 const fieldsOf = (
   object: HeapObject | undefined,
@@ -94,6 +127,10 @@ export function samplesIn(
     if (parent === facts.name || i < (options.from ?? 0)) continue
     // Hasta que ese marco devuelve: lo impreso entre medias (también por lo que llama) es suyo.
     let printed = ''
+    // Las vueltas del bucle más interior: cada vez que se pasa por su cabecera empieza una.
+    const loop = innerLoop(facts.code)
+    const laps: number[][] = []
+    let lap: number[] | null = null
     let last = call
     let end = -1
     const lines = new Set<number>()
@@ -107,8 +144,21 @@ export function samplesIn(
         break
       }
       if (event.k === 'line') lines.add(event.l)
+      if (event.k === 'line' && loop) {
+        const at = event.l - facts.line
+        if (at === loop.head) {
+          if (lap && lap.length > 0) laps.push(lap)
+          lap = []
+        } else if (at > loop.head && at <= loop.to) {
+          if (lap && lap.length < 40) lap.push(at)
+        } else {
+          if (lap && lap.length > 0) laps.push(lap)
+          lap = null
+        }
+      }
       last = event
     }
+    if (lap && lap.length > 0) laps.push(lap)
     // La traza se cortó antes de que acabara: no hay salida que enseñar.
     if (end < 0) continue
     const before = stateAt(index, i)
@@ -122,6 +172,7 @@ export function samplesIn(
       steps: end - i,
       lines: lines.size,
       invented: false,
+      ...(laps.length > 1 && laps.length <= MAX_LAPS ? { paths: laps } : {}),
     }
     if (last.k === 'exception') sample.error = last.e ?? 'error'
     else if (facts.returns || (events[end]?.v ?? null) !== null)

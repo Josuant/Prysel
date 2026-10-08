@@ -496,6 +496,87 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     expect(scene?.lanes[2]).toMatchObject([{ type: 'console', beats: true }])
   })
 
+  it('calcular_siguiente: la traza dice por qué camino fue cada celda, y eso es su regla', async () => {
+    const source = lines(
+      'def contar_vecinos_vivos(tablero, fila, columna):',
+      '    vivos = 0',
+      '    for df in (-1, 0, 1):',
+      '        for dc in (-1, 0, 1):',
+      '            f, c = fila + df, columna + dc',
+      '            if (df or dc) and 0 <= f < len(tablero) and 0 <= c < len(tablero[0]):',
+      '                vivos += tablero[f][c]',
+      '    return vivos',
+      '',
+      '',
+      'def esta_viva(tablero, f, c):',
+      '    return tablero[f][c] == 1',
+      '',
+      '',
+      'def debe_sobrevivir(vecinos):',
+      '    return vecinos == 2 or vecinos == 3',
+      '',
+      '',
+      'def debe_nacer(vecinos):',
+      '    return vecinos == 3',
+      '',
+      '',
+      'def calcular_siguiente(tablero):',
+      '    filas = len(tablero)',
+      '    columnas = len(tablero[0])',
+      '    nuevo = [[0] * columnas for _ in range(filas)]',
+      '    for f in range(filas):',
+      '        for c in range(columnas):',
+      '            vecinos = contar_vecinos_vivos(tablero, f, c)',
+      '            if esta_viva(tablero, f, c):',
+      '                if debe_sobrevivir(vecinos):',
+      '                    nuevo[f][c] = 1',
+      '            else:',
+      '                if debe_nacer(vecinos):',
+      '                    nuevo[f][c] = 1',
+      '    return nuevo',
+    )
+    const program = parse(source)
+    const blinker =
+      '[[0, 0, 0, 0, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 0, 0, 0, 0]]'
+    const gist = await invent(program, one(program, 'calcular_siguiente'), {
+      provider: { id: 'm', generate: () => Promise.resolve(`calcular_siguiente(${blinker})`) },
+      trace: (code) => kernel.trace(code, 20_000, false, true),
+    })
+    expect(shown(gist.sample?.returned)).toBe(
+      '[[0, 0, 0, 0, 0], [0, 0, 0, 0, 0], [0, 1, 1, 1, 0], [0, 0, 0, 0, 0], [0, 0, 0, 0, 0]]',
+    )
+    expect(gist.sample?.paths).toHaveLength(25)
+    const rule = gist.rule
+    expect(rule?.kind === 'cases' && rule.spoken).toBe(true)
+    expect(rule?.kind === 'cases' && rule.cases).toEqual([
+      { when: 'no esta_viva y no debe_nacer', gives: '0' },
+      { when: 'esta_viva y no debe_sobrevivir', gives: '0' },
+      { when: 'no esta_viva y debe_nacer', gives: '1' },
+      { when: 'esta_viva y debe_sobrevivir', gives: '1' },
+    ])
+    // Cada celda, por su camino; y su resultado, en su sitio de la rejilla que sale.
+    const scene = sampleScene(gist)
+    expect(scene?.beats).toBe(25)
+    expect(scene?.lanes[1]).toMatchObject([{ type: 'rule', label: 'cada elemento, según' }])
+    expect(scene?.lanes[2]).toMatchObject([{ type: 'datum', arrives: true }])
+  })
+
+  it('si el mismo camino da resultados distintos, el camino no es la regla', async () => {
+    const source = lines(
+      'def dobles(numeros):',
+      '    salida = []',
+      '    for n in numeros:',
+      '        if n > 0:',
+      '            salida.append(n * 2)',
+      '        else:',
+      '            salida.append(0)',
+      '    return salida',
+    )
+    const gist = await ruled(source, 'dobles', 'dobles([1, -2, 3])')
+    expect(gist.sample?.paths).toHaveLength(3)
+    expect(gist.rule).toBeUndefined()
+  })
+
   it('un método enseña el objeto antes y después', async () => {
     const program = parse(CAJERO)
     const gist = await invent(program, one(program, 'validar_pin'), port())

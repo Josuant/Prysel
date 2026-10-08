@@ -239,7 +239,7 @@ export function gistStateRows(piece: Extract<GistPiece, { type: 'state' }>) {
 export function gistCases(piece: Extract<GistPiece, { type: 'rule' }>) {
   return piece.cases
     .slice(0, GIST.maxFields + 1)
-    .map((entry) => ({ when: clip(entry.when, 10), gives: clip(entry.gives, 12) }))
+    .map((entry) => ({ when: clip(entry.when, 44), gives: clip(entry.gives, 12) }))
 }
 
 export function gistPieceSize(piece: GistPiece): { w: number; h: number } {

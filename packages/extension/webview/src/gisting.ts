@@ -101,9 +101,14 @@ function ruleScene(sample: Sample, rule: Rule): Pick<GistScene, 'lanes' | 'beats
   if (rule.kind === 'cases')
     middle = {
       type: 'rule',
-      label: rule.each ? `cada ${rule.subject}` : rule.subject,
+      label: rule.spoken
+        ? 'cada elemento, según'
+        : rule.each
+          ? `cada ${rule.subject}`
+          : rule.subject,
       cases: rule.cases.map((entry) => ({
-        when: entry.when === null ? 'otro' : seen(entry.when),
+        // Un camino («esta_viva y no debe_nacer») se enseña tal cual; un valor, sin sus comillas.
+        when: entry.when === null ? 'otro' : rule.spoken ? entry.when : seen(entry.when),
         gives: seen(entry.gives),
       })),
       ...(tour ? { via: rule.via } : {}),
