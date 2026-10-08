@@ -320,6 +320,24 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     expect(shown(bestSample(samples)?.returned)).toBe('24')
   })
 
+  it('entre varias llamadas, la que más enseña sin dejar de ser pequeña', async () => {
+    const source = lines(
+      'def fact(n):',
+      '    if n <= 1:',
+      '        return 1',
+      '    return n * fact(n - 1)',
+      '',
+      'total = 0',
+      'for i in range(1, 4):',
+      '    total += fact(i)',
+    )
+    const program = parse(source)
+    const best = bestSample(samplesIn(await kernel.trace(source), one(program, 'fact')))
+    // `fact(1)` acaba en el primer `return`: se prefiere la que da la vuelta.
+    expect(best?.inputs.map((input) => showValue(input.value))).toEqual(['3'])
+    expect(shown(best?.returned)).toBe('6')
+  })
+
   it('lo que pide datos por teclado no se prueba; lo que la IA no acierta, tampoco', async () => {
     const program = parse(UTILES)
     expect(await invent(program, one(program, 'pares'), port())).toMatchObject({

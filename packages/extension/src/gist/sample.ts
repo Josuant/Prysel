@@ -155,16 +155,21 @@ export function samplesIn(
 const weight = (sample: Sample): number =>
   sample.inputs.reduce((sum, input) => sum + showValue(input.value).length, 0)
 
+/** Hasta cuántos pasos una muestra sigue siendo «pequeña»: se lee de un vistazo. */
+const SMALL = 60
+
 /**
- * La muestra que mejor enseña la función: la que no falla, la que pisa más líneas (más ramas vistas), y
- * entre esas, la más corta y la de entrada más pequeña.
+ * La muestra que mejor enseña la función: la que no falla y la que pisa más líneas (más ramas vistas). Entre
+ * esas, la que más hace sin dejar de ser pequeña: `factorial(3)` enseña más que `factorial(1)`, que acaba en
+ * el primer `return`. Si todas son largas, la más corta. Y a igualdad, la de entrada más pequeña.
  */
 export function bestSample(samples: readonly Sample[]): Sample | null {
+  const reach = (sample: Sample) => (sample.steps <= SMALL ? sample.steps : -sample.steps)
   const ranked = [...samples].sort(
     (a, b) =>
       Number(a.error !== undefined) - Number(b.error !== undefined) ||
       b.lines - a.lines ||
-      a.steps - b.steps ||
+      reach(b) - reach(a) ||
       weight(a) - weight(b),
   )
   return ranked[0] ?? null

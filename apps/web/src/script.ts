@@ -191,6 +191,18 @@ export const SCRIPTS: { id: string; title: string; text: string }[] = [
     ].join('\n'),
   },
   {
+    id: 'tablero',
+    title: 'Tablero: qué hace cada función, comprobado',
+    text: [
+      '> nuevo',
+      'Crea una función mostrar tablero que reciba una matriz de ceros y unos e imprima un asterisco por cada uno y un punto por cada cero',
+      'Crea una función contar vivas que devuelva cuántos unos hay en el tablero',
+      'Crea un tablero de tres por tres y muéstralo',
+      'No, los ceros que sean espacios',
+    ].join('
+'),
+  },
+  {
     id: 'gestos',
     title: 'Gestos: mover, envolver, juntar, deshacer',
     text: [
