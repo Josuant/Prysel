@@ -26,6 +26,8 @@ export type GistPiece =
       cls: string
       rows: { name: string; before?: GistValue; after: GistValue; changed: boolean }[]
     }
+  /** Una regla por casos: con qué valor, qué da (`1 → *`, `otro → .`). */
+  | { type: 'rule'; label: string; cases: { when: string; gives: string }[] }
   | { type: 'error'; text: string }
   /** Una frase suelta: «no recibe nada», o por qué no hay muestra. */
   | { type: 'note'; text: string }
@@ -190,6 +192,13 @@ export function gistStateRows(piece: Extract<GistPiece, { type: 'state' }>) {
   }
 }
 
+/** Los casos de una regla que se enseñan, recortados. */
+export function gistCases(piece: Extract<GistPiece, { type: 'rule' }>) {
+  return piece.cases
+    .slice(0, GIST.maxFields + 1)
+    .map((entry) => ({ when: clip(entry.when, 10), gives: clip(entry.gives, 12) }))
+}
+
 export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
   if (piece.type === 'datum') {
     const box = shapeSize(gistShape(piece.value))
@@ -216,6 +225,16 @@ export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
     return {
       w: Math.max(96, Math.ceil(piece.cls.length * 6.4), ...widths),
       h: GIST.label + (rows.length + (more > 0 ? 1 : 0)) * GIST.row,
+    }
+  }
+  if (piece.type === 'rule') {
+    const cases = gistCases(piece)
+    return {
+      w: Math.max(
+        Math.ceil(piece.label.length * 6.4),
+        ...cases.map((entry) => cellWidth(entry.when) + 22 + cellWidth(entry.gives)),
+      ),
+      h: GIST.label + cases.length * GIST.cell + (cases.length - 1) * GIST.cellGap * 2,
     }
   }
   if (piece.type === 'error')

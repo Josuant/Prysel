@@ -1,5 +1,6 @@
 import {
   GIST,
+  gistCases,
   gistConsole,
   gistShape,
   gistStateRows,
@@ -153,6 +154,27 @@ function Piece({ piece }: { piece: GistPiece }) {
       </div>
     )
   }
+  if (piece.type === 'rule')
+    return (
+      <div className="gist-piece">
+        <span className="gist-label">{piece.label}</span>
+        <div className="gist-rule" style={{ gap: GIST.cellGap * 2 }}>
+          {gistCases(piece).map((entry, index) => (
+            <span key={index} className="gist-case" style={turn(index, { height: GIST.cell })}>
+              <span className="gist-cell" data-on={entry.when === 'otro' ? undefined : ''}>
+                {entry.when}
+              </span>
+              <span className="gist-case__to" aria-hidden>
+                →
+              </span>
+              <span className="gist-cell" data-gives="">
+                {entry.gives}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+    )
   if (piece.type === 'error')
     return (
       <div className="gist-piece">

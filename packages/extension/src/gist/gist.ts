@@ -2,6 +2,7 @@ import type { Program } from '@prysel/python'
 import type { AiProvider } from '../ai/provider.ts'
 import { indexOf, type Trace } from '../trace.ts'
 import { functionsIn, reaches, type Facts } from './facts.ts'
+import { ruleFor, type Rule } from './patterns.ts'
 import { bestSample, samplesIn, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
 
@@ -29,6 +30,8 @@ export interface Gist {
   title: string | null
   status: GistStatus
   sample: Sample | null
+  /** Su regla («si es 1, un asterisco; si no, un punto»), cuando la tiene y la muestra la confirma. */
+  rule?: Rule
   /** Con otro estado que `ok`: por qué no hay muestra. */
   why?: string
 }
@@ -39,6 +42,12 @@ export function unrunnable(source: string): string | null {
   if (/\binput\s*\(/.test(bare)) return 'Pide datos por teclado.'
   if (reaches(source)) return 'Puede tocar archivos, la red o el sistema.'
   return null
+}
+
+/** La función con su muestra y, si la muestra la confirma, su regla. */
+const proven = (facts: Facts, sample: Sample): Gist => {
+  const rule = ruleFor(facts.code, sample)
+  return { ...base(facts), status: 'ok', sample, ...(rule ? { rule } : {}) }
 }
 
 const base = (facts: Facts): Omit<Gist, 'status' | 'sample'> => ({
@@ -58,7 +67,7 @@ export function gistsOf(program: Program, trace: Trace | null): Gist[] {
   const index = trace ? indexOf(trace) : null
   return functionsIn(program).map((facts) => {
     const sample = trace && index ? bestSample(samplesIn(trace, facts, { index })) : null
-    if (sample) return { ...base(facts), status: 'ok', sample }
+    if (sample) return proven(facts, sample)
     if (blocked !== null)
       return { ...base(facts), status: 'no-ejecutable', sample: null, why: blocked }
     const why = trace?.error ? `${trace.error.name}: ${trace.error.message}` : 'Nadie la llama.'
@@ -155,7 +164,7 @@ export async function invent(program: Program, facts: Facts, port: GistPort): Pr
       : 'El ejemplo no llegó a ejecutarse.'
     return { ...base(facts), status: 'sin-muestra', sample: null, why }
   }
-  return { ...base(facts), status: 'ok', sample: { ...sample, invented: true, call } }
+  return proven(facts, { ...sample, invented: true, call })
 }
 
 /** Lo ya calculado, por el texto de cada función: mientras no cambie, no se vuelve a ejecutar ni a preguntar. */

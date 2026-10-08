@@ -7,6 +7,7 @@ import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import type { AiProvider } from '../src/ai/provider.ts'
 import { functionsIn } from '../src/gist/facts.ts'
 import { GistCache, gistsOf, invent, unrunnable, validCall, withCall } from '../src/gist/gist.ts'
+import { candidateRules } from '../src/gist/patterns.ts'
 import { bestSample, samplesIn } from '../src/gist/sample.ts'
 import {
   matrixOf,
@@ -17,6 +18,7 @@ import {
   type Value,
 } from '../src/gist/value.ts'
 import { Kernel } from '../src/kernel.ts'
+import { sampleScene } from '../webview/src/gisting.ts'
 import type { Trace } from '../src/trace.ts'
 
 /**
@@ -219,6 +221,41 @@ describe('la llamada de prueba solo puede llevar literales', () => {
   })
 })
 
+describe('las reglas que deja leer el código', () => {
+  it('una decisión cuyas ramas hacen lo mismo con un literal distinto', () => {
+    expect(candidateRules(TABLERO)).toEqual([
+      {
+        subject: 'celda',
+        cases: [
+          { when: '1', gives: '"*"' },
+          { when: null, gives: '"."' },
+        ],
+      },
+    ])
+    const three = lines(
+      'if n == 1:',
+      '    print("uno", end="")',
+      'elif n == 2:',
+      '    print("dos", end="")',
+      'else:',
+      '    print("muchos", end="")',
+    )
+    expect(candidateRules(three)[0]?.cases.map((entry) => entry.gives)).toEqual([
+      '"uno"',
+      '"dos"',
+      '"muchos"',
+    ])
+  })
+
+  it('si las ramas no hacen lo mismo, o hacen más de una cosa, no es una regla', () => {
+    expect(candidateRules(lines('if a == 1:', '    x = 1', 'else:', '    y = 2'))).toEqual([])
+    expect(
+      candidateRules(lines('if a == 1:', '    x = 1', '    z = 3', 'else:', '    x = 2')),
+    ).toEqual([])
+    expect(candidateRules(lines('if a == 1:', '    x = 1'))).toEqual([])
+  })
+})
+
 describe('lo que se sabe de una función sin ejecutarla', () => {
   it('qué recibe, qué deja y de quién es', () => {
     const facts = functionsIn(parse(ZOO))
@@ -293,6 +330,51 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
       matrixOf(must(bestSample(samplesIn(trace, one(program, 'ver')))?.inputs[0]).value)
     expect(grid(await kernel.trace(source))).toBeNull()
     expect(grid(await kernel.trace(source, 20_000, false, true))).toHaveLength(5)
+  })
+
+  it('la regla del tablero se lee del código y la muestra la confirma', async () => {
+    const program = parse(TABLERO)
+    const gist = await invent(program, one(program, 'mostrar_tablero'), port())
+    expect(gist.rule).toEqual({
+      subject: 'celda',
+      cases: [
+        { when: '1', gives: '"*"' },
+        { when: null, gives: '"."' },
+      ],
+      input: 'tablero',
+      each: true,
+    })
+    expect(sampleScene(gist)?.lanes.map((lane) => lane.map((piece) => piece.type))).toEqual([
+      ['datum'],
+      ['rule'],
+      ['console'],
+    ])
+  })
+
+  it('también escrita en una línea, y devolviendo en vez de imprimir', async () => {
+    const source = lines(
+      'def simbolos(celdas):',
+      '    return ["#" if celda == 1 else " " for celda in celdas]',
+    )
+    const program = parse(source)
+    const gist = await invent(program, one(program, 'simbolos'), {
+      ...port(),
+      provider: { id: 'm', generate: () => Promise.resolve('simbolos([1, 0, 1])') },
+    })
+    expect(gist.rule?.cases).toEqual([
+      { when: '1', gives: '"#"' },
+      { when: null, gives: '" "' },
+    ])
+  })
+
+  it('una regla que no explica lo que salió no se enseña', async () => {
+    // Las ramas dan un símbolo, pero luego la línea se invierte: la regla sola no da la salida.
+    const source = TABLERO.replace('print(linea)', 'print(linea[::-1])')
+    const program = parse(source)
+    const gist = await invent(program, one(program, 'mostrar_tablero'), port())
+    expect(gist.status).toBe('ok')
+    expect(gist.rule).toBeUndefined()
+    expect(sampleScene(gist)?.lanes).toHaveLength(2)
   })
 
   it('un método enseña el objeto antes y después', async () => {

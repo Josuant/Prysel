@@ -1,5 +1,6 @@
 import type { GistPiece, GistScene } from '@prysel/ui'
 import type { Gist } from '../../src/gist/gist.ts'
+import { bare, type Rule } from '../../src/gist/patterns.ts'
 import type { Sample } from '../../src/gist/sample.ts'
 import { showValue } from '../../src/gist/value.ts'
 
@@ -49,6 +50,22 @@ function leaving(sample: Sample): GistPiece[] {
   return pieces
 }
 
+/** La regla, como pieza: `1 → *`, `otro → .`. Los textos van sin comillas; un espacio se enseña. */
+function ruleOf(rule: Rule): GistPiece {
+  const seen = (literal: string) => {
+    const text = bare(literal)
+    return text === '' ? '""' : text.replace(/ /g, '␣')
+  }
+  return {
+    type: 'rule',
+    label: rule.each ? `cada ${rule.subject}` : rule.subject,
+    cases: rule.cases.map((entry) => ({
+      when: entry.when === null ? 'otro' : seen(entry.when),
+      gives: seen(entry.gives),
+    })),
+  }
+}
+
 /** La escena de una función con muestra; `null` si no la tiene (entonces se ve su diagrama, como siempre). */
 export function sampleScene(gist: Gist): GistScene | null {
   if (gist.status !== 'ok' || !gist.sample) return null
@@ -56,6 +73,11 @@ export function sampleScene(gist: Gist): GistScene | null {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,
     ...(gist.title ? { title: gist.title } : {}),
     ...(gist.sample.invented ? { example: true } : {}),
-    lanes: [entering(gist.sample), leaving(gist.sample)],
+    lanes: [
+      entering(gist.sample),
+      // Con regla, en medio va lo que la función hace con cada cosa: es su explicación.
+      ...(gist.rule ? [[ruleOf(gist.rule)]] : []),
+      leaving(gist.sample),
+    ],
   }
 }

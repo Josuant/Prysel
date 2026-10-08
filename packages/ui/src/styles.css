@@ -5336,6 +5336,34 @@ button.fn-menu__crumb:hover {
   animation-delay:
     calc(var(--lane) + var(--i, 0) * 34ms), calc(var(--lane) + 300ms + var(--i, 0) * 34ms);
 }
+.gist-rule {
+  display: flex;
+  flex-direction: column;
+}
+.gist-case {
+  display: inline-flex;
+  align-items: stretch;
+  animation: gist-in 240ms ease-out both;
+  animation-delay: calc(var(--lane) + var(--i, 0) * 160ms);
+}
+/* Dentro de un caso las dos casillas entran con él, no cada una por su cuenta. */
+.gist-lane .gist-case .gist-cell {
+  min-width: 24px;
+  padding: 0 5px;
+  animation: none;
+}
+.gist-case__to {
+  display: inline-grid;
+  width: 22px;
+  place-items: center;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+.gist-cell[data-gives] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
 @media (prefers-reduced-motion: reduce) {
   .gist-arrow,
   .gist-lane * {
