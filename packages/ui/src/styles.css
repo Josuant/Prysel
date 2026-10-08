@@ -5249,6 +5249,101 @@ button.fn-menu__crumb:hover {
 }
 
 /*
+ * La tarjeta se cuenta en orden, como pasó: entra el dato, cruza la flecha y sale el resultado, celda a celda
+ * y línea a línea. `--i` es el turno de cada cosa (el carril, y dentro de él cada celda o línea). Un pulso
+ * recorre la flecha mientras tanto. Pulsar la flecha lo vuelve a contar.
+ */
+@keyframes gist-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.92);
+  }
+}
+@keyframes gist-type {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes gist-cross {
+  0% {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  60% {
+    opacity: 1;
+    color: var(--accent);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes gist-land {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+.gist-arrow {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 16px;
+  animation: gist-cross 420ms ease-out both;
+  animation-delay: calc(var(--i, 1) * 520ms - 240ms);
+}
+.gist-arrow:hover {
+  color: var(--accent);
+}
+.gist-lane {
+  --lane: calc(var(--i, 0) * 520ms);
+}
+.gist-lane .gist-label,
+.gist-lane .gist-note,
+.gist-lane .gist-text,
+.gist-lane .gist-pair {
+  animation: gist-in 260ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-lane .gist-cell,
+.gist-lane .gist-field {
+  animation: gist-in 220ms ease-out both;
+  animation-delay: calc(var(--lane) + var(--i, 0) * 34ms);
+}
+.gist-lane .gist-console {
+  animation: gist-in 220ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-lane .gist-console span {
+  animation: gist-type 260ms steps(12, end) both;
+  animation-delay: calc(var(--lane) + 140ms + var(--i, 0) * 130ms);
+}
+/* Lo que cambió aterriza con un pulso: es lo que la función hizo. */
+.gist-lane [data-changed].gist-field .gist-field__after,
+.gist-lane [data-changed] > .gist-cell {
+  animation:
+    gist-in 220ms ease-out both,
+    gist-land 700ms ease-out backwards;
+  animation-delay:
+    calc(var(--lane) + var(--i, 0) * 34ms), calc(var(--lane) + 300ms + var(--i, 0) * 34ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-arrow,
+  .gist-lane * {
+    animation: none !important;
+  }
+}
+
+/*
  * ── Etapas: el algoritmo a la vista ──
  * Una fase del algoritmo con nombre. Plegada, una tarjeta de cuaderno: su número en un squircle del acento, su
  * título y su subtítulo, lo que usa → lo que deja (chips) y las pastillas de sus subprocesos. Abierta, un marco

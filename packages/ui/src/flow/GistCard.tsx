@@ -7,12 +7,17 @@ import {
   type GistScene,
   type GistValue,
 } from '../gist.ts'
+import { type CSSProperties, useState } from 'react'
 import { Icon } from '../Icon.tsx'
 
 /**
  * La tarjeta «Qué hace» de una función plegada: lo que entró → lo que salió, una vez que se ejecutó de
  * verdad. Se lee sin abrir el diagrama; el botón lo abre.
  */
+
+/** El turno de una celda o una línea dentro de su pieza: las animaciones las van sacando una a una. */
+const turn = (index: number, more: CSSProperties = {}): CSSProperties =>
+  ({ ...more, '--i': index }) as CSSProperties
 
 function Value({ value, changed }: { value: GistValue; changed?: boolean | undefined }) {
   const shape = gistShape(value)
@@ -31,7 +36,12 @@ function Value({ value, changed }: { value: GistValue; changed?: boolean | undef
       >
         {shape.rows.flatMap((row, r) => [
           ...row.map((cell, c) => (
-            <span key={`${r}:${c}`} className="gist-cell" data-on={cell === '0' ? undefined : ''}>
+            <span
+              key={`${r}:${c}`}
+              className="gist-cell"
+              data-on={cell === '0' ? undefined : ''}
+              style={turn(r + c)}
+            >
               {cell}
             </span>
           )),
@@ -59,7 +69,7 @@ function Value({ value, changed }: { value: GistValue; changed?: boolean | undef
             key={index}
             className="gist-cell"
             data-on=""
-            style={{ width: shape.widths[index], height: GIST.cell }}
+            style={turn(index, { width: shape.widths[index], height: GIST.cell })}
           >
             {cell}
           </span>
@@ -103,7 +113,7 @@ function Piece({ piece }: { piece: GistPiece }) {
         <span className="gist-label">consola</span>
         <pre className="gist-console">
           {[...lines, ...(more > 0 ? [`… ${more} más`] : [])].map((line, index) => (
-            <span key={index} style={{ height: GIST.line }}>
+            <span key={index} style={turn(index, { height: GIST.line })}>
               {line === '' ? ' ' : line}
             </span>
           ))}
@@ -122,7 +132,7 @@ function Piece({ piece }: { piece: GistPiece }) {
               key={row.name}
               className="gist-field"
               data-changed={row.changed ? '' : undefined}
-              style={{ height: GIST.row }}
+              style={turn(rows.indexOf(row), { height: GIST.row })}
             >
               <span className="gist-field__name">{row.name}</span>
               {row.before !== undefined && (
@@ -167,6 +177,8 @@ export interface GistCardProps {
 }
 
 export function GistCard({ scene, size, onToggle }: GistCardProps) {
+  // Cada vez que se pulsa la flecha, la escena se vuelve a contar desde el principio.
+  const [run, setRun] = useState(0)
   return (
     <div
       className="gist-card"
@@ -212,21 +224,27 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
           {scene.title}
         </p>
       )}
-      <div className="gist-card__body" style={{ marginTop: GIST.gap }}>
+      <div key={run} className="gist-card__body" style={{ marginTop: GIST.gap }}>
         {scene.lanes.flatMap((lane, index) => [
           ...(index > 0
             ? [
-                <span
+                <button
                   key={`a${index}`}
-                  className="gist-arrow"
-                  style={{ width: GIST.arrow }}
-                  aria-hidden
+                  type="button"
+                  className="gist-arrow nodrag"
+                  style={turn(index, { width: GIST.arrow })}
+                  aria-label="Volver a ver cómo entra y qué sale"
+                  title="Volver a verlo"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setRun((count) => count + 1)
+                  }}
                 >
                   →
-                </span>,
+                </button>,
               ]
             : []),
-          <div key={index} className="gist-lane" style={{ gap: GIST.gap }}>
+          <div key={index} className="gist-lane" style={turn(index, { gap: GIST.gap })}>
             {lane.map((piece, at) => (
               <Piece key={at} piece={piece} />
             ))}

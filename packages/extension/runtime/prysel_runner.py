@@ -580,11 +580,39 @@ def _items(value):
     return items
 
 
+# En modo ancho (lo pide quien va a dibujar el valor con su forma, no a enseñarlo en una celda), una rejilla
+# pequeña se graba entera: hasta estas filas y columnas.
+_WIDE = False
+_GRID_ROWS = 12
+_GRID_COLS = 16
+
+
+def _grid(value):
+    """El texto entero de una rejilla pequeña (una lista de listas de escalares); `None` si no lo es."""
+    if not isinstance(value, (list, tuple)) or not 0 < len(value) <= _GRID_ROWS:
+        return None
+    rows = []
+    for row in value:
+        if not isinstance(row, (list, tuple)) or not 0 < len(row) <= _GRID_COLS:
+            return None
+        items = _items(row)
+        if items is None:
+            return None
+        cells = ", ".join(item if isinstance(item, str) else repr(item) for item in items)
+        rows.append(f"[{cells}]" if isinstance(row, list) else f"({cells}{',' if len(row) == 1 else ''})")
+    text = ", ".join(rows)
+    return f"[{text}]" if isinstance(value, list) else f"({text}{',' if len(rows) == 1 else ''})"
+
+
 def _show(value):
     """Lo que enseña una traza de un valor: un número tal cual, una lista corta de escalares entera
     (`{"l": [...], "n": largo, "t": "list"|"tuple"}`), y lo demás como texto corto."""
     if isinstance(value, bool) or value is None:
         return value
+    if _WIDE:
+        grid = _grid(value)
+        if grid is not None:
+            return grid
     if isinstance(value, (list, tuple)) and len(value) <= _LIST_LIMIT:
         items = _items(value)
         if items is not None:
@@ -1018,9 +1046,11 @@ class Runner:
         corta, ni se compila: se devuelve el mismo evento de error que un fallo normal, con el motivo exacto
         para poder pedirle a la IA que lo corrija.
         """
+        global _WIDE
         run = request.get("id", "trace")
         limit = int(request.get("limit", 5000))
         safe = bool(request.get("safe", False))
+        wide = bool(request.get("wide", False))
         filename = f"<prysel-trace:{run}>"
         out = io.StringIO()
         source = request.get("code", "")
@@ -1044,11 +1074,13 @@ class Runner:
             self.running.set()
             try:
                 code = compile(source, filename, "exec")
+                _WIDE = wide
                 sys.settrace(tracer.global_trace)
                 try:
                     exec(code, namespace)
                 finally:
                     sys.settrace(None)
+                    _WIDE = False
             except _TraceLimit:
                 truncated = True
             except BaseException as caught:  # incluye KeyboardInterrupt y SystemExit

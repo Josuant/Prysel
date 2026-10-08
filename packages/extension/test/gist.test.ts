@@ -281,6 +281,20 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     expect(gist.sample?.returned).toBeUndefined()
   })
 
+  it('en modo ancho, una rejilla de 5×5 llega entera (y sin él, recortada, como siempre)', async () => {
+    const source = lines(
+      'def ver(tablero):',
+      '    return len(tablero)',
+      '',
+      'ver([[0, 0, 0, 0, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 0, 0, 0, 0]])',
+    )
+    const program = parse(source)
+    const grid = (trace: Trace) =>
+      matrixOf(must(bestSample(samplesIn(trace, one(program, 'ver')))?.inputs[0]).value)
+    expect(grid(await kernel.trace(source))).toBeNull()
+    expect(grid(await kernel.trace(source, 20_000, false, true))).toHaveLength(5)
+  })
+
   it('un método enseña el objeto antes y después', async () => {
     const program = parse(CAJERO)
     const gist = await invent(program, one(program, 'validar_pin'), port())

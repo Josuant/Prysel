@@ -96,7 +96,8 @@ export class WebHost {
       version: () => this.version,
       text: () => this.doc.text,
       analyse: () => this.analyse(),
-      trace: (code) => this.session.trace(code),
+      // Ancha: las rejillas pequeñas llegan enteras, para dibujarlas como rejillas.
+      trace: (code) => this.session.trace(code, 20_000, false, true),
       provider: () => {
         const provider = providerFrom(this.settings)
         return provider ? this.calls.provider(provider) : null

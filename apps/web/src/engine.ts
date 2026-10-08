@@ -159,7 +159,7 @@ export class WebKernel implements Engine {
     })
   }
 
-  trace(code: string, limit = 20_000, safe = false): Promise<Trace> {
+  trace(code: string, limit = 20_000, safe = false, wide = false): Promise<Trace> {
     const id = `t${++this.counter}`
     return new Promise((resolve, reject) => {
       if (this.dead) return reject(this.dead)
@@ -173,7 +173,7 @@ export class WebKernel implements Engine {
           output: String(event['output'] ?? ''),
         })
       })
-      this.send({ op: 'trace', id, code, limit, safe })
+      this.send({ op: 'trace', id, code, limit, safe, wide })
     })
   }
 
