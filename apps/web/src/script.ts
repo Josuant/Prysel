@@ -199,8 +199,7 @@ export const SCRIPTS: { id: string; title: string; text: string }[] = [
       'Crea una función contar vivas que devuelva cuántos unos hay en el tablero',
       'Crea un tablero de tres por tres y muéstralo',
       'No, los ceros que sean espacios',
-    ].join('
-'),
+    ].join('\n'),
   },
   {
     id: 'gestos',
