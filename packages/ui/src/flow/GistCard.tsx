@@ -11,8 +11,14 @@ import {
   gistCases,
   gistConsole,
   gistLapColumns,
+  gistPieceSize,
   lapItemWidth,
   lapText,
+  netDetail,
+  netError,
+  netHead,
+  netRowHeight,
+  NET_PART_W,
   type LapCell,
   gistShape,
   gistStateRows,
@@ -305,6 +311,7 @@ function Piece({ piece }: { piece: GistPiece }) {
     )
   }
   if (piece.type === 'laps') return <LapsTable piece={piece} />
+  if (piece.type === 'net') return <NetPiece piece={piece} />
   if (piece.type === 'error')
     return (
       <div className="gist-piece">
@@ -444,6 +451,103 @@ function LapsTable({ piece }: { piece: Extract<GistPiece, { type: 'laps' }> }) {
   )
 }
 
+/** Lo que se dice de cada parte de un `try`, según lo que le pasó. */
+function netBadge(
+  row: Extract<GistPiece, { type: 'net' }>['rows'][number],
+  fell: boolean,
+): { text: string; tone: string } {
+  if (row.state === 'raised') return { text: '✗ salta un error', tone: 'error' }
+  if (row.state === 'caught') return { text: '✓ lo atrapa', tone: 'caught' }
+  if (row.state === 'ran') return { text: '✓ se ejecuta', tone: 'ran' }
+  if (row.part === 'except' && fell) return { text: 'no es su tipo', tone: 'skipped' }
+  return { text: 'no hizo falta', tone: 'skipped' }
+}
+
+/**
+ * Un `try` como una red de seguridad: lo que se intenta arriba y cada cláusula debajo, encendiéndose en orden.
+ * Si saltó un error, aparece en la línea que lo lanzó y **cae** hasta el `except` que lo atrapa; si ninguno lo
+ * atrapa, cae hasta abajo y se escapa. Sin recorrido (o sin movimiento), se ve entero.
+ */
+function NetPiece({ piece }: { piece: Extract<GistPiece, { type: 'net' }> }) {
+  const beat = useContext(Beat)
+  const finished = !Number.isFinite(beat) || beat >= piece.rows.length
+  const tops: number[] = []
+  let y = 0
+  for (const row of piece.rows) {
+    tops.push(y)
+    y += netRowHeight(row)
+  }
+  const fall = piece.fall
+  const target = fall ? (fall.to ?? piece.rows.length) : 0
+  const landed = fall ? finished || beat >= target : false
+  const escaped = fall?.to === null
+  const chipTop = (landed ? (escaped ? y : (tops[target] ?? 0)) : 0) + 3
+  const endTop = escaped ? y + GIST.row : y
+  return (
+    <div className="gist-piece">
+      <span className="gist-label">{piece.label}</span>
+      <div
+        className="gist-net"
+        style={{ width: gistPieceSize(piece).w, height: endTop + GIST.row }}
+      >
+        {piece.rows.map((row, k) => {
+          const state = finished ? 'done' : beat < k ? 'wait' : beat === k ? 'now' : 'done'
+          const badge = netBadge(row, Boolean(fall))
+          return (
+            <div
+              key={k}
+              className="gist-net__row"
+              data-part={row.part}
+              data-state={row.state}
+              {...{ [`data-${state}`]: '' }}
+              style={{ top: tops[k], height: netRowHeight(row) }}
+            >
+              <span className="gist-net__part" style={{ width: NET_PART_W }}>
+                {row.part === 'try'
+                  ? 'intenta'
+                  : row.part === 'except'
+                    ? 'red'
+                    : row.part === 'else'
+                      ? 'si no falla'
+                      : 'al final'}
+              </span>
+              <span className="gist-net__body">
+                <span className="gist-net__line">
+                  <code className="gist-net__head">{netHead(row.head)}</code>
+                  {!(fall && row.state === 'raised') && (
+                    <span className="gist-net__badge" data-tone={badge.tone}>
+                      {badge.text}
+                    </span>
+                  )}
+                </span>
+                {row.detail && <span className="gist-net__detail">{netDetail(row.detail)}</span>}
+              </span>
+            </div>
+          )
+        })}
+        {fall && (beat >= 0 || finished) && (
+          <span
+            className="gist-net__error"
+            data-landed={landed ? '' : undefined}
+            data-escaped={escaped ? '' : undefined}
+            style={{ top: chipTop }}
+            title={fall.error}
+          >
+            {netError(fall.error)}
+          </span>
+        )}
+        <span
+          className="gist-net__end"
+          data-wait={finished ? undefined : ''}
+          style={{ top: endTop, height: GIST.row }}
+        >
+          {piece.end}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 /** Los carriles de la escena, con su recorrido. Montarlo de nuevo (otra `key`) lo cuenta desde el principio. */
 function Lanes({ scene, onReplay }: { scene: GistScene; onReplay: () => void }) {
   const beat = useTour(scene.beats ?? 0, scene.stepMs)
@@ -501,14 +605,17 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
       data-stale={scene.stale ? '' : undefined}
       role="group"
       data-block={scene.block}
-      aria-label={`${scene.block === 'loop' ? 'Cómo funciona' : 'Qué hace'} ${scene.name}${scene.title ? `: ${scene.title}` : ''}`}
+      aria-label={`${scene.block === 'loop' || scene.block === 'try' ? 'Cómo funciona' : 'Qué hace'} ${scene.name}${scene.title ? `: ${scene.title}` : ''}`}
       // Como un nodo: alcanzable por teclado para recorrer el diagrama con un lector de pantalla.
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
     >
       <header className="gist-card__head" style={{ height: GIST.head }}>
         <span className="gist-card__icon" aria-hidden>
-          <Icon name={scene.block === 'loop' ? 'loop' : 'folder'} size={13} />
+          <Icon
+            name={scene.block === 'loop' ? 'loop' : scene.block === 'try' ? 'shield' : 'folder'}
+            size={13}
+          />
         </span>
         <span className="gist-card__name">{scene.name}</span>
         {scene.example && (

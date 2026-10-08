@@ -1,8 +1,9 @@
-import type { GistPiece, GistScene, LapCell } from '@prysel/ui'
+import type { GistPiece, GistScene, LapCell, NetRow } from '@prysel/ui'
 import type { Gist } from '../../src/gist/gist.ts'
 import { bare, type FoldRule, type Rule } from '../../src/gist/patterns.ts'
 import type { Sample } from '../../src/gist/sample.ts'
 import type { Laps } from '../../src/gist/laps.ts'
+import type { Net, NetPart } from '../../src/gist/net.ts'
 import { showValue, type Value } from '../../src/gist/value.ts'
 
 /**
@@ -244,9 +245,78 @@ export function loopScene(gist: Gist): GistScene | null {
   }
 }
 
+/** Lo que se cuenta debajo de una parte de un `try`: la línea que falló, o lo que hizo. */
+function netDetail(part: NetPart): string | undefined {
+  if (part.state === 'raised') return part.at ? `falla en: ${part.at}` : undefined
+  if (part.state === 'skipped') return undefined
+  const did = [
+    ...(part.leaves ?? []).map((leave) => `${leave.name} = ${showValue(leave.value)}`),
+    ...(part.printed ? [`imprime ${JSON.stringify(part.printed.replace(/\n+$/, ''))}`] : []),
+  ]
+  return did.length > 0 ? did.join(' · ') : undefined
+}
+
+/** Cómo acabaron todas las veces que se entró en el `try`, dicho en una frase. */
+function tallyOf(net: Net): string {
+  const { ok, caught, escaped } = net.tally
+  const total = ok + caught + escaped
+  if (total <= 1) {
+    if (net.outcome === 'caught') return 'Saltó un error y la red lo atrapó: el programa siguió.'
+    if (net.outcome === 'escaped')
+      return 'Saltó un error y ninguna red lo atrapó: siguió hacia fuera.'
+    if (net.outcome === 'cut') return 'La ejecución se cortó aquí dentro.'
+    return 'No saltó ningún error: la red no hizo falta.'
+  }
+  const parts = [
+    ok > 0 ? plural(ok, 'sin errores', 'sin errores') : null,
+    caught > 0 ? `${plural(caught, 'cayó', 'cayeron')} en la red` : null,
+    escaped > 0 ? `${plural(escaped, 'se escapó', 'se escaparon')}` : null,
+  ].filter(Boolean)
+  return `De ${total} veces: ${parts.join(', ')}.`
+}
+
+/**
+ * La escena de un `try`: la red de seguridad. Lo que se intenta y cada cláusula, en orden; si saltó un error,
+ * cae desde la línea que lo lanzó hasta el `except` que lo atrapa (o se escapa), y lo que hizo cada parte.
+ */
+export function tryScene(gist: Gist): GistScene | null {
+  const net = gist.net
+  if (gist.status !== 'ok' || !net) return null
+  const rows: NetRow[] = net.parts.map((part) => {
+    const detail = netDetail(part)
+    return { part: part.kind, head: part.head, state: part.state, ...(detail ? { detail } : {}) }
+  })
+  const caughtAt = net.parts.findIndex((part) => part.state === 'caught')
+  const title =
+    net.outcome === 'caught'
+      ? 'Si algo falla, lo atrapa y sigue'
+      : net.outcome === 'escaped'
+        ? 'Falló y la red no lo atrapó'
+        : 'Lo intenta: si fallara, tiene una red'
+  return {
+    name: gist.name,
+    block: 'try',
+    title,
+    beats: rows.length,
+    stepMs: 750,
+    lanes: [
+      [
+        {
+          type: 'net',
+          label: 'qué pasó',
+          rows,
+          ...(net.error ? { fall: { error: net.error, to: caughtAt >= 0 ? caughtAt : null } } : {}),
+          end: tallyOf(net),
+        },
+      ],
+    ],
+  }
+}
+
 /** La escena de una función con muestra; `null` si no la tiene (entonces se ve su diagrama, como siempre). */
 export function sampleScene(gist: Gist): GistScene | null {
   if (gist.block === 'loop') return loopScene(gist)
+  if (gist.block === 'try') return tryScene(gist)
   if (gist.status !== 'ok' || !gist.sample) return null
   return {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,

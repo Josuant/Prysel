@@ -64,6 +64,7 @@ export {
   type GistScene,
   type GistValue,
   type LapCell,
+  type NetRow,
 } from './gist.ts'
 export { GistCard, type GistCardProps } from './flow/GistCard.tsx'
 export { FUNCTION_CHIP } from './flow/useChipDrag.ts'

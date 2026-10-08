@@ -68,14 +68,27 @@ export type GistPiece =
       skipped?: { count: number; at: number }
       end: string
     }
+  /**
+   * Un `try`, como una red de seguridad: una fila por parte (lo que se intenta y cada cláusula), con lo que
+   * pasó en cada una. `fall`: el error que salta en la fila del intento y cae hasta la fila del `except` que
+   * lo atrapa (`to`: su índice; `null`, nadie lo atrapa y se escapa). Con recorrido, la fila `k` llega en el
+   * paso `k`.
+   */
+  | {
+      type: 'net'
+      label: string
+      rows: NetRow[]
+      fall?: { error: string; to: number | null }
+      end: string
+    }
   /** Una frase suelta: «no recibe nada», o por qué no hay muestra. */
   | { type: 'note'; text: string }
 
 export interface GistScene {
   /** El nombre de la función (o la cabecera del bloque). */
   name: string
-  /** Qué bloque cuenta: una función (por defecto) o un bucle. Cambia el icono y cómo se nombra. */
-  block?: 'function' | 'loop'
+  /** Qué bloque cuenta: una función (por defecto), un bucle o un `try`. Cambia el icono y cómo se nombra. */
+  block?: 'function' | 'loop' | 'try'
   /** Lo que hace, en una frase. */
   title?: string
   /** La entrada no estaba en el programa: se propuso para probar. */
@@ -269,6 +282,27 @@ export function gistCases(piece: Extract<GistPiece, { type: 'rule' }>) {
  */
 export type LapCell = string | { items: string[]; changed: boolean[] }
 
+/**
+ * Una parte de un `try`: `ran`, se ejecutó entera; `raised`, saltó un error dentro; `caught`, este `except`
+ * lo atrapó; `skipped`, no se ejecutó. `detail`: la línea que falló, lo que imprimió o dejó cambiado.
+ */
+export interface NetRow {
+  part: 'try' | 'except' | 'else' | 'finally'
+  head: string
+  state: 'ran' | 'raised' | 'caught' | 'skipped'
+  detail?: string
+}
+
+/** Lo que mide la columna del nombre de cada parte de un `try`, y lo que se enseña de su cabecera y su detalle. */
+export const NET_PART_W = 58
+export const netHead = (text: string) => clip(text, 30)
+export const netDetail = (text: string) => clip(text.replace(/\n+$/, '').replace(/\n/g, ' · '), 40)
+/** El error que cae, corto: su tipo y el principio del mensaje. */
+export const netError = (text: string) => clip(text.replace(/\s+/g, ' ').trim(), 28)
+export const netErrorWidth = (text: string) => Math.ceil(netError(text).length * 6.4) + 18
+/** Lo que mide cada fila de un `try`: su cabecera y, si lo tiene, su detalle debajo. */
+export const netRowHeight = (row: NetRow) => GIST.row + (row.detail ? GIST.line : 0) + 4
+
 /** Lo que se enseña de una celda de la tabla de vueltas: corto, que la fila quepa. */
 export const lapText = (text: string) => clip(text.replace(/\n/g, ' ').trim(), 14)
 
@@ -357,6 +391,26 @@ export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
         Math.ceil(clip(piece.end, 44).length * 6.6) + 4,
       ),
       h: GIST.label + rows * GIST.row,
+    }
+  }
+  if (piece.type === 'net') {
+    const chip = piece.fall ? netErrorWidth(piece.fall.error) + 8 : 0
+    const rows = piece.rows.map((row) =>
+      Math.max(
+        NET_PART_W + Math.ceil(netHead(row.head).length * GIST.char) + 104 + chip,
+        row.detail ? NET_PART_W + Math.ceil(netDetail(row.detail).length * 6.6) + 8 : 0,
+      ),
+    )
+    return {
+      w: Math.max(
+        Math.ceil(piece.label.length * 6.4),
+        ...rows,
+        Math.ceil(clip(piece.end, 52).length * 6.6) + 4,
+      ),
+      h:
+        GIST.label +
+        piece.rows.reduce((sum, row) => sum + netRowHeight(row), 0) +
+        GIST.row * (piece.fall && piece.fall.to === null ? 2 : 1),
     }
   }
   return { w: Math.ceil(clip(piece.text, 44).length * 6.6) + 4, h: GIST.cell }

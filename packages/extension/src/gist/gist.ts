@@ -3,6 +3,7 @@ import type { AiProvider } from '../ai/provider.ts'
 import { indexOf, type Trace, type TraceIndex } from '../trace.ts'
 import { functionsIn, reaches, type Facts } from './facts.ts'
 import { bestLaps, loopsIn, type Laps } from './laps.ts'
+import { bestNet, triesIn, type Net } from './net.ts'
 import { ruleFor, type Rule } from './patterns.ts'
 import { bestSample, samplesIn, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
@@ -35,10 +36,12 @@ export interface Gist {
   rule?: Rule
   /** Con otro estado que `ok`: por qué no hay muestra. */
   why?: string
-  /** Qué bloque es: una función (por defecto) o un bucle. */
-  block?: 'function' | 'loop'
+  /** Qué bloque es: una función (por defecto), un bucle o un `try`. */
+  block?: 'function' | 'loop' | 'try'
   /** En un bucle: sus vueltas, tal como se ejecutaron. */
   laps?: Laps
+  /** En un `try`: qué se intentó, si saltó un error y qué red lo atrapó. */
+  net?: Net
 }
 
 /** Por qué un programa no se ejecuta solo para sacar muestras; `null` si se puede. */
@@ -78,7 +81,7 @@ export function gistsOf(program: Program, trace: Trace | null): Gist[] {
     const why = trace?.error ? `${trace.error.name}: ${trace.error.message}` : 'Nadie la llama.'
     return { ...base(facts), status: 'sin-muestra', sample: null, why }
   })
-  return [...functions, ...loopGists(program, trace, index)]
+  return [...functions, ...loopGists(program, trace, index), ...tryGists(program, trace, index)]
 }
 
 /**
@@ -101,6 +104,34 @@ function loopGists(program: Program, trace: Trace | null, index: TraceIndex | nu
         sample: null,
         block: 'loop' as const,
         laps,
+      },
+    ]
+  })
+}
+
+/**
+ * Los `try` en los que llegó a entrar la ejecución, con la vez que mejor los enseña (la que cae en la red,
+ * si alguna cayó). Los que no se ejecutaron se ven como siempre, con su diagrama.
+ */
+function tryGists(program: Program, trace: Trace | null, index: TraceIndex | null): Gist[] {
+  if (!trace || !index) return []
+  return triesIn(program).flatMap((facts) => {
+    const net = bestNet(trace, facts, index)
+    if (!net) return []
+    const handlers = facts.clauses
+      .filter((clause) => clause.kind === 'except')
+      .map((clause) => clause.head.replace(/\s+as\s+\w+$/, ''))
+    return [
+      {
+        id: facts.id,
+        name: handlers.length > 0 ? `try · ${handlers.join(' · ')}` : 'try',
+        owner: null,
+        hash: facts.hash,
+        title: null,
+        status: 'ok' as const,
+        sample: null,
+        block: 'try' as const,
+        net,
       },
     ]
   })

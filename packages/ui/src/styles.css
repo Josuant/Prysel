@@ -5655,6 +5655,142 @@ button.fn-menu__crumb:hover {
   color: var(--ink);
   font-weight: 600;
 }
+.gist-net {
+  position: relative;
+  font-size: 11.5px;
+}
+.gist-net__row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+  transition: opacity 220ms ease;
+}
+.gist-net__row[data-wait] {
+  opacity: 0.32;
+}
+/* Cada parte cuelga de la anterior, como los tramos de una red: una línea a la izquierda las une. */
+.gist-net__part {
+  flex: none;
+  box-sizing: border-box;
+  height: 20px;
+  padding-right: 8px;
+  border-right: 2px solid var(--border-card);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: right;
+  white-space: nowrap;
+}
+.gist-net__row[data-part='except'] .gist-net__part {
+  border-right-color: color-mix(in srgb, var(--state-warning) 60%, transparent);
+}
+.gist-net__body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding-left: 8px;
+}
+.gist-net__line {
+  display: flex;
+  height: 20px;
+  align-items: center;
+  gap: 8px;
+}
+.gist-net__head {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.gist-net__row[data-state='skipped'] .gist-net__head {
+  color: var(--ink-faint);
+}
+.gist-net__badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.gist-net__badge[data-tone='ran'] {
+  background: color-mix(in srgb, var(--state-success) 14%, transparent);
+  color: var(--state-success);
+}
+.gist-net__badge[data-tone='caught'] {
+  background: color-mix(in srgb, var(--state-success) 22%, transparent);
+  color: var(--state-success);
+}
+.gist-net__badge[data-tone='error'] {
+  background: color-mix(in srgb, var(--state-error) 14%, transparent);
+  color: var(--state-error);
+}
+.gist-net__badge[data-tone='skipped'] {
+  color: var(--ink-faint);
+}
+.gist-net__row[data-now] .gist-net__badge {
+  animation: gist-pulse 420ms ease-out;
+}
+.gist-net__detail {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* El error: aparece donde salta y cae hasta la red que lo atrapa (o hasta abajo, si se escapa). */
+.gist-net__error {
+  position: absolute;
+  right: 0;
+  z-index: 1;
+  padding: 1px 8px;
+  border: 1px solid var(--state-error);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-error) 16%, var(--surface));
+  color: var(--state-error);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: gist-in 200ms ease-out both;
+  transition: top 520ms cubic-bezier(0.55, 0, 0.75, 0.2);
+}
+.gist-net__error[data-landed]:not([data-escaped]) {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 14%, var(--surface));
+  color: var(--state-success);
+  transition:
+    top 520ms cubic-bezier(0.55, 0, 0.75, 0.2),
+    color 200ms ease 520ms,
+    border-color 200ms ease 520ms,
+    background-color 200ms ease 520ms;
+}
+.gist-net__end {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: opacity 220ms ease;
+}
+.gist-net__end[data-wait] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-net__row,
+  .gist-net__error,
+  .gist-net__end,
+  .gist-net__badge {
+    transition: none !important;
+    animation: none !important;
+  }
+}
 @keyframes gist-pulse {
   0% {
     transform: scale(1);
