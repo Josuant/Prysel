@@ -57,6 +57,8 @@ export { addPlace, checkConnection, type Link, type Verdict } from './connect.ts
 export { CodePanel, type CodePanelProps } from './CodePanel.tsx'
 export type { NodeMenuItem } from './NodeMenu.tsx'
 export { viewerSize, type ViewerContent } from './viewer.ts'
+export { gistSize, gistText, type GistPiece, type GistScene, type GistValue } from './gist.ts'
+export { GistCard, type GistCardProps } from './flow/GistCard.tsx'
 export { FUNCTION_CHIP } from './flow/useChipDrag.ts'
 export {
   NOTE_STYLES,

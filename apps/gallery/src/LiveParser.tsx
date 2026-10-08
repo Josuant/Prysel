@@ -12,6 +12,7 @@ import {
   toCanvasNodes,
   useProgramView,
   type ControlModel,
+  type GistScene,
 } from '@prysel/ui'
 import runtimeWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter.wasm?url'
 import pythonWasm from '@vscode/tree-sitter-wasm/wasm/tree-sitter-python.wasm?url'
@@ -138,7 +139,28 @@ export function LiveParser() {
   const canvasHeight = Number(new URLSearchParams(location.search).get('h')) || 460
   // Compacto pliega las funciones (vista de pájaro: qué recibe y qué devuelve cada una);
   // normal y expandido las abren como territorios que envuelven su cuerpo.
-  const canvasNodes = useMemo(() => (program ? toCanvasNodes(program.nodes) : []), [program])
+  // `?gists=` (JSON en Base64: nombre de función → escena) le pone a cada una su tarjeta «Qué hace»: aquí no
+  // hay un motor que ejecute nada, así que la escena viene dada. Sirve para ver y fotografiar la tarjeta.
+  const [gists] = useState<Record<string, GistScene>>(() => {
+    const given = new URLSearchParams(location.search).get('gists')
+    if (given === null) return {}
+    try {
+      const text = new TextDecoder().decode(Uint8Array.from(atob(given), (c) => c.charCodeAt(0)))
+      return JSON.parse(text) as Record<string, GistScene>
+    } catch {
+      return {}
+    }
+  })
+  const canvasNodes = useMemo(
+    () =>
+      program
+        ? toCanvasNodes(program.nodes).map((node) => {
+            const scene = node.kind === 'abstraction.collapsed' ? gists[node.label] : undefined
+            return scene ? { ...node, gist: scene } : node
+          })
+        : [],
+    [program, gists],
+  )
   const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density, {
     flow: true,
     sections: program?.sections ?? NO_SECTIONS,

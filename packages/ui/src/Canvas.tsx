@@ -62,6 +62,7 @@ import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { IconButton } from './chrome.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
+import { gistSize, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
 import { runFor } from './fit.ts'
@@ -176,6 +177,11 @@ export interface CanvasNode {
   section?: SectionInfo
   /** Las funciones, clases y métodos del archivo a los que llama: pastillas que los abren. */
   subprocesses?: readonly Subprocess[]
+  /**
+   * En una función: «qué hace», con los datos de una vez que se ejecutó de verdad. Plegada, se dibuja como
+   * esa tarjeta (lo que entró → lo que salió) en vez de su cabecera sola.
+   */
+  gist?: GistScene
 }
 
 export interface CanvasProps {
@@ -747,57 +753,60 @@ function CanvasInner({
             ? viewerSize(node.viewer)
             : isChipKind(node)
               ? chipSize(node)
-              : node.section && !node.contains?.some((id) => present.has(id))
-                ? // Plegada, una etapa es su tarjeta; abierta, el marco la hace crecer con lo que tiene dentro.
-                  sectionCardSize({
-                    title: node.section.title,
-                    subtitle: node.section.subtitle,
-                    uses: node.section.uses,
-                    leaves: node.section.leaves.map((leaf) => leaf.name),
-                    callees: node.section.opens.map((open) => open.name),
-                    glyphs: node.section.glyphs.length,
-                  })
-                : flow && isDecision(node)
-                  ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
-                    widen(questionSize(node.control, d, node.label, node.code), node)
-                  : d === 'normal' && isLineCard(node.kind, node.control)
-                    ? // Una operación o una llamada: una sola línea, con su nombre como chip.
-                      {
-                        w: lineWidth(
-                          node.control,
-                          // Cada pastilla mide también lo que se observó de su valor (`200×2`).
-                          resultNames(node, d).map((name) => {
-                            const short = node.observed?.[name]?.short
-                            return short ? `${name} ${short}` : name
-                          }),
-                          linked[node.id],
-                          // Lo que abre (el chevron de una llamada, o las pastillas de sus subprocesos).
-                          subprocessesOf(node).length > 0
-                            ? opensWidth(subprocessesOf(node))
-                            : node.openable
-                              ? 26
-                              : 0,
-                        ),
-                        h: lineHeight(node.note),
-                      }
-                    : d === 'normal'
-                      ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
-                        widen(
-                          {
-                            w: slimWidth(base.w, node.control),
-                            h: slimHeight(
-                              node.control,
-                              linked[node.id],
-                              node.note,
-                              node.code !== undefined,
-                            ),
+              : node.gist && !node.contains?.some((id) => present.has(id))
+                ? // Plegada, una función de la que se sabe qué hace es su tarjeta «Qué hace».
+                  gistSize(node.gist)
+                : node.section && !node.contains?.some((id) => present.has(id))
+                  ? // Plegada, una etapa es su tarjeta; abierta, el marco la hace crecer con lo que tiene dentro.
+                    sectionCardSize({
+                      title: node.section.title,
+                      subtitle: node.section.subtitle,
+                      uses: node.section.uses,
+                      leaves: node.section.leaves.map((leaf) => leaf.name),
+                      callees: node.section.opens.map((open) => open.name),
+                      glyphs: node.section.glyphs.length,
+                    })
+                  : flow && isDecision(node)
+                    ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
+                      widen(questionSize(node.control, d, node.label, node.code), node)
+                    : d === 'normal' && isLineCard(node.kind, node.control)
+                      ? // Una operación o una llamada: una sola línea, con su nombre como chip.
+                        {
+                          w: lineWidth(
+                            node.control,
+                            // Cada pastilla mide también lo que se observó de su valor (`200×2`).
+                            resultNames(node, d).map((name) => {
+                              const short = node.observed?.[name]?.short
+                              return short ? `${name} ${short}` : name
+                            }),
+                            linked[node.id],
+                            // Lo que abre (el chevron de una llamada, o las pastillas de sus subprocesos).
+                            subprocessesOf(node).length > 0
+                              ? opensWidth(subprocessesOf(node))
+                              : node.openable
+                                ? 26
+                                : 0,
+                          ),
+                          h: lineHeight(node.note),
+                        }
+                      : d === 'normal'
+                        ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+                          widen(
+                            {
+                              w: slimWidth(base.w, node.control),
+                              h: slimHeight(
+                                node.control,
+                                linked[node.id],
+                                node.note,
+                                node.code !== undefined,
+                              ),
+                            },
+                            node,
+                          )
+                        : {
+                            w: base.w,
+                            h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
                           },
-                          node,
-                        )
-                      : {
-                          w: base.w,
-                          h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
-                        },
           // La documentación, el editor de un bucle y la cajita de chips viven en la cabecera de un territorio.
           ...(head > 0 ? { headroom: head } : {}),
           ...(flowFoot(node, flow) > 0 ? { footroom: flowFoot(node, flow) } : {}),

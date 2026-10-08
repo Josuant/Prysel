@@ -597,8 +597,11 @@ export function programView(
       ? []
       : nodes.filter((node) => node.contains?.includes(focus)).map((node) => node.id),
   )
+  // Una función de la que se sabe qué hace no se esconde aunque el programa la use: su tarjeta es lo que se
+  // lee de ella.
+  const gisted = new Set(nodes.filter((node) => node.gist).map((node) => node.id))
   const used = functionsOf(nodes, edges).filter(
-    (f) => f.used && f.id !== focus && !around.has(f.id),
+    (f) => f.used && f.id !== focus && !around.has(f.id) && !gisted.has(f.id),
   )
   const hidden = new Set<string>()
   for (const fn of used) {
@@ -960,8 +963,10 @@ export function viewOf(
   // La función que se está viendo nunca se pliega: sería quedarse sin ver lo que se pidió ver.
   const scopes = base.nodes.filter((node) => isFoldable(node) && node.id !== focus)
   const leaves = leafSections(base.nodes)
+  // En normal, una función de la que se sabe qué hace empieza plegada en su tarjeta: se abre para ver cómo.
+  const gisted = new Set(base.nodes.filter((node) => node.gist).map((node) => node.id))
   const byDefault = (id: string) =>
-    density === 'compact' ? true : density === 'normal' ? leaves.has(id) : false
+    density === 'compact' ? true : density === 'normal' ? leaves.has(id) || gisted.has(id) : false
   const folded = new Set(
     scopes
       .map((node) => node.id)

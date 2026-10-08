@@ -113,7 +113,13 @@ export function Shell({ host }: { host: WebHost }) {
     })
     setRunning(null)
     // Lo que pasó, en tres archivos: lo dicho y sus tiempos, las consultas y los cambios al código.
-    const result = { script: text, run, calls: host.callsLog(), changes: host.changesLog() }
+    const result = {
+      script: text,
+      run,
+      gists: host.gistsLog(),
+      calls: host.callsLog(),
+      changes: host.changesLog(),
+    }
     ;(globalThis as { __pryselRun?: unknown }).__pryselRun = result
     save(result, 'prysel-guion')
   }

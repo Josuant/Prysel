@@ -3,6 +3,7 @@ import type { Assets, KernelStatus, RunView } from './runs.ts'
 import { LESSON_LIMITS, parseLesson, type Lesson } from './lesson.ts'
 import type { Trace } from './trace.ts'
 import type { CallEntry } from './calls.ts'
+import type { Gist } from './gist/gist.ts'
 import {
   INTENTS,
   type Decision,
@@ -213,7 +214,18 @@ export interface SayMessage {
   aside?: boolean
 }
 
+/**
+ * Extensión → webview: «qué hace» cada función, con una muestra ejecutada de verdad. `version` es la del
+ * texto del que salió; cada una lleva además el resumen de su función, y solo vale mientras coincida.
+ */
+export interface GistsMessage {
+  type: 'gists'
+  version: number
+  gists: Gist[]
+}
+
 export type WebviewMessage =
+  | GistsMessage
   | DecisionMessage
   | GeneratedMessage
   | StepMessage
@@ -528,6 +540,20 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (typeof entry.model !== 'string') return null
     if (!['running', 'done', 'failed'].includes(entry.status as string)) return null
     return { type: 'call', entry: entry as CallEntry }
+  }
+  if (type === 'gists') {
+    const { version, gists } = value as Partial<GistsMessage>
+    if (!Number.isInteger(version) || !Array.isArray(gists)) return null
+    const sound = gists.every(
+      (gist: Partial<Gist> | null) =>
+        typeof gist === 'object' &&
+        gist !== null &&
+        typeof gist.id === 'string' &&
+        typeof gist.name === 'string' &&
+        typeof gist.hash === 'string' &&
+        typeof gist.status === 'string',
+    )
+    return sound ? { type: 'gists', version: version as number, gists } : null
   }
   if (type === 'progress') {
     const { gen, text } = value as Partial<ProgressMessage>

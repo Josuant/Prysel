@@ -5046,6 +5046,209 @@ button.fn-menu__crumb:hover {
 }
 
 /*
+ * ── «Qué hace»: una función plegada, comprobada ──
+ * Lo que entró → lo que salió, con los datos de una vez que se ejecutó de verdad. Las piezas (una rejilla, una
+ * fila de celdas, la consola, un objeto antes y después) miden lo que dice `gist.ts`: el lienzo reserva ese
+ * sitio y aquí se dibuja en él.
+ */
+.gist-card {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  border: 1px solid var(--border-card);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  transition:
+    box-shadow 160ms ease,
+    opacity 220ms ease;
+}
+.gist-card[data-stale] {
+  opacity: 0.55;
+}
+.flow-node[data-selected] .gist-card {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent),
+    var(--shadow-card);
+}
+.gist-card__head {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.gist-card__icon {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+}
+.gist-card__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-card__example {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  border-radius: var(--radius-full);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.gist-card__toggle {
+  flex: none;
+}
+.gist-card__sub {
+  flex: none;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-card__body {
+  display: flex;
+  min-height: 0;
+  align-items: center;
+}
+.gist-lane {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gist-arrow {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 16px;
+  text-align: center;
+}
+.gist-piece {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gist-label {
+  height: 15px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  line-height: 13px;
+  white-space: nowrap;
+}
+.gist-grid {
+  display: grid;
+}
+.gist-cells {
+  display: flex;
+}
+.gist-cell {
+  display: inline-grid;
+  box-sizing: border-box;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--field);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gist-cell[data-on] {
+  background: var(--value-any-bg);
+  color: var(--value-any-fg);
+}
+.gist-cell[data-more] {
+  background: none;
+  color: var(--ink-faint);
+}
+.gist-pairs,
+.gist-state {
+  display: flex;
+  flex-direction: column;
+}
+.gist-pair,
+.gist-field,
+.gist-text,
+.gist-note {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  white-space: nowrap;
+}
+.gist-pair,
+.gist-field,
+.gist-text {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.gist-text {
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--value-any-bg);
+  color: var(--value-any-fg);
+}
+.gist-text[data-error] {
+  background: color-mix(in srgb, var(--state-error) 14%, var(--surface));
+  color: var(--state-error);
+}
+.gist-note {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.gist-field {
+  gap: 6px;
+  color: var(--ink-muted);
+}
+.gist-field__name {
+  color: var(--ink-faint);
+}
+.gist-field__before {
+  color: var(--ink-faint);
+}
+.gist-field[data-changed] .gist-field__after {
+  color: var(--accent);
+  font-weight: 600;
+}
+[data-changed].gist-cells .gist-cell,
+[data-changed].gist-grid .gist-cell[data-on],
+[data-changed].gist-text {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.gist-console {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-self: stretch;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 17px;
+}
+.gist-console span {
+  display: block;
+  white-space: pre;
+}
+
+/*
  * ── Etapas: el algoritmo a la vista ──
  * Una fase del algoritmo con nombre. Plegada, una tarjeta de cuaderno: su número en un squircle del acento, su
  * título y su subtítulo, lo que usa → lo que deja (chips) y las pastillas de sus subprocesos. Abierta, un marco

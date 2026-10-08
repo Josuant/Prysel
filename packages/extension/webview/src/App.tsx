@@ -68,6 +68,9 @@ import {
 } from './player.ts'
 import { currentMoment, lessonNotes, momentsOf, noteNodeId, resolveBeats } from './lessons.ts'
 import { speakableNote, useNarration } from './useNarration.ts'
+import { functionsIn } from '../../src/gist/facts.ts'
+import type { Gist } from '../../src/gist/gist.ts'
+import { sampleScene } from './gisting.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -244,6 +247,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   } | null>(null)
   /** Lo que se le ha preguntado a cada modelo y lo que contestó, y si se está mirando esa pestaña. */
   const [calls, setCalls] = useState<CallEntry[]>([])
+  // «Qué hace» cada función: su muestra ejecutada, tal como la mandó quien ejecuta el programa.
+  const [gists, setGists] = useState<readonly Gist[]>([])
   /** La conversación con la IA (interfaz de chat): cada orden y lo que se contestó, y se fue contando. */
   const [chat, setChat] = useState<ChatEntry[]>([])
   /** Añade una frase a la respuesta de la orden en curso (o una respuesta nueva, si no hay ninguna). */
@@ -387,6 +392,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             at < 0 ? [...previous, entry] : previous.map((call, i) => (i === at ? entry : call))
           return next.length > 150 ? next.slice(next.length - 150) : next
         })
+      } else if (message.type === 'gists') {
+        setGists(message.gists)
       } else if (message.type === 'preview') {
         // Si la frase está entera o a medias: el micrófono lo consulta antes de mandarla.
         if (message.complete !== undefined) {
@@ -738,7 +745,24 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
   // El lienzo se lee hacia abajo, como diagrama de flujo (ver `axis` más abajo).
   // Con sus etapas: las fases con nombre del algoritmo, plegadas en normal hasta que se abren.
-  const view = useProgramView(source, program?.edges ?? NO_EDGES, density, {
+  // Cada función de la que se sabe qué hace lleva su tarjeta (lo que entró → lo que salió): plegada, se lee
+  // eso en vez de su diagrama. Solo mientras su texto sea el mismo del que salió la muestra.
+  const gisted = useMemo(() => {
+    if (!program || gists.length === 0) return source
+    const hashes = new Map(functionsIn(program).map((fact) => [fact.id, fact.hash]))
+    const scenes = new Map(
+      gists.flatMap((gist) => {
+        const scene = hashes.get(gist.id) === gist.hash ? sampleScene(gist) : null
+        return scene ? [[gist.id, scene] as const] : []
+      }),
+    )
+    if (scenes.size === 0) return source
+    return source.map((node) => {
+      const scene = scenes.get(node.id)
+      return scene ? { ...node, gist: scene } : node
+    })
+  }, [source, program, gists])
+  const view = useProgramView(gisted, program?.edges ?? NO_EDGES, density, {
     flow: true,
     sections: program?.sections ?? NO_SECTIONS,
   })

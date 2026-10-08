@@ -26,6 +26,7 @@ import { FLOW_LANE, FLOW_RAIL, flowEntry, isLoopTerritory, territoryHeadroom } f
 import { TrayBox } from './ChipNode.tsx'
 import { LapsStrip } from './LapsStrip.tsx'
 import { LAPS_HEADROOM } from '../laps.ts'
+import { GistCard } from './GistCard.tsx'
 import { SectionCard, SectionFrame } from './SectionCard.tsx'
 import { TRAY, resultNames, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
@@ -315,6 +316,72 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
 
   /** Los campos que enseñan su nombre: los que reciben un cable, y (al arrastrar uno) donde valdría soltarlo. */
   const named = [...connected, ...open.filter((slot) => eligible?.includes(slot.id))]
+
+  // Una función plegada de la que se sabe qué hace: su tarjeta «Qué hace» (lo que entró → lo que salió).
+  if (node.gist && !container) {
+    return (
+      <div
+        className="flow-node"
+        data-phase={phase}
+        data-gist=""
+        data-selected={selected ? '' : undefined}
+        data-add-target={data.addTarget ? '' : undefined}
+        data-cursor={data.cursor ? '' : undefined}
+        data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
+        data-born={data.born ? '' : undefined}
+        data-echo={data.echoed ? '' : undefined}
+        data-change={data.change}
+        data-hinted={data.hinted ? '' : undefined}
+        data-modifier={modifier}
+      >
+        <Handle
+          type="source"
+          id="note-out"
+          position={Position.Right}
+          isConnectable={false}
+          className="note-handle"
+        />
+        <Handle
+          type="source"
+          id="aux-out"
+          position={Position.Left}
+          isConnectable={false}
+          className="note-handle"
+        />
+        {axis === 'vertical' && (
+          <>
+            <Handle
+              type="target"
+              id="step-in"
+              position={Position.Top}
+              isConnectable={false}
+              className="note-handle"
+              {...(spineStyle ? { style: spineStyle } : {})}
+            />
+            <Handle
+              type="source"
+              id="step-out"
+              position={Position.Bottom}
+              isConnectable={false}
+              className="note-handle"
+              {...(spineStyle ? { style: spineStyle } : {})}
+            />
+          </>
+        )}
+        <GistCard
+          scene={node.gist}
+          size={size}
+          onToggle={
+            data.onEnter
+              ? () => {
+                  data.onEnter?.(id)
+                }
+              : undefined
+          }
+        />
+      </div>
+    )
+  }
 
   // Una etapa (o un bucle que encabeza una, plegado): su tarjeta o su marco, no una tarjeta de sentencia.
   const stage = node.section

@@ -15,6 +15,7 @@ import {
 import { Session } from '../../../packages/extension/src/session.ts'
 import { WebKernel } from './engine.ts'
 import { Orders } from './orders.ts'
+import { Gists } from './gists.ts'
 import {
   deciderFrom,
   loadFlow,
@@ -84,12 +85,25 @@ export class WebHost {
   private marks: number[] = []
   private started = performance.now()
   private orders: Orders
+  private gists: Gists
 
   constructor() {
     this.parserReady = createPythonParser({ runtime: runtimeWasm, language: pythonWasm }).then(
       (parser) => (this.parser = parser),
     )
     this.session = this.newSession()
+    this.gists = new Gists({
+      version: () => this.version,
+      text: () => this.doc.text,
+      analyse: () => this.analyse(),
+      trace: (code) => this.session.trace(code),
+      provider: () => {
+        const provider = providerFrom(this.settings)
+        return provider ? this.calls.provider(provider) : null
+      },
+      busy: () => this.working,
+      post: (gists, version) => this.post({ type: 'gists', version, gists }),
+    })
     this.orders = new Orders({
       version: () => this.version,
       text: () => this.doc.text,
@@ -311,6 +325,7 @@ export class WebHost {
       program = buildProgram(parser.parse(text), text)
       this.session.update(program, text)
       this.orders.tend(program)
+      this.gists.touch()
     } catch {
       // El código a medio escribir no debe tumbar el lienzo.
       program = null
@@ -394,7 +409,17 @@ export class WebHost {
 
   /** Si hay algo en marcha: una orden construyendo, o una consulta a un modelo sin contestar. */
   get busy(): boolean {
+    return this.working || this.gists.pending
+  }
+
+  /** Lo mismo, sin contar la comprobación de qué hace cada función (que espera a que esto acabe). */
+  private get working(): boolean {
     return this.orders.busy || this.calls.all().some((call) => call.status === 'running')
+  }
+
+  /** «Qué hace» cada función, tal como se sabe ahora: su muestra ejecutada, o por qué no la hay. */
+  gistsLog(): unknown {
+    return this.gists.all
   }
 
   /** Todo lo que se le ha preguntado a cada modelo y lo que contestó, para descargarlo. Sin claves. */
