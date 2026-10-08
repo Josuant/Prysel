@@ -525,6 +525,18 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
       data-hinted={data.hinted ? '' : undefined}
       {...(opened ? { 'data-opened': '', style: opened } : arriving)}
     >
+      {from && opened && node.gist && (
+        // La tarjeta de la que sale el diagrama: se queda un momento encima, deshaciéndose, mientras el
+        // marco crece y los nodos aparecen debajo. Es un fundido: no se puede tocar ni leer.
+        <div
+          className="gist-ghost"
+          aria-hidden
+          inert
+          style={{ width: from.w, height: from.h, marginLeft: -from.w / 2 }}
+        >
+          <GistCard scene={{ ...node.gist, beats: 0 }} size={{ w: from.w, h: from.h }} />
+        </div>
+      )}
       {/* De aquí sale la flecha de una nota: existe en todo nodo (también en un territorio, que no tiene salida). */}
       <Handle
         type="source"

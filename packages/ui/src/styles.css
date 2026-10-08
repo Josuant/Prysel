@@ -1130,6 +1130,33 @@
     clip-path: inset(0 0 0 0 round 16px);
   }
 }
+/* El fundido: la tarjeta, tal como estaba, se deshace encima del diagrama que nace debajo. */
+.gist-ghost {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  left: 50%;
+  pointer-events: none;
+  animation: gist-dissolve 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+/* Se enseña como quedó, sin volver a contar su entrada. */
+.gist-ghost .gist-card,
+.gist-ghost .gist-card * {
+  animation: none !important;
+}
+@keyframes gist-dissolve {
+  0% {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+  100% {
+    visibility: hidden;
+    opacity: 0;
+    filter: blur(3px);
+    transform: scale(1.12);
+  }
+}
 .gist-card {
   animation: gist-settle 340ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
@@ -1158,6 +1185,9 @@
   .gist-card {
     animation: none;
     transition: none;
+  }
+  .gist-ghost {
+    display: none;
   }
 }
 
