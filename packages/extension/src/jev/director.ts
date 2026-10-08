@@ -907,32 +907,59 @@ async function rewrite(
     after.replace(/\r\n/g, '\n'),
   )
   if (!edit) return failed('La IA no propuso ningún cambio.', verdict.ms)
-  // Se escribe entero, de una vez: lo que cambia, cambia junto, y nunca queda a medias.
-  const refused = await host.write({
-    edits: [{ start: 0, end: before.length, text: after }],
-    select: { line: hunks[0]?.line ?? 1 },
-  })
-  if (refused !== null) return failed(refused, verdict.ms)
-  await host.show({ type: 'progress', text: 'JEV ✓ · cambio escrito' })
-  // Y ahora se ve: cada tramo que cambió, uno detrás de otro, donde ha quedado.
-  const now = await host.program()
+  // Se escribe por tramos, de arriba abajo, para que se vea crecer: cada tramo que cambia entra, se señala
+  // y deja paso al siguiente. Pero nunca queda a medias: un tramo solo se escribe si con él el programa
+  // sigue siendo válido; si no, espera al siguiente y entran juntos. El último deja el programa final.
+  const target = after.replace(/\r\n/g, '\n').split('\n')
+  let current = before.replace(/\r\n/g, '\n').split('\n')
+  let shift = 0
   let written = 0
-  for (const hunk of hunks) {
+  let waiting: typeof hunks = []
+  for (const [index, hunk] of hunks.entries()) {
     if (host.signal.aborted) break
-    if (hunk.added === 0) continue
-    const last = hunk.line + hunk.added - 1
-    const shown =
-      now.nodes
-        .filter((node) => node.range && node.line >= hunk.line && node.line <= last)
-        .sort((x, y) => x.line - y.line)[0] ??
-      now.nodes
-        .filter((node) => node.range && node.line <= hunk.line)
-        .sort((x, y) => y.line - x.line)[0]
-    if (!shown) continue
-    written++
-    await host.show({ type: 'step', index: written, say: '', line: shown.line, effect: 'changed' })
-    await host.wait(STREAM_PACE_MS)
+    // Todo lo de arriba ya es como en el programa nuevo: el tramo cae en su línea de allí.
+    current = [
+      ...current.slice(0, hunk.line - 1),
+      ...target.slice(hunk.line - 1, hunk.line - 1 + hunk.added),
+      ...current.slice(hunk.line - 1 + hunk.removed),
+    ]
+    waiting.push(hunk)
+    const last = index === hunks.length - 1
+    const text = (last ? target : current).join(eol)
+    if (!last && !(host.parses(text) && indentationOk(text))) continue
+    const live = (await host.program()).source
+    const refused = await host.write({
+      edits: [{ start: 0, end: live.length, text }],
+      select: { line: waiting[0]?.line ?? 1 },
+    })
+    if (refused !== null) return failed(refused, verdict.ms)
+    shift++
+    const now = await host.program()
+    for (const shown of waiting) {
+      if (shown.added === 0) continue
+      const end = shown.line + shown.added - 1
+      const node =
+        now.nodes
+          .filter((item) => item.range && item.line >= shown.line && item.line <= end)
+          .sort((x, y) => x.line - y.line)[0] ??
+        now.nodes
+          .filter((item) => item.range && item.line <= shown.line)
+          .sort((x, y) => y.line - x.line)[0]
+      if (!node) continue
+      written++
+      await host.show({
+        type: 'step',
+        index: written,
+        say: '',
+        line: node.line,
+        effect: shown.removed === 0 ? 'born' : 'changed',
+      })
+      await host.wait(STREAM_PACE_MS)
+    }
+    waiting = []
   }
+  if (shift === 0) return failed('No se pudo escribir el cambio.', verdict.ms)
+  await host.show({ type: 'progress', text: 'JEV ✓ · cambio escrito' })
   // Una frase, al margen, de lo que se ha hecho.
   const changed = after
     .replace(/\r\n/g, '\n')

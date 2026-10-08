@@ -62,6 +62,17 @@ interface Recognition {
   stop(): void
 }
 
+/** Cuánto silencio basta para dar lo dicho por terminado y mandarlo, sin esperar al navegador. */
+const EARLY_MS = 1000
+
+/** Lo dicho, para comparar: sin mayúsculas, signos ni espacios de más. */
+const spoken = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[¿?¡!.,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
 /** Tras empezar a oír algo, lo que se espera a que se convierta en una frase antes de darlo por ruido. */
 const HEARING_PATIENCE_MS = 4000
 
@@ -122,6 +133,9 @@ export function ChatDock({
   // orden; mientras se está diciendo, se avisa (lo que se construye se queda quieto a oírla).
   const wanted = useRef(false)
   const quiet = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Lo que ya se mandó de la frase que el navegador aún no ha dado por terminada. */
+  const early = useRef('')
+  const pause = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hearing = (value: string | null) => {
     if (quiet.current) clearTimeout(quiet.current)
     quiet.current = null
@@ -149,12 +163,37 @@ export function ChatDock({
         if (result?.isFinal) said += transcript
         else partial += transcript
       }
+      // Lo que ya se mandó de esta misma frase (por haberse callado un momento) no se vuelve a mandar: de
+      // lo que llega, cuenta solo lo que viene detrás.
+      const rest = (heard: string) => {
+        const sent = spoken(early.current)
+        const now = spoken(heard)
+        if (sent === '' || !now.startsWith(sent)) return heard.trim()
+        const extra = now.slice(sent.length).trim()
+        return extra === ''
+          ? ''
+          : heard.trim().split(/\s+/).slice(-extra.split(' ').length).join(' ')
+      }
+      if (pause.current) clearTimeout(pause.current)
+      pause.current = null
       if (said.trim() !== '') {
+        const more = rest(said)
+        early.current = ''
         hearing(null)
-        send(said)
+        if (more !== '') send(more)
       } else if (partial.trim() !== '') {
-        setText(partial)
-        hearing(partial)
+        const more = rest(partial)
+        if (more === '') return
+        setText(more)
+        hearing(more)
+        // El navegador tarda en dar una frase por terminada. Si lo dicho no cambia durante un momento, ya
+        // está dicho: se manda sin esperarle. Si luego sigue hablando, lo que añada llega como otra orden
+        // (y si se estaba construyendo, el JEV decide si la ajusta).
+        pause.current = setTimeout(() => {
+          early.current = partial
+          hearing(null)
+          send(more)
+        }, EARLY_MS)
       }
     }
     // El navegador corta la escucha cada cierto tiempo (o tras un silencio): mientras se quiera, se reabre.

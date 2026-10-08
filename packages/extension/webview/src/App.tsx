@@ -34,7 +34,9 @@ import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { ChatDock, type ChatEntry } from './ChatDock.tsx'
 import { CommandBar } from './CommandBar.tsx'
+import { answerTo, rejection } from './answering.ts'
 import { dissolve, dragChips, flyNode, gesture } from './dragging.ts'
+import { morph } from './effects.ts'
 import { draftOf } from './drafting.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
@@ -300,6 +302,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
   const [preview, setPreview] = useState<{ kind: string; text: string } | null>(null)
   const heardWords = useRef(0)
+  /** Dónde estaba la caja provisional cuando llegó la pieza de verdad: de ahí sale el marco que viaja. */
+  const morphFrom = useRef<DOMRect | null>(null)
+  /** La corrección que viene tras un «no, eso no»: se manda cuando lo deshecho ya se ve. */
+  const afterUndo = useRef<string | null>(null)
   /** La línea de la función o la clase en la que hay que entrar en cuanto el programa la traiga. */
   const [enterLine, setEnterLine] = useState<number | null>(null)
   /** El cambio de una orden ya está en el lienzo: en cuanto se pinte, se sabe cuánto tardó. */
@@ -384,7 +390,6 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         onPreview.current(message.kind, message.text)
       } else if (message.type === 'progress') {
         const text = message.text
-        setPreview(null)
         setThinking(text)
         setOrder((previous) =>
           previous.phase === 'done' ? { ...previous, note: text, building: true } : previous,
@@ -923,9 +928,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     }
     // Mientras se le oye, el hueco de lo que está pidiendo: «Una función · que sume dos…».
     const guess = preview && preview.kind !== 'nada' ? (HEARD_LABELS[preview.kind] ?? null) : null
-    const busy =
-      thinking ?? (guess && preview ? preview.text : deciding ? 'Decidiendo qué hacer…' : null)
-    const busyTitle = thinking === null && guess ? guess : 'La IA está pensando'
+    // La caja de lo que se pidió sigue ahí mientras se piensa y se escribe: es la misma pieza, y dentro
+    // se va leyendo lo que pasa. Solo se va cuando aparece el nodo de verdad (y se convierte en él).
+    const drafting = guess !== null && preview !== null
+    const busy = drafting
+      ? (thinking ?? preview.text)
+      : (thinking ?? (deciding ? 'Decidiendo qué hacer…' : null))
+    const busyTitle = drafting ? guess : 'La IA está pensando'
     if (busy !== null) {
       // Donde trabaja: el hueco que espera contenido, lo último que tocó, lo seleccionado o el final.
       const hole = view.nodes.find((n) => byId.get(n.id)?.generating !== undefined)?.id
@@ -944,8 +953,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             text: [busy],
             busy: true,
             // Mientras se le oye: no una nota, la caja de la pieza, rellenándose con lo que va diciendo.
-            ...(thinking === null && guess && preview
-              ? { ghost: HEARD_GHOST[preview.kind], draft: draftOf(preview.kind, preview.text) }
+            ...(drafting
+              ? {
+                  ghost: HEARD_GHOST[preview.kind],
+                  draft: {
+                    ...draftOf(preview.kind, preview.text),
+                    ...(thinking === null ? {} : { does: thinking }),
+                  },
+                }
               : {}),
           },
         })
@@ -1116,6 +1131,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       unmark?.()
     }
   }, [spotId, spotMark, spotKey])
+  // La caja provisional se convierte en el nodo: un marco viaja de donde estaba ella a donde está él.
+  useEffect(() => {
+    const from = morphFrom.current
+    if (from === null || spotId === null) return
+    morphFrom.current = null
+    const timer = setTimeout(() => {
+      const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(spotId)}"]`)
+      if (node) morph(from, node)
+    }, 320)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [spotId, spotKey])
   // Lo que está a punto de quitarse se deshace en partículas: no desaparece de golpe.
   useEffect(() => {
     if (spotId === null || spotChange !== 'leaving' || reducedMotion) return
@@ -1196,6 +1224,71 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       ...(force ? { force } : {}),
     })
   }
+  /**
+   * Lo que se dice o se escribe en el chat. Antes que una orden puede ser la respuesta a una pregunta
+   * pendiente («sí», «la segunda») o un «no, eso no», que deshace lo último y, si trae la corrección detrás,
+   * la pide.
+   */
+  const hear = (text: string) => {
+    if (order.phase === 'ask') {
+      const answer = answerTo(
+        text,
+        order.options.map((option) => option.label),
+      )
+      if (answer === 'no') {
+        orderSeq.current++
+        setOrder({ phase: 'idle' })
+        setChat((previous) => [
+          ...previous.slice(-60),
+          { id: Date.now(), role: 'user', text },
+          { id: Date.now(), role: 'ai', text: 'Vale, lo dejo.', tone: 'muted' },
+        ])
+        return
+      }
+      const option = answer === null ? undefined : order.options[answer]
+      if (option) {
+        if (option.order) sendOrder(option.order)
+        else sendOrder(lastOrder.current, option.force)
+        return
+      }
+    }
+    const rejected = rejection(text)
+    if (rejected) {
+      hush()
+      orderSeq.current++
+      setOrder({ phase: 'idle' })
+      setPreview(null)
+      setThinking(null)
+      setChat((previous) => [
+        ...previous.slice(-60),
+        { id: Date.now(), role: 'user', text },
+        { id: Date.now(), role: 'ai', text: 'Deshecho.', tone: 'muted' },
+      ])
+      // Detrás puede venir lo que sí se quería: se pide en cuanto lo deshecho ya se ve.
+      afterUndo.current = rejected.then.split(' ').length >= 2 ? rejected.then : null
+      post({ type: 'undoOrder' })
+      return
+    }
+    sendOrder(text)
+  }
+  const sendLater = useRef<(text: string) => void>(() => undefined)
+  useEffect(() => {
+    sendLater.current = (text) => {
+      sendOrder(text)
+    }
+  })
+  // Lo deshecho ya se ve (llegó el programa de antes): ahora sí, la corrección.
+  useEffect(() => {
+    const next = afterUndo.current
+    if (next === null || version === null) return
+    afterUndo.current = null
+    const timer = setTimeout(() => {
+      sendLater.current(next)
+    }, 80)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [version])
   useEffect(() => {
     onDecision.current = (message) => {
       if (message.id !== orderSeq.current) return
@@ -1211,6 +1304,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         awaitingPaint.current = null
         setOrder({ phase: 'done', text, say, tone, ...meta, ...(needsKey ? { needsKey } : {}) })
         tell(say)
+      }
+      if (
+        directive.kind !== 'do' ||
+        (directive.effect.type !== 'compose' && directive.effect.type !== 'modify')
+      ) {
+        setPreview(null)
       }
       if (directive.kind === 'ask') {
         awaitingPaint.current = null
@@ -1360,6 +1459,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       if (named && wanted?.id !== named.id) setWanted({ id: named.id, key: ++spotSeq.current })
     }
     onStep.current = (message) => {
+      // Llega la pieza de verdad: la caja provisional se va… convirtiéndose en ella.
+      if (preview !== null) {
+        morphFrom.current = document.querySelector('.ghost-box')?.getBoundingClientRect() ?? null
+        setPreview(null)
+      }
       setThinking(null)
       // Una pieza puede aparecer antes que su explicación (llega detrás): mientras, se queda lo que se decía.
       setOrder((previous) =>
@@ -1964,7 +2068,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           ai={models ? models.ai : ''}
           suggestions={features.suggestions ?? []}
           onSubmit={(text) => {
-            sendOrder(text)
+            hear(text)
           }}
           onChoose={(option) => {
             if (option.order) sendOrder(option.order)

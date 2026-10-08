@@ -1901,6 +1901,18 @@ button.fn-menu__crumb:hover {
   height: 24px;
   border: 2px solid var(--accent);
 }
+/* El marco de la caja provisional, que viaja hasta el nodo en que se convierte. */
+.fx-morph {
+  position: absolute;
+  z-index: 9;
+  top: 0;
+  left: 0;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+  transform-origin: 0 0;
+}
 /* El foco: mientras dura un gesto, lo que no participa se desenfoca y se apaga un poco. */
 .react-flow[data-focusing] .react-flow__node,
 .react-flow[data-focusing] .react-flow__edge {

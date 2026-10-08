@@ -80,6 +80,8 @@ export class WebHost {
   private calls = new CallLog((entry) => this.post({ type: 'call', entry }))
   /** Cada cambio que se le ha hecho al código desde que se abrió la página. */
   private changes: CodeChange[] = []
+  /** Cuánto había en la historia de deshacer al empezar cada orden. */
+  private marks: number[] = []
   private started = performance.now()
   private orders: Orders
 
@@ -250,8 +252,25 @@ export class WebHost {
         return
       }
       case 'command':
+        // Dónde estaba la historia al empezar esta orden: «no, eso no» vuelve justo hasta aquí.
+        this.marks.push(this.history.sizes.undo)
+        if (this.marks.length > 40) this.marks.shift()
         void this.orders.receive(message)
         return
+      case 'undoOrder': {
+        this.orders.stop()
+        const sizes = () => this.history.sizes.undo
+        // La última orden que de verdad escribió algo (las que solo miraron no dejaron nada que deshacer).
+        let to = this.marks.pop()
+        while (to !== undefined && to >= sizes() && this.marks.length > 0) to = this.marks.pop()
+        const floor = to === undefined || to >= sizes() ? Math.max(0, sizes() - 1) : to
+        while (sizes() > floor) {
+          const before = sizes()
+          await this.stepHistory('undo')
+          if (sizes() >= before) break
+        }
+        return
+      }
       case 'spoken':
         this.orders.spoken(message.seq, message.spoke)
         return

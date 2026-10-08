@@ -181,6 +181,40 @@ export function dissolve(node: Element): void {
   }
 }
 
+/**
+ * La caja de lo que se estaba pidiendo se convierte en la pieza de verdad: un marco sale de donde estaba la
+ * caja y viaja hasta el nodo, tomando su tamaño; al llegar, un destello. Así no desaparece una cosa y
+ * aparece otra: es la misma, que ya existe.
+ */
+export function morph(from: DOMRect, node: Element): void {
+  const stage = stageOf(node)
+  if (!stage || reduced()) return
+  const frame = stage.getBoundingClientRect()
+  const to = node.getBoundingClientRect()
+  if (to.width === 0 || from.width === 0) return
+  const shell = document.createElement('span')
+  shell.className = 'fx-morph'
+  shell.style.width = `${to.width.toFixed(1)}px`
+  shell.style.height = `${to.height.toFixed(1)}px`
+  stage.append(shell)
+  const at = (box: DOMRect) =>
+    `translate(${(box.left - frame.left).toFixed(1)}px, ${(box.top - frame.top).toFixed(1)}px) scale(${(box.width / to.width).toFixed(3)}, ${(box.height / to.height).toFixed(3)})`
+  shell
+    .animate(
+      [
+        { transform: at(from), opacity: 0.95 },
+        { transform: at(to), opacity: 0.9, offset: 0.8 },
+        { transform: at(to), opacity: 0 },
+      ],
+      { duration: 620, easing: 'cubic-bezier(0.3, 0, 0.1, 1)' },
+    )
+    .finished.catch(() => undefined)
+    .finally(() => {
+      shell.remove()
+      ring(stage, centerOf(stage, node), 'born')
+    })
+}
+
 /** Un nodo acaba de nacer: un destello discreto en su borde (no partículas: nacen muchos seguidos). */
 export function spark(node: Element): void {
   const stage = stageOf(node)

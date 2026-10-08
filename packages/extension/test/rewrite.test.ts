@@ -77,7 +77,7 @@ const ROTO = lines(
 )
 
 function stage(source: string) {
-  const state = { text: source, writes: 0, shown: [] as Shown[] }
+  const state = { text: source, writes: 0, frames: [] as string[], shown: [] as Shown[] }
   const host: Stagehand = {
     signal: new AbortController().signal,
     program: () => Promise.resolve(parse(state.text)),
@@ -85,6 +85,7 @@ function stage(source: string) {
     write(change) {
       if (change.edits.length === 0) return Promise.resolve(null)
       state.text = applyEdits(state.text, change.edits)
+      state.frames.push(state.text)
       state.writes++
       return Promise.resolve(null)
     },
@@ -119,20 +120,24 @@ const ORDER = {
 }
 
 describe('cambiar un programa pequeño: el programa entero, de una vez', () => {
-  it('la IA devuelve el programa cambiado; se escribe en un solo paso y se enseña lo que cambió', async () => {
+  it('la IA devuelve el programa cambiado; entra por tramos, y ningún estado intermedio queda roto', async () => {
     const { host, state } = stage(CAJERO)
     const provider = ai(CAJERO_CON_BLOQUEO)
     const outcome = await modify(host, { decider: localDecider(), provider }, ORDER)
     expect(outcome.trouble).toBeNull()
     expect(state.text).toBe(CAJERO_CON_BLOQUEO)
-    // De una vez: nunca hay un estado a medias en el archivo.
-    expect(state.writes).toBe(1)
-    // Y se ve cada tramo que cambió, donde quedó.
+    // Entra por tramos (se ve crecer), pero cada estado por el que pasa el archivo es un programa válido.
+    expect(state.writes).toBeGreaterThan(1)
+    for (const frame of state.frames) {
+      expect(hasError(frame), frame).toBe(false)
+      expect(indentationOk(frame), frame).toBe(true)
+    }
+    // Y se ve cada tramo, donde quedó: lo que solo añade, nace.
     const changed = state.shown.flatMap((event) => (event.type === 'step' ? [event] : []))
     expect(changed.map((event) => `${event.effect} L${event.line}`)).toEqual([
-      'changed L4',
-      'changed L10',
-      'changed L14',
+      'born L4',
+      'born L10',
+      'born L14',
     ])
     // Una frase al margen de lo que se hizo; a la IA no se le pide ningún formato.
     expect(state.shown.some((event) => event.type === 'say' && event.aside)).toBe(true)

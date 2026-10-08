@@ -325,6 +325,14 @@ export interface StopOrderMessage {
 }
 
 /**
+ * Deshacer la última orden entera («no, eso no»): todo lo que escribió, aunque fueran muchos pasos, de una
+ * vez. No es el deshacer del lienzo, que va cambio a cambio.
+ */
+export interface UndoOrderMessage {
+  type: 'undoOrder'
+}
+
+/**
  * El usuario ha empezado a hablar (`on`) o ha dejado de hacerlo sin decir nada que valga. Mientras habla, lo
  * que se esté construyendo se queda quieto: va a decir algo, y puede cambiarlo todo.
  */
@@ -349,6 +357,7 @@ export type HostMessage =
   | CommandMessage
   | JevKeyMessage
   | StopOrderMessage
+  | UndoOrderMessage
   | ListeningMessage
   | SpokenMessage
   | ClearCallsMessage
@@ -601,6 +610,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   }
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
+  if (type === 'undoOrder') return { type: 'undoOrder' }
   if (type === 'listening') {
     const { on, text } = value as { on?: unknown; text?: unknown }
     if (typeof on !== 'boolean') return null
