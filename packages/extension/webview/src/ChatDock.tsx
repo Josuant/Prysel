@@ -44,6 +44,11 @@ export interface ChatDockProps {
   onMic?: (open: boolean) => void
   /** Lo que se le está oyendo decir ahora mismo (`null`: nada, o ya acabó). */
   onHearing?: (text: string | null) => void
+  /**
+   * Lo que dijo el JEV de si eso que se ha oído es una orden entera (1) o está a medias (0). `undefined`:
+   * aún no se sabe.
+   */
+  judged?: (text: string) => number | undefined
 }
 
 interface Recognition {
@@ -64,6 +69,12 @@ interface Recognition {
 
 /** Cuánto silencio basta para dar lo dicho por terminado y mandarlo, sin esperar al navegador. */
 const EARLY_MS = 1000
+/** A partir de aquí, el JEV da la frase por entera: se puede mandar ya. */
+const WHOLE_SAID = 0.6
+/** Por debajo, la frase está a medias: no se manda aunque el navegador la haya cerrado. */
+const HALF_SAID = 0.4
+/** Lo que se espera a que se termine una frase a medias antes de mandarla tal cual. */
+const HELD_MS = 4500
 
 /** Lo dicho, para comparar: sin mayúsculas, signos ni espacios de más. */
 const spoken = (text: string) =>
@@ -99,6 +110,7 @@ export function ChatDock({
   onTyping,
   onMic,
   onHearing,
+  judged,
 }: ChatDockProps) {
   const [text, setText] = useState('')
   const [open, setOpen] = useState(false)
@@ -117,9 +129,9 @@ export function ChatDock({
 
   // El reconocimiento de voz vive más que un render: lo que llama tiene que ser lo de ahora, no lo de cuando
   // se abrió el micrófono (una orden mandada con datos de entonces llega desfasada y se rechaza).
-  const live = useRef({ onSubmit, onHearing, onMic })
+  const live = useRef({ onSubmit, onHearing, onMic, judged })
   useEffect(() => {
-    live.current = { onSubmit, onHearing, onMic }
+    live.current = { onSubmit, onHearing, onMic, judged }
   })
 
   const send = (value: string) => {
@@ -136,6 +148,9 @@ export function ChatDock({
   /** Lo que ya se mandó de la frase que el navegador aún no ha dado por terminada. */
   const early = useRef('')
   const pause = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Una frase que el navegador cerró pero que estaba a medias: espera a lo que falta. */
+  const held = useRef('')
+  const waiting = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hearing = (value: string | null) => {
     if (quiet.current) clearTimeout(quiet.current)
     quiet.current = null
@@ -176,23 +191,55 @@ export function ChatDock({
       }
       if (pause.current) clearTimeout(pause.current)
       pause.current = null
+      // Lo que quedó a medias de antes va delante de lo que se dice ahora: es la misma frase.
+      const joined = (piece: string) => (held.current === '' ? piece : `${held.current} ${piece}`)
+      const flush = () => {
+        const whole = held.current
+        held.current = ''
+        hearing(null)
+        if (whole !== '') send(whole)
+      }
       if (said.trim() !== '') {
         const more = rest(said)
         early.current = ''
+        if (more === '') {
+          if (held.current === '') hearing(null)
+          return
+        }
+        const whole = joined(more)
+        // El navegador ha cerrado la frase, pero puede estar a medias (una pausa para pensar). Si el JEV
+        // dice que lo está, no se manda: se guarda, y lo que se diga a continuación se le une. Si no llega
+        // nada más, se manda tal cual.
+        const sure = live.current.judged?.(whole) ?? live.current.judged?.(more)
+        if (sure !== undefined && sure < HALF_SAID) {
+          held.current = whole
+          setText(whole)
+          hearing(whole)
+          if (waiting.current) clearTimeout(waiting.current)
+          waiting.current = setTimeout(flush, HELD_MS)
+          return
+        }
+        if (waiting.current) clearTimeout(waiting.current)
+        held.current = ''
         hearing(null)
-        if (more !== '') send(more)
+        send(whole)
       } else if (partial.trim() !== '') {
         const more = rest(partial)
         if (more === '') return
-        setText(more)
-        hearing(more)
-        // El navegador tarda en dar una frase por terminada. Si lo dicho no cambia durante un momento, ya
-        // está dicho: se manda sin esperarle. Si luego sigue hablando, lo que añada llega como otra orden
-        // (y si se estaba construyendo, el JEV decide si la ajusta).
+        // Sigue hablando: lo que estaba guardado espera a que acabe.
+        if (waiting.current) clearTimeout(waiting.current)
+        const whole = joined(more)
+        setText(whole)
+        hearing(whole)
+        // El navegador tarda en dar una frase por terminada. Si lo dicho no cambia durante un momento y
+        // el JEV dice que la frase está entera, se manda sin esperarle. Si está a medias, se espera.
         pause.current = setTimeout(() => {
+          const sure = live.current.judged?.(whole)
+          if (sure === undefined || sure < WHOLE_SAID) return
           early.current = partial
+          held.current = ''
           hearing(null)
-          send(more)
+          send(whole)
         }, EARLY_MS)
       }
     }

@@ -726,10 +726,22 @@ export type HeardKind = (typeof HEARD_KINDS)[number]
 export async function judgeHeard(
   decider: Decider,
   heard: string,
-): Promise<{ kind: HeardKind; ms: number }> {
+): Promise<{ kind: HeardKind; complete: number; ms: number }> {
   const { answers, ms } = await decider.decide({
     state: { oido: heard },
     questions: {
+      // Quien habla hace pausas a mitad de frase: antes de dar lo dicho por una orden hay que saber si
+      // ya está entera. Si no, se espera a lo que falta, en vez de cumplir media frase.
+      completa: {
+        type: 'noul',
+        instructions:
+          'El campo `oido` es lo que alguien lleva dicho. ¿Es ya una orden entera, que se puede cumplir tal cual, o la frase está a medias?',
+        criteria: {
+          true: 'Está entera: dice qué quiere y sobre qué. «Crea una clase llamada animal», «borra el objeto gato», «sí», «deshazlo».',
+          false:
+            'Está a medias: le falta lo principal, o acaba en una palabra que pide continuación (un artículo, una preposición, «que», «para», «y»). «Crea una», «un objeto», «en el programa principal», «manda llamar la función para», «y llamada gato».',
+        },
+      },
       oyendo: {
         type: 'choice',
         instructions:
@@ -754,7 +766,8 @@ export async function judgeHeard(
     answer?.type === 'choice' && answer.confidence >= 0.4
       ? (HEARD_KINDS.find((id) => id === answer.choice) ?? 'nada')
       : 'nada'
-  return { kind, ms }
+  const whole = answers.completa
+  return { kind, complete: whole?.type === 'noul' ? whole.noul : 1, ms }
 }
 
 // ───────────────────────── si el usuario interrumpe: ¿vale lo que ya estaba preparado? ─────────────────────────

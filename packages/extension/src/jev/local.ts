@@ -203,6 +203,19 @@ export function localDecider(): Decider {
             /\bfuncion\b|\bclase\b|\bprograma\b|\balgoritmo/.test(text) &&
             !/\baqui\b|\bdentro\b|\bmetodo\b/.test(text)
           answers[id] = pick(own ? 'programa' : 'dentro', SURE)
+        } else if (id === 'completa') {
+          // A medias si es muy corta o acaba en una palabra que pide continuación.
+          const heard = plain(textOf((request.state as { oido?: unknown }).oido))
+            .replace(/[^a-z0-9_ ]+/g, ' ')
+            .trim()
+          const words = heard.split(/\s+/).filter((word) => word !== '')
+          const open =
+            /^(de|del|la|el|los|las|un|una|unos|unas|para|que|y|o|con|en|a|al|por|se|su|sus|llamada|llamado|es|sea|tipo)$/
+          const short = words.length < 3 && !/^(si|no|vale|deshazlo|deshaz|para|sigue)$/.test(heard)
+          answers[id] = {
+            type: 'noul',
+            noul: short || open.test(words[words.length - 1] ?? '') ? 0.1 : SURE,
+          }
         } else if (id === 'oyendo') {
           // Lo que se le va oyendo decir: la primera cosa que nombra.
           const heard = plain(textOf((request.state as { oido?: unknown }).oido))

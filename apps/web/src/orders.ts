@@ -460,8 +460,8 @@ export class Orders {
     // Con cada palabra nueva, el JEV adelanta qué se está pidiendo. Si llega tarde (ya dijo más), no vale.
     const turn = ++this.heardSeq
     void judgeHeard(this.port.decider(), text)
-      .then(({ kind }) => {
-        if (turn === this.heardSeq) this.port.post({ type: 'preview', kind, text })
+      .then(({ kind, complete }) => {
+        if (turn === this.heardSeq) this.port.post({ type: 'preview', kind, text, complete })
       })
       .catch(() => undefined)
   }

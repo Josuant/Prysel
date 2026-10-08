@@ -612,12 +612,30 @@ export function namedBy(text: string, targets: readonly Target[]): Target[] {
     }
     return []
   })
+  // Dos cosas pueden llamarse igual (`class gato` y `gato = gato()`). La orden suele decir cuál: «el objeto
+  // gato», «la clase gato», «la función…». Entre las que comparten sitio en la frase, gana la que es eso.
+  const KIND_WORDS: [RegExp, RegExp][] = [
+    [/^(objeto|instancia|variable|dato|valor)$/, /^\w+\s*=(?!=)/],
+    [/^(clase)$/, /^class\s/],
+    [/^(funcion|metodo)$/, /^(?:async\s+)?def\s/],
+  ]
+  const saidKind = (at: number) =>
+    KIND_WORDS.find(([word]) => word.test(words[at - 1] ?? '') || word.test(words[at - 2] ?? ''))
+  const chosen = found.filter((entry) => {
+    const rivals = found.filter((other) => other.at === entry.at && other.end === entry.end)
+    const kind = saidKind(entry.at)
+    if (rivals.length < 2 || !kind) return true
+    // Si alguno de los que se llaman igual es de la clase que se dijo, solo vale ese.
+    return (
+      !rivals.some((rival) => kind[1].test(rival.target.head)) || kind[1].test(entry.target.head)
+    )
+  })
   // «insertar tarjeta y validar pin» nombra a `insertar_tarjeta_y_validar_pin`, no a las dos que lleva
   // dentro: lo que cae dentro de un nombre más largo no cuenta.
-  return found
+  return chosen
     .filter(
       (entry) =>
-        !found.some(
+        !chosen.some(
           (other) =>
             other !== entry &&
             other.at <= entry.at &&
@@ -798,11 +816,19 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   // Si el JEV no lo tiene claro y la orden nombra un elemento tal cual, es ese (antes que lo que quedara
   // seleccionado de otra cosa).
   const literal = namedTarget === null ? (namedBy(input.text, targets)[0] ?? null) : null
+  // Lo que quedó seleccionado solo es «de lo que se habla» si la orden lo señala («esto», «aquí») o si
+  // lo que se pide es añadir algo (va junto a lo seleccionado, como con el botón). Para borrar, mover o
+  // cambiar algo, una selección que se quedó de antes no dice nada: mandaría borrar lo que no se nombró.
+  const pointed = /\b(esto|este|esta|estos|estas|aqui|eso|ese|esa|seleccionad[oa]s?)\b/.test(
+    input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
+  )
+  const implied =
+    pointed || intent === 'agregar' || intent === 'componer' || intent === 'etapa' ? chosen : null
   const target =
-    forced.target !== undefined ? byId(forced.target) : (namedTarget ?? literal ?? chosen)
+    forced.target !== undefined ? byId(forced.target) : (namedTarget ?? literal ?? implied)
   /** Con cuánta certeza se sabe el objetivo: lo que el usuario eligió a mano, o nombró, es seguro. */
   const targetSure =
-    forced.target !== undefined || (namedTarget === null && (literal !== null || chosen !== null))
+    forced.target !== undefined || (namedTarget === null && (literal !== null || implied !== null))
       ? 1
       : (named?.confidence ?? 0)
   const viewing = byId(input.focus)
@@ -1006,6 +1032,17 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
       // No es una pieza de las de siempre: si hay quien lo escriba, se escribe; si no, se pregunta cuál.
       if (piece === undefined && forced.piece === undefined && input.genId !== undefined) {
         return compose()
+      }
+      // No hay plantilla de clase: si se pide una y el JEV, a falta de otra, dice «función», no se
+      // pone una función con nombre de clase. La escribe la IA (o, si ya hay programa, lo cambia).
+      if (
+        forced.piece === undefined &&
+        input.genId !== undefined &&
+        piece === 'function' &&
+        /\bclase\b/i.test(input.text) &&
+        !/\b(funci[oó]n|m[eé]todo)\b/i.test(input.text)
+      ) {
+        return hasCode ? rework(false) : compose()
       }
       // Mirando una clase por dentro, lo que no es un método no va suelto en su cuerpo («pedir el PIN
       // por teclado» es un paso de alguno de sus métodos): que decida la IA, con la clase delante.

@@ -171,6 +171,8 @@ export interface PreviewMessage {
   kind: string
   /** Lo que lleva dicho. */
   text: string
+  /** Si lo dicho es ya una orden entera (1) o la frase está a medias (0). Lo dice el JEV. */
+  complete?: number
 }
 
 /**
@@ -534,8 +536,9 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
   }
   if (type === 'preview') {
     const { kind, text } = value as Partial<PreviewMessage>
+    const complete = (value as { complete?: unknown }).complete
     return typeof kind === 'string' && typeof text === 'string'
-      ? { type: 'preview', kind, text }
+      ? { type: 'preview', kind, text, ...(typeof complete === 'number' ? { complete } : {}) }
       : null
   }
   if (type === 'models') {

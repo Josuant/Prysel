@@ -240,6 +240,8 @@ interface Tally {
   /** Las cabeceras de las funciones y clases escritas (su línea), y cuántos trozos se escribieron en total. */
   heads: number[]
   chunks: number
+  /** Cuántos trozos no se escribieron porque repetían algo que el programa ya tenía. */
+  repeated: number
 }
 
 export interface BuildRequest {
@@ -420,7 +422,15 @@ export async function build(
   const { command, gen } = request
   const teach = request.teach === true
   const streaming = request.flow === 'stream'
-  const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null, heads: [], chunks: 0 }
+  const tally: Tally = {
+    written: 0,
+    code: [],
+    jevMs: 0,
+    trouble: null,
+    heads: [],
+    chunks: 0,
+    repeated: 0,
+  }
   const start = await host.program()
   const anchor = start.nodes.find((n) => n.id === (request.place.after ?? request.place.into))
   await host.show({ type: 'progress', text: 'Leyendo lo que ya hay…' })
@@ -553,6 +563,12 @@ export async function build(
       const row = code.split('\n').find((line) => line.trim() !== '') ?? ''
       return row.trim().length > 44 ? `${row.trim().slice(0, 43)}…` : row.trim()
     }
+    // Las clases y funciones que el programa ya tenía antes de empezar.
+    const existing = new Set(
+      [...start.source.matchAll(/^[ \t]*(?:async\s+)?(?:def|class)\s+(\w+)/gm)].map(
+        (match) => match[1] ?? '',
+      ),
+    )
     const preparing = (async () => {
       const seen: string[] = []
       let stage = 0
@@ -561,6 +577,16 @@ export async function build(
         if (chunk === null || prep.stop) break
         // Lo que no es Python (una frase suelta que el modelo puso alrededor) no es parte del programa.
         if (!host.parses(chunk.code)) continue
+        // Tampoco lo que ya existe: si el modelo vuelve a escribir una clase o una función que el programa
+        // ya tiene, no se pone otra vez (quedaría duplicada, o una dentro de otra).
+        const defined = /^(?:async\s+)?(?:def|class)\s+(\w+)/.exec(
+          chunk.code.split('\n').find((row) => row.trim() !== '' && !row.startsWith('#')) ?? '',
+        )?.[1]
+        if (defined !== undefined && existing.has(defined)) {
+          tally.repeated++
+          await note(`«${defined}» ya está en el programa: no la repito.`)
+          continue
+        }
         await note(`Llegó código: ${titleOf(chunk.code)} · lo mira el JEV…`)
         let verdict: ChunkVerdict | null = null
         try {
@@ -790,6 +816,9 @@ export async function build(
       }
     }
     prep.stop = true
+    if (tally.written === 0 && tally.repeated > 0 && tally.trouble === null) {
+      tally.trouble = 'Eso ya está en el programa: no lo he vuelto a escribir.'
+    }
     await preparing
     // Si algo falló, no se espera a que la IA acabe de dictar lo que ya no se va a escribir.
     if (tally.trouble === null) await source.finished
@@ -1001,7 +1030,15 @@ export async function modify(
   request: ModifyRequest,
 ): Promise<Outcome> {
   const { command } = request
-  const tally: Tally = { written: 0, code: [], jevMs: 0, trouble: null, heads: [], chunks: 0 }
+  const tally: Tally = {
+    written: 0,
+    code: [],
+    jevMs: 0,
+    trouble: null,
+    heads: [],
+    chunks: 0,
+    repeated: 0,
+  }
   const start = await host.program()
   // Un programa que cabe entero se cambia reescribiéndolo: es más fiable que dictar cambios línea a línea.
   if (request.whole && start.source.length <= WHOLE_BUDGET) {

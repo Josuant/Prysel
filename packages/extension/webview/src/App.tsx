@@ -302,6 +302,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
   const [preview, setPreview] = useState<{ kind: string; text: string } | null>(null)
   const heardWords = useRef(0)
+  /** Lo que ha dicho el JEV de cada cosa oída: si es una orden entera o está a medias. */
+  const wholeness = useRef(new Map<string, number>())
   /** Dónde estaba la caja provisional cuando llegó la pieza de verdad: de ahí sale el marco que viaja. */
   const morphFrom = useRef<DOMRect | null>(null)
   /** La corrección que viene tras un «no, eso no»: se manda cuando lo deshecho ya se ve. */
@@ -386,6 +388,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           return next.length > 150 ? next.slice(next.length - 150) : next
         })
       } else if (message.type === 'preview') {
+        // Si la frase está entera o a medias: el micrófono lo consulta antes de mandarla.
+        if (message.complete !== undefined) {
+          if (wholeness.current.size > 200) wholeness.current.clear()
+          wholeness.current.set(sayKey(message.text), message.complete)
+        }
         setPreview({ kind: message.kind, text: message.text })
         onPreview.current(message.kind, message.text)
       } else if (message.type === 'progress') {
@@ -2092,6 +2099,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             setMicOpen(open)
             if (!open) setHearing(null)
           }}
+          judged={(heard) => wholeness.current.get(sayKey(heard))}
           onHearing={(heard) => {
             // Al empezar a oírle, lo que se construye se queda quieto; si no dijo nada, sigue.
             // Con cada palabra nueva se manda lo que lleva dicho: el JEV va adelantando qué está pidiendo.
@@ -2210,6 +2218,14 @@ function DensityControl({
 function baseName(file: string): string {
   return file.split(/[\\/]/).pop() ?? file
 }
+
+/** Lo dicho, para buscarlo: sin mayúsculas, signos ni espacios de más. */
+const sayKey = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[¿?¡!.,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 
 /** Con qué aspecto se dibuja el hueco de cada cosa que se puede pedir. */
 const HEARD_GHOST: Record<string, NonNullable<ViewerContent['ghost']>> = {
