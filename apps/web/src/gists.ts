@@ -10,6 +10,7 @@ import {
 } from '../../../packages/extension/src/gist/gist.ts'
 import { loopsIn } from '../../../packages/extension/src/gist/laps.ts'
 import { triesIn } from '../../../packages/extension/src/gist/net.ts'
+import { classesIn } from '../../../packages/extension/src/gist/blueprint.ts'
 import { pickRule, verifiedRules } from '../../../packages/extension/src/gist/patterns.ts'
 import type { Decider } from '../../../packages/extension/src/jev/client.ts'
 import type { Trace } from '../../../packages/extension/src/trace.ts'
@@ -94,7 +95,12 @@ export class Gists {
     if (text.trim() === '') return []
     const program = await this.port.analyse()
     const facts = functionsIn(program)
-    if (facts.length === 0 && loopsIn(program).length === 0 && triesIn(program).length === 0)
+    if (
+      facts.length === 0 &&
+      loopsIn(program).length === 0 &&
+      triesIn(program).length === 0 &&
+      classesIn(program).length === 0
+    )
       return []
     if (unrunnable(text) !== null) return gistsOf(program, null)
     const trace = await this.port.trace(text)

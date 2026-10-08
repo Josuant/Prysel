@@ -372,7 +372,7 @@ function LapsTable({ piece }: { piece: Extract<GistPiece, { type: 'laps' }> }) {
       <div className="gist-laps" role="table" aria-label="Vuelta a vuelta">
         {row('head', [
           <span key="n" className="gist-laps__head" style={{ textAlign: 'right', paddingRight: 6 }}>
-            #
+            {piece.counter ?? '#'}
           </span>,
           ...piece.columns.map((name, at) => (
             <span
@@ -605,7 +605,7 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
       data-stale={scene.stale ? '' : undefined}
       role="group"
       data-block={scene.block}
-      aria-label={`${scene.block === 'loop' || scene.block === 'try' ? 'Cómo funciona' : 'Qué hace'} ${scene.name}${scene.title ? `: ${scene.title}` : ''}`}
+      aria-label={`${scene.block && scene.block !== 'function' ? 'Cómo funciona' : 'Qué hace'} ${scene.name}${scene.title ? `: ${scene.title}` : ''}`}
       // Como un nodo: alcanzable por teclado para recorrer el diagrama con un lector de pantalla.
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
@@ -613,7 +613,15 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
       <header className="gist-card__head" style={{ height: GIST.head }}>
         <span className="gist-card__icon" aria-hidden>
           <Icon
-            name={scene.block === 'loop' ? 'loop' : scene.block === 'try' ? 'shield' : 'folder'}
+            name={
+              scene.block === 'loop'
+                ? 'loop'
+                : scene.block === 'try'
+                  ? 'shield'
+                  : scene.block === 'class'
+                    ? 'package'
+                    : 'folder'
+            }
             size={13}
           />
         </span>

@@ -4,6 +4,7 @@ import { indexOf, type Trace, type TraceIndex } from '../trace.ts'
 import { functionsIn, reaches, type Facts } from './facts.ts'
 import { bestLaps, loopsIn, type Laps } from './laps.ts'
 import { bestNet, triesIn, type Net } from './net.ts'
+import { bestLife, classesIn, type Life } from './blueprint.ts'
 import { ruleFor, type Rule } from './patterns.ts'
 import { bestSample, samplesIn, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
@@ -36,12 +37,14 @@ export interface Gist {
   rule?: Rule
   /** Con otro estado que `ok`: por qué no hay muestra. */
   why?: string
-  /** Qué bloque es: una función (por defecto), un bucle o un `try`. */
-  block?: 'function' | 'loop' | 'try'
+  /** Qué bloque es: una función (por defecto), un bucle, un `try` o una clase. */
+  block?: 'function' | 'loop' | 'try' | 'class'
   /** En un bucle: sus vueltas, tal como se ejecutaron. */
   laps?: Laps
   /** En un `try`: qué se intentó, si saltó un error y qué red lo atrapó. */
   net?: Net
+  /** En una clase: la vida de uno de sus objetos, llamada a llamada. */
+  life?: Life
 }
 
 /** Por qué un programa no se ejecuta solo para sacar muestras; `null` si se puede. */
@@ -81,7 +84,12 @@ export function gistsOf(program: Program, trace: Trace | null): Gist[] {
     const why = trace?.error ? `${trace.error.name}: ${trace.error.message}` : 'Nadie la llama.'
     return { ...base(facts), status: 'sin-muestra', sample: null, why }
   })
-  return [...functions, ...loopGists(program, trace, index), ...tryGists(program, trace, index)]
+  return [
+    ...functions,
+    ...loopGists(program, trace, index),
+    ...tryGists(program, trace, index),
+    ...classGists(program, trace, index),
+  ]
 }
 
 /**
@@ -132,6 +140,31 @@ function tryGists(program: Program, trace: Trace | null, index: TraceIndex | nul
         sample: null,
         block: 'try' as const,
         net,
+      },
+    ]
+  })
+}
+
+/**
+ * Las clases de las que algún objeto recibió llamadas, con la vida del que más se usó. Las que no se usaron se
+ * ven como siempre, con su diagrama.
+ */
+function classGists(program: Program, trace: Trace | null, index: TraceIndex | null): Gist[] {
+  if (!trace || !index) return []
+  return classesIn(program).flatMap((facts) => {
+    const life = bestLife(trace, facts, index)
+    if (!life) return []
+    return [
+      {
+        id: facts.id,
+        name: facts.name,
+        owner: null,
+        hash: facts.hash,
+        title: null,
+        status: 'ok' as const,
+        sample: null,
+        block: 'class' as const,
+        life,
       },
     ]
   })

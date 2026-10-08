@@ -73,7 +73,7 @@ export function innerLoop(code: string): { head: number; to: number } | null {
   return to > head ? { head, to } : null
 }
 
-const fieldsOf = (
+export const fieldsOf = (
   object: HeapObject | undefined,
   heap: Readonly<Record<string, HeapObject>>,
 ): Record<string, Value> => {

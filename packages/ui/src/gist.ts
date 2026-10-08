@@ -63,6 +63,8 @@ export type GistPiece =
       columns: string[]
       /** Cuántas de las columnas son lo que toma la cabecera (las demás, lo que lleva el bucle). */
       takes: number
+      /** Lo que encabeza la columna del número de fila (`#` si no). */
+      counter?: string
       start?: LapCell[]
       rows: { cells: LapCell[]; changed: boolean[]; exit?: 'break' | 'continue' }[]
       skipped?: { count: number; at: number }
@@ -87,8 +89,8 @@ export type GistPiece =
 export interface GistScene {
   /** El nombre de la función (o la cabecera del bloque). */
   name: string
-  /** Qué bloque cuenta: una función (por defecto), un bucle o un `try`. Cambia el icono y cómo se nombra. */
-  block?: 'function' | 'loop' | 'try'
+  /** Qué bloque cuenta: una función (por defecto), un bucle, un `try` o una clase. Cambia el icono y el nombre. */
+  block?: 'function' | 'loop' | 'try' | 'class'
   /** Lo que hace, en una frase. */
   title?: string
   /** La entrada no estaba en el programa: se propuso para probar. */

@@ -161,6 +161,28 @@ function endOf(laps: Laps, head: string): string {
     : `${total}; no quedaban más elementos.`
 }
 
+/** Una lista corta de valores sueltos se dibuja como celdas: así se ve qué posiciones cambiaron. */
+const short = (value: Value): string[] | null =>
+  value.kind === 'list' &&
+  !value.more &&
+  value.items.length <= 10 &&
+  value.items.every((item) => item.kind === 'atom')
+    ? value.items.map((item) => showValue(item))
+    : null
+
+/** Una celda de una tabla que se llena fila a fila: el valor, o sus elementos con los que cambiaron. */
+function cell(value: Value, was: Value | undefined): LapCell {
+  const items = short(value)
+  if (!items) return showValue(value)
+  const before = was ? short(was) : null
+  return {
+    items,
+    changed: items.map(
+      (item, at) => before !== null && before.length === items.length && before[at] !== item,
+    ),
+  }
+}
+
 /**
  * La escena de un bucle: sus vueltas, una a una, como una tabla que se llena. Lo que toma la cabecera en cada
  * vuelta, cómo van quedando las variables que lleva, lo que imprime, y por qué acaba.
@@ -171,25 +193,6 @@ export function loopScene(gist: Gist): GistScene | null {
   const takes = laps.laps[0]?.takes.map((take) => take.name) ?? []
   const carried = laps.laps[0]?.leaves.map((leave) => leave.name) ?? []
   const prints = laps.laps.some((lap) => lap.printed)
-  // Una lista corta de valores sueltos se dibuja como celdas: así se ve qué posiciones cambió cada vuelta.
-  const short = (value: Value): string[] | null =>
-    value.kind === 'list' &&
-    !value.more &&
-    value.items.length <= 10 &&
-    value.items.every((item) => item.kind === 'atom')
-      ? value.items.map((item) => showValue(item))
-      : null
-  const cell = (value: Value, was: Value | undefined): LapCell => {
-    const items = short(value)
-    if (!items) return showValue(value)
-    const before = was ? short(was) : null
-    return {
-      items,
-      changed: items.map(
-        (item, at) => before !== null && before.length === items.length && before[at] !== item,
-      ),
-    }
-  }
   const columns = [...takes, ...carried, ...(prints ? ['imprime'] : [])]
   const start =
     laps.carried.length > 0
@@ -239,6 +242,59 @@ export function loopScene(gist: Gist): GistScene | null {
           rows,
           ...(laps.skipped ? { skipped: laps.skipped } : {}),
           end: endOf(laps, gist.name),
+        },
+      ],
+    ],
+  }
+}
+
+/**
+ * La escena de una clase: la vida de uno de sus objetos, como una tabla que se llena llamada a llamada. Cómo se
+ * llamó cada método, cómo quedaron los campos del objeto (lo que cambió se enciende) y qué devolvió.
+ */
+export function classScene(gist: Gist): GistScene | null {
+  const life = gist.life
+  if (gist.status !== 'ok' || !life || life.visits.length === 0) return null
+  const returns = life.visits.some((visit) => visit.returned || visit.error)
+  const methods = new Set(life.visits.map((visit) => visit.method).filter((m) => m !== '__init__'))
+  const rows = life.visits.map((visit, k) => ({
+    cells: [
+      visit.call,
+      ...visit.fields.map((value, at): LapCell => {
+        if (!value) return '—'
+        return cell(value, k > 0 ? life.visits[k - 1]?.fields[at] : undefined)
+      }),
+      ...(returns
+        ? [visit.error ? `✗ ${visit.error}` : visit.returned ? showValue(visit.returned) : '']
+        : []),
+    ],
+    changed: [
+      false,
+      ...visit.changed,
+      ...(returns ? [Boolean(visit.returned || visit.error)] : []),
+    ],
+  }))
+  const others = life.objects - 1
+  return {
+    name: life.cls,
+    block: 'class',
+    title: `El plano de ${life.cls}: ${plural(methods.size, 'método', 'métodos')} en uso, ${plural(life.total, 'llamada', 'llamadas')}`,
+    beats: rows.length,
+    stepMs: 700,
+    lanes: [
+      [
+        {
+          type: 'laps',
+          label: 'la vida de un objeto, llamada a llamada',
+          columns: ['llamada', ...life.fields, ...(returns ? ['devuelve'] : [])],
+          takes: 1,
+          counter: '#',
+          rows,
+          ...(life.skipped ? { skipped: life.skipped } : {}),
+          end:
+            others > 0
+              ? `${plural(life.objects, `objeto ${life.cls}`, `objetos ${life.cls}`)}: este es el que más se usó.`
+              : `Un objeto ${life.cls}, de principio a fin.`,
         },
       ],
     ],
@@ -317,6 +373,7 @@ export function tryScene(gist: Gist): GistScene | null {
 export function sampleScene(gist: Gist): GistScene | null {
   if (gist.block === 'loop') return loopScene(gist)
   if (gist.block === 'try') return tryScene(gist)
+  if (gist.block === 'class') return classScene(gist)
   if (gist.status !== 'ok' || !gist.sample) return null
   return {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,
