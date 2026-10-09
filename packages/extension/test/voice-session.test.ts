@@ -332,6 +332,28 @@ describe('«añade unos gastos de ejemplo», con el programa de gastos ya escrit
     expect(directive.kind === 'do' && directive.intent).toBe('modificar')
   })
 
+  it('«enséñame solo los de más de 20»: dudando entre ir a verlo y nada, no se pregunta: se hace', async () => {
+    const { directive } = await decideCommand(
+      {
+        text: 'enséñame solo los de más de 20',
+        program: parse(SOURCE),
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+      },
+      // Lo que contestó el JEV de verdad.
+      recorded({
+        accion: pick('enfocar', 0.44),
+        ver: pick('programa', 0.32),
+        encaje: pick('cambio', 0.6),
+        pieza: pick('if', 0.59),
+        objetivo: pick('p2', 0.32),
+      }),
+    )
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+  })
+
   it('una pieza que sí está clara se sigue poniendo tal cual', async () => {
     const { directive } = await decideCommand(
       {

@@ -722,6 +722,10 @@ export function titleIn(text: string): string | null {
 
 // ───────────────────────── la resolución ─────────────────────────
 
+/** Pedir salir a la vista general: eso sí es solo mover la vista, aunque no nombre nada. */
+const LEAVES =
+  /(programa|principal|main|general|inicio|sal|salir|salgamos|fuera|atras|vuelve|volver|todo)/
+
 /** Lo que suena a pregunta o a pedir una explicación. */
 const ASKS =
   /[¿?]|\b(como|por que|para que|que hace|que pasa|que es|cuando|donde|explica\w*|cuenta(?:me)?|dime)\b/
@@ -1466,6 +1470,22 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     case 'explicar':
     case 'plegar': {
       if (intent === 'explicar' && aboutThis()) return answerIt()
+      // «Enséñame solo los de más de 20»: el JEV lo leyó como «ir a verlo», pero sin estar seguro (44 %) y
+      // sin que la orden señale nada del diagrama. Antes que devolver una pregunta («¿qué quieres que se
+      // muestre?»), lo resuelve la IA con el programa delante: quien pide resultados espera que pase algo.
+      if (
+        intent === 'enfocar' &&
+        doubtful &&
+        !namedTarget &&
+        literal === null &&
+        forced.intent === undefined &&
+        forced.target === undefined &&
+        hasCode &&
+        input.genId !== undefined &&
+        !LEAVES.test(plainText(input.text))
+      ) {
+        return rework(false)
+      }
       // «Explícame…» algo que la orden no señala en el programa no es una pregunta sobre lo seleccionado:
       // es un tema. Con quien lo redacte, se explica construyendo; no se devuelve un «¿a qué te refieres?».
       if (
