@@ -343,6 +343,20 @@ describe('lo que la IA se deja fuera al reescribir', () => {
     expect(state.text).toContain('        acc = 0\n        for a in p["articulos"]:')
   })
 
+  it('lo que cambia de nombre no se ha perdido: al renombrar no vuelve la versión vieja', () => {
+    // Lo que pasó de verdad tras «ponle nombres más claros»: la IA renombró bien, y la versión vieja de cada
+    // función «volvía a su sitio», duplicando el programa.
+    const renamed = PEDIDOS.replace(/t\(/g, 'total_articulos(')
+      .replace(/r\(/g, 'resumen_pedidos(')
+      .replace(/acc/g, 'acumulado')
+    expect(lostBlocks(PEDIDOS, renamed)).toEqual([])
+    expect(restoreLost(PEDIDOS, renamed).trimEnd()).toBe(
+      topBlocks(renamed)
+        .map((block) => block.text)
+        .join('\n\n'),
+    )
+  })
+
   it('si la orden sí pedía quitarlo, se quita', async () => {
     const { host, state } = stage(PEDIDOS)
     await modify(

@@ -153,10 +153,69 @@ export function topBlocks(source: string): TopBlock[] {
   })
 }
 
-/** Los trozos que estaban en el programa y ya no están en su versión nueva (ni cambiados: no están). */
+const KEYWORDS = new Set(
+  'and as assert async await break class continue def del elif else except finally for from global if import in is lambda None nonlocal not or pass raise return True False try while with yield print len range int float str list dict sum max min'.split(
+    ' ',
+  ),
+)
+
+/** La forma de un trozo sin sus nombres: dos trozos que solo se diferencian en cómo se llaman las cosas dan lo mismo. */
+const skeleton = (text: string) =>
+  text
+    .replace(/#.*$/gm, '')
+    .replace(/"[^"\n]*"|'[^'\n]*'/g, '""')
+    .replace(/[A-Za-z_]\w*/g, (word) => (KEYWORDS.has(word) ? word : '_'))
+    .replace(/\s+/g, ' ')
+    .trim()
+
+/** Cuánto se parecen dos trozos, de 0 a 1: las líneas que comparten, sobre las del más largo. */
+function alike(a: string, b: string): number {
+  const rows = (text: string) =>
+    text
+      .split('\n')
+      .map((row) => row.trim())
+      .filter((row) => row !== '' && !row.startsWith('#'))
+  const [x, y] = [rows(a), rows(b)]
+  if (x.length === 0 || y.length === 0) return 0
+  const pool = [...y]
+  let shared = 0
+  for (const row of x) {
+    const at = pool.indexOf(row)
+    if (at < 0) continue
+    shared++
+    pool.splice(at, 1)
+  }
+  return shared / Math.max(x.length, y.length)
+}
+
+/**
+ * A qué trozo de la versión nueva corresponde cada uno de la anterior (su índice allí, o −1 si no está). Es
+ * el mismo si se llama igual; o si es igual salvo por los nombres (se renombró); o si comparte casi todas sus
+ * líneas (se retocó). Lo que no corresponde a nada, se perdió.
+ */
+function pairBlocks(before: readonly TopBlock[], after: readonly TopBlock[]): number[] {
+  const used = new Set<number>()
+  const pairs = before.map(() => -1)
+  const match = (test: (old: TopBlock, fresh: TopBlock) => boolean) => {
+    for (const [at, old] of before.entries()) {
+      if ((pairs[at] ?? -1) >= 0) continue
+      const found = after.findIndex((fresh, index) => !used.has(index) && test(old, fresh))
+      if (found < 0) continue
+      used.add(found)
+      pairs[at] = found
+    }
+  }
+  match((old, fresh) => old.key === fresh.key)
+  match((old, fresh) => skeleton(old.text) === skeleton(fresh.text))
+  match((old, fresh) => alike(old.text, fresh.text) >= 0.6)
+  return pairs
+}
+
+/** Los trozos que estaban en el programa y ya no están en su versión nueva (ni cambiados, ni renombrados). */
 export function lostBlocks(before: string, after: string): TopBlock[] {
-  const kept = new Set(topBlocks(after).map((block) => block.key))
-  return topBlocks(before).filter((block) => !kept.has(block.key))
+  const old = topBlocks(before)
+  const pairs = pairBlocks(old, topBlocks(after))
+  return old.filter((_, at) => (pairs[at] ?? -1) < 0)
 }
 
 /**
@@ -164,22 +223,22 @@ export function lostBlocks(before: string, after: string): TopBlock[] {
  * estaba, entre los que sí siguen (que quedan como en la versión nueva).
  */
 export function restoreLost(before: string, after: string): string {
+  const old = topBlocks(before)
   const fresh = topBlocks(after)
+  const pairs = pairBlocks(old, fresh)
   const used = new Set<number>()
   const out: string[] = []
-  for (const block of topBlocks(before)) {
-    const at = fresh.findIndex(
-      (candidate, index) => !used.has(index) && candidate.key === block.key,
-    )
+  for (const [index, block] of old.entries()) {
+    const at = pairs[index] ?? -1
     if (at < 0) {
       out.push(block.text)
       continue
     }
     // Lo nuevo que la versión nueva puso antes de este trozo entra con él.
-    for (let index = 0; index <= at; index++) {
-      if (used.has(index)) continue
-      used.add(index)
-      out.push(fresh[index]?.text ?? '')
+    for (let k = 0; k <= at; k++) {
+      if (used.has(k)) continue
+      used.add(k)
+      out.push(fresh[k]?.text ?? '')
     }
   }
   for (const [index, block] of fresh.entries()) if (!used.has(index)) out.push(block.text)
