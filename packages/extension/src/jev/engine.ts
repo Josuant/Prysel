@@ -124,6 +124,8 @@ export const THRESHOLDS = {
   /** Por debajo, no está claro qué se pide: se pregunta. */
   intent: 0.45,
   piece: 0.4,
+  /** Por debajo, con un programa ya escrito, no se pone una plantilla: lo resuelve la IA. */
+  pieceSure: 0.75,
   /** Por debajo, el sitio es el de siempre: dentro o detrás de lo seleccionado, o al final. */
   place: 0.4,
   target: 0.45,
@@ -1154,6 +1156,18 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         (wanted && wanted.confidence >= THRESHOLDS.piece
           ? TEMPLATE_IDS.find((id) => id === wanted.choice)
           : undefined)
+      // Con un programa ya escrito y quien lo cambie, una pieza de plantilla solo se pone si está claro cuál
+      // es. Quien pide resultados («añade unos gastos de ejemplo») no nombra piezas: con el JEV dudando entre
+      // ellas (un diccionario, al 47 %) se pegaba una plantilla sin sentido. Lo resuelve la IA, con el
+      // programa delante.
+      if (
+        forced.piece === undefined &&
+        hasCode &&
+        input.genId !== undefined &&
+        (wanted?.confidence ?? 0) < THRESHOLDS.pieceSure
+      ) {
+        return rework(false)
+      }
       // No es una pieza de las de siempre: si hay quien lo escriba, se escribe; si no, se pregunta cuál.
       if (piece === undefined && forced.piece === undefined && input.genId !== undefined) {
         return compose()

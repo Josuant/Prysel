@@ -298,6 +298,56 @@ describe('una sesión de vibe coding: el juego de adivinar el número', () => {
   })
 })
 
+describe('«añade unos gastos de ejemplo», con el programa de gastos ya escrito', () => {
+  const SOURCE = lines(
+    'gastos = []',
+    'while True:',
+    '    entrada = input("Gasto (o fin): ")',
+    '    if entrada == "fin":',
+    '        break',
+    '    gastos.append(float(entrada))',
+    'total = sum(gastos)',
+    'print("Total:", total)',
+  )
+  // Lo que contestó el JEV de verdad: añadir, seguro; pero qué pieza, no lo tenía claro.
+  const answers = {
+    accion: pick('agregar', 0.98),
+    encaje: pick('pieza', 0.9),
+    pieza: pick('dict', 0.47),
+    donde: pick('final', 0.98),
+  }
+
+  it('no se pega una plantilla que el JEV no tiene clara: lo resuelve la IA con el programa delante', async () => {
+    const { directive } = await decideCommand(
+      {
+        text: 'añade unos gastos de ejemplo',
+        program: parse(SOURCE),
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+      },
+      recorded(answers),
+    )
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+  })
+
+  it('una pieza que sí está clara se sigue poniendo tal cual', async () => {
+    const { directive } = await decideCommand(
+      {
+        text: 'añade una variable limite',
+        program: parse(SOURCE),
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+      },
+      recorded({ ...answers, pieza: pick('variable', 0.93) }),
+    )
+    expect(directive.kind === 'do' && directive.intent).toBe('agregar')
+  })
+})
+
 describe('lo que el programa ya tiene no se vuelve a escribir', () => {
   it('si la IA repite una clase que ya existe, no se pone otra vez (ni dentro de sí misma)', async () => {
     const state = { text: ZOO }
