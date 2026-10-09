@@ -993,8 +993,20 @@ export function viewOf(
   const leaves = leafSections(base.nodes)
   // En normal, una función de la que se sabe qué hace empieza plegada en su tarjeta: se abre para ver cómo.
   const gisted = new Set(base.nodes.filter((node) => node.gist).map((node) => node.id))
+  // Una etapa que guarda dentro algo con tarjeta (una función de la que se sabe qué hace, un bucle del que se
+  // sabe cómo funciona) empieza abierta: plegada, su rótulo taparía justo lo que mejor la explica. Dentro,
+  // cada cosa con tarjeta sigue plegada en la suya.
+  const holding = new Set(
+    base.nodes
+      .filter((node) => isSection(node) && node.contains?.some((id) => gisted.has(id)))
+      .map((node) => node.id),
+  )
   const byDefault = (id: string) =>
-    density === 'compact' ? true : density === 'normal' ? leaves.has(id) || gisted.has(id) : false
+    density === 'compact'
+      ? true
+      : density === 'normal'
+        ? (leaves.has(id) && !holding.has(id)) || gisted.has(id)
+        : false
   const folded = new Set(
     scopes
       .map((node) => node.id)

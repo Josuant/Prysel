@@ -132,7 +132,7 @@ export class Gists {
           // Si el programa tira de azar, a ciegas solo se dan las primeras: el resto las propone la IA
           // después, viendo ya lo que el programa contestó y lo que eligió (para que la sesión acabe bien).
           inputs = /\brandom\b/.test(text) ? proposed.slice(0, 2) : proposed
-          this.answers.set(key, proposed)
+          this.answers.set(key, inputs)
         }
       }
     }

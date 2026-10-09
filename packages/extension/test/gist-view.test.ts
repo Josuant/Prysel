@@ -319,3 +319,50 @@ describe('el nombre de una tarjeta de bloque: con palabras, no con código', () 
     expect(titledScene(fn, { note: 'Dibuja el tablero' })).toBe(fn)
   })
 })
+
+describe('una etapa que guarda una función con tarjeta', () => {
+  // Como lo escribe la IA al construir por etapas: cada función, bajo el rótulo de su etapa.
+  const SOURCE = lines(
+    '# Mostrar: imprimir el tablero',
+    'def mostrar(tablero):',
+    '    for fila in tablero:',
+    '        print(fila)',
+    '',
+    '# Datos: el tablero inicial',
+    'tablero = [[0, 1], [1, 0]]',
+    'ancho = 2',
+    '',
+    '# Arranque: enseñarlo',
+    'mostrar(tablero)',
+    'print(ancho)',
+  )
+  const card: GistScene = { name: 'mostrar', lanes: [[{ type: 'note', text: 'sin entrada' }]] }
+  const shown = (gisted: boolean) => {
+    const program = parse(SOURCE)
+    const nodes = toCanvasNodes(program.nodes).map((node) =>
+      gisted && node.label === 'mostrar' && node.kind === 'abstraction.collapsed'
+        ? { ...node, gist: card }
+        : node,
+    )
+    const all = withSections(nodes, program.edges, program.sections ?? [])
+    return viewOf(all, program.edges, functionsOf(all, program.edges), {
+      focus: null,
+      flow: true,
+      density: 'normal',
+    }).view.nodes
+  }
+
+  it('empieza abierta: se ve la tarjeta de la función, no solo el rótulo de la etapa', () => {
+    const nodes = shown(true)
+    const fn = nodes.find((node) => node.label === 'mostrar')
+    expect(fn?.gist).toBeDefined()
+    // La función sigue plegada en su tarjeta: lo de dentro no se dibuja.
+    expect(nodes.some((node) => node.owner === fn?.id)).toBe(false)
+  })
+
+  it('una etapa sin nada con tarjeta sigue plegada en su rótulo, como siempre', () => {
+    const nodes = shown(true)
+    // La de los datos (dos asignaciones) no enseña sus sentencias.
+    expect(nodes.some((node) => node.label === 'ancho')).toBe(false)
+  })
+})
