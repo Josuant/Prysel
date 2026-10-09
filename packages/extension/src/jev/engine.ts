@@ -443,6 +443,27 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         },
       }
     }
+    // «Muestra el tablero» se puede entender de dos maneras: llévame a verlo en el diagrama, o que el
+    // programa lo muestre al ejecutarse. Con las claves de verdad el JEV lo leía siempre como lo primero, y
+    // el «muéstralo» de «crea un tablero y muéstralo» se quedaba sin hacer. Cuando la orden usa uno de esos
+    // verbos, se le pregunta aparte cuál de las dos es.
+    if (
+      input.genId !== undefined &&
+      input.program.nodes.length > 0 &&
+      SHOWS.test(plainText(input.text))
+    ) {
+      questions.ver = {
+        type: 'choice',
+        instructions:
+          'La `orden` pide «mostrar», «enseñar» o «imprimir» algo. ¿Qué quiere quien la da: mirar él esa parte del diagrama, o que el programa lo muestre cuando se ejecute?',
+        criteria: {
+          diagrama:
+            'Quiere ir a mirar una parte del diagrama: que la vista vaya allí, sin cambiar el programa. «Enséñame la clase animal», «muéstrame la función sumar», «ver el programa principal».',
+          programa:
+            'Quiere que el PROGRAMA lo muestre al ejecutarse: que lo imprima, o que llame a la función que lo muestra. Es un cambio en el código. «Muestra el tablero», «imprime el total», «muéstralo» justo después de pedir que se cree algo.',
+        },
+      }
+    }
     // Se está viendo una función o una clase por dentro: lo que se pide, ¿es parte de ella o es algo aparte?
     if (input.genId !== undefined && input.focus !== null) {
       questions.ambito = {
@@ -662,6 +683,10 @@ export function titleIn(text: string): string | null {
 
 // ───────────────────────── la resolución ─────────────────────────
 
+/** Verbos que tanto piden ir a ver algo como que el programa lo enseñe. */
+const SHOWS = /\b(muestra\w*|mostrar\w*|ensena\w*|imprim\w+|pinta(?:lo|la)?|dibuja(?:lo|la)?)\b/
+const plainText = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
 const choice = (answer: JevAnswer | undefined) => (answer?.type === 'choice' ? answer : undefined)
 
 /** Las opciones más probables de una respuesta, de más a menos. */
@@ -787,7 +812,12 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
           : sure >= 0.25
             ? reading
             : 'componer'
-  const intent = guess ?? heard
+  // Leído como «ir a verlo», pero preguntado aparte dice que es el programa quien tiene que mostrarlo:
+  // es un cambio en el código, y lo hace la IA con todo el programa delante.
+  const shows = choice(answers.ver)
+  const display =
+    (guess ?? heard) === 'enfocar' && shows?.choice === 'programa' && shows.confidence >= 0.5
+  const intent = display ? 'modificar' : (guess ?? heard)
   if (guess === undefined && (intent === undefined || sure < THRESHOLDS.intent)) {
     const options = likely.slice(0, 2)
     if (options.length === 0) {

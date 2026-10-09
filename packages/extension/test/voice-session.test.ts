@@ -174,6 +174,53 @@ describe('«Crea un tablero de tres por tres», mirando una función y con un bu
   })
 })
 
+describe('«Muestra el tablero»: ¿ir a verlo, o que el programa lo muestre?', () => {
+  const SOURCE = lines(
+    'def mostrar_tablero(matriz):',
+    '    for fila in matriz:',
+    '        print(fila)',
+    '',
+    'tablero = [[0, 1], [1, 0]]',
+  )
+  const decide = async (text: string, ver: JevAnswer | null) => {
+    const asked: string[] = []
+    const { directive } = await decideCommand(
+      { text, program: parse(SOURCE), selected: null, focus: null, typed: true, genId: 'g1' },
+      {
+        id: 'grabado',
+        decide: (request) => {
+          asked.push(...Object.keys(request.questions))
+          return Promise.resolve({
+            ms: 1,
+            // Lo que contestó el JEV de verdad a «Muestra el tablero»: ir a verlo, al 87 %.
+            answers: { accion: pick('enfocar', 0.87), ...(ver ? { ver } : {}) },
+          })
+        },
+      },
+    )
+    return { directive, asked }
+  }
+
+  it('se le pregunta aparte, y si es el programa quien lo muestra, es un cambio en el código', async () => {
+    const { directive, asked } = await decide('Muestra el tablero', pick('programa', 0.9))
+    expect(asked).toContain('ver')
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+  })
+
+  it('si lo que quiere es mirarlo en el diagrama, se queda en ir a verlo', async () => {
+    const { directive } = await decide(
+      'Muéstrame la función mostrar tablero',
+      pick('diagrama', 0.9),
+    )
+    expect(directive.kind === 'do' && directive.intent).not.toBe('modificar')
+  })
+
+  it('una orden que no habla de mostrar no lleva esa pregunta', async () => {
+    const { asked } = await decide('Ver el programa principal', null)
+    expect(asked).not.toContain('ver')
+  })
+})
+
 describe('lo que el programa ya tiene no se vuelve a escribir', () => {
   it('si la IA repite una clase que ya existe, no se pone otra vez (ni dentro de sí misma)', async () => {
     const state = { text: ZOO }
