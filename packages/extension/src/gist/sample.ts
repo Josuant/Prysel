@@ -34,9 +34,11 @@ export interface Sample {
   /** La entrada no estaba en el programa: se propuso para probar. La salida es igual de real. */
   invented: boolean
   /**
-   * Por dónde fue cada vuelta del bucle más interior de la función: las líneas de su cuerpo que se
-   * ejecutaron, en orden (contadas desde la línea del `def`, que es la 0). Es lo que dice qué rama tomó cada
-   * elemento, también cuando la decisión la toma otra función. Sin bucle (o con demasiadas vueltas), no está.
+   * Por dónde fue cada vuelta del bucle que recorre lo que entró (el que da una vuelta por elemento; si
+   * ninguno cuadra, el más interior): las líneas propias de su cuerpo que se ejecutaron, en orden (contadas
+   * desde la línea del `def`, que es la 0; sin las de un bucle de más adentro). Es lo que dice qué rama tomó
+   * cada elemento, también cuando la decisión la toma otra función. Sin bucle (o con demasiadas vueltas), no
+   * está.
    */
   paths?: number[][]
   /** Con `invented`: la llamada que se probó. */
@@ -72,6 +74,34 @@ export function innerLoop(code: string): { head: number; to: number } | null {
   }
   return to > head ? { head, to } : null
 }
+
+/** Todos los bucles de una función: la línea de su cabecera y la última de su cuerpo (desde la del `def`). */
+export function loopsOf(code: string): { head: number; to: number }[] {
+  const rows = code.split('\n')
+  const loops: { head: number; to: number }[] = []
+  for (const [head, row] of rows.entries()) {
+    if (!/^\s*(?:for|while)\b.*:\s*(?:#.*)?$/.test(row)) continue
+    const indent = indentOf(row)
+    let to = head
+    for (let at = head + 1; at < rows.length; at++) {
+      const below = rows[at] ?? ''
+      if (below.trim() === '') continue
+      if (indentOf(below) <= indent) break
+      to = at
+    }
+    if (to > head) loops.push({ head, to })
+  }
+  return loops
+}
+
+/** Cuántos valores sueltos lleva un valor (una rejilla, celda a celda); 0 si no es una colección. */
+const atomsIn = (value: Value): number =>
+  value.kind === 'list'
+    ? value.items.reduce(
+        (sum, item) => sum + (item.kind === 'list' ? atomsIn(item) : item.kind === 'atom' ? 1 : 0),
+        0,
+      )
+    : 0
 
 export const fieldsOf = (
   object: HeapObject | undefined,
@@ -127,10 +157,16 @@ export function samplesIn(
     if (parent === facts.name || i < (options.from ?? 0)) continue
     // Hasta que ese marco devuelve: lo impreso entre medias (también por lo que llama) es suyo.
     let printed = ''
-    // Las vueltas del bucle más interior: cada vez que se pasa por su cabecera empieza una.
-    const loop = innerLoop(facts.code)
-    const laps: number[][] = []
-    let lap: number[] | null = null
+    // Las vueltas de cada bucle de la función: cada vez que se pasa por su cabecera empieza una. De cada
+    // vuelta se guardan las líneas propias de su cuerpo (no las de un bucle de más adentro: esas van y
+    // vienen un número de veces distinto en cada vuelta y no dicen por qué rama se fue).
+    const loops = loopsOf(facts.code).slice(0, 8)
+    const tracked = loops.map((loop) => ({
+      loop,
+      inner: loops.filter((other) => other.head > loop.head && other.to <= loop.to),
+      laps: [] as number[][],
+      lap: null as number[] | null,
+    }))
     let last = call
     let end = -1
     const lines = new Set<number>()
@@ -144,35 +180,49 @@ export function samplesIn(
         break
       }
       if (event.k === 'line') lines.add(event.l)
-      if (event.k === 'line' && loop) {
+      if (event.k === 'line') {
         const at = event.l - facts.line
-        if (at === loop.head) {
-          if (lap && lap.length > 0) laps.push(lap)
-          lap = []
-        } else if (at > loop.head && at <= loop.to) {
-          if (lap && lap.length < 40) lap.push(at)
-        } else {
-          if (lap && lap.length > 0) laps.push(lap)
-          lap = null
+        for (const track of tracked) {
+          if (at === track.loop.head) {
+            if (track.lap && track.lap.length > 0) track.laps.push(track.lap)
+            track.lap = []
+          } else if (at > track.loop.head && at <= track.loop.to) {
+            const nested = track.inner.some((other) => at >= other.head && at <= other.to)
+            if (!nested && track.lap && track.lap.length < 40 && track.lap.at(-1) !== at)
+              track.lap.push(at)
+          } else {
+            if (track.lap && track.lap.length > 0) track.laps.push(track.lap)
+            track.lap = null
+          }
         }
       }
       last = event
     }
-    if (lap && lap.length > 0) laps.push(lap)
+    for (const track of tracked) if (track.lap && track.lap.length > 0) track.laps.push(track.lap)
     // La traza se cortó antes de que acabara: no hay salida que enseñar.
     if (end < 0) continue
     const before = stateAt(index, i)
     const after = stateAt(index, end)
     const entered = before.frames.find((frame) => frame.id === call.f)
     const left = after.frames.find((frame) => frame.id === call.f)
+    const inputs = facts.takes
+      .filter((name) => entered !== undefined && name in entered.locals)
+      .map((name) => ({ name, value: valueOf(entered?.locals[name] as Shown) }))
+    // El bucle que cuenta: el que da una vuelta por cada elemento de lo que entró (en una rejilla, el de las
+    // celdas, aunque dentro tenga otro que mire a los vecinos). Si ninguno cuadra, el más interior.
+    const sizes = new Set(inputs.map((input) => atomsIn(input.value)).filter((size) => size > 1))
+    const usable = tracked.filter((track) => track.laps.length > 1 && track.laps.length <= MAX_LAPS)
+    const inner = innerLoop(facts.code)
+    const laps = (
+      usable.find((track) => sizes.has(track.laps.length)) ??
+      usable.find((track) => track.loop.head === inner?.head)
+    )?.laps
     const sample: Sample = {
-      inputs: facts.takes
-        .filter((name) => entered !== undefined && name in entered.locals)
-        .map((name) => ({ name, value: valueOf(entered?.locals[name] as Shown) })),
+      inputs,
       steps: end - i,
       lines: lines.size,
       invented: false,
-      ...(laps.length > 1 && laps.length <= MAX_LAPS ? { paths: laps } : {}),
+      ...(laps ? { paths: laps } : {}),
     }
     if (last.k === 'exception') sample.error = last.e ?? 'error'
     else if (facts.returns || (events[end]?.v ?? null) !== null)

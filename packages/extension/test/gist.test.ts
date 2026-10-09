@@ -572,6 +572,58 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     expect(scene?.lanes[2]).toMatchObject([{ type: 'datum', arrives: true }])
   })
 
+  it('con un bucle de vecinos dentro del de las celdas, la regla sigue saliendo (como lo escribió la IA)', async () => {
+    // El juego de la vida tal como lo escribió DeepSeek en una sesión real: todo en una función, contando
+    // los vecinos con dos bucles dentro del de las celdas.
+    const source = lines(
+      'def calcular_siguiente(tablero):',
+      '    nuevo_tablero = []',
+      '    for i in range(5):',
+      '        nueva_fila = []',
+      '        for j in range(5):',
+      '            vecinos = 0',
+      '            for di in [-1, 0, 1]:',
+      '                for dj in [-1, 0, 1]:',
+      '                    if di == 0 and dj == 0:',
+      '                        continue',
+      '                    fi = i + di',
+      '                    fj = j + dj',
+      '                    if fi >= 0 and fi < 5 and fj >= 0 and fj < 5:',
+      '                        vecinos = vecinos + tablero[fi][fj]',
+      '            if tablero[i][j] == 1:',
+      '                if vecinos == 2 or vecinos == 3:',
+      '                    nueva_fila.append(1)',
+      '                else:',
+      '                    nueva_fila.append(0)',
+      '            else:',
+      '                if vecinos == 3:',
+      '                    nueva_fila.append(1)',
+      '                else:',
+      '                    nueva_fila.append(0)',
+      '        nuevo_tablero.append(nueva_fila)',
+      '    return nuevo_tablero',
+    )
+    const program = parse(source)
+    const board =
+      '[[0, 0, 0, 0, 0], [0, 1, 1, 0, 0], [0, 1, 0, 1, 0], [0, 0, 1, 1, 0], [0, 0, 0, 0, 0]]'
+    const gist = await invent(program, one(program, 'calcular_siguiente'), {
+      provider: { id: 'm', generate: () => Promise.resolve(`calcular_siguiente(${board})`) },
+      trace: (code) => kernel.trace(code, 20_000, false, true),
+    })
+    // Una vuelta por celda (25), no una por vecino mirado (225).
+    expect(gist.sample?.paths).toHaveLength(25)
+    const rule = gist.rule
+    expect(rule?.kind === 'cases' && rule.spoken).toBe(true)
+    expect(
+      rule?.kind === 'cases' && rule.cases.map((entry) => `${entry.when} → ${entry.gives}`),
+    ).toEqual(
+      expect.arrayContaining([
+        'tablero[i][j] == 1 y vecinos == 2 or vecinos =… → 1',
+        'no tablero[i][j] == 1 y no vecinos == 3 → 0',
+      ]),
+    )
+  })
+
   it('si el mismo camino da resultados distintos, el camino no es la regla', async () => {
     const source = lines(
       'def dobles(numeros):',
