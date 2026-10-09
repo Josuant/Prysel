@@ -132,7 +132,17 @@ export class Gists {
     }
     const blocked = unrunnable(text, inputs !== undefined)
     if (blocked !== null) {
-      this.ran = { output: '', ended: 'blocked', problem: blocked }
+      // Pide datos y no hay respuestas de ejemplo: se dice qué falta para verlo funcionar.
+      const waiting = asksInput(text) && inputs === undefined
+      this.ran = {
+        output: '',
+        ended: 'blocked',
+        problem: !waiting
+          ? blocked
+          : provider
+            ? 'Pide datos por teclado, y la IA no propuso respuestas de ejemplo.'
+            : 'Pide datos por teclado. Conecta la IA para verlo funcionar con respuestas de ejemplo.',
+      }
       return gistsOf(program, null)
     }
     const raw = await this.port.trace(text, inputs)

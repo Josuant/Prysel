@@ -5955,7 +5955,8 @@ button.fn-menu__crumb:hover {
 }
 .run-panel {
   display: flex;
-  width: min(340px, calc(100vw - 48px));
+  /* Estrecha, para tapar lo menos posible del diagrama; se pliega con su botón. */
+  width: min(300px, 44vw);
   box-sizing: border-box;
   flex-direction: column;
   gap: 6px;

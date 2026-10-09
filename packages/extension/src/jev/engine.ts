@@ -842,6 +842,12 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   // Cuando no está claro qué se pide y ya hay un programa, lo más probable no se ejecuta a ciegas si es
   // escribir algo: añadir una plantilla «por si acaso» duplica lo que ya hay. Se le pasa a la IA con el
   // programa entero delante, que es quien puede ver qué hace falta tocar (y si hay que tocar algo).
+  // Sin una IA que escriba, casi cualquier idea dicha con palabras propias se queda sin entender: se dice
+  // qué falta, en vez de un «no entendí» que no ayuda a quien acaba de llegar.
+  const notUnderstood =
+    input.genId === undefined
+      ? 'Para construir eso hace falta conectar una IA que lo escriba: añade tu clave en Ajustes.'
+      : 'No entendí qué quieres que haga.'
   const WRITES: readonly Intent[] = [
     'agregar',
     'componer',
@@ -890,7 +896,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   if (!asking && guess === undefined && (intent === undefined || sure < THRESHOLDS.intent)) {
     const options = likely.slice(0, 2)
     if (options.length === 0) {
-      return done({ kind: 'unknown', say: 'No entendí qué quieres que haga.' })
+      return done({ kind: 'unknown', say: notUnderstood })
     }
     return done({
       kind: 'ask',
@@ -899,8 +905,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     })
   }
 
-  if (intent === undefined)
-    return done({ kind: 'unknown', say: 'No entendí qué quieres que haga.' })
+  if (intent === undefined) return done({ kind: 'unknown', say: notUnderstood })
 
   // Sobre qué: lo que el usuario ya aclaró, lo que Jev eligió con certeza o, si no, lo seleccionado.
   const byId = (id: string | null | undefined) => targets.find((target) => target.id === id) ?? null
