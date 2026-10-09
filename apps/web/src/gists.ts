@@ -7,6 +7,7 @@ import {
   MAX_ANSWERS,
   asksInput,
   continueAnswers,
+  finalValues,
   gistsOf,
   inputSignature,
   invent,
@@ -155,7 +156,7 @@ export class Gists {
       const key = inputSignature(text)
       for (let round = 0; round < ANSWER_ROUNDS; round++) {
         if (raw?.error?.name !== 'NoMoreInput' || inputs.length >= MAX_ANSWERS) break
-        const more = await continueAnswers(provider, text, inputs, raw.output)
+        const more = await continueAnswers(provider, text, inputs, raw.output, finalValues(raw))
         if (!more) break
         inputs = [...inputs, ...more].slice(0, MAX_ANSWERS)
         this.answers.set(key, inputs)

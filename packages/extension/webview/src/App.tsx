@@ -256,6 +256,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [gists, setGists] = useState<readonly Gist[]>([])
   // Cómo le fue al programa entero al ejecutarlo: lo que salió por pantalla.
   const [ran, setRan] = useState<RunSummary | null>(null)
+  // Cuántas veces se ha asentado lo construido (llega su comprobación): el lienzo lo enseña entero.
+  const [settled, setSettled] = useState(0)
   /** La conversación con la IA (interfaz de chat): cada orden y lo que se contestó, y se fue contando. */
   const [chat, setChat] = useState<ChatEntry[]>([])
   /** Añade una frase a la respuesta de la orden en curso (o una respuesta nueva, si no hay ninguna). */
@@ -402,6 +404,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       } else if (message.type === 'gists') {
         setGists(message.gists)
         setRan(message.run ?? null)
+        setSettled((count) => count + 1)
       } else if (message.type === 'preview') {
         // Si la frase está entera o a medias: el micrófono lo consulta antes de mandarla.
         if (message.complete !== undefined) {
@@ -1853,6 +1856,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 interactive
                 height="fill"
                 fitKey={view.viewKey}
+                settle={settled}
                 cursor={cursor}
                 spotlight={spotlight}
                 echo={echo}

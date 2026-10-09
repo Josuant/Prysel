@@ -256,6 +256,12 @@ export interface CanvasProps {
    */
   fitKey?: string
   /**
+   * Sube cada vez que lo que se estaba construyendo ha terminado y se ha asentado: la cámara suelta lo último
+   * que fue siguiendo y enseña el programa entero (si cabe a un tamaño que se lea), para verlo de un vistazo.
+   * Si el usuario ya movió el lienzo a mano, se respeta.
+   */
+  settle?: number
+  /**
    * El nodo por el que va la reproducción de una traza: se marca con un anillo y, si se sale de la vista,
    * la cámara lo sigue. Sin él, no hay reproducción.
    */
@@ -419,6 +425,7 @@ function CanvasInner({
   animate = true,
   fitMode,
   fitKey = '',
+  settle = 0,
   cursor = null,
   spotlight = null,
   echo,
@@ -2136,7 +2143,8 @@ function CanvasInner({
   )
 
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
-  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}`
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}`
+  const lastSettle = useRef(settle)
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
    * no hace falta que la vista lo redescubra midiendo el DOM (que además llega tarde).
@@ -2144,6 +2152,12 @@ function CanvasInner({
   useEffect(() => {
     const frame = frameRef.current
     if (!frame || taken) return
+    // Lo que se construía ha terminado: la cámara deja de estar donde la llevó la orden y se enseña todo.
+    const settled = lastSettle.current !== settle
+    if (settled) {
+      lastSettle.current = settle
+      spotHeld.current = null
+    }
     const fit = () => {
       // La cámara está donde la dejó una orden: no se la lleva un reencuadre.
       if (spotHeld.current === fitKey) return
@@ -2152,7 +2166,12 @@ function CanvasInner({
       const byHeight = Math.max(0.15, (frame.clientHeight - pad * 2) / bounds.h)
       // Un lienzo de trabajo se ajusta al ancho y se recorre; una ilustración se enseña entera.
       const mode = fitMode ?? (interactive ? 'width' : 'contain')
-      const zoom = Math.min(1, mode === 'width' ? byWidth : Math.min(byWidth, byHeight))
+      // Al asentarse, entero si se lee (no por debajo de un tamaño legible); si no, a lo ancho y desde arriba.
+      const whole = Math.min(byWidth, byHeight)
+      const zoom = Math.min(
+        1,
+        mode === 'width' ? (settled && whole >= 0.6 ? whole : byWidth) : whole,
+      )
       const first = lastFit.current === ''
       lastFit.current = shape
       void setViewport(
@@ -2171,7 +2190,7 @@ function CanvasInner({
     return () => {
       observer.disconnect()
     }
-  }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive, fitKey])
+  }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive, fitKey, settle])
 
   // El foco de una orden: la cámara va a donde el nodo **va a quedar** (no a donde está a medio camino de
   // su animación), a un tamaño que se lea. Desde ahí la cámara ya no se reencuadra sola: se movió a propósito.

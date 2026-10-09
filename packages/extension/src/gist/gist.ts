@@ -1,6 +1,6 @@
 import type { Program } from '@prysel/python'
 import type { AiProvider } from '../ai/provider.ts'
-import { indexOf, type Trace, type TraceIndex } from '../trace.ts'
+import { indexOf, stateAt, type Trace, type TraceIndex } from '../trace.ts'
 import { functionsIn, reaches, type Facts } from './facts.ts'
 import { bestLaps, loopsIn, type Laps } from './laps.ts'
 import { bestNet, triesIn, type Net } from './net.ts'
@@ -310,6 +310,7 @@ export async function continueAnswers(
   source: string,
   typed: readonly string[],
   output: string,
+  values: Readonly<Record<string, string>> = {},
 ): Promise<string[] | null> {
   try {
     const answer = await provider.generate({
@@ -319,16 +320,31 @@ export async function continueAnswers(
         'Ahora la sesión ya ha empezado: te doy lo que se ha visto en la pantalla hasta este momento (las',
         'preguntas del programa, lo que se tecleó y lo que contestó). El programa está esperando otra respuesta.',
         'Lee lo que ha ido contestando y sigue con sentido: si te dice «más alto» o «más bajo», hazle caso.',
+        'También te doy lo que valen ahora las variables del programa. Si guarda algo que hay que acertar (un',
+        'número secreto, una palabra), úsalo para que la sesión acabe bien: acércate con sentido en una o dos',
+        'respuestas más y acierta. Es una demostración: tiene que verse cómo termina.',
         'Devuelve SOLO un array JSON con las respuestas SIGUIENTES (no repitas las ya tecleadas), las justas',
         'para que la sesión llegue a su final.',
       ].join('\n'),
-      prompt: `El programa:\n\n${source.trimEnd()}\n\nYa tecleado: ${JSON.stringify(typed)}\n\nLa pantalla hasta ahora:\n${output.slice(-1500)}`,
+      prompt: `El programa:\n\n${source.trimEnd()}\n\nYa tecleado: ${JSON.stringify(typed)}\n\nLas variables ahora: ${JSON.stringify(values)}\n\nLa pantalla hasta ahora:\n${output.slice(-1500)}`,
       maxTokens: 300,
     })
     return validAnswers(answer)
   } catch {
     return null
   }
+}
+
+/** Lo que valen, al acabar la traza, las variables sueltas del programa (números, textos cortos). */
+export function finalValues(trace: Trace): Record<string, string> {
+  const index = indexOf(trace)
+  const locals = stateAt(index, trace.events.length - 1).frames[0]?.locals ?? {}
+  return Object.fromEntries(
+    Object.entries(locals)
+      .filter(([, value]) => ['number', 'string', 'boolean'].includes(typeof value))
+      .map(([name, value]) => [name, String(value).slice(0, 40)] as const)
+      .slice(0, 12),
+  )
 }
 
 /** Cuántas veces se le pide a la IA que siga una sesión de ejemplo, y cuántas respuestas caben en total. */
