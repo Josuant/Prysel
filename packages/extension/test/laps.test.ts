@@ -170,6 +170,22 @@ describe.skipIf(!available)('las vueltas: lo que pasó al ejecutarlo de verdad',
     expect(laps?.error).toBeUndefined()
   })
 
+  it('si el programa se queda esperando un dato dentro del bucle, no «salió con break»', async () => {
+    const source = lines(
+      'while True:',
+      '    intento = int(input("Adivina: "))',
+      '    if intento == 7:',
+      '        break',
+      '    print("No")',
+    )
+    const trace = await kernel.trace(source, 20_000, false, false, { inputs: ['1', '2'] })
+    const laps = bestLaps(trace, loopAt(parse(source), 1))
+    expect(laps?.ended).toBe('cut')
+    // Y con el dato que lo acierta, sí sale con break.
+    const won = await kernel.trace(source, 20_000, false, false, { inputs: ['1', '7'] })
+    expect(bestLaps(won, loopAt(parse(source), 1))?.ended).toBe('break')
+  })
+
   it('un break: la vuelta en la que sale', async () => {
     const source = lines(
       'for x in [5, 7, 8, 9]:',

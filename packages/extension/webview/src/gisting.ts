@@ -154,7 +154,7 @@ function endOf(laps: Laps, head: string): string {
   if (laps.ended === 'return')
     return `Devolvió algo en la vuelta ${laps.total} y salió de la función.`
   if (laps.ended === 'error') return `Falló en la vuelta ${laps.total}: ${laps.error ?? 'error'}`
-  if (laps.ended === 'cut') return `${total}… y la ejecución se cortó aquí.`
+  if (laps.ended === 'cut') return `${total}… y aquí se quedó: no acabó en esta ejecución.`
   const test = /^while\s+(.+)$/.exec(head)?.[1]
   return test
     ? `${total}; luego «${test}» dejó de cumplirse.`

@@ -739,8 +739,8 @@ describe('seguir escribiendo detrás de lo que no deja un nodo («El paso anteri
     expect(outcome.trouble).toBeNull()
     expect(text).toBe(
       lines(
+        // El comentario del trozo («Las notas de la clase») repetía el rótulo de la etapa: se quita.
         '# Preparar los datos: las notas',
-        '# Las notas de la clase',
         'notas = [7, 4]',
         'total = sum(notas)',
         '',

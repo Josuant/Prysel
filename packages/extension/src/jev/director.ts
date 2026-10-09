@@ -62,6 +62,7 @@ import {
   rewritePrompt,
   rewriteSystem,
   type ChangeOp,
+  echoEdits,
   lostBlocks,
   restoreLost,
 } from './modify.ts'
@@ -850,6 +851,11 @@ export async function build(
       const left = clearGenerating(program, mark)
       if (left.edits.length > 0) await host.write(left)
     }
+  }
+  // El comentario con el que la IA abre el código de una etapa, cuando solo repite su rótulo, sobra.
+  if (tally.written > 0) {
+    const echoes = echoEdits((await host.program()).source)
+    if (echoes.length > 0) await host.write({ edits: echoes })
   }
   return conclude(host, players, command, tally)
 }

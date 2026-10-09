@@ -102,6 +102,53 @@ export interface Hunk {
   removed: number
 }
 
+/**
+ * Las ediciones que quitan el comentario que repite al rótulo de su etapa. Al construir por etapas, cada una
+ * lleva su rótulo (`# Título: qué hace`) y la IA suele abrir su código con otro comentario que dice lo mismo
+ * (`# Título`): dos líneas seguidas para una sola idea. Se quita la segunda.
+ */
+/** Si un comentario dice lo mismo que el rótulo de encima: comparten alguna palabra de peso (o su raíz). */
+function echoes(heading: string, comment: string): boolean {
+  const stems = (text: string) =>
+    text
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length >= 4)
+      .map((word) => word.slice(0, 5))
+  const said = new Set(stems(heading))
+  return stems(comment).some((stem) => said.has(stem))
+}
+
+export function echoEdits(source: string): { start: number; end: number; text: string }[] {
+  const edits: { start: number; end: number; text: string }[] = []
+  const rows = source.split('\n')
+  let offset = 0
+  let heading: { indent: string; text: string } | null = null
+  for (const row of rows) {
+    const comment = /^(\s*)#\s?(.*)$/.exec(row.replace(/\r$/, ''))
+    if (
+      comment &&
+      heading &&
+      comment[1] === heading.indent &&
+      !/prysel:/.test(row) &&
+      echoes(heading.text, comment[2] ?? '')
+    ) {
+      edits.push({ start: offset, end: offset + row.length + 1, text: '' })
+      heading = null
+    } else {
+      // Un rótulo de etapa: un comentario de línea entera con «Título: qué hace».
+      heading =
+        comment && /^[^:]{2,60}:\s+\S/.test(comment[2] ?? '') && !/prysel:/.test(row)
+          ? { indent: comment[1] ?? '', text: comment[2] ?? '' }
+          : null
+    }
+    offset += row.length + 1
+  }
+  return edits
+}
+
 /** Un trozo del programa a la altura del archivo: una función, una clase, una asignación, un bucle… */
 export interface TopBlock {
   /** Lo que lo identifica: `def nombre`, `class Nombre`, `nombre =`, o su primera línea. */
@@ -211,11 +258,39 @@ function pairBlocks(before: readonly TopBlock[], after: readonly TopBlock[]): nu
   return pairs
 }
 
-/** Los trozos que estaban en el programa y ya no están en su versión nueva (ni cambiados, ni renombrados). */
-export function lostBlocks(before: string, after: string): TopBlock[] {
+/**
+ * Si lo que hacía un trozo sigue en la versión nueva aunque ya no sea un trozo suelto: sus líneas están,
+ * metidas en otra cosa (un `print` que pasó a estar dentro de un `if`, unas líneas que se envolvieron en un
+ * bucle). Eso no se ha perdido: se ha cambiado.
+ */
+function absorbed(block: TopBlock, after: string): boolean {
+  const rows = (text: string) =>
+    text
+      .split('\n')
+      .map((row) => row.trim())
+      .filter((row) => row !== '' && !row.startsWith('#'))
+  const mine = rows(block.text)
+  if (mine.length === 0) return true
+  const there = new Set(rows(after))
+  return mine.filter((row) => there.has(row)).length / mine.length >= 0.6
+}
+
+/** Qué trozos de la versión anterior no están en la nueva de ninguna manera (su índice allí es −1). */
+function pairing(before: string, after: string) {
   const old = topBlocks(before)
-  const pairs = pairBlocks(old, topBlocks(after))
-  return old.filter((_, at) => (pairs[at] ?? -1) < 0)
+  const fresh = topBlocks(after)
+  const pairs = pairBlocks(old, fresh)
+  const lost = old.map((block, at) => (pairs[at] ?? -1) < 0 && !absorbed(block, after))
+  return { old, fresh, pairs, lost }
+}
+
+/**
+ * Los trozos que estaban en el programa y ya no están en su versión nueva: ni cambiados, ni renombrados, ni
+ * metidos dentro de otra cosa.
+ */
+export function lostBlocks(before: string, after: string): TopBlock[] {
+  const { old, lost } = pairing(before, after)
+  return old.filter((_, at) => lost[at])
 }
 
 /**
@@ -223,15 +298,14 @@ export function lostBlocks(before: string, after: string): TopBlock[] {
  * estaba, entre los que sí siguen (que quedan como en la versión nueva).
  */
 export function restoreLost(before: string, after: string): string {
-  const old = topBlocks(before)
-  const fresh = topBlocks(after)
-  const pairs = pairBlocks(old, fresh)
+  const { old, fresh, pairs, lost } = pairing(before, after)
   const used = new Set<number>()
   const out: string[] = []
   for (const [index, block] of old.entries()) {
     const at = pairs[index] ?? -1
     if (at < 0) {
-      out.push(block.text)
+      // Solo vuelve lo que de verdad falta; lo que quedó dentro de otra cosa ya está.
+      if (lost[index]) out.push(block.text)
       continue
     }
     // Lo nuevo que la versión nueva puso antes de este trozo entra con él.

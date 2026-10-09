@@ -153,7 +153,16 @@ function episodesOf(trace: Trace, facts: LoopFacts): Episode[] {
     if (event.k === 'end') {
       for (const episode of open.values()) {
         episode.end = i
-        episode.ended = episode.lastLine === facts.line ? 'done' : 'break'
+        // El programa acabó con el bucle a medias: o se salió de él en su última línea, o algo lo cortó
+        // desde dentro (un error, o que se quedó esperando un dato que no llegó).
+        episode.ended =
+          episode.error !== undefined
+            ? /NoMoreInput/.test(episode.error)
+              ? 'cut'
+              : 'error'
+            : episode.lastLine === facts.line
+              ? 'done'
+              : 'break'
         episodes.push(episode)
       }
       open.clear()

@@ -301,6 +301,41 @@ export async function proposeAnswers(
 }
 
 /**
+ * Sigue una sesión de ejemplo que se quedó a medias: la IA ve lo que ha salido por pantalla hasta ahora (lo
+ * que el programa contestó a cada cosa) y dice qué teclearía a continuación. Así una partida de adivinar un
+ * número va hacia el número, en vez de probar a ciegas. `null` si no dio nada que añadir.
+ */
+export async function continueAnswers(
+  provider: AiProvider,
+  source: string,
+  typed: readonly string[],
+  output: string,
+): Promise<string[] | null> {
+  try {
+    const answer = await provider.generate({
+      system: [
+        answersSystem(),
+        '',
+        'Ahora la sesión ya ha empezado: te doy lo que se ha visto en la pantalla hasta este momento (las',
+        'preguntas del programa, lo que se tecleó y lo que contestó). El programa está esperando otra respuesta.',
+        'Lee lo que ha ido contestando y sigue con sentido: si te dice «más alto» o «más bajo», hazle caso.',
+        'Devuelve SOLO un array JSON con las respuestas SIGUIENTES (no repitas las ya tecleadas), las justas',
+        'para que la sesión llegue a su final.',
+      ].join('\n'),
+      prompt: `El programa:\n\n${source.trimEnd()}\n\nYa tecleado: ${JSON.stringify(typed)}\n\nLa pantalla hasta ahora:\n${output.slice(-1500)}`,
+      maxTokens: 300,
+    })
+    return validAnswers(answer)
+  } catch {
+    return null
+  }
+}
+
+/** Cuántas veces se le pide a la IA que siga una sesión de ejemplo, y cuántas respuestas caben en total. */
+export const ANSWER_ROUNDS = 3
+export const MAX_ANSWERS = 24
+
+/**
  * Lo que identifica lo que el programa pregunta por teclado: sus `input(…)`, tal como están escritos. Mientras
  * no cambien, valen las mismas respuestas de ejemplo (aunque cambie el resto del programa).
  */

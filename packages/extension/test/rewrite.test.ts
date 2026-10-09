@@ -10,6 +10,7 @@ import { localDecider } from '../src/jev/local.ts'
 import {
   changesBetween,
   dedent,
+  echoEdits,
   indentationOk,
   lostBlocks,
   opOf,
@@ -357,6 +358,32 @@ describe('lo que la IA se deja fuera al reescribir', () => {
     )
   })
 
+  it('lo que pasa a estar dentro de otra cosa no se ha perdido: no vuelve duplicado', () => {
+    // De una sesión real: «que tenga solo 7 intentos». La IA cambió el mensaje final por un si/si no (bien
+    // hecho), y el mensaje viejo «volvía a su sitio»: el juego decía «¡Correcto!» siempre.
+    const antes = lines(
+      'intentos = 7',
+      'while intentos > 0:',
+      '    intentos -= 1',
+      '',
+      '# Finalizar partida',
+      'print("¡Correcto! El número era", numero_secreto)',
+    )
+    const despues = lines(
+      'intentos = 7',
+      'while intentos > 0:',
+      '    intentos -= 1',
+      '',
+      '# Finalizar partida',
+      'if intento == numero_secreto:',
+      '    print("¡Correcto! El número era", numero_secreto)',
+      'else:',
+      '    print("Se acabaron los intentos.")',
+    )
+    expect(lostBlocks(antes, despues)).toEqual([])
+    expect(restoreLost(antes, despues).match(/Correcto/g)).toHaveLength(1)
+  })
+
   it('si la orden sí pedía quitarlo, se quita', async () => {
     const { host, state } = stage(PEDIDOS)
     await modify(
@@ -365,5 +392,50 @@ describe('lo que la IA se deja fuera al reescribir', () => {
       { command: 'quita los datos de ejemplo y lo que los imprime', whole: true },
     )
     expect(state.text).not.toContain('pedidos = [')
+  })
+})
+
+describe('el comentario que repite al rótulo de su etapa', () => {
+  const clean = (source: string) => applyEdits(source, echoEdits(source))
+
+  it('se quita la segunda línea cuando dice lo mismo que el rótulo', () => {
+    // Tal como quedó en una sesión real.
+    const source = lines(
+      '# Entrada de datos: pedir gastos al usuario',
+      '# Pedir gastos al usuario',
+      'gastos = []',
+      '',
+      '# Cálculo de total: sumar los gastos',
+      '# Calcular el total',
+      'total = sum(gastos)',
+      '',
+      '# Finalizar partida: mensaje de acierto o fin',
+      '# Finalizar partida',
+      'print(total)',
+    )
+    expect(clean(source)).toBe(
+      lines(
+        '# Entrada de datos: pedir gastos al usuario',
+        'gastos = []',
+        '',
+        '# Cálculo de total: sumar los gastos',
+        'total = sum(gastos)',
+        '',
+        '# Finalizar partida: mensaje de acierto o fin',
+        'print(total)',
+      ),
+    )
+  })
+
+  it('un comentario que dice otra cosa, o que no va bajo un rótulo, se queda', () => {
+    const source = lines(
+      '# Preparar: los datos de entrada',
+      '# Ojo: los precios van sin impuestos',
+      'precios = [1, 2]',
+      '# Un comentario suelto',
+      '# y su segunda línea',
+      'x = 1',
+    )
+    expect(clean(source)).toBe(source)
   })
 })

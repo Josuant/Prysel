@@ -2,8 +2,11 @@ import type { Program } from '@prysel/python'
 import type { AiProvider } from '../../../packages/extension/src/ai/provider.ts'
 import { functionsIn } from '../../../packages/extension/src/gist/facts.ts'
 import {
+  ANSWER_ROUNDS,
   GistCache,
+  MAX_ANSWERS,
   asksInput,
+  continueAnswers,
   gistsOf,
   inputSignature,
   invent,
@@ -145,7 +148,20 @@ export class Gists {
       }
       return gistsOf(program, null)
     }
-    const raw = await this.port.trace(text, inputs)
+    let raw = await this.port.trace(text, inputs)
+    // La sesión de ejemplo se quedó esperando otra respuesta: la IA ve lo que ha salido y la continúa, hasta
+    // que el programa acabe (o unas pocas rondas). Las respuestas que la llevan al final se guardan.
+    if (inputs && provider) {
+      const key = inputSignature(text)
+      for (let round = 0; round < ANSWER_ROUNDS; round++) {
+        if (raw?.error?.name !== 'NoMoreInput' || inputs.length >= MAX_ANSWERS) break
+        const more = await continueAnswers(provider, text, inputs, raw.output)
+        if (!more) break
+        inputs = [...inputs, ...more].slice(0, MAX_ANSWERS)
+        this.answers.set(key, inputs)
+        raw = await this.port.trace(text, inputs)
+      }
+    }
     if (raw) this.ran = runSummary(raw, inputs)
     const trace = raw ? settled(raw) : null
     const nothing =
