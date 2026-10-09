@@ -28,7 +28,12 @@ const WEB_FEATURES: HostFeatures = {
   editLesson: false,
   chat: true,
   foldInsights: true,
-  suggestions: ['Enséñame la recursión', 'Explícame este programa', 'Paso a paso'],
+  starters: [
+    'Hazme un juego de adivinar un número',
+    'Quiero llevar la cuenta de mis gastos',
+    'Haz el juego de la vida y enseña tres generaciones',
+  ],
+  suggestions: ['¿Qué hace este programa?', 'Explícame este programa', 'Paso a paso'],
 }
 
 /** Descarga unos datos como un archivo `.json`, con la fecha en el nombre. */
@@ -147,7 +152,9 @@ export function Shell({ host }: { host: WebHost }) {
   useEffect(() => {
     if (opened.current) return
     opened.current = true
-    host.open(loadDocument() ?? EXAMPLES[0] ?? BLANK)
+    // Quien llega por primera vez empieza con el lienzo en blanco y la pregunta «¿qué quieres construir?»;
+    // las lecciones siguen en el menú.
+    host.open(loadDocument() ?? EMPTY)
   }, [host])
 
   const open = (next: WebDocument) => {
@@ -156,7 +163,7 @@ export function Shell({ host }: { host: WebHost }) {
   }
 
   const example = EXAMPLES.find((candidate) => candidate.name === doc.name)
-  const title = example?.title ?? (doc.text.trim() === '' ? 'Nuevo tema' : doc.name)
+  const title = example?.title ?? (doc.text.trim() === '' ? 'Programa nuevo' : doc.name)
 
   return (
     <div className="web-shell">
@@ -217,8 +224,8 @@ export function Shell({ host }: { host: WebHost }) {
           <ul>
             <li>
               <button type="button" onClick={() => open(EMPTY)}>
-                <strong>Nuevo tema</strong>
-                <span>Pídele a la IA que te enseñe algo desde cero</span>
+                <strong>Empezar de cero</strong>
+                <span>Di qué quieres construir (o qué quieres aprender) y míralo crecer</span>
               </button>
             </li>
             <li>

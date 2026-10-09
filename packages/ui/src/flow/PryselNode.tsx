@@ -26,6 +26,7 @@ import { FLOW_LANE, FLOW_RAIL, flowEntry, isLoopTerritory, territoryHeadroom } f
 import { TrayBox } from './ChipNode.tsx'
 import { LapsStrip } from './LapsStrip.tsx'
 import { LAPS_HEADROOM } from '../laps.ts'
+import { titledScene } from '../gist.ts'
 import { GistCard } from './GistCard.tsx'
 import { markOpening, openingNow, unrollDelay } from './opening.ts'
 import { SectionCard, SectionFrame } from './SectionCard.tsx'
@@ -378,7 +379,10 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
           </>
         )}
         <GistCard
-          scene={node.gist}
+          scene={titledScene(node.gist, {
+            ...(node.section ? { stage: node.section.title } : {}),
+            ...(node.note ? { note: node.note } : {}),
+          })}
           size={size}
           onToggle={
             data.onEnter

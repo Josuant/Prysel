@@ -60,6 +60,7 @@ export { viewerSize, type ViewerContent } from './viewer.ts'
 export {
   gistSize,
   gistText,
+  titledScene,
   type GistPiece,
   type GistScene,
   type GistValue,

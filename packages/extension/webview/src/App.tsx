@@ -169,6 +169,8 @@ export interface HostFeatures {
   chat?: boolean
   /** Sugerencias para empezar a hablar con la IA (en la interfaz de chat). */
   suggestions?: string[]
+  /** Lo que se propone con el lienzo vacío: ideas que construir, dichas como las diría cualquiera. */
+  starters?: string[]
   /**
    * El reproductor y los nodos para entender (variables, pila, árbol de llamadas…) empiezan recogidos. Una
    * lección no se pone a reproducir sola al abrirla: el reproductor aparece cuando se pide «Paso a paso»
@@ -2135,7 +2137,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           building={order.phase === 'done' && order.building === true}
           voice={voice}
           ai={models ? models.ai : ''}
-          suggestions={features.suggestions ?? []}
+          // Con el lienzo vacío se propone algo que construir; con un programa delante, qué hacer con él.
+          suggestions={
+            (program?.nodes.length ?? 0) === 0
+              ? (features.starters ?? features.suggestions ?? [])
+              : (features.suggestions ?? [])
+          }
           onSubmit={(text) => {
             hear(text)
           }}
@@ -2349,10 +2356,11 @@ function EmptyState({
     return (
       <div className="flex h-full items-center justify-center p-6 text-center" role="status">
         <div className="max-w-xs">
-          <p className="text-base text-ink">¿Qué quieres aprender?</p>
+          <p className="text-base text-ink">¿Qué quieres construir?</p>
           <p className="mt-2 text-sm leading-6 text-ink-faint">
-            Pídeselo a la IA abajo, por ejemplo «enséñame la recursión», y mira cómo el diagrama se
-            construye aquí mientras te lo explica.
+            Dilo con tus palabras, abajo o con el micrófono: «un juego de adivinar el número»,
+            «llevar la cuenta de mis gastos». Verás el programa crecer aquí, y funcionar. También
+            puedes pedir que te enseñe un tema.
           </p>
         </div>
       </div>

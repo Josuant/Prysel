@@ -5,6 +5,7 @@ import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import {
   functionsOf,
   gistSize,
+  titledScene,
   toCanvasNodes,
   viewOf,
   withSections,
@@ -16,7 +17,7 @@ import { functionsIn } from '../src/gist/facts.ts'
 import type { Gist } from '../src/gist/gist.ts'
 import type { Sample } from '../src/gist/sample.ts'
 import { valueOf } from '../src/gist/value.ts'
-import { sampleScene } from '../webview/src/gisting.ts'
+import { sampleScene, spokenHead } from '../webview/src/gisting.ts'
 
 /**
  * La tarjeta «Qué hace»: de la muestra ejecutada a lo que se dibuja (lo que entró → lo que salió), y cómo
@@ -281,5 +282,40 @@ describe('un if con tarjeta se pliega en ella (solo en la vista)', () => {
     const open = view.nodes.find((node) => node.id === 'if:2:4')
     expect(open?.gist).toBeUndefined()
     expect(open?.openable).toBe(true)
+  })
+})
+
+describe('el nombre de una tarjeta de bloque: con palabras, no con código', () => {
+  it('sin otro nombre, la cabecera se dice en castellano', () => {
+    expect(spokenHead('for fila in tablero')).toBe('Para cada fila de tablero')
+    expect(spokenHead('while intentos < 5')).toBe('Mientras intentos < 5')
+    expect(spokenHead('while True')).toBe('Repetir hasta salir')
+    expect(spokenHead('if intento == secreto')).toBe('¿intento == secreto?')
+  })
+
+  it('si el programa le da nombre (su etapa, o el comentario de encima), es ese', () => {
+    const loop: GistScene = {
+      name: 'Mientras intentos < 5',
+      code: 'while intentos < 5',
+      block: 'loop',
+      lanes: [],
+    }
+    expect(titledScene(loop, { stage: 'Repetir hasta acertar' })).toMatchObject({
+      name: 'Repetir hasta acertar',
+      code: 'while intentos < 5',
+    })
+    expect(titledScene(loop, { note: 'Comparar y dar pistas\nmás detalle' }).name).toBe(
+      'Comparar y dar pistas',
+    )
+    // Un rótulo «Título: qué hace» da el título.
+    expect(titledScene(loop, { stage: 'Bucle de intentos: pedir hasta acertar' }).name).toBe(
+      'Bucle de intentos',
+    )
+    expect(titledScene(loop, {})).toBe(loop)
+  })
+
+  it('una función conserva su nombre: es como se la llama', () => {
+    const fn: GistScene = { name: 'mostrar_tablero', lanes: [] }
+    expect(titledScene(fn, { note: 'Dibuja el tablero' })).toBe(fn)
   })
 })

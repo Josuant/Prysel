@@ -108,6 +108,8 @@ export interface GistScene {
   block?: 'function' | 'loop' | 'try' | 'class' | 'condition'
   /** Lo que hace, en una frase. */
   title?: string
+  /** El código de su cabecera, cuando el nombre se dice con palabras: se enseña al pasar el puntero. */
+  code?: string
   /** La entrada no estaba en el programa: se propuso para probar. */
   example?: boolean
   /** El código cambió después: se está volviendo a comprobar. */
@@ -117,6 +119,18 @@ export interface GistScene {
   /** Lo que dura cada paso, si no el de serie: una vuelta de un bucle se cuenta más despacio que una celda. */
   stepMs?: number
   lanes: GistPiece[][]
+}
+
+/**
+ * La escena de un bloque (un bucle, una decisión, un intento) con el nombre que le da el propio programa: el
+ * de su etapa, o el comentario que lleva encima. Quien construye hablando dijo «repetir hasta acertar», no
+ * `while intento != secreto`: ese es el nombre que reconoce. El código de la cabecera queda a un gesto.
+ */
+export function titledScene(scene: GistScene, named: { stage?: string; note?: string }): GistScene {
+  if (!scene.block || scene.block === 'function' || scene.block === 'class') return scene
+  const said = (named.stage ?? named.note?.split('\n')[0] ?? '').replace(/:\s.*$/, '').trim()
+  if (said === '' || said.length > 60) return scene
+  return { ...scene, name: said, code: scene.code ?? scene.name }
 }
 
 /** Lo que mide cada cosa: el dibujo usa estas mismas medidas, así el lienzo reserva el sitio justo. */

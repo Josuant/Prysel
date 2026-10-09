@@ -62,7 +62,7 @@ import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { IconButton } from './chrome.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
-import { gistSize, type GistScene } from './gist.ts'
+import { gistSize, titledScene, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
 import { runFor } from './fit.ts'
@@ -764,7 +764,12 @@ function CanvasInner({
               ? chipSize(node)
               : node.gist && !node.contains?.some((id) => present.has(id))
                 ? // Plegada, una función de la que se sabe qué hace es su tarjeta «Qué hace».
-                  gistSize(node.gist)
+                  gistSize(
+                    titledScene(node.gist, {
+                      ...(node.section ? { stage: node.section.title } : {}),
+                      ...(node.note ? { note: node.note } : {}),
+                    }),
+                  )
                 : node.section && !node.contains?.some((id) => present.has(id))
                   ? // Plegada, una etapa es su tarjeta; abierta, el marco la hace crecer con lo que tiene dentro.
                     sectionCardSize({

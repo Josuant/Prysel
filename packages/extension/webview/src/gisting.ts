@@ -145,6 +145,26 @@ function ruleScene(sample: Sample, rule: Rule): Pick<GistScene, 'lanes' | 'beats
   return { lanes: [inputs, [middle], outputs], ...(tour ? { beats: steps } : {}) }
 }
 
+/**
+ * La cabecera de un bloque, dicha con palabras: `for x in xs` → «Para cada x de xs», `while c` → «Mientras
+ * c», `if c` → «¿c?». Es lo que se lee cuando el programa no le da otro nombre (una etapa, un comentario).
+ */
+export function spokenHead(head: string): string {
+  const text = head.trim().replace(/:$/, '')
+  const each = /^(?:async\s+)?for\s+(.+?)\s+in\s+(.+)$/.exec(text)
+  if (each) return `Para cada ${each[1] ?? ''} de ${each[2] ?? ''}`
+  if (/^while\s+True$/.test(text)) return 'Repetir hasta salir'
+  const until = /^while\s+(.+)$/.exec(text)
+  if (until) return `Mientras ${until[1] ?? ''}`
+  const whether = /^if\s+(.+)$/.exec(text)
+  if (whether) return `¿${whether[1] ?? ''}?`
+  if (/^try\b/.test(text))
+    return text.replace(/^try\s*·?\s*/, '') === ''
+      ? 'Intentarlo'
+      : `Intentarlo · ${text.replace(/^try\s*·\s*/, '')}`
+  return text
+}
+
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 /** Por qué acabó un bucle, dicho para quien lo lee. */
@@ -223,7 +243,8 @@ export function loopScene(gist: Gist): GistScene | null {
     ...(lap.exit ? { exit: lap.exit } : {}),
   }))
   return {
-    name: gist.name,
+    name: spokenHead(gist.name),
+    code: gist.name,
     block: 'loop',
     title:
       carried.length > 0
@@ -326,7 +347,8 @@ export function conditionScene(gist: Gist): GistScene | null {
         ? `Pasó ${plural(result.total, 'vez', 'veces')}, siempre por el mismo camino`
         : `Pasó ${plural(result.total, 'vez', 'veces')} y repartió por ${used} caminos`
   return {
-    name: gist.name,
+    name: spokenHead(gist.name),
+    code: gist.name,
     block: 'condition',
     title,
     beats: result.visits.length,
@@ -399,7 +421,8 @@ export function tryScene(gist: Gist): GistScene | null {
         ? 'Falló y la red no lo atrapó'
         : 'Lo intenta: si fallara, tiene una red'
   return {
-    name: gist.name,
+    name: spokenHead(gist.name),
+    code: gist.name,
     block: 'try',
     title,
     beats: rows.length,

@@ -735,7 +735,9 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
             size={13}
           />
         </span>
-        <span className="gist-card__name">{scene.name}</span>
+        <span className="gist-card__name" title={scene.code}>
+          {scene.name}
+        </span>
         {scene.example && (
           <span
             className="gist-card__example"
