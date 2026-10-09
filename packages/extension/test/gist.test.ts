@@ -449,6 +449,17 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
       running: ['0', '1', '1', '2', '3', '3'],
       counts: [false, true, false, true, true, false],
     })
+    // Escrito largo (`total = total + 1`), como lo escribió una IA de verdad: es la misma cuenta.
+    const long = source
+      .replace('vivas += 1', 'vivas = vivas + 1')
+      .replace('suma += precio', 'suma = suma + precio')
+    expect(
+      (await ruled(long, 'contar_vivas', 'contar_vivas([[0, 1], [1, 1]])')).rule,
+    ).toMatchObject({
+      op: 'count-if',
+      running: ['0', '1', '2', '3'],
+    })
+    expect((await ruled(long, 'total', 'total([3, 4])')).rule).toMatchObject({ op: 'sum' })
     const mayor = await ruled(source, 'mayor', 'mayor([3, 9, 2, 7])')
     expect(mayor.rule).toMatchObject({ kind: 'fold', op: 'max', running: ['3', '9', '9', '9'] })
     expect(sampleScene(mayor)?.lanes[2]).toMatchObject([{ beats: [3], arrives: true }])

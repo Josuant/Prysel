@@ -288,7 +288,11 @@ function foldRules(code: string, sample: Sample): FoldRule[] {
   const out = sample.returned
   if (!out || out.kind !== 'atom' || out.type !== 'number') return []
   const result = Number(out.text)
-  const bareCode = code.replace(/"[^"\n]*"|'[^'\n]*'/g, '""').replace(/#.*$/gm, '')
+  // `total = total + 1` es `total += 1` escrito largo: se lee igual. (Es como lo escribe a menudo una IA.)
+  const bareCode = code
+    .replace(/"[^"\n]*"|'[^'\n]*'/g, '""')
+    .replace(/#.*$/gm, '')
+    .replace(/\b([A-Za-z_]\w*)\s*=\s*\1\s*\+(?!=)/g, '$1 +=')
   const found: FoldRule[] = []
   const show = (value: number) => String(Math.round(value * 1e6) / 1e6)
   for (const input of sample.inputs) {

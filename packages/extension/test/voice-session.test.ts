@@ -128,6 +128,52 @@ describe('«Borra el objeto gato», con la clase gato seleccionada de antes', ()
   })
 })
 
+describe('«Crea un tablero de tres por tres», mirando una función y con un bucle seleccionado de antes', () => {
+  const SOURCE = lines(
+    'numeros = [3, 1, 2]',
+    'total = 0',
+    'for n in numeros:',
+    '    total = total + n',
+    'print(total)',
+    'def contar_vivas(matriz):',
+    '    total = 0',
+    '    for fila in matriz:',
+    '        for valor in fila:',
+    '            if valor == 1:',
+    '                total = total + 1',
+    '    return total',
+  )
+  // Lo que contestó el JEV de verdad.
+  const answers = {
+    sigue: { type: 'noul' as const, noul: 0.15 },
+    accion: pick('componer', 0.82),
+    ambito: pick('programa', 0.82),
+    alcance: pick('directo', 0.7),
+    pieza: pick('function', 0.49),
+    donde: pick('final', 0.81),
+    objetivo: pick('ninguno', 0.59),
+  }
+  const decide = (text: string) => {
+    const program = parse(SOURCE)
+    const at = (line: number) => program.nodes.find((n) => n.range && n.line === line)?.id ?? null
+    return decideCommand(
+      { text, program, selected: at(3), focus: at(6), typed: true, genId: 'g1' },
+      recorded(answers),
+    )
+  }
+
+  it('va al programa, no dentro de la función que se mira: la selección de antes no señala nada', async () => {
+    const { directive } = await decide('Crea un tablero de tres por tres')
+    expect(directive.kind === 'do' && directive.effect).toMatchObject({ type: 'compose' })
+    expect(directive.kind === 'do' && directive.say).toContain('al final del programa')
+  })
+
+  it('si la orden sí señala lo seleccionado («después de esto»), manda eso', async () => {
+    const { directive } = await decide('Crea un tablero de tres por tres después de esto')
+    expect(directive.kind === 'do' && directive.say).not.toContain('al final del programa')
+  })
+})
+
 describe('lo que el programa ya tiene no se vuelve a escribir', () => {
   it('si la IA repite una clase que ya existe, no se pone otra vez (ni dentro de sí misma)', async () => {
     const state = { text: ZOO }

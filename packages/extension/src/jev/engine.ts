@@ -835,9 +835,17 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   // Mirando una función por dentro, «crea otra función» no la mete dentro de la que se mira: lo dice el
   // JEV. Solo cuenta si la orden no señala ningún elemento (ni lo nombra, ni hay nada seleccionado): un
   // «después» o un «final» sin nada a lo que referirse no apunta a ningún sitio de lo que se mira.
+  // Lo que quedó seleccionado de antes tampoco cuenta como señalar: si la orden no lo nombra ni dice
+  // «esto» o «aquí», no es junto a ello donde se pide. (Visto con el JEV de verdad: «crea un tablero», con
+  // un bucle del programa aún seleccionado, acabó dentro de la función que se miraba.)
+  const signalled =
+    forced.target !== undefined ||
+    namedTarget !== null ||
+    literal !== null ||
+    (pointed && chosen !== null)
   const ambit = choice(answers.ambito)
   const apartSpot = (place: PlaceId | null): Placed | null =>
-    viewing !== null && target === null && ambit?.choice === 'programa' && ambit.confidence >= 0.5
+    viewing !== null && !signalled && ambit?.choice === 'programa' && ambit.confidence >= 0.5
       ? place === 'principio'
         ? { at: 'start', phrase: 'al principio del programa' }
         : { phrase: 'al final del programa' }

@@ -252,9 +252,9 @@ export function Shell({ host }: { host: WebHost }) {
               <button type="button" onClick={() => setSheet('settings')}>
                 <strong>Inteligencia artificial</strong>
                 <span>
-                  {host.aiSettings.anthropicKey
+                  {hasAiKey(host.aiSettings)
                     ? 'Clave guardada en este dispositivo'
-                    : 'Falta tu clave de Anthropic'}
+                    : 'Falta tu clave (Anthropic o DeepSeek)'}
                 </span>
               </button>
             </li>
