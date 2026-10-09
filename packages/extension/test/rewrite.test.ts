@@ -346,9 +346,9 @@ describe('lo que la IA se deja fuera al reescribir', () => {
   it('lo que cambia de nombre no se ha perdido: al renombrar no vuelve la versión vieja', () => {
     // Lo que pasó de verdad tras «ponle nombres más claros»: la IA renombró bien, y la versión vieja de cada
     // función «volvía a su sitio», duplicando el programa.
-    const renamed = PEDIDOS.replace(/t\(/g, 'total_articulos(')
-      .replace(/r\(/g, 'resumen_pedidos(')
-      .replace(/acc/g, 'acumulado')
+    const renamed = PEDIDOS.replace(/\bt\(/g, 'total_articulos(')
+      .replace(/\br\(/g, 'resumen_pedidos(')
+      .replace(/\bacc\b/g, 'acumulado')
     expect(lostBlocks(PEDIDOS, renamed)).toEqual([])
     expect(restoreLost(PEDIDOS, renamed).trimEnd()).toBe(
       topBlocks(renamed)
