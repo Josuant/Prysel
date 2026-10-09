@@ -294,6 +294,9 @@ export function localDecider(): Decider {
               : pick('otra', SURE)
         } else if (id === 'encaja' || id === 'pertinente') {
           answers[id] = { type: 'noul', noul: SURE }
+        } else if (id === 'hecho') {
+          // Sin un modelo que lea el programa no se sabe: no se da nada por hecho.
+          answers[id] = { type: 'noul', noul: 0.1 }
         } else if (id === 'cumple') {
           answers[id] = { type: 'noul', noul: SURE }
         } else if (id === 'seguro') {

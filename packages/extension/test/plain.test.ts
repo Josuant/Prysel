@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Decider, JevAnswer } from '../src/jev/client.ts'
 import { localDecider } from '../src/jev/local.ts'
+import { judgeDone } from '../src/jev/plain.ts'
 import { bestMatch, locate } from '../webview/src/marking.ts'
 import {
   CodeStream,
@@ -377,5 +378,29 @@ describe('lo que decide el JEV de cada trozo', () => {
       '',
     )
     expect(plain.aid).toBeNull()
+  })
+})
+
+describe('un paso de una orden larga que ya está hecho', () => {
+  it('lo dice el JEV mirando el programa; el motor local, que no lo lee, no da nada por hecho', async () => {
+    const asked: unknown[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { state: unknown }) => {
+        asked.push(request.state)
+        return Promise.resolve({ ms: 1, answers: { hecho: { type: 'noul' as const, noul: 0.93 } } })
+      },
+    }
+    const done = await judgeDone(jev, 'Pon el tablero en el programa principal', 'tablero = []\n', [
+      'Saca el tablero de la función',
+    ])
+    expect(done).toBe(0.93)
+    expect(asked[0]).toMatchObject({
+      paso: 'Pon el tablero en el programa principal',
+      antes: ['Saca el tablero de la función'],
+    })
+    expect(
+      await judgeDone(localDecider(), 'Pon el tablero en el programa', 'x = 1\n', []),
+    ).toBeLessThan(0.6)
   })
 })

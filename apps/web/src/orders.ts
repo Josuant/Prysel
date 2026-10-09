@@ -30,6 +30,8 @@ import {
 import { explainNode, generateFill } from '../../../packages/extension/src/jev/fill.ts'
 import { indentationOk } from '../../../packages/extension/src/jev/modify.ts'
 import {
+  DONE_THRESHOLD,
+  judgeDone,
   judgeHeard,
   judgeInterruption,
   type Interruption,
@@ -229,6 +231,18 @@ export class Orders {
         const { directive } = part
         const label = `${index + 1}/${steps.length}`
         if (directive.kind !== 'do') {
+          // Un paso anterior puede haberlo dejado hecho («sácalo de la función» ya lo pone en el programa):
+          // si el JEV, mirando el programa, dice que está cumplido, se sigue con lo que queda en vez de
+          // pararse y dejar sin hacer el resto de lo que se pidió.
+          if (index > 0) {
+            const done = await judgeDone(decider, step, port.text(), steps.slice(0, index)).catch(
+              () => 0,
+            )
+            if (done >= DONE_THRESHOLD) {
+              port.post({ type: 'say', text: `${label} · Eso ya estaba hecho: sigo.`, aside: true })
+              continue
+            }
+          }
           const why = directive.kind === 'ask' ? directive.question : directive.say
           port.post({
             type: 'decision',

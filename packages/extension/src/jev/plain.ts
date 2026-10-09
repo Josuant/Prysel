@@ -770,6 +770,40 @@ export async function judgeHeard(
   return { kind, complete: whole?.type === 'noul' ? whole.noul : 1, ms }
 }
 
+// ───────────────────────── un paso de una orden larga: ¿ya está hecho? ─────────────────────────
+
+/** Con cuánta certeza del JEV se da un paso por hecho y se sigue con el siguiente. */
+export const DONE_THRESHOLD = 0.6
+
+/**
+ * Una orden larga se parte en pasos, y a veces un paso deja hecho también el siguiente («sácalo de la función»
+ * ya lo deja en el programa; «ponlo en el programa» no tiene nada que mover). Antes de pararse en un paso que
+ * no se sabe cómo cumplir, el JEV mira el programa tal como está y dice si eso ya está cumplido.
+ */
+export async function judgeDone(
+  decider: Decider,
+  step: string,
+  code: string,
+  earlier: readonly string[],
+): Promise<number> {
+  const { answers } = await decider.decide({
+    state: { paso: step, programa: code, antes: [...earlier] },
+    questions: {
+      hecho: {
+        type: 'noul',
+        instructions:
+          'El campo `programa` es un programa de Python tal como está ahora. `antes` son los pasos que se acaban de cumplir sobre él. El campo `paso` es el siguiente paso que se pidió. ¿Está ya cumplido ese `paso` en el programa, de modo que no queda nada por hacer para él?',
+        criteria: {
+          true: 'Sí: el programa ya está como pide el paso (lo dejó así un paso anterior, o ya estaba).',
+          false: 'No: todavía falta hacer algo en el programa para cumplir el paso.',
+        },
+      },
+    },
+  })
+  const answer = answers['hecho']
+  return answer?.type === 'noul' ? answer.noul : 0
+}
+
 // ───────────────────────── si el usuario interrumpe: ¿vale lo que ya estaba preparado? ─────────────────────────
 
 /** Qué hacer con una orden que llega mientras se está construyendo otra cosa. */
