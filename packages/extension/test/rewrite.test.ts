@@ -7,7 +7,15 @@ import { applyEdits } from '@prysel/python/edits'
 import type { AiProvider } from '../src/ai/provider.ts'
 import { modify, type Shown, type Stagehand } from '../src/jev/director.ts'
 import { localDecider } from '../src/jev/local.ts'
-import { changesBetween, dedent, indentationOk, opOf } from '../src/jev/modify.ts'
+import {
+  changesBetween,
+  dedent,
+  indentationOk,
+  lostBlocks,
+  opOf,
+  restoreLost,
+  topBlocks,
+} from '../src/jev/modify.ts'
 
 /**
  * Cambiar un programa pequeño reescribiéndolo: a la IA se le pide el programa entero con el cambio hecho
@@ -250,5 +258,98 @@ describe('qué cambia entre dos versiones de un programa', () => {
     expect(changesBetween('a = 1\nb = 2\n', 'a = 1\n').hunks).toEqual([
       { line: 2, added: 0, removed: 1 },
     ])
+  })
+})
+
+describe('lo que la IA se deja fuera al reescribir', () => {
+  // De una sesión real: se pegó este programa, se pidió «hay algo raro con el total, arréglalo», y la IA
+  // devolvió las tres funciones (con el arreglo bien hecho) sin los datos de arriba ni el programa de abajo.
+  const PEDIDOS = lines(
+    'pedidos = [',
+    '    {"cliente": "Ana", "articulos": [12, 5, 8]},',
+    '    {"cliente": "Luis", "articulos": [20, 3]},',
+    ']',
+    '',
+    '',
+    'def t(p):',
+    '    return sum(p["articulos"])',
+    '',
+    '',
+    'def r(ps):',
+    '    x = []',
+    '    acc = 0',
+    '    for p in ps:',
+    '        for a in p["articulos"]:',
+    '            acc = acc + a',
+    '        x.append((p["cliente"], acc))',
+    '    return x',
+    '',
+    '',
+    'for c, tot in r(pedidos):',
+    '    print(c, tot)',
+    'print("Mejor:", t(pedidos[0]))',
+  )
+  const SOLO_FUNCIONES = lines(
+    'def t(p):',
+    '    return sum(p["articulos"])',
+    '',
+    '',
+    'def r(ps):',
+    '    x = []',
+    '    for p in ps:',
+    '        acc = 0',
+    '        for a in p["articulos"]:',
+    '            acc = acc + a',
+    '        x.append((p["cliente"], acc))',
+    '    return x',
+  )
+
+  it('se sabe qué trozos del programa faltan en la versión nueva', () => {
+    expect(topBlocks(PEDIDOS).map((block) => block.key)).toEqual([
+      'pedidos =',
+      'def t',
+      'def r',
+      'for c, tot in r(pedidos):',
+      'print("Mejor:", t(pedidos[0]))',
+    ])
+    expect(lostBlocks(PEDIDOS, SOLO_FUNCIONES).map((block) => block.head)).toEqual([
+      'pedidos = [',
+      'for c, tot in r(pedidos):',
+      'print("Mejor:", t(pedidos[0]))',
+    ])
+    expect(lostBlocks(PEDIDOS, PEDIDOS)).toEqual([])
+  })
+
+  it('vuelven a su sitio, y lo que sí cambió se queda cambiado', () => {
+    const restored = restoreLost(PEDIDOS, SOLO_FUNCIONES)
+    expect(lostBlocks(PEDIDOS, restored)).toEqual([])
+    expect(restored.startsWith('pedidos = [')).toBe(true)
+    expect(restored.trimEnd().endsWith('print("Mejor:", t(pedidos[0]))')).toBe(true)
+    // El arreglo (el acumulador, dentro del bucle) sigue ahí.
+    expect(restored).toContain('    for p in ps:\n        acc = 0')
+    expect(hasError(restored)).toBe(false)
+  })
+
+  it('si la orden no pedía quitar nada, el programa no pierde sus datos ni su programa principal', async () => {
+    const { host, state } = stage(PEDIDOS)
+    const outcome = await modify(
+      host,
+      { decider: localDecider(), provider: ai(SOLO_FUNCIONES) },
+      { command: 'hay algo raro con el total, arréglalo', whole: true },
+    )
+    expect(outcome.trouble).toBeNull()
+    expect(state.text).toContain('pedidos = [')
+    expect(state.text).toContain('for c, tot in r(pedidos):')
+    expect(state.text).toContain('        acc = 0\n        for a in p["articulos"]:')
+  })
+
+  it('si la orden sí pedía quitarlo, se quita', async () => {
+    const { host, state } = stage(PEDIDOS)
+    await modify(
+      host,
+      { decider: localDecider(), provider: ai(SOLO_FUNCIONES) },
+      { command: 'quita los datos de ejemplo y lo que los imprime', whole: true },
+    )
+    expect(state.text).not.toContain('pedidos = [')
   })
 })

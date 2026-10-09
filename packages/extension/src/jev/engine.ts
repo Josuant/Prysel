@@ -722,6 +722,9 @@ export function titleIn(text: string): string | null {
 
 // ───────────────────────── la resolución ─────────────────────────
 
+/** La orden acaba dando un nombre: «…a suma», «…como total», «…por x». */
+const GIVES_NAME = /(?:^|\s)(?:a|como|por)\s+[«"'`]?[\p{L}_][\p{L}\p{N}_]*[.!?»"'`]*$/iu
+
 /** Pedir salir a la vista general: eso sí es solo mover la vista, aunque no nombre nada. */
 const LEAVES =
   /(programa|principal|main|general|inicio|sal|salir|salgamos|fuera|atras|vuelve|volver|todo)/
@@ -1448,6 +1451,17 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     }
 
     case 'renombrar': {
+      // «Ponle nombres más claros» no dice qué nombre poner: no es un renombrado, es un cambio que piensa
+      // la IA. (Tomando la última palabra como nombre, una función acabó llamándose «claros».) Solo es un
+      // renombrado tal cual cuando la orden da el nombre nuevo: «…a suma», «…como total», «…por x».
+      if (
+        !GIVES_NAME.test(input.text.trim()) &&
+        hasCode &&
+        input.genId !== undefined &&
+        forced.intent === undefined
+      ) {
+        return rework(false)
+      }
       if (!target) {
         return done({ kind: 'unknown', say: 'Dime qué renombro: selecciónalo o nómbralo.' })
       }

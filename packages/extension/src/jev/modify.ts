@@ -102,6 +102,90 @@ export interface Hunk {
   removed: number
 }
 
+/** Un trozo del programa a la altura del archivo: una función, una clase, una asignación, un bucle… */
+export interface TopBlock {
+  /** Lo que lo identifica: `def nombre`, `class Nombre`, `nombre =`, o su primera línea. */
+  key: string
+  /** Su primera línea de código, para nombrarlo. */
+  head: string
+  /** Su texto entero, con los comentarios que lleva encima. */
+  text: string
+}
+
+/**
+ * Los trozos de un programa a la altura del archivo, en orden. Los comentarios y decoradores de justo encima
+ * van con el trozo que encabezan; lo que continúa uno (`else:`, un corchete que se cierra) va con él.
+ */
+export function topBlocks(source: string): TopBlock[] {
+  const rows = source.replace(/\r\n/g, '\n').split('\n')
+  const blocks: { lead: string[]; body: string[] }[] = []
+  let lead: string[] = []
+  let open: { lead: string[]; body: string[] } | null = null
+  for (const row of rows) {
+    const flush = /^\S/.test(row)
+    if (!flush) {
+      // Una línea en blanco o sangrada: del trozo abierto, o de lo que encabeza al siguiente.
+      if (open && lead.length === 0) open.body.push(row)
+      else lead.push(row)
+      continue
+    }
+    if (/^(#|@)/.test(row)) {
+      lead.push(row)
+      continue
+    }
+    if (open && /^(else\b|elif\b|except\b|finally\b|[\])}])/.test(row)) {
+      open.body.push(...lead, row)
+      lead = []
+      continue
+    }
+    open = { lead, body: [row] }
+    blocks.push(open)
+    lead = []
+  }
+  return blocks.map((block) => {
+    const head = block.body[0] ?? ''
+    const named =
+      /^(?:async\s+)?(def|class)\s+(\w+)/.exec(head) ??
+      /^()([A-Za-z_]\w*)\s*(?::[^=]+)?=(?!=)/.exec(head)
+    const key = named ? `${named[1] ?? ''} ${named[2] ?? ''}`.trim() : head.trim()
+    const text = [...block.lead, ...block.body].join('\n').replace(/^\n+|\n+$/g, '')
+    return { key: named?.[1] ? key : named ? `${key} =` : key, head: head.trim(), text }
+  })
+}
+
+/** Los trozos que estaban en el programa y ya no están en su versión nueva (ni cambiados: no están). */
+export function lostBlocks(before: string, after: string): TopBlock[] {
+  const kept = new Set(topBlocks(after).map((block) => block.key))
+  return topBlocks(before).filter((block) => !kept.has(block.key))
+}
+
+/**
+ * La versión nueva, con lo que se había perdido devuelto a su sitio: cada trozo que falta vuelve donde
+ * estaba, entre los que sí siguen (que quedan como en la versión nueva).
+ */
+export function restoreLost(before: string, after: string): string {
+  const fresh = topBlocks(after)
+  const used = new Set<number>()
+  const out: string[] = []
+  for (const block of topBlocks(before)) {
+    const at = fresh.findIndex(
+      (candidate, index) => !used.has(index) && candidate.key === block.key,
+    )
+    if (at < 0) {
+      out.push(block.text)
+      continue
+    }
+    // Lo nuevo que la versión nueva puso antes de este trozo entra con él.
+    for (let index = 0; index <= at; index++) {
+      if (used.has(index)) continue
+      used.add(index)
+      out.push(fresh[index]?.text ?? '')
+    }
+  }
+  for (const [index, block] of fresh.entries()) if (!used.has(index)) out.push(block.text)
+  return `${out.filter((text) => text !== '').join('\n\n')}\n`
+}
+
 /**
  * Qué cambia entre dos versiones de un programa, línea a línea: los tramos distintos (para enseñarlos uno a
  * uno) y la edición única que lleva de una a otra (para escribirla de una vez, sin estados intermedios).

@@ -430,6 +430,33 @@ describe('«Haz el juego de la vida… y enseña tres generaciones», con el pro
   })
 })
 
+describe('«ponle nombres más claros», con código de otro pegado', () => {
+  const SOURCE = lines('def r(ps):', '    x = []', '    return x', '', 'print(r([]))')
+  const decide = (text: string) =>
+    decideCommand(
+      { text, program: parse(SOURCE), selected: null, focus: null, typed: true, genId: 'g1' },
+      // Lo que contestó el JEV de verdad: renombrar, seguro, y señalando la primera función.
+      recorded({
+        accion: pick('renombrar', 1),
+        objetivo: pick('p1', 0.81),
+        encaje: pick('cambio', 0.9),
+      }),
+    )
+
+  it('no da un nombre nuevo: no se llama «claros» a nada; los nombres los piensa la IA', async () => {
+    const { directive } = await decide('ponle nombres más claros')
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+  })
+
+  it('cuando sí da el nombre, es un renombrado tal cual', async () => {
+    const { directive } = await decide('renombra r a resumen')
+    expect(directive.kind === 'do' && directive.effect).toMatchObject({
+      type: 'action',
+      action: { type: 'rename', to: 'resumen' },
+    })
+  })
+})
+
 describe('lo que el programa ya tiene no se vuelve a escribir', () => {
   it('si la IA repite una clase que ya existe, no se pone otra vez (ni dentro de sí misma)', async () => {
     const state = { text: ZOO }

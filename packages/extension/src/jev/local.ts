@@ -294,6 +294,15 @@ export function localDecider(): Decider {
               : pick('otra', SURE)
         } else if (id === 'encaja' || id === 'pertinente') {
           answers[id] = { type: 'noul', noul: SURE }
+        } else if (id === 'quitar') {
+          answers[id] = {
+            type: 'noul',
+            noul: /\b(quita|borra|elimina|suprime|sustituye|rehaz|reescribe)\w*/.test(
+              plain(textOf(state.orden)),
+            )
+              ? SURE
+              : 0.1,
+          }
         } else if (id === 'hecho') {
           // Sin un modelo que lea el programa no se sabe: no se da nada por hecho.
           answers[id] = { type: 'noul', noul: 0.1 }

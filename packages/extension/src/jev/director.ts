@@ -46,6 +46,7 @@ import {
   stageFromLine,
   tellPrompt,
   tellSystem,
+  judgeRemoval,
 } from './plain.ts'
 import { formatVisual, seriesIn, visualOf } from './visual.ts'
 import {
@@ -61,6 +62,8 @@ import {
   rewritePrompt,
   rewriteSystem,
   type ChangeOp,
+  lostBlocks,
+  restoreLost,
 } from './modify.ts'
 
 /**
@@ -909,9 +912,21 @@ async function rewrite(
   }
   if (host.signal.aborted) return failed('')
   const eol = before.includes('\r\n') ? '\r\n' : '\n'
-  const body = unfenced(answer)
-  const after = (body === '' ? '' : `${body}\n`).replace(/\n/g, eol)
+  let body = unfenced(answer)
   if (body === '') return failed('La IA no devolvió el programa.')
+  // Lo que estaba y ya no está: si la orden no pedía quitarlo (lo dice el JEV), vuelve a su sitio. Una IA
+  // que arregla una función a veces devuelve solo las funciones y se deja fuera los datos y lo demás.
+  const lost = lostBlocks(before, body)
+  if (lost.length > 0) {
+    await host.show({ type: 'progress', text: 'Al cambio le faltan trozos · lo mira el JEV…' })
+    const wanted = await judgeRemoval(
+      players.decider,
+      command,
+      lost.map((block) => block.head),
+    ).catch(() => 0)
+    if (wanted < 0.5) body = restoreLost(before, body).replace(/\s+$/, '')
+  }
+  const after = `${body}\n`.replace(/\n/g, eol)
   if (after.trimEnd() === before.trimEnd()) return failed('La IA no propuso ningún cambio.')
   if (!host.parses(after) || !indentationOk(after)) {
     return failed('El cambio que propuso la IA no deja un programa válido: no toco nada.')

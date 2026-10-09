@@ -770,6 +770,37 @@ export async function judgeHeard(
   return { kind, complete: whole?.type === 'noul' ? whole.noul : 1, ms }
 }
 
+// ───────────────────────── al reescribir, ¿se quería quitar eso? ─────────────────────────
+
+/**
+ * La IA devolvió el programa cambiado, pero le faltan trozos que estaban (visto de verdad: al arreglar una
+ * función se dejó fuera los datos y el programa principal). El JEV dice si la orden pedía quitar algo; si
+ * no, lo que falta se devuelve a su sitio.
+ */
+export async function judgeRemoval(
+  decider: Decider,
+  order: string,
+  lost: readonly string[],
+): Promise<number> {
+  const { answers } = await decider.decide({
+    state: { orden: order, falta: [...lost] },
+    questions: {
+      quitar: {
+        type: 'noul',
+        instructions:
+          'Se le pidió a un programa en Python el cambio que dice `orden`. En el resultado ya no están los trozos de `falta` (su primera línea). ¿La `orden` pedía quitar, borrar o sustituir por completo esos trozos?',
+        criteria: {
+          true: 'Sí: la orden pide eliminar eso, quitarlo, o rehacer el programa entero de otra manera.',
+          false:
+            'No: la orden pide arreglar, cambiar o añadir otra cosa; esos trozos no tenían por qué desaparecer.',
+        },
+      },
+    },
+  })
+  const answer = answers['quitar']
+  return answer?.type === 'noul' ? answer.noul : 0
+}
+
 // ───────────────────────── un paso de una orden larga: ¿ya está hecho? ─────────────────────────
 
 /** Con cuánta certeza del JEV se da un paso por hecho y se sigue con el siguiente. */
