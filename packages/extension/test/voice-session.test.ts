@@ -250,6 +250,26 @@ describe('una sesión de vibe coding: el juego de adivinar el número', () => {
     expect(directive.kind === 'do' && directive.effect.type).toBe('focus')
   })
 
+  it('también cuando el JEV, dudando, la lee como «añadir» (lo que contestó de verdad)', async () => {
+    const directive = await decide('¿cómo sabe cuándo he ganado?', {
+      accion: pick('agregar', 0.24),
+      pieza: pick('if', 0.7),
+      encaje: pick('cambio', 0.46),
+      sobre: pick('programa', 1),
+    })
+    expect(directive).toMatchObject({ kind: 'do', intent: 'explicar', answer: true })
+  })
+
+  it('una petición con forma de pregunta sigue siendo una petición', async () => {
+    const directive = await decide('¿puedes añadir un contador de intentos?', {
+      accion: pick('agregar', 0.9),
+      pieza: pick('variable', 0.9),
+      encaje: pick('cambio', 0.8),
+      sobre: pick('peticion', 0.9),
+    })
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+  })
+
   it('un tema que no es de este programa sí se enseña construyendo', async () => {
     const directive = await decide('Explícame la recursión', {
       accion: pick('ensenar', 0.8),

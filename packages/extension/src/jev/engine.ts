@@ -481,6 +481,8 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
           criteria: {
             programa:
               'Pregunta por lo que este programa ya hace: «¿cómo sabe cuándo he ganado?», «¿por qué empieza en cero?», «¿qué pasa si escribo una letra?», «¿dónde se calcula el total?».',
+            peticion:
+              'No pregunta nada: pide que se haga o se cambie algo, aunque lo diga con forma de pregunta o empiece por «dime»: «¿puedes añadir un contador?», «dime cuánto llevo gastado», «¿y si tuviera tres vidas?».',
             tema: 'Quiere que se le enseñe un tema general, que no está en este programa: «explícame la recursión», «qué es una red neuronal», «cómo funciona el interés compuesto».',
           },
         }
@@ -856,8 +858,21 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   const shows = choice(answers.ver)
   const display =
     (guess ?? heard) === 'enfocar' && shows?.choice === 'programa' && shows.confidence >= 0.5
-  const intent = display ? 'modificar' : (guess ?? heard)
-  if (guess === undefined && (intent === undefined || sure < THRESHOLDS.intent)) {
+  // Una pregunta sobre lo que el programa ya hace no es una orden de escribir, aunque el JEV, dudando, la
+  // lea como «añadir» (visto de verdad: «¿cómo sabe cuándo he ganado?» → añadir, al 24 %, y se cambió el
+  // juego). Si dice claro que pregunta por este programa y no hay una intención firme de otra cosa, se
+  // contesta.
+  const about = choice(answers.sobre)
+  const asking =
+    hasCode &&
+    input.genId !== undefined &&
+    forced.intent === undefined &&
+    forced.target === undefined &&
+    about?.choice === 'programa' &&
+    about.confidence >= 0.7 &&
+    (doubtful || heard === 'ensenar' || heard === 'explicar')
+  const intent = asking ? 'explicar' : display ? 'modificar' : (guess ?? heard)
+  if (!asking && guess === undefined && (intent === undefined || sure < THRESHOLDS.intent)) {
     const options = likely.slice(0, 2)
     if (options.length === 0) {
       return done({ kind: 'unknown', say: 'No entendí qué quieres que haga.' })
@@ -1436,6 +1451,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     case 'enfocar':
     case 'explicar':
     case 'plegar': {
+      if (intent === 'explicar' && aboutThis()) return answerIt()
       // «Explícame…» algo que la orden no señala en el programa no es una pregunta sobre lo seleccionado:
       // es un tema. Con quien lo redacte, se explica construyendo; no se devuelve un «¿a qué te refieres?».
       if (
