@@ -111,6 +111,65 @@ describe.skipIf(!available)('las vueltas: lo que pasó al ejecutarlo de verdad',
     expect(laps?.laps.map((lap) => lap.printed)).toEqual(['3\n', '2\n', '1\n'])
   })
 
+  it('si el bucle es lo último de una función, acaba igual: sin una vuelta de más', async () => {
+    const source = lines(
+      'def mostrar(xs):',
+      '    for x in xs:',
+      '        print(x)',
+      '',
+      '',
+      'def cuenta(n):',
+      '    while n > 0:',
+      '        n -= 1',
+      '',
+      '',
+      'mostrar([1, 2, 3])',
+      'cuenta(3)',
+    )
+    const program = parse(source)
+    const trace = await kernel.trace(source)
+    const each = bestLaps(trace, loopAt(program, 2))
+    expect(each?.total).toBe(3)
+    expect(each?.ended).toBe('done')
+    const until = bestLaps(trace, loopAt(program, 7))
+    expect(until?.total).toBe(3)
+    expect(until?.ended).toBe('done')
+  })
+
+  it('un return desde dentro sí es salir de la función', async () => {
+    const source = lines(
+      'def primero_par(xs):',
+      '    for x in xs:',
+      '        if x % 2 == 0:',
+      '            return x',
+      '',
+      '',
+      'primero_par([1, 3, 4, 5])',
+    )
+    const laps = bestLaps(await kernel.trace(source), loopAt(parse(source), 2))
+    expect(laps?.total).toBe(3)
+    expect(laps?.ended).toBe('return')
+  })
+
+  it('un error que atrapa un try de dentro no es un fallo del bucle', async () => {
+    const source = lines(
+      'def sumar(textos):',
+      '    total = 0',
+      '    for texto in textos:',
+      '        try:',
+      '            total += int(texto)',
+      '        except ValueError:',
+      '            total += 0',
+      '',
+      '',
+      'sumar(["1", "a"])',
+    )
+    const laps = bestLaps(await kernel.trace(source), loopAt(parse(source), 3))
+    expect(laps?.total).toBe(2)
+    expect(laps?.ended).toBe('done')
+    expect(laps?.error).toBeUndefined()
+  })
+
   it('un break: la vuelta en la que sale', async () => {
     const source = lines(
       'for x in [5, 7, 8, 9]:',

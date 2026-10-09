@@ -164,7 +164,10 @@ function episodesOf(trace: Trace, facts: TryFacts): Episode[] {
         close(current, i)
         continue
       }
-      if (inBody && !current.raised) current.bodyTo = i
+      // Siguió por lo que se intenta después de un error: lo atrapó un `try` de más adentro, no llegó a esta
+      // red. Para este `try`, no saltó nada.
+      if (inBody && current.raised) current.raised = null
+      if (inBody) current.bodyTo = i
       const at = clauseOf(facts, event.l)
       if (at >= 0) {
         const seen = current.entered.get(at)

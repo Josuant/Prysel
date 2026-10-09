@@ -165,12 +165,18 @@ function episodesOf(trace: Trace, facts: LoopFacts): Episode[] {
       if (event.k === 'exception' && event.f === current.frame) current.error = event.e ?? 'error'
       if (event.k === 'return') {
         current.end = i
-        current.ended = current.error === undefined ? 'return' : 'error'
+        // La función acaba justo tras el bucle (era lo último que hacía): si se sale desde la cabecera, el
+        // bucle terminó por sí mismo, como cuando después viene otra línea. Solo es un `return` si se sale
+        // desde dentro.
+        const fromHead = current.lastLine === facts.line
+        current.ended = current.error !== undefined ? 'error' : fromHead ? 'done' : 'return'
         episodes.push(current)
         open.delete(event.f)
         continue
       }
       if (event.k !== 'line') continue
+      // Siguió adelante tras un error: lo atrapó un `try` de dentro. No es un fallo del bucle.
+      delete current.error
       if (event.l === facts.line) {
         current.heads.push(i)
         current.lastLine = facts.line

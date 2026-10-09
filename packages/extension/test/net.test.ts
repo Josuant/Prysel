@@ -92,6 +92,32 @@ describe.skipIf(!available)('la red: lo que pasó al ejecutarlo de verdad', () =
     expect(last).toMatchObject({ kind: 'finally', state: 'ran', printed: 'fin\n' })
   })
 
+  it('un error que atrapa un try de más adentro no llega a esta red', async () => {
+    const source = lines(
+      'def dividir(texto):',
+      '    try:',
+      '        try:',
+      '            n = int(texto)',
+      '        except ValueError:',
+      '            n = 0',
+      '        r = 10 // (n + 1)',
+      '    except ZeroDivisionError:',
+      '        r = -1',
+      '    return r',
+      '',
+      'dividir("x")',
+    )
+    const program = parse(source)
+    const trace = await kernel.trace(source)
+    const outer = bestNet(trace, tryAt(program, 2))
+    expect(outer?.outcome).toBe('ok')
+    expect(outer?.error).toBeUndefined()
+    expect(outer?.parts.map((part) => part.state)).toEqual(['ran', 'skipped'])
+    expect(outer?.tally).toEqual({ ok: 1, caught: 0, escaped: 0 })
+    // El de dentro sí lo atrapó.
+    expect(bestNet(trace, tryAt(program, 3))?.outcome).toBe('caught')
+  })
+
   it('si nunca saltó, lo dice: la red no hizo falta', async () => {
     const source = lines(
       'try:',
