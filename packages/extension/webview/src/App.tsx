@@ -73,7 +73,8 @@ import { loopsIn } from '../../src/gist/laps.ts'
 import { triesIn } from '../../src/gist/net.ts'
 import { classesIn } from '../../src/gist/blueprint.ts'
 import { conditionsIn } from '../../src/gist/branch.ts'
-import type { Gist } from '../../src/gist/gist.ts'
+import type { Gist, RunSummary } from '../../src/gist/gist.ts'
+import { RunPanel } from './RunPanel.tsx'
 import { sampleScene } from './gisting.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
@@ -253,6 +254,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [calls, setCalls] = useState<CallEntry[]>([])
   // «Qué hace» cada función: su muestra ejecutada, tal como la mandó quien ejecuta el programa.
   const [gists, setGists] = useState<readonly Gist[]>([])
+  // Cómo le fue al programa entero al ejecutarlo: lo que salió por pantalla.
+  const [ran, setRan] = useState<RunSummary | null>(null)
   /** La conversación con la IA (interfaz de chat): cada orden y lo que se contestó, y se fue contando. */
   const [chat, setChat] = useState<ChatEntry[]>([])
   /** Añade una frase a la respuesta de la orden en curso (o una respuesta nueva, si no hay ninguna). */
@@ -398,6 +401,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         })
       } else if (message.type === 'gists') {
         setGists(message.gists)
+        setRan(message.run ?? null)
       } else if (message.type === 'preview') {
         // Si la frase está entera o a medias: el micrófono lo consulta antes de mandarla.
         if (message.complete !== undefined) {
@@ -1949,6 +1953,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
                   </div>
                 </>
+              )}
+              {/* Lo que el programa saca por pantalla: a la vista mientras se construye. */}
+              {ran && program && program.nodes.length > 0 && (
+                <div className="canvas-float" data-at="bottom-right">
+                  <RunPanel run={ran} />
+                </div>
               )}
               {features.orders && !features.chat && (
                 <div className="canvas-float" data-at="bottom-center">

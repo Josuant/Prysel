@@ -97,14 +97,17 @@ export class WebHost {
       text: () => this.doc.text,
       analyse: () => this.analyse(),
       // Ancha: las rejillas pequeñas llegan enteras, para dibujarlas como rejillas.
-      trace: (code) => this.session.trace(code, 20_000, false, true),
+      // Con azar repetible (la misma partida de ejemplo cada vez) y, si pide datos, sus respuestas.
+      trace: (code, inputs) =>
+        this.session.trace(code, 20_000, false, true, { seed: 7, ...(inputs ? { inputs } : {}) }),
       provider: () => {
         const provider = providerFrom(this.settings)
         return provider ? this.calls.provider(provider) : null
       },
       busy: () => this.working,
       decider: () => this.calls.decider(deciderFrom(this.settings)),
-      post: (gists, version) => this.post({ type: 'gists', version, gists }),
+      post: (gists, version, run) =>
+        this.post({ type: 'gists', version, gists, ...(run ? { run } : {}) }),
     })
     this.orders = new Orders({
       version: () => this.version,
@@ -421,7 +424,7 @@ export class WebHost {
 
   /** «Qué hace» cada función, tal como se sabe ahora: su muestra ejecutada, o por qué no la hay. */
   gistsLog(): unknown {
-    return this.gists.all
+    return { gists: this.gists.all, run: this.gists.run }
   }
 
   /** Todo lo que se le ha preguntado a cada modelo y lo que contestó, para descargarlo. Sin claves. */

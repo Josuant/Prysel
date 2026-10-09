@@ -50,10 +50,18 @@ export interface Gist {
   branches?: Switch
 }
 
-/** Por qué un programa no se ejecuta solo para sacar muestras; `null` si se puede. */
-export function unrunnable(source: string): string | null {
+/** Si el programa pide datos por teclado. */
+export function asksInput(source: string): boolean {
   const bare = source.replace(/"[^"\n]*"|'[^'\n]*'/g, '""').replace(/#.*$/gm, '')
-  if (/\binput\s*\(/.test(bare)) return 'Pide datos por teclado.'
+  return /\binput\s*\(/.test(bare)
+}
+
+/**
+ * Por qué un programa no se ejecuta solo para sacar muestras; `null` si se puede. `scripted`: hay respuestas
+ * de teclado de ejemplo, así que pedir datos ya no lo impide.
+ */
+export function unrunnable(source: string, scripted = false): string | null {
+  if (!scripted && asksInput(source)) return 'Pide datos por teclado.'
   if (reaches(source)) return 'Puede tocar archivos, la red o el sistema.'
   return null
 }
@@ -76,8 +84,8 @@ const base = (facts: Facts): Omit<Gist, 'status' | 'sample'> => ({
  * Lo que se sabe de cada función con la traza del programa tal como está (`null`: no se ha ejecutado). Las
  * que el programa ya llama salen con su muestra; las demás quedan pendientes de que se les proponga una.
  */
-export function gistsOf(program: Program, trace: Trace | null): Gist[] {
-  const blocked = unrunnable(program.source)
+export function gistsOf(program: Program, trace: Trace | null, scripted = false): Gist[] {
+  const blocked = unrunnable(program.source, scripted)
   const index = trace ? indexOf(trace) : null
   const functions = functionsIn(program).map((facts): Gist => {
     const sample = trace && index ? bestSample(samplesIn(trace, facts, { index })) : null
@@ -194,6 +202,110 @@ function conditionGists(program: Program, trace: Trace | null, index: TraceIndex
       },
     ]
   })
+}
+
+// ─── El programa entero, ejecutado ────────────────────────────────────────────────────────────────
+
+/**
+ * Cómo le fue al programa al ejecutarlo: lo que salió por pantalla y cómo acabó. Es lo primero que quiere ver
+ * quien lo está construyendo: que funciona, y qué hace.
+ */
+export interface RunSummary {
+  /** Lo que se vio en la pantalla (lo último, si es mucho). Con respuestas de ejemplo, también lo tecleado. */
+  output: string
+  /**
+   * `done`: acabó. `waiting`: se quedó pidiendo otro dato (se acabaron las respuestas de ejemplo). `cut`: era
+   * demasiado largo y se cortó. `error`: falló. `blocked`: no se ejecutó.
+   */
+  ended: 'done' | 'waiting' | 'cut' | 'error' | 'blocked'
+  /** Con `error`: cuál, y en qué línea. Con `blocked`: por qué. */
+  problem?: string
+  line?: number
+  /** Las respuestas de teclado de ejemplo que se le dieron, en orden (si pide datos). */
+  typed?: string[]
+}
+
+/** El resumen de una ejecución, a partir de su traza. */
+export function runSummary(trace: Trace, typed?: readonly string[]): RunSummary {
+  const waiting = trace.error?.name === 'NoMoreInput'
+  const failed = trace.error !== null && !waiting
+  return {
+    output: trace.output,
+    ended: failed ? 'error' : waiting ? 'waiting' : trace.truncated ? 'cut' : 'done',
+    ...(failed && trace.error
+      ? {
+          problem: `${trace.error.name}: ${trace.error.message}`,
+          ...(trace.error.line !== null ? { line: trace.error.line } : {}),
+        }
+      : {}),
+    ...(typed ? { typed: [...typed] } : {}),
+  }
+}
+
+/** La traza, sin contar como fallo que se acabaran las respuestas de ejemplo: el programa iba bien. */
+export function settled(trace: Trace): Trace {
+  return trace.error?.name === 'NoMoreInput' ? { ...trace, error: null } : trace
+}
+
+export function answersSystem(): string {
+  return [
+    'Eres parte de una herramienta que enseña cómo funciona un programa de Python ejecutándolo.',
+    'El programa pide datos por teclado. Escribe lo que teclearía una persona en UNA sesión de ejemplo, corta y',
+    'representativa: en el orden en que el programa lo va a pedir, una respuesta por cada vez que pregunte.',
+    'Reglas:',
+    '- Entre 1 y 12 respuestas. Que la sesión llegue al final del programa si se puede.',
+    '- Si pregunta si se quiere seguir o repetir, contesta que no cuando toque, para que termine.',
+    '- Si hay que acertar algo que el programa elige al azar, prueba valores razonables y distintos.',
+    '- Respuestas realistas y cortas: lo que se teclea, sin comillas de más.',
+    'Devuelve SOLO un array JSON de textos, por ejemplo: ["50", "75", "n"].',
+  ].join('\n')
+}
+
+/** Las respuestas de teclado propuestas, si de verdad son una lista corta de textos; `null` si no. */
+export function validAnswers(answer: string): string[] | null {
+  const found = /\[[\s\S]*\]/.exec(answer.replace(/```\w*/g, ''))?.[0]
+  if (!found) return null
+  try {
+    const parsed: unknown = JSON.parse(found)
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    const texts = parsed
+      .filter(
+        (item): item is string | number => typeof item === 'string' || typeof item === 'number',
+      )
+      .map((item) =>
+        String(item)
+          .replace(/[\r\n]+/g, ' ')
+          .slice(0, 60),
+      )
+    return texts.length === parsed.length ? texts.slice(0, 12) : null
+  } catch {
+    return null
+  }
+}
+
+/** Le pide a la IA las respuestas de teclado de una sesión de ejemplo. `null` si no las dio bien. */
+export async function proposeAnswers(
+  provider: AiProvider,
+  source: string,
+): Promise<string[] | null> {
+  try {
+    const answer = await provider.generate({
+      system: answersSystem(),
+      prompt: `El programa:\n\n${source.trimEnd()}\n\nEscribe las respuestas de teclado de la sesión de ejemplo.`,
+      maxTokens: 300,
+    })
+    return validAnswers(answer)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Lo que identifica lo que el programa pregunta por teclado: sus `input(…)`, tal como están escritos. Mientras
+ * no cambien, valen las mismas respuestas de ejemplo (aunque cambie el resto del programa).
+ */
+export function inputSignature(source: string): string {
+  return [...source.matchAll(/\binput\s*\(([^)\n]*)\)/g)].map((match) => match[1] ?? '').join('|')
 }
 
 // ─── Proponer con qué probarla ────────────────────────────────────────────────────────────────────

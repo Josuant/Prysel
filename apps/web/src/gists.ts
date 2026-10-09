@@ -3,10 +3,16 @@ import type { AiProvider } from '../../../packages/extension/src/ai/provider.ts'
 import { functionsIn } from '../../../packages/extension/src/gist/facts.ts'
 import {
   GistCache,
+  asksInput,
   gistsOf,
+  inputSignature,
   invent,
+  proposeAnswers,
+  runSummary,
+  settled,
   unrunnable,
   type Gist,
+  type RunSummary,
 } from '../../../packages/extension/src/gist/gist.ts'
 import { loopsIn } from '../../../packages/extension/src/gist/laps.ts'
 import { triesIn } from '../../../packages/extension/src/gist/net.ts'
@@ -28,14 +34,17 @@ export interface GistsPort {
   version(): number
   text(): string
   analyse(): Promise<Program>
-  /** Ejecuta un programa entero grabando su traza; `null` si no se pudo. */
-  trace(code: string): Promise<Trace | null>
+  /**
+   * Ejecuta un programa entero grabando su traza; `null` si no se pudo. `inputs`: las respuestas de teclado
+   * de ejemplo, si el programa pide datos.
+   */
+  trace(code: string, inputs?: readonly string[]): Promise<Trace | null>
   provider(): AiProvider | null
   /** Quien elige entre varias reglas que la muestra confirma por igual. */
   decider(): Decider
   /** Hay una orden construyendo o una consulta en marcha: se espera a que acabe. */
   busy(): boolean
-  post(gists: Gist[], version: number): void
+  post(gists: Gist[], version: number, run: RunSummary | null): void
 }
 
 /** Lo que se espera, con el código quieto, antes de ejecutarlo. */
@@ -50,12 +59,21 @@ export class Gists {
   /** El texto del que salió lo último que se mandó: si no ha cambiado, no hay nada que hacer. */
   private done: string | null = null
   private last: Gist[] = []
+  /** Cómo le fue al programa la última vez que se ejecutó. */
+  private ran: RunSummary | null = null
+  /** Las respuestas de teclado de ejemplo, por lo que el programa pregunta: mientras pregunte lo mismo, valen. */
+  private readonly answers = new Map<string, string[]>()
 
   constructor(private readonly port: GistsPort) {}
 
   /** Lo último que se supo, para exportarlo con los registros. */
   get all(): readonly Gist[] {
     return this.last
+  }
+
+  /** Lo que salió al ejecutar el programa la última vez, para exportarlo con los registros. */
+  get run(): RunSummary | null {
+    return this.ran
   }
 
   /** Queda algo por mirar: está esperando a que haya calma, o ejecutando. */
@@ -84,7 +102,7 @@ export class Gists {
       if (gists === null || this.port.version() !== version) return this.touch()
       this.done = text
       this.last = gists
-      this.port.post(gists, version)
+      this.port.post(gists, version, this.ran)
     } catch {
       // Sin «qué hace» el lienzo sigue como siempre: no es motivo para molestar.
     } finally {
@@ -93,21 +111,41 @@ export class Gists {
   }
 
   private async compute(text: string): Promise<Gist[] | null> {
+    this.ran = null
     if (text.trim() === '') return []
     const program = await this.port.analyse()
     const facts = functionsIn(program)
-    if (
+    const provider = this.port.provider()
+    // Un programa que pide datos por teclado se ejecuta con unas respuestas de ejemplo: las propone la IA
+    // una vez, y valen mientras el programa siga preguntando lo mismo.
+    let inputs: string[] | undefined
+    if (asksInput(text)) {
+      const key = inputSignature(text)
+      inputs = this.answers.get(key)
+      if (!inputs && provider) {
+        const proposed = await proposeAnswers(provider, text)
+        if (proposed) {
+          inputs = proposed
+          this.answers.set(key, proposed)
+        }
+      }
+    }
+    const blocked = unrunnable(text, inputs !== undefined)
+    if (blocked !== null) {
+      this.ran = { output: '', ended: 'blocked', problem: blocked }
+      return gistsOf(program, null)
+    }
+    const raw = await this.port.trace(text, inputs)
+    if (raw) this.ran = runSummary(raw, inputs)
+    const trace = raw ? settled(raw) : null
+    const nothing =
       facts.length === 0 &&
       loopsIn(program).length === 0 &&
       triesIn(program).length === 0 &&
       classesIn(program).length === 0 &&
       conditionsIn(program).length === 0
-    )
-      return []
-    if (unrunnable(text) !== null) return gistsOf(program, null)
-    const trace = await this.port.trace(text)
-    const gists = gistsOf(program, trace)
-    const provider = this.port.provider()
+    if (nothing) return []
+    const gists = gistsOf(program, trace, inputs !== undefined)
     let invented = 0
     for (const [at, gist] of gists.entries()) {
       if (gist.status !== 'sin-muestra' || trace?.error) continue
@@ -123,7 +161,7 @@ export class Gists {
       const tried = await invent(program, fact, {
         provider,
         trace: async (code) =>
-          (await this.port.trace(code)) ?? {
+          (await this.port.trace(code, inputs)) ?? {
             events: [],
             truncated: false,
             error: null,

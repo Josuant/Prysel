@@ -3,7 +3,7 @@ import type { Assets, KernelStatus, RunView } from './runs.ts'
 import { LESSON_LIMITS, parseLesson, type Lesson } from './lesson.ts'
 import type { Trace } from './trace.ts'
 import type { CallEntry } from './calls.ts'
-import type { Gist } from './gist/gist.ts'
+import type { Gist, RunSummary } from './gist/gist.ts'
 import {
   INTENTS,
   type Decision,
@@ -222,6 +222,8 @@ export interface GistsMessage {
   type: 'gists'
   version: number
   gists: Gist[]
+  /** Cómo le fue al programa entero al ejecutarlo (lo que salió por pantalla). */
+  run?: RunSummary
 }
 
 export type WebviewMessage =
@@ -553,7 +555,20 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
         typeof gist.hash === 'string' &&
         typeof gist.status === 'string',
     )
-    return sound ? { type: 'gists', version: version as number, gists } : null
+    const run = (value as { run?: Partial<RunSummary> | null }).run
+    const ran =
+      typeof run === 'object' &&
+      run !== null &&
+      typeof run.output === 'string' &&
+      typeof run.ended === 'string'
+    return sound
+      ? {
+          type: 'gists',
+          version: version as number,
+          gists,
+          ...(ran ? { run: run as RunSummary } : {}),
+        }
+      : null
   }
   if (type === 'progress') {
     const { gen, text } = value as Partial<ProgressMessage>

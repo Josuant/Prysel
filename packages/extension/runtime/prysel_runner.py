@@ -550,6 +550,26 @@ class _TraceLimit(BaseException):
     """Se llegó al tope de pasos de una traza: se corta la ejecución."""
 
 
+class _NoMoreInput(BaseException):
+    """El programa pidió otro dato por teclado y ya no quedaban respuestas de ejemplo: se queda ahí."""
+
+
+def _scripted_input(answers, out):
+    """Un `input` que no espera a nadie: contesta lo que se le dio, en orden, y lo deja escrito en la salida
+    como se vería en la pantalla (la pregunta y, detrás, lo tecleado)."""
+    pending = [str(answer) for answer in answers]
+
+    def ask(prompt=""):
+        out.write(str(prompt))
+        if not pending:
+            raise _NoMoreInput()
+        answer = pending.pop(0)
+        out.write(answer + "\n")
+        return answer
+
+    return ask
+
+
 _COMPREHENSIONS = {"<listcomp>", "<setcomp>", "<dictcomp>", "<genexpr>"}
 
 # `reprlib` recorta sin construir la representación entera: una lista enorme no cuesta un paso de traza.
@@ -1051,6 +1071,10 @@ class Runner:
         limit = int(request.get("limit", 5000))
         safe = bool(request.get("safe", False))
         wide = bool(request.get("wide", False))
+        # Respuestas de teclado dadas de antemano (para ver funcionar un programa que pide datos), y una
+        # semilla para que su azar salga igual cada vez que se vuelve a mirar.
+        inputs = request.get("inputs")
+        seed = request.get("seed")
         filename = f"<prysel-trace:{run}>"
         out = io.StringIO()
         source = request.get("code", "")
@@ -1067,6 +1091,8 @@ class Runner:
             error = {"name": "UnsafeCode", "message": str(unsafe), "line": unsafe.line}
         tracer = _Tracer(filename, limit, out, hidden)
         namespace = {"__name__": "__main__"}
+        if isinstance(inputs, list):
+            namespace["input"] = _scripted_input(inputs, out)
         truncated = False
         if error is None:
             saved = sys.stdout, sys.stderr
@@ -1075,6 +1101,10 @@ class Runner:
             try:
                 code = compile(source, filename, "exec")
                 _WIDE = wide
+                if seed is not None:
+                    import random as _random
+
+                    _random.seed(seed)
                 sys.settrace(tracer.global_trace)
                 try:
                     exec(code, namespace)
@@ -1083,6 +1113,10 @@ class Runner:
                     _WIDE = False
             except _TraceLimit:
                 truncated = True
+            except _NoMoreInput:
+                # No es un fallo del programa: se acabó el ejemplo. Queda dicho, para contarlo así.
+                truncated = True
+                error = {"name": "NoMoreInput", "message": "Se quedó esperando otra respuesta.", "line": None}
             except BaseException as caught:  # incluye KeyboardInterrupt y SystemExit
                 line = None
                 for frame in traceback.extract_tb(caught.__traceback__):

@@ -6,7 +6,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import type { AiProvider } from '../src/ai/provider.ts'
 import { functionsIn } from '../src/gist/facts.ts'
-import { GistCache, gistsOf, invent, unrunnable, validCall, withCall } from '../src/gist/gist.ts'
+import {
+  GistCache,
+  asksInput,
+  gistsOf,
+  inputSignature,
+  invent,
+  runSummary,
+  settled,
+  unrunnable,
+  validAnswers,
+  validCall,
+  withCall,
+} from '../src/gist/gist.ts'
 import { candidateRules, pickRule, testOf, verifiedRules } from '../src/gist/patterns.ts'
 import { bestSample, samplesIn } from '../src/gist/sample.ts'
 import {
@@ -20,6 +32,7 @@ import {
 import type { Decider } from '../src/jev/client.ts'
 import { Kernel } from '../src/kernel.ts'
 import { sampleScene } from '../webview/src/gisting.ts'
+import { runLines } from '../webview/src/RunPanel.tsx'
 import type { Trace } from '../src/trace.ts'
 
 /**
@@ -265,6 +278,36 @@ describe('las reglas que deja leer el código', () => {
       candidateRules(lines('if a == 1:', '    x = 1', '    z = 3', 'else:', '    x = 2')),
     ).toEqual([])
     expect(candidateRules(lines('if a == 1:', '    x = 1'))).toEqual([])
+  })
+})
+
+describe('un programa que pide datos por teclado', () => {
+  it('las respuestas de ejemplo tienen que ser una lista corta de textos', () => {
+    expect(validAnswers('["50", "75", "n"]')).toEqual(['50', '75', 'n'])
+    expect(validAnswers('```json\n[50, "s"]\n```')).toEqual(['50', 's'])
+    expect(validAnswers('Claro: prueba con 50')).toBeNull()
+    expect(validAnswers('[]')).toBeNull()
+    expect(validAnswers('[{"a": 1}]')).toBeNull()
+    expect(validAnswers(JSON.stringify(Array.from({ length: 30 }, () => 'x')))).toHaveLength(12)
+  })
+
+  it('valen mientras pregunte lo mismo, aunque cambie lo demás', () => {
+    const game = 'n = int(input("Adivina: "))\nprint(n)\n'
+    expect(inputSignature(game)).toBe(inputSignature(game.replace('print(n)', 'print(n * 2)')))
+    expect(inputSignature(game)).not.toBe(inputSignature(game.replace('Adivina', 'Otra')))
+    expect(asksInput(game)).toBe(true)
+    expect(asksInput('print("input(")\n')).toBe(false)
+  })
+
+  it('en la salida, lo tecleado se separa de lo que escribió el programa', () => {
+    expect(runLines('Adivina: 50\nMayor\nAdivina: 75\n¡Acertaste!\n', ['50', '75'])).toEqual([
+      { text: 'Adivina: ', typed: '50' },
+      { text: 'Mayor' },
+      { text: 'Adivina: ', typed: '75' },
+      { text: '¡Acertaste!' },
+    ])
+    // Sin respuestas, todo es del programa.
+    expect(runLines('Total: 50\n')).toEqual([{ text: 'Total: 50' }])
   })
 })
 
@@ -638,6 +681,60 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     const gist = await ruled(source, 'dobles', 'dobles([1, -2, 3])')
     expect(gist.sample?.paths).toHaveLength(3)
     expect(gist.rule).toBeUndefined()
+  })
+
+  const GUESS = lines(
+    'import random',
+    'secreto = random.randint(1, 100)',
+    'intentos = 0',
+    'while intentos < 3:',
+    '    intento = int(input("Adivina: "))',
+    '    intentos += 1',
+    '    if intento < secreto:',
+    '        print("Mayor")',
+    '    elif intento > secreto:',
+    '        print("Menor")',
+    '    else:',
+    '        print("¡Acertaste!")',
+    '        break',
+    'print("Era el", secreto)',
+  )
+
+  it('con respuestas de ejemplo se ve funcionar: lo que pregunta, lo tecleado y lo que contesta', async () => {
+    const extra = { inputs: ['50', '25', '12'], seed: 7 }
+    const trace = await kernel.trace(GUESS, 20_000, false, true, extra)
+    const run = runSummary(trace, extra.inputs)
+    expect(run.ended).toBe('done')
+    expect(run.typed).toEqual(['50', '25', '12'])
+    expect(run.output).toMatch(/^Adivina: 50\n(Mayor|Menor|¡Acertaste!)\n/)
+    expect(run.output).toMatch(/Era el \d+\n$/)
+    // Con la misma semilla, la misma partida: no cambia cada vez que se vuelve a mirar.
+    const again = await kernel.trace(GUESS, 20_000, false, true, extra)
+    expect(again.output).toBe(trace.output)
+    // Y hay tarjetas: el bucle dio sus vueltas con esos datos.
+    const gists = gistsOf(parse(GUESS), settled(trace), true)
+    expect(gists.find((gist) => gist.block === 'loop')?.laps?.total).toBeGreaterThan(0)
+  })
+
+  it('si se acaban las respuestas, se queda esperando: no es un fallo del programa', async () => {
+    const trace = await kernel.trace(GUESS, 20_000, false, true, { inputs: ['50'], seed: 7 })
+    const run = runSummary(trace, ['50'])
+    expect(run.ended === 'waiting' || run.ended === 'done').toBe(true)
+    expect(run.problem).toBeUndefined()
+    expect(settled(trace).error).toBeNull()
+    expect(run.output.startsWith('Adivina: 50\n')).toBe(true)
+  })
+
+  it('un programa que falla lo dice, con su línea', async () => {
+    const source = lines('precios = [3, 4]', 'print(precios[5])')
+    const run = runSummary(await kernel.trace(source))
+    expect(run).toMatchObject({ ended: 'error', line: 2 })
+    expect(run.problem).toMatch(/^IndexError/)
+  })
+
+  it('sin respuestas de ejemplo, un programa que pide datos sigue sin ejecutarse solo', () => {
+    expect(unrunnable(GUESS)).toBe('Pide datos por teclado.')
+    expect(unrunnable(GUESS, true)).toBeNull()
   })
 
   it('un método enseña el objeto antes y después', async () => {

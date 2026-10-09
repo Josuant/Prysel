@@ -6,7 +6,7 @@ import type {
   Summary,
 } from '../../../packages/extension/src/kernel.ts'
 import type { Engine } from '../../../packages/extension/src/session.ts'
-import type { Trace } from '../../../packages/extension/src/trace.ts'
+import type { Trace, TraceExtra } from '../../../packages/extension/src/trace.ts'
 import PythonWorker from './python.worker.ts?worker'
 
 /**
@@ -159,7 +159,13 @@ export class WebKernel implements Engine {
     })
   }
 
-  trace(code: string, limit = 20_000, safe = false, wide = false): Promise<Trace> {
+  trace(
+    code: string,
+    limit = 20_000,
+    safe = false,
+    wide = false,
+    extra: TraceExtra = {},
+  ): Promise<Trace> {
     const id = `t${++this.counter}`
     return new Promise((resolve, reject) => {
       if (this.dead) return reject(this.dead)
@@ -173,7 +179,7 @@ export class WebKernel implements Engine {
           output: String(event['output'] ?? ''),
         })
       })
-      this.send({ op: 'trace', id, code, limit, safe, wide })
+      this.send({ op: 'trace', id, code, limit, safe, wide, ...extra })
     })
   }
 

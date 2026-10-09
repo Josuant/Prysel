@@ -5945,6 +5945,116 @@ button.fn-menu__crumb:hover {
 }
 
 /*
+ * «Al ejecutarlo»: lo que el programa saca por pantalla, a la vista mientras se construye. Una consola
+ * pequeña en una esquina del lienzo: las líneas entran una a una cuando la salida cambia, y lo que se tecleó
+ * (las respuestas de ejemplo de un programa que pide datos) va resaltado.
+ */
+.canvas-float[data-at='bottom-right'] {
+  right: 14px;
+  bottom: 16px;
+}
+.run-panel {
+  display: flex;
+  width: min(340px, calc(100vw - 48px));
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  animation: gist-settle 300ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.run-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.run-panel__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--state-success);
+}
+.run-panel[data-ended='error'] .run-panel__dot {
+  background: var(--state-error);
+}
+.run-panel[data-ended='waiting'] .run-panel__dot,
+.run-panel[data-ended='cut'] .run-panel__dot,
+.run-panel[data-ended='blocked'] .run-panel__dot {
+  background: var(--state-warning);
+}
+.run-panel__title {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.run-panel__badge {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  border-radius: var(--radius-full);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+}
+.run-panel__toggle {
+  flex: none;
+}
+.run-panel__out {
+  display: flex;
+  max-height: 220px;
+  flex-direction: column;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 9px;
+  background: var(--void);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 17px;
+}
+.run-panel__line {
+  display: block;
+  min-height: 17px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  animation: gist-in 220ms ease-out both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.run-panel__typed {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+}
+.run-panel__more,
+.run-panel__empty {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+}
+.run-panel__end {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.run-panel[data-ended='error'] .run-panel__end {
+  color: var(--state-error);
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-panel,
+  .run-panel__line {
+    animation: none;
+  }
+}
+
+/*
  * ── Etapas: el algoritmo a la vista ──
  * Una fase del algoritmo con nombre. Plegada, una tarjeta de cuaderno: su número en un squircle del acento, su
  * título y su subtítulo, lo que usa → lo que deja (chips) y las pastillas de sus subprocesos. Abierta, un marco

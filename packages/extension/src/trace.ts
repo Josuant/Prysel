@@ -80,6 +80,16 @@ export interface Trace {
   output: string
 }
 
+/**
+ * Lo que se le da de más a una traza para ver funcionar un programa sin nadie delante: las respuestas de
+ * teclado, en orden (cada `input()` toma la siguiente; si se acaban, el programa se queda ahí y la traza
+ * lo dice con el error `NoMoreInput`), y una semilla para que su azar salga igual cada vez.
+ */
+export interface TraceExtra {
+  inputs?: readonly string[]
+  seed?: number
+}
+
 export interface FrameState {
   id: number
   /** `null` en el programa (el marco 0). */

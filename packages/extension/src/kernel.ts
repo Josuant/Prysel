@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { createServer, type Socket } from 'node:net'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Trace } from './trace.ts'
+import type { Trace, TraceExtra } from './trace.ts'
 
 /**
  * El cliente del motor de ejecución (`runtime/prysel_runner.py`): lanza un Python, le pide que ejecute
@@ -371,7 +371,13 @@ export class Kernel {
    * motor recorre el árbol antes de ejecutar nada; un módulo o un nombre fuera de la lista corta ni se
    * compila, y llega como un error de traza más (`error.name === 'UnsafeCode'`).
    */
-  trace(code: string, limit = 20_000, safe = false, wide = false): Promise<Trace> {
+  trace(
+    code: string,
+    limit = 20_000,
+    safe = false,
+    wide = false,
+    extra: TraceExtra = {},
+  ): Promise<Trace> {
     const id = `t${++this.counter}`
     return new Promise((resolve, reject) => {
       if (this.dead) return reject(this.dead)
@@ -385,7 +391,7 @@ export class Kernel {
         })
       })
       try {
-        this.send({ op: 'trace', id, code, limit, safe, wide })
+        this.send({ op: 'trace', id, code, limit, safe, wide, ...extra })
       } catch (error) {
         this.waiting.delete(`trace:${id}`)
         reject(error)
