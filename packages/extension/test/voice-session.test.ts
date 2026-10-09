@@ -354,6 +354,28 @@ describe('«añade unos gastos de ejemplo», con el programa de gastos ya escrit
     expect(directive.kind === 'do' && directive.intent).toBe('modificar')
   })
 
+  it('y si lo lee como ir a verlo, pero dice que hay que cambiar el código, también se hace', async () => {
+    const { directive } = await decideCommand(
+      {
+        text: 'enséñame solo los de más de 20',
+        program: parse(SOURCE),
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+      },
+      // Lo que contestó el JEV de verdad la segunda vez.
+      recorded({
+        accion: pick('enfocar', 0.61),
+        ver: pick('diagrama', 0.36),
+        encaje: pick('cambio', 0.92),
+        pieza: pick('if', 0.7),
+        objetivo: pick('ninguno', 0.37),
+      }),
+    )
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
+  })
+
   it('una pieza que sí está clara se sigue poniendo tal cual', async () => {
     const { directive } = await decideCommand(
       {
@@ -367,6 +389,44 @@ describe('«añade unos gastos de ejemplo», con el programa de gastos ya escrit
       recorded({ ...answers, pieza: pick('variable', 0.93) }),
     )
     expect(directive.kind === 'do' && directive.intent).toBe('agregar')
+  })
+})
+
+describe('«Haz el juego de la vida… y enseña tres generaciones», con el programa vacío', () => {
+  it('es un programa que construir, no varias órdenes: no se parte', async () => {
+    const { directive } = await decideCommand(
+      {
+        text: 'Haz el juego de la vida de Conway en un tablero de 5 por 5 y enseña tres generaciones',
+        program: parse(''),
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+      },
+      // El JEV dijo que eran varias cosas (por el «y enseña…»).
+      recorded({
+        varias: { type: 'noul', noul: 0.9 },
+        accion: pick('componer', 0.9),
+        alcance: pick('esquema', 0.8),
+        donde: pick('final', 0.9),
+      }),
+    )
+    expect(directive.kind === 'do' && directive.effect.type).toBe('compose')
+  })
+
+  it('con un programa ya escrito, dos órdenes en una frase sí se parten', async () => {
+    const { directive } = await decideCommand(
+      {
+        text: 'Añade un contador y luego imprímelo',
+        program: parse(lines('x = 1')),
+        selected: null,
+        focus: null,
+        typed: true,
+        genId: 'g1',
+      },
+      recorded({ varias: { type: 'noul', noul: 0.9 }, accion: pick('agregar', 0.9) }),
+    )
+    expect(directive.kind).toBe('several')
   })
 })
 

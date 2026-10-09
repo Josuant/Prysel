@@ -814,7 +814,13 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   if (order < THRESHOLDS.order) return done({ kind: 'ignored', say: 'No lo tomé como una orden.' })
 
   const several = answers.varias?.type === 'noul' ? answers.varias.noul : 0
-  if (several >= THRESHOLDS.several) {
+  // Con el programa vacío, lo que se pide es un programa: «haz el juego de la vida y enseña tres
+  // generaciones» es una sola cosa que construir, no cinco órdenes sueltas. (Partida en pasos, se paró en el
+  // cuarto —«repite el cálculo»: ¿envolver qué?— y nunca llegó a enseñar nada.)
+  if (
+    several >= THRESHOLDS.several &&
+    (input.program.nodes.length > 0 || input.genId === undefined)
+  ) {
     return done({ kind: 'several', say: 'Son varias órdenes: las hago una a una.' })
   }
 
@@ -1016,6 +1022,11 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
    * Cambiar lo que ya está escrito (lo redacta la IA generativa). `followUp`: la orden retoca lo que se
    * acaba de hacer, así que es ahí donde se mira, diga lo que diga de pasada.
    */
+  /** El JEV dice que cumplir la orden pide cambiar lo que ya está escrito. */
+  const changes = (): boolean => {
+    const fits = choice(answers.encaje)
+    return fits?.choice === 'cambio' && fits.confidence >= 0.6
+  }
   /** La orden pregunta por lo que este programa ya hace (lo dice el JEV), no por un tema nuevo. */
   const aboutThis = (): boolean => {
     const about = choice(answers.sobre)
@@ -1287,6 +1298,9 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         return intoClass(what)
       }
       if (!what?.node || !where?.node || what.id === where.id) {
+        // Sin saber qué o adónde, antes que preguntar lo resuelve la IA con el programa delante.
+        if (hasCode && input.genId !== undefined && forced.intent === undefined)
+          return rework(false)
         return done({ kind: 'unknown', say: 'Dime qué muevo y adónde: nómbralos los dos.' })
       }
       const how = choice(answers.mover_como)?.choice ?? 'dentro'
@@ -1307,6 +1321,8 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
 
     case 'envolver': {
       if (!target?.node) {
+        if (hasCode && input.genId !== undefined && forced.intent === undefined)
+          return rework(false)
         return done({ kind: 'unknown', say: 'Dime qué envuelvo: selecciónalo o nómbralo.' })
       }
       const into = choice(answers.envolver_en)
@@ -1475,7 +1491,8 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
       // muestre?»), lo resuelve la IA con el programa delante: quien pide resultados espera que pase algo.
       if (
         intent === 'enfocar' &&
-        doubtful &&
+        // …o seguro de que es mirar, pero diciendo a la vez que hay que cambiar el código (visto al 92 %).
+        (doubtful || changes()) &&
         !namedTarget &&
         literal === null &&
         forced.intent === undefined &&

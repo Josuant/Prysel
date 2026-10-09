@@ -86,9 +86,11 @@ describe('mover algo que ya existe', () => {
     )
   })
 
-  it('sin saber qué o adónde, lo pregunta en vez de inventarlo', async () => {
+  it('sin saber adónde, no se inventa un destino: lo resuelve la IA con el programa delante', async () => {
+    // Antes se devolvía una pregunta («dime qué muevo y adónde»). Con una IA que cambie el programa, quien
+    // pide resultados no se queda parado: es un cambio, y lo hace ella viendo el programa entero.
     const { directive } = await order('mueve la función sumar')
-    expect(directive.kind).toBe('unknown')
+    expect(directive.kind === 'do' && directive.intent).toBe('modificar')
   })
 })
 
