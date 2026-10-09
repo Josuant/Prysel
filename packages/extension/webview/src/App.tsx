@@ -675,11 +675,23 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     const statement = top.get(id)
     return statement === undefined ? undefined : runs[statement]
   }
+  // Si el programa falló al ejecutarlo, el paso en el que falló se marca en el diagrama: «línea 30» no le
+  // dice nada a quien no lee el código; ver cuál es, sí.
+  const failing =
+    ran?.ended === 'error' && ran.line !== undefined && program
+      ? ([...program.nodes]
+          .filter(
+            (n) => n.range && n.line <= (ran.line ?? 0) && (n.lineEnd ?? n.line) >= (ran.line ?? 0),
+          )
+          .sort((a, b) => b.line - a.line)[0]?.id ?? null)
+      : null
   const stateOf = (id: string): NodeState => {
+    if (id === failing) return 'error'
     const view = viewOf(id)
     return view ? NODE_STATE[view.state] : 'dormant'
   }
-  const started = kernel !== 'stopped' || Object.values(runs).some((r) => r.state !== 'never')
+  const started =
+    failing !== null || kernel !== 'stopped' || Object.values(runs).some((r) => r.state !== 'never')
 
   /** Ejecutar: los nodos pedidos (con lo que necesitan y no está al día), o todo. */
   const run = (ids: string[] | 'all') => {

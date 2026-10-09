@@ -82,7 +82,14 @@ export function RunPanel({ run }: { run: RunSummary }) {
         <>
           {lines.length > 0 ? (
             // La clave hace que, al cambiar la salida, las líneas vuelvan a entrar una a una.
-            <pre key={run.output} className="run-panel__out">
+            <pre
+              key={run.output}
+              className="run-panel__out"
+              // Lo último que salió (cómo acabó) es lo que importa: la consola empieza por el final.
+              ref={(element) => {
+                if (element) element.scrollTop = element.scrollHeight
+              }}
+            >
               {hidden > 0 && <span className="run-panel__more">… {hidden} líneas antes</span>}
               {lines.map((line, index) => (
                 <span
