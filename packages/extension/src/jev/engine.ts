@@ -224,6 +224,11 @@ export type Directive =
       pending?: { id: string; template: TemplateId }
       /** Hay que explicar este elemento (lo redacta la IA generativa, después). */
       explain?: string
+      /**
+       * La orden es una pregunta sobre el programa: la contesta la IA generativa, después, mirándolo entero,
+       * y se señala el sitio que lo decide. No cambia el código.
+       */
+      answer?: boolean
       /** La vista vuelve al programa principal: se sale de la función o la clase que se estuviera viendo. */
       home?: boolean
       /**
@@ -464,6 +469,36 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         },
       }
     }
+    if (input.genId !== undefined && input.program.nodes.length > 0) {
+      // «¿Cómo sabe cuándo he ganado?» pregunta por ESTE programa. Con las claves de verdad se entendía como
+      // un tema que enseñar, y se escribía un modelo nuevo (una copia del juego) al final del programa de
+      // quien solo quería entender el suyo.
+      if (ASKS.test(plainText(input.text))) {
+        questions.sobre = {
+          type: 'choice',
+          instructions:
+            'La `orden` pregunta algo o pide una explicación. ¿Pregunta por ESTE programa (el que ya está escrito: cómo hace algo, por qué, qué pasa si…), o quiere aprender un tema nuevo que no es este programa?',
+          criteria: {
+            programa:
+              'Pregunta por lo que este programa ya hace: «¿cómo sabe cuándo he ganado?», «¿por qué empieza en cero?», «¿qué pasa si escribo una letra?», «¿dónde se calcula el total?».',
+            tema: 'Quiere que se le enseñe un tema general, que no está en este programa: «explícame la recursión», «qué es una red neuronal», «cómo funciona el interés compuesto».',
+          },
+        }
+      }
+      // «Que pregunte si quiero jugar otra vez» no se cumple pegando una pregunta al final: hay que hacer
+      // que el juego se repita. Si lo que se pide cambia cómo funciona lo que ya hay, no es añadir una pieza.
+      questions.encaje = {
+        type: 'choice',
+        instructions:
+          'El programa ya tiene código. Para cumplir la `orden`, ¿basta con añadir una pieza nueva y suelta, o hay que cambiar o envolver lo que ya está escrito?',
+        criteria: {
+          pieza:
+            'Basta con añadir algo nuevo que no toca lo que hay: otra variable, otra función, imprimir un dato al final, una lista nueva.',
+          cambio:
+            'Hay que cambiar cómo funciona lo que ya está: que se repita, que tenga un límite, que pregunte y actúe según la respuesta, que haga otra cosa, que lo de antes pase solo en ciertos casos.',
+        },
+      }
+    }
     // Se está viendo una función o una clase por dentro: lo que se pide, ¿es parte de ella o es algo aparte?
     if (input.genId !== undefined && input.focus !== null) {
       questions.ambito = {
@@ -682,6 +717,10 @@ export function titleIn(text: string): string | null {
 }
 
 // ───────────────────────── la resolución ─────────────────────────
+
+/** Lo que suena a pregunta o a pedir una explicación. */
+const ASKS =
+  /[¿?]|\b(como|por que|para que|que hace|que pasa|que es|cuando|donde|explica\w*|cuenta(?:me)?|dime)\b/
 
 /** Verbos que tanto piden ir a ver algo como que el programa lo enseñe. */
 const SHOWS = /\b(muestra\w*|mostrar\w*|ensena\w*|imprim\w+|pinta(?:lo|la)?|dibuja(?:lo|la)?)\b/
@@ -956,6 +995,27 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
    * Cambiar lo que ya está escrito (lo redacta la IA generativa). `followUp`: la orden retoca lo que se
    * acaba de hacer, así que es ahí donde se mira, diga lo que diga de pasada.
    */
+  /** La orden pregunta por lo que este programa ya hace (lo dice el JEV), no por un tema nuevo. */
+  const aboutThis = (): boolean => {
+    const about = choice(answers.sobre)
+    return (
+      hasCode &&
+      input.genId !== undefined &&
+      forced.target === undefined &&
+      about?.choice === 'programa' &&
+      about.confidence >= 0.5
+    )
+  }
+  /** Se contesta mirando el programa: la IA responde en una frase y se señala dónde. No se escribe nada. */
+  const answerIt = (): Decision =>
+    done({
+      kind: 'do',
+      intent: 'explicar',
+      effect: { type: 'focus' },
+      say: 'Lo miro en tu programa.',
+      answer: true,
+    })
+
   const rework = (followUp: boolean): Decision => {
     if (input.genId === undefined) {
       return done({
@@ -1041,6 +1101,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     case 'modificar':
       return rework(false)
     case 'ensenar':
+      if (aboutThis()) return answerIt()
       // Si lo que se quiere entender resulta ser algo de este programa, se explica ese elemento.
       if (namedTarget) {
         return done({
@@ -1061,6 +1122,17 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         say: 'Preparo la lección narrada del programa.',
       })
     case 'agregar': {
+      // Lo que se pide cambia cómo funciona lo que ya hay: no se cumple con una pieza suelta.
+      const fits = choice(answers.encaje)
+      if (
+        forced.piece === undefined &&
+        hasCode &&
+        input.genId !== undefined &&
+        fits?.choice === 'cambio' &&
+        fits.confidence >= 0.5
+      ) {
+        return rework(false)
+      }
       const wanted = choice(answers.pieza)
       const piece =
         forced.piece ??
@@ -1372,7 +1444,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         forced.target === undefined &&
         input.genId !== undefined
       ) {
-        return compose(true)
+        return aboutThis() ? answerIt() : compose(true)
       }
       // «Ver el programa principal», «sal de aquí»: no señala un elemento, pide salir a la vista general.
       if (

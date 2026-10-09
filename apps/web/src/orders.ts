@@ -27,7 +27,11 @@ import {
   type Directive,
   type Effect,
 } from '../../../packages/extension/src/jev/engine.ts'
-import { explainNode, generateFill } from '../../../packages/extension/src/jev/fill.ts'
+import {
+  answerQuestion,
+  explainNode,
+  generateFill,
+} from '../../../packages/extension/src/jev/fill.ts'
 import { indentationOk } from '../../../packages/extension/src/jev/modify.ts'
 import {
   DONE_THRESHOLD,
@@ -375,6 +379,22 @@ export class Orders {
       const node = program.nodes.find((n) => n.id === directive.explain)
       const said = node ? await explainNode(provider, program, node) : null
       if (said && node) port.post({ type: 'say', text: said, focus: node.id })
+    }
+    // Una pregunta sobre el programa: se contesta mirándolo, y se señala dónde lo decide.
+    if (directive.answer && provider) {
+      const program = await port.analyse()
+      const answer = await answerQuestion(provider, program, text)
+      if (answer) {
+        // La sentencia más interior que abarca esa línea.
+        const at = answer.line
+        const node =
+          at === null
+            ? undefined
+            : program.nodes
+                .filter((n) => n.range && n.line <= at && (n.lineEnd ?? n.line) >= at)
+                .sort((a, b) => b.line - a.line)[0]
+        port.post({ type: 'say', text: answer.said, ...(node ? { focus: node.id } : {}) })
+      } else port.post({ type: 'say', text: 'No he sabido contestar a eso mirando el programa.' })
     }
     return false
   }

@@ -221,6 +221,63 @@ describe('«Muestra el tablero»: ¿ir a verlo, o que el programa lo muestre?', 
   })
 })
 
+describe('una sesión de vibe coding: el juego de adivinar el número', () => {
+  const GAME = lines(
+    'import random',
+    'secreto = random.randint(1, 100)',
+    'acertado = False',
+    'while not acertado:',
+    '    conjetura = int(input("Adivina: "))',
+    '    if conjetura == secreto:',
+    '        acertado = True',
+    'print("¡Bien hecho!")',
+  )
+  const decide = async (text: string, answers: Record<string, JevAnswer>) => {
+    const { directive } = await decideCommand(
+      { text, program: parse(GAME), selected: null, focus: null, typed: true, genId: 'g1' },
+      recorded(answers),
+    )
+    return directive
+  }
+
+  it('«¿cómo sabe cuándo he ganado?» se contesta mirando el programa: no se escribe nada', async () => {
+    // El JEV de verdad lo leyó como un tema que enseñar, y se escribió una copia del juego al final.
+    const directive = await decide('¿cómo sabe cuándo he ganado?', {
+      accion: pick('ensenar', 0.8),
+      sobre: pick('programa', 0.9),
+    })
+    expect(directive).toMatchObject({ kind: 'do', intent: 'explicar', answer: true })
+    expect(directive.kind === 'do' && directive.effect.type).toBe('focus')
+  })
+
+  it('un tema que no es de este programa sí se enseña construyendo', async () => {
+    const directive = await decide('Explícame la recursión', {
+      accion: pick('ensenar', 0.8),
+      sobre: pick('tema', 0.9),
+    })
+    expect(directive.kind === 'do' && directive.effect.type).toBe('compose')
+  })
+
+  it('«que pregunte si quiero jugar otra vez» no es pegar una pregunta al final: cambia el juego', async () => {
+    const answers = {
+      accion: pick('agregar', 0.9),
+      pieza: pick('input', 0.9),
+      donde: pick('final', 0.9),
+    }
+    const loose = await decide('al acabar, que pregunte si quiero jugar otra vez', {
+      ...answers,
+      encaje: pick('cambio', 0.85),
+    })
+    expect(loose.kind === 'do' && loose.intent).toBe('modificar')
+    // Si de verdad basta con una pieza, se añade la pieza.
+    const piece = await decide('añade una pregunta al final', {
+      ...answers,
+      encaje: pick('pieza', 0.9),
+    })
+    expect(piece.kind === 'do' && piece.intent).toBe('agregar')
+  })
+})
+
 describe('lo que el programa ya tiene no se vuelve a escribir', () => {
   it('si la IA repite una clase que ya existe, no se pone otra vez (ni dentro de sí misma)', async () => {
     const state = { text: ZOO }
