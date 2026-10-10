@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { Idea, IdeaStep } from '@prysel/ui'
 
 /**
@@ -81,6 +82,13 @@ export function IdeaView({
   // La parte donde empieza el trabajo se dice la primera, no entre «lo demás».
   const opener = start ? idea.parts.find((step) => step.id === start.at) : undefined
   const parts = opener ? idea.parts.filter((step) => step !== opener) : idea.parts
+  // Al reproducir, la línea en la que se está se trae a la vista (si quedó fuera, arriba o abajo).
+  const scroller = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (live === null) return
+    const now = scroller.current?.querySelector('.idea__step[data-live], .idea__block[data-live]')
+    now?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [live])
   const isLive = (step: IdeaStep) => live !== null && (step.id === live || step.also.includes(live))
   const block = (label: string, steps: readonly IdeaStep[], kind: string) =>
     steps.length > 0 && (
@@ -95,7 +103,7 @@ export function IdeaView({
     )
   return (
     <div className="idea" role="region" aria-label="La idea del programa">
-      <div className="idea__scroll" style={{ bottom: footer }}>
+      <div className="idea__scroll" style={{ bottom: footer }} ref={scroller}>
         <div className="idea__flow">
           {start && (
             <section className="idea__block" data-kind="start">

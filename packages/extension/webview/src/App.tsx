@@ -338,6 +338,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * o su **detalle** (el diagrama abierto, paso a paso).
    */
   const [distance, setDistance] = useState<Distance>('partes')
+  /** Cada vez que el diagrama cambia de distancia (de sus partes a su detalle, o al revés), se encuadra de nuevo. */
+  const [reframed, setReframed] = useState(0)
+  const lookFrom = useCallback(
+    (next: Distance) => {
+      if ((next === 'detalle') !== (distance === 'detalle')) setReframed((count) => count + 1)
+      setDistance(next)
+    },
+    [distance],
+  )
   /** El plan de lo que se construye, como arquitectura: cada módulo y de cuáles necesita algo. */
   const [planned, setPlanned] = useState<readonly PlannedModule[] | null>(null)
   /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
@@ -2301,7 +2310,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 framed={false}
                 interactive
                 height="fill"
-                fitKey={view.viewKey}
+                fitKey={`${view.viewKey}#${reframed}`}
                 settle={settled}
                 // Mientras se construye se ve el conjunto: la cámara no persigue cada pieza que nace.
                 follow={!building}
@@ -2488,7 +2497,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                         aria-pressed={distance === option.id}
                         title={option.title}
                         onClick={() => {
-                          setDistance(option.id)
+                          lookFrom(option.id)
                         }}
                       >
                         {option.label}
@@ -2505,7 +2514,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   live={beat?.at ?? null}
                   footer={(reserve?.bottom ?? 0) + 8}
                   onPick={(id) => {
-                    setDistance('partes')
+                    lookFrom('partes')
                     setSelected(id)
                   }}
                 />
@@ -2952,7 +2961,11 @@ type Distance = 'idea' | 'partes' | 'detalle'
 const DISTANCES: readonly { id: Distance; label: string; title: string }[] = [
   { id: 'idea', label: 'Idea', title: 'Qué hace, en unas pocas líneas' },
   { id: 'partes', label: 'Partes', title: 'Sus partes y lo que se pasan' },
-  { id: 'detalle', label: 'Detalle', title: 'Cada parte abierta, paso a paso' },
+  {
+    id: 'detalle',
+    label: 'Detalle',
+    title: 'Cada parte con lo que usa y lo que deja; ábrela para ver sus pasos',
+  },
 ]
 /** Lo que necesitan, a lo ancho, las barras de abajo para ir al lado de la consola y no encima. */
 const DOCK_ROOM = 480
