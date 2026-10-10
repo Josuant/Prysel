@@ -436,6 +436,24 @@ describe('lo pedido y lo construido: qué pieza cubre cada parte', () => {
     })
   })
 
+  it('del plan se pregunta qué etapa se ocupará, no cuál lo hace ya', async () => {
+    const asked: string[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, { instructions: string }> }) => {
+        asked.push(request.questions.parte0?.instructions ?? '')
+        return Promise.resolve({
+          ms: 1,
+          answers: { parte0: { type: 'choice' as const, choice: 'p0', confidence: 0.8 } },
+        })
+      },
+    }
+    expect(
+      await judgeCover(jev, 'gastos', ['saber cuánto llevo'], ['Mostrar total'], true),
+    ).toEqual(['Mostrar total'])
+    expect(asked[0]).toContain('etapas del plan')
+  })
+
   it('el motor local no lo sabe, y sin piezas no se pregunta', async () => {
     expect(await judgeCover(localDecider(), 'gastos', parts, pieces)).toEqual([null, null, null])
     expect(await judgeCover(localDecider(), 'gastos', parts, [])).toEqual([null, null, null])

@@ -321,6 +321,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [typed, setTyped] = useState<string | null>(null)
   /** Lo último que dijo el JEV de qué pieza cubre cada parte de lo pedido. */
   const [judged, setJudged] = useState<{ key: string; by: (string | null)[] } | null>(null)
+  /** Y lo que dijo del plan: qué etapa se ocupará de cada parte, antes de que esté escrita. */
+  const [foreseen, setForeseen] = useState<{ key: string; by: (string | null)[] } | null>(null)
   /** El esbozo de lo último que se pidió sobre un lienzo vacío: sigue a la vista mientras se construye. */
   const [asked, setAsked] = useState<{ sketch: Sketch; kind: string | null } | null>(null)
   /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
@@ -416,7 +418,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
       } else if (message.type === 'covered') {
-        setJudged({ key: coverKey(message.parts, message.pieces), by: message.by })
+        const verdict = { key: coverKey(message.parts, message.pieces), by: message.by }
+        if (message.plan) setForeseen(verdict)
+        else setJudged(verdict)
       } else if (message.type === 'preview') {
         // Si la frase está entera o a medias: el micrófono lo consulta antes de mandarla.
         if (message.complete !== undefined) {
@@ -1193,16 +1197,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // Las piezas que ya están escritas. Mientras se construye, una etapa es solo el plan: lo escrito son las
   // funciones y clases que existen. Al acabar, también vale la etapa (hay programas sin funciones).
   const programText = program?.source ?? ''
-  const written = useMemo(
-    () =>
-      asked === null
-        ? NO_PIECES
-        : piecesOf(programText, building ? [] : stages.map((stage) => stage.title)).slice(
-            0,
-            MAX_COVER_PIECES,
-          ),
-    [asked, programText, building, stages],
+  // (Las listas se guardan por su contenido: que el programa cambie sin traer piezas nuevas no vuelve a
+  // preguntar nada.)
+  const titlesKey = JSON.stringify(asked === null ? [] : stages.map((stage) => stage.title))
+  const titles = useMemo(
+    () => (JSON.parse(titlesKey) as string[]).slice(0, MAX_COVER_PIECES),
+    [titlesKey],
   )
+  const writtenKey = JSON.stringify(
+    asked === null ? [] : piecesOf(programText, building ? [] : titles).slice(0, MAX_COVER_PIECES),
+  )
+  const written = useMemo(() => JSON.parse(writtenKey) as string[], [writtenKey])
   // Qué pieza cubre cada parte lo dice el JEV, que entiende que «ver el total» es `calcular_suma`; mientras
   // llega su respuesta (o si no hay JEV), valen las palabras que comparten.
   const parts = asked?.sketch.parts
@@ -1218,6 +1223,24 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       window.clearTimeout(timer)
     }
   }, [parts, what, written])
+  // Lo mismo con el plan, mientras se construye: qué etapa se ocupará de cada parte, antes de que exista su
+  // código. Así una parte no espera como hueco mudo a que llegue su función.
+  useEffect(() => {
+    if (parts === undefined || what === undefined || parts.length === 0) return
+    if (!building || titles.length === 0) return
+    const timer = window.setTimeout(() => {
+      post({
+        type: 'cover',
+        what,
+        parts: parts.slice(0, MAX_COVER_PARTS),
+        pieces: titles,
+        plan: true,
+      })
+    }, COVER_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [parts, what, titles, building])
   const goTo = (id: string) => {
     // Se selecciona lo que se ve: si el paso está dentro de algo plegado, eso que lo guarda.
     setSelected(shownIds.has(id) ? id : (view.representative(id) ?? id))
@@ -1373,6 +1396,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
     const drawn = program && program.nodes.length > 0 ? null : sketchOf(text)
     setJudged(null)
+    setForeseen(null)
     setAsked(
       drawn && force === undefined
         ? {
@@ -2033,17 +2057,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 kind={asked.kind}
                 filled={coverOf(
                   filledBy(asked.sketch, written),
-                  // Un «ninguna» dicho de un programa que ya ha cambiado no vale: puede haber llegado la pieza.
-                  judged && judged.by.length === asked.sketch.parts.length
-                    ? judged.key === coverKey(asked.sketch.parts, written)
-                      ? judged.by
-                      : judged.by.map((piece) => (piece === '' ? null : piece))
-                    : null,
+                  verdictFor(judged, asked.sketch.parts, written),
                   written,
                 )}
-                planned={filledBy(
-                  asked.sketch,
-                  stages.map((stage) => stage.title),
+                planned={coverOf(
+                  filledBy(asked.sketch, titles),
+                  verdictFor(foreseen, asked.sketch.parts, titles),
+                  titles,
                 )}
                 hint={thinking}
                 pinned
@@ -2503,9 +2523,23 @@ const HEARD_LABELS: Record<string, string> = {
 
 /** Cuánto se espera a que el programa deje de cambiar antes de preguntar al JEV qué cubre cada parte. */
 const COVER_WAIT_MS = 350
-const NO_PIECES: string[] = []
 const coverKey = (parts: readonly string[], pieces: readonly string[]) =>
-  `${parts.join('')}${pieces.join('')}`
+  JSON.stringify([parts, pieces])
+
+/**
+ * Lo que dijo el JEV, si vale para estas partes. Un «ninguna» dicho de unas piezas que ya han cambiado no
+ * cuenta: puede haber llegado la que faltaba.
+ */
+function verdictFor(
+  verdict: { key: string; by: (string | null)[] } | null,
+  parts: readonly string[],
+  pieces: readonly string[],
+): (string | null)[] | null {
+  if (verdict?.by.length !== parts.length) return null
+  return verdict.key === coverKey(parts, pieces)
+    ? verdict.by
+    : verdict.by.map((piece) => (piece === '' ? null : piece))
+}
 
 /** Cuánto se queda el esbozo de lo pedido cuando ya está construido: lo justo para verlo completo. */
 const SKETCH_LINGER_MS = 3200

@@ -300,7 +300,7 @@ export class WebHost {
         this.orders.listening(message.on, message.text)
         return
       case 'cover':
-        this.orders.cover(message.what, message.parts, message.pieces)
+        this.orders.cover(message.what, message.parts, message.pieces, message.plan === true)
         return
       case 'clearCalls':
         this.calls.clear()

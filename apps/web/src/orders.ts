@@ -109,7 +109,8 @@ export class Orders {
   /** Las últimas órdenes y lo que se hizo con cada una: la conversación. */
   private turns: { order: string; did: string }[] = []
   private heardSeq = 0
-  private coverSeq = 0
+  private coverSeq = { at: 0 }
+  private planSeq = { at: 0 }
 
   constructor(private readonly port: OrderPort) {}
 
@@ -523,11 +524,14 @@ export class Orders {
   }
 
   /** Qué pieza del programa cubre cada parte de lo que se pidió: lo dice el JEV; si llega tarde, no vale. */
-  cover(what: string, parts: string[], pieces: string[]) {
-    const turn = ++this.coverSeq
-    void judgeCover(this.port.decider(), what, parts, pieces)
+  cover(what: string, parts: string[], pieces: string[], plan = false) {
+    // Lo escrito y lo planeado se preguntan por separado: una respuesta no deja vieja a la otra.
+    const seq = plan ? this.planSeq : this.coverSeq
+    const turn = ++seq.at
+    void judgeCover(this.port.decider(), what, parts, pieces, plan)
       .then((by) => {
-        if (turn === this.coverSeq) this.port.post({ type: 'covered', parts, pieces, by })
+        if (turn !== seq.at) return
+        this.port.post({ type: 'covered', parts, pieces, by, ...(plan ? { plan: true } : {}) })
       })
       .catch(() => undefined)
   }

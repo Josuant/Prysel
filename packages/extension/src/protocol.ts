@@ -236,6 +236,8 @@ export interface CoveredMessage {
   parts: string[]
   pieces: string[]
   by: (string | null)[]
+  /** Las piezas eran las etapas del plan, aún sin escribir. */
+  plan?: boolean
 }
 
 export type WebviewMessage =
@@ -381,6 +383,8 @@ export interface CoverMessage {
   what: string
   parts: string[]
   pieces: string[]
+  /** Las piezas son las etapas del plan: se pregunta cuál se ocupará de cada parte, no cuál lo hace ya. */
+  plan?: boolean
 }
 
 /** Olvidar las consultas apuntadas. */
@@ -615,7 +619,13 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (by.length !== parts.length || !by.every((one) => one === null || typeof one === 'string')) {
       return null
     }
-    return { type: 'covered', parts, pieces, by: by as (string | null)[] }
+    return {
+      type: 'covered',
+      parts,
+      pieces,
+      by: by as (string | null)[],
+      ...((value as { plan?: unknown }).plan === true ? { plan: true } : {}),
+    }
   }
   if (type === 'preview') {
     const { kind, text } = value as Partial<PreviewMessage>
@@ -710,7 +720,13 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     if (parts.length === 0 || parts.length > MAX_COVER_PARTS || pieces.length > MAX_COVER_PIECES) {
       return null
     }
-    return { type: 'cover', what: what.slice(0, MAX_COMMAND), parts, pieces }
+    return {
+      type: 'cover',
+      what: what.slice(0, MAX_COMMAND),
+      parts,
+      pieces,
+      ...((value as { plan?: unknown }).plan === true ? { plan: true } : {}),
+    }
   }
   if (type === 'spoken') {
     const { seq, spoke } = value as { seq?: unknown; spoke?: unknown }

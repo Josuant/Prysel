@@ -785,6 +785,8 @@ export async function judgeCover(
   what: string,
   parts: readonly string[],
   pieces: readonly string[],
+  /** Las piezas son las etapas de un plan aún sin escribir: se pregunta cuál se ocupará de cada parte. */
+  plan = false,
 ): Promise<(string | null)[]> {
   if (pieces.length === 0) return parts.map(() => null)
   const offered = Object.fromEntries(pieces.map((piece, at) => [`p${at}`, piece]))
@@ -795,10 +797,14 @@ export async function judgeCover(
         `parte${at}`,
         {
           type: 'choice' as const,
-          instructions: `Alguien pidió un programa en Python (campo \`pedido\`) que, entre otras cosas, sirva para: «${part}». El programa ya tiene las funciones, clases y etapas de \`piezas\`. ¿Cuál de ellas es la que hace eso?`,
+          instructions: plan
+            ? `Alguien pidió un programa en Python (campo \`pedido\`) que, entre otras cosas, sirva para: «${part}». Se va a escribir por etapas; \`piezas\` son los títulos de las etapas del plan. ¿Cuál de esas etapas es la que se ocupará de eso?`
+            : `Alguien pidió un programa en Python (campo \`pedido\`) que, entre otras cosas, sirva para: «${part}». El programa ya tiene las funciones, clases y etapas de \`piezas\`. ¿Cuál de ellas es la que hace eso?`,
           criteria: {
             ...offered,
-            ninguna: 'Ninguna de esas piezas hace eso: aún no está escrito.',
+            ninguna: plan
+              ? 'Ninguna etapa del plan se ocupa de eso.'
+              : 'Ninguna de esas piezas hace eso: aún no está escrito.',
           },
         },
       ]),
