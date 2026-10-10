@@ -406,6 +406,7 @@ const EDGE_TYPES = { prysel: PryselEdge, arch: ArchEdge }
 /** El nodo del resultado del programa, y lo que se separa de la arquitectura. */
 const RESULT_ID = 'prysel:result'
 const RESULT_GAP = 110
+const RESULT_NODE: CanvasNode = { id: RESULT_ID, kind: 'output.display', label: 'Resultado' }
 /** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
 const SHARED_FROM = 3
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
@@ -2029,13 +2030,15 @@ function CanvasInner({
       ? [
           {
             ...viewerNode(
-              { id: RESULT_ID, kind: 'output.display', label: result.content.title },
+              RESULT_NODE,
               result.content,
               { x: resultAt.x, y: resultAt.y },
               { w: resultAt.w, h: resultAt.h },
             ),
             draggable: false,
             selectable: false,
+            // No es un visor que se haya fijado: no se quita.
+            data: { node: RESULT_NODE, content: result.content, size: resultAt },
           },
         ]
       : []

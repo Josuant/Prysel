@@ -899,7 +899,7 @@ async function launchIfInert(host: Stagehand, players: Players, tally: Tally): P
   let call = entry.takes.length === 0 ? `${entry.name}()` : null
   if (call === null) {
     const answer = await players.provider
-      .generate({ system: callSystem(), prompt: callPrompt(program, entry), maxTokens: 200 })
+      .generate({ system: callSystem(true), prompt: callPrompt(program, entry), maxTokens: 200 })
       .catch(() => '')
     call = validCall(answer, entry)
   }

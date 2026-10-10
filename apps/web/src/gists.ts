@@ -9,6 +9,8 @@ import {
   GistCache,
   MAX_ANSWERS,
   asksInput,
+  callPrompt,
+  callSystem,
   continueAnswers,
   finalValues,
   gistsOf,
@@ -19,6 +21,7 @@ import {
   settled,
   tested,
   unrunnable,
+  validCall,
   type Gist,
   type RunSummary,
 } from '../../../packages/extension/src/gist/gist.ts'
@@ -226,17 +229,17 @@ export class Gists {
     if (!entry) return null
     const fact = functionsIn(program).find((candidate) => candidate.id === entry.id)
     if (!fact) return null
-    let call =
-      this.last.find((gist) => gist.id === fact.id)?.sample?.call ??
-      (fact.takes.length === 0 ? `${fact.name}()` : null)
+    // Para arrancarlo de verdad se pide una llamada con valores con los que se vea funcionar (la de la
+    // prueba aparte es mínima a propósito). Sin IA, vale la de la prueba; sin nada que recibir, ninguna.
+    let call = fact.takes.length === 0 ? `${fact.name}()` : null
     const provider = this.port.provider()
     if (call === null && provider) {
-      const tried = await invent(program, fact, {
-        provider,
-        trace: (code) => this.traced(code),
-      })
-      call = tried.sample?.call ?? null
+      const answer = await provider
+        .generate({ system: callSystem(true), prompt: callPrompt(program, fact), maxTokens: 200 })
+        .catch(() => '')
+      call = validCall(answer, fact)
     }
+    call ??= this.last.find((gist) => gist.id === fact.id)?.sample?.call ?? null
     if (call === null) return null
     const body = source.replace(/\s+$/, '')
     return {

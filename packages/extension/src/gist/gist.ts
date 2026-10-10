@@ -432,7 +432,11 @@ export function inputSignature(source: string): string {
 
 // ─── Proponer con qué probarla ────────────────────────────────────────────────────────────────────
 
-export function callSystem(): string {
+/**
+ * `launch`: la llamada no es para enseñar una pieza con un ejemplo mínimo, sino para **arrancar el programa
+ * entero** y verlo funcionar: valores con los que le dé tiempo a llegar a un buen resultado.
+ */
+export function callSystem(launch = false): string {
   return [
     'Eres parte de una herramienta que enseña qué hace una función de Python ejecutándola con un ejemplo.',
     'Te doy un programa y el nombre de una función o método. Escribe UNA sola línea: una llamada de ejemplo.',
@@ -440,8 +444,16 @@ export function callSystem(): string {
     '- Para una función: nombre(argumentos). Para un método: Clase(argumentos).metodo(argumentos).',
     '- Los argumentos son solo literales: números, textos, True, False, None, listas, tuplas, diccionarios.',
     '- Nada de variables, ni otras llamadas, ni operaciones.',
-    '- El ejemplo es pequeño (una lista de 3 a 6 elementos, una rejilla de hasta 4×5) y variado: que pase',
-    '  por todos los casos que la función distingue.',
+    ...(launch
+      ? [
+          '- Esta función es la que pone en marcha el programa entero. Elige valores realistas, con los que',
+          '  se vea que FUNCIONA: que le dé tiempo a llegar a un buen resultado (bastantes vueltas, una',
+          '  población o unos datos suficientes), pero que acabe en un par de segundos como mucho.',
+        ]
+      : [
+          '- El ejemplo es pequeño (una lista de 3 a 6 elementos, una rejilla de hasta 4×5) y variado: que pase',
+          '  por todos los casos que la función distingue.',
+        ]),
     'Responde solo con la llamada, sin comillas alrededor, sin explicación y sin bloque de código.',
   ].join('\n')
 }
