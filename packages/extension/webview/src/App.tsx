@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { Density, NodeState } from '@prysel/morphology'
 import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
@@ -337,15 +337,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * Desde dónde se mira el programa: su **idea** (qué hace, en unas líneas), sus **partes** (la arquitectura)
    * o su **detalle** (el diagrama abierto, paso a paso).
    */
-  const [distance, setDistance] = useState<Distance>('partes')
+  const [chosen, setChosen] = useState<Distance | null>(null)
+  /** Una pantalla estrecha (un móvil): ahí las partes, encuadradas, no se leen. */
+  const narrow = useSyncExternalStore(watchNarrow, isNarrow, () => false)
   /** Cada vez que el diagrama cambia de distancia (de sus partes a su detalle, o al revés), se encuadra de nuevo. */
   const [reframed, setReframed] = useState(0)
   const lookFrom = useCallback(
     (next: Distance) => {
-      if ((next === 'detalle') !== (distance === 'detalle')) setReframed((count) => count + 1)
-      setDistance(next)
+      if ((next === 'detalle') !== (chosen === 'detalle')) setReframed((count) => count + 1)
+      setChosen(next)
     },
-    [distance],
+    [chosen],
   )
   /** El plan de lo que se construye, como arquitectura: cada módulo y de cuáles necesita algo. */
   const [planned, setPlanned] = useState<readonly PlannedModule[] | null>(null)
@@ -902,7 +904,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     sections: program?.sections ?? NO_SECTIONS,
     // El primer nivel se lee como arquitectura. (Una lección va paso a paso por el código: sigue en columna;
     // y «Detalle» es justo eso: el diagrama abierto.)
-    architecture: lesson === null && distance !== 'detalle',
+    architecture: lesson === null && chosen !== 'detalle',
   })
   // Durante la reproducción, si el paso ocurre dentro de una función o un método que no se está viendo, el
   // lienzo entra en él solo: si no, solo se vería la llamada que lo abrió, nunca la línea que se ejecuta.
@@ -1428,6 +1430,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     }),
     [outcome, architecture, told],
   )
+  // Si nadie ha elegido: las partes; en una pantalla estrecha, la idea (que ahí sí se lee), salvo mientras se
+  // construye, que lo que se ve es el diagrama creciendo.
+  const distance: Distance = chosen ?? (narrow && !constructing ? 'idea' : 'partes')
   const showIdea = distance === 'idea' && idea !== null
   // Las franjas que ocupan las barras que flotan sobre la arquitectura: arriba las migas; abajo la leyenda
   // y, si hay historia, la de ver una vuelta (y la consola, si van encima de ella).
@@ -2958,6 +2963,18 @@ const HEARD_LABELS: Record<string, string> = {
 /** El aire entre la consola y el diagrama (su separación del borde, y un poco más). */
 const CONSOLE_MARGIN = 28
 type Distance = 'idea' | 'partes' | 'detalle'
+/** Lo que se tiene por una pantalla estrecha (la misma medida que usa la hoja de estilos). */
+const NARROW = '(max-width: 560px)'
+const canMatch = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+const isNarrow = () => canMatch() && window.matchMedia(NARROW).matches
+const watchNarrow = (changed: () => void) => {
+  if (!canMatch()) return () => undefined
+  const query = window.matchMedia(NARROW)
+  query.addEventListener('change', changed)
+  return () => {
+    query.removeEventListener('change', changed)
+  }
+}
 const DISTANCES: readonly { id: Distance; label: string; title: string }[] = [
   { id: 'idea', label: 'Idea', title: 'Qué hace, en unas pocas líneas' },
   { id: 'partes', label: 'Partes', title: 'Sus partes y lo que se pasan' },

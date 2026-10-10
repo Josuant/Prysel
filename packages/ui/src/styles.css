@@ -6789,7 +6789,7 @@ button.run-panel__line:hover {
   .distance {
     top: 54px;
   }
-  .idea__scroll {
+  .idea .idea__scroll {
     top: 96px;
   }
 }
