@@ -1554,6 +1554,46 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         : null,
     [playingBeat, playback.serial, playback.ms],
   )
+  // La visita guiada: de cada paso, lo que es y lo que hace, lo que recibe, y cuánto se usó. Todo son hechos
+  // del programa (su rótulo) y de su ejecución; con voz, además se dice.
+  const guideText = useMemo(() => {
+    if (!playback.guided || !playingBeat || !architecture) return null
+    const { at, phase, links } = playingBeat
+    if (phase === 'result') {
+      const said = outcome?.result?.content.text?.slice(-1)[0]
+      return said
+        ? `Y al salir del ciclo, el resultado: ${said}`
+        : 'Y al salir del ciclo, el resultado.'
+    }
+    const fact = view.moduleFacts.find((one) => one.id === at)
+    if (!fact) return null
+    const does = fact.subtitle ? `: ${fact.subtitle}` : ''
+    if (phase === 'again') {
+      const laps = architecture.caption ? `Así, ${architecture.caption}` : 'Y vuelta a empezar'
+      return `${laps}${told?.exit ? `; ${told.exit}` : ''}.`
+    }
+    const brings = [
+      ...new Set(
+        links.flatMap(
+          (link) =>
+            architecture.links.find(
+              (other) => other.kind === 'data' && `${other.from}>${other.to}` === link,
+            )?.label ?? [],
+        ),
+      ),
+    ]
+    const used = states?.[at]?.tone === 'ran' ? states[at]?.title : undefined
+    return [
+      phase === 'before' ? `Antes de empezar, ${fact.title}${does}.` : `${fact.title}${does}.`,
+      brings.length > 0 ? `Recibe ${brings.join(' y ')}.` : '',
+      used ?? '',
+    ]
+      .filter((part) => part !== '')
+      .join(' ')
+  }, [playback.guided, playingBeat, architecture, outcome, view.moduleFacts, told, states])
+  useEffect(() => {
+    if (guideText && voice) speak(guideText)
+  }, [guideText, voice])
   // Al acabar de construir, el programa se enseña solo una vez, despacio: es la primera vez que se ve entero.
   const justBuilt = useRef(false)
   const playStory = playback.play
@@ -2699,6 +2739,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     )?.label
                   }
                   dock={dock}
+                  guide={guideText}
                 />
               )}
               {/* Cómo leer la arquitectura: qué forma tiene y qué dice cada flecha. */}

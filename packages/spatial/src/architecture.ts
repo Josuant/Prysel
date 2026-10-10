@@ -53,6 +53,8 @@ export interface ArchLink {
   planned?: boolean
   /** Sale de la ejecución (un paso de la historia), no del análisis del texto: se dibuja siempre. */
   told?: boolean
+  /** Una muestra de lo que se vio pasar por ella al ejecutarlo: es lo que enseña su sonda. */
+  sample?: string
 }
 
 /** Los módulos, en el orden del programa, y lo que los une. */

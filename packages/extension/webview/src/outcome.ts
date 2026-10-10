@@ -302,7 +302,15 @@ export function moduleStory(
       // Con palabras, no como se escribe en el código (`mejor_nota` → «mejor nota»); y una colección, con
       // cuántos lleva: «poblacion ×20».
       const name = flow.name.replace(/_+/g, ' ').trim() || flow.name
-      return [{ from, to, label: flow.size === undefined ? name : `${name} ×${flow.size}` }]
+      return [
+        {
+          from,
+          to,
+          label: flow.size === undefined ? name : `${name} ×${flow.size}`,
+          // Lo que se vio pasar, para la sonda de su flecha.
+          ...(flow.text ? { sample: flow.text } : {}),
+        },
+      ]
     }),
     caption: `${lapsSaid(story.loop)} ${laps === 1 ? 'vuelta' : 'vueltas'}`,
     exit: exitOf(story.loop),

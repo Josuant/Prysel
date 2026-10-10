@@ -295,7 +295,8 @@ export interface ModuleStory {
   anchor: string
   ring: readonly string[]
   before: readonly string[]
-  flows: readonly { from: string; to: string; label: string }[]
+  /** `sample`: una muestra de lo que pasó (el principio del valor), para la sonda de su flecha. */
+  flows: readonly { from: string; to: string; label: string; sample?: string }[]
   /** Lo que se dice en el centro del ciclo. */
   caption: string
   /** Cómo se salió del ciclo, con palabras: va en la marca de salida de quien lo lleva. */
@@ -324,26 +325,33 @@ export function withStory(
     if (link.from !== link.to && !linked(link.from, link.to)) links.push(link)
   }
   // Lo que viaja: varios nombres entre los mismos dos módulos, en una sola flecha.
-  const carried = new Map<string, { from: string; to: string; labels: string[] }>()
+  const carried = new Map<
+    string,
+    { from: string; to: string; labels: string[]; samples: string[] }
+  >()
   for (const flow of story.flows) {
     if (!known.has(flow.from) || !known.has(flow.to) || flow.from === flow.to) continue
     const key = `${flow.from}|${flow.to}`
-    const entry = carried.get(key) ?? { from: flow.from, to: flow.to, labels: [] }
-    if (!entry.labels.includes(flow.label)) entry.labels.push(flow.label)
+    const entry = carried.get(key) ?? { from: flow.from, to: flow.to, labels: [], samples: [] }
+    if (!entry.labels.includes(flow.label)) {
+      entry.labels.push(flow.label)
+      if (flow.sample) entry.samples.push(`${flowName(flow.label)}: ${flow.sample}`)
+    }
     carried.set(key, entry)
   }
   const first = ring[0] ?? ''
   const last = ring[ring.length - 1] ?? ''
-  for (const { from, to, labels } of carried.values()) {
+  for (const { from, to, labels, samples } of carried.values()) {
     const label = labels.slice(0, 2).join(', ')
+    const probe = samples.length > 0 ? { sample: samples.slice(0, 2).join('\n') } : {}
     // Lo que un paso le deja a uno anterior es para la vuelta siguiente: se lo da la cabeza del ciclo, que es
     // quien decide si hay otra vuelta. Dibujado directo iría contra el sentido del anillo y por su centro; el
     // camino de vuelta ya lo cuenta el cierre del anillo, que lleva el dato si quien lo deja es el último.
     const back = ring.includes(from) && ring.includes(to) && ring.indexOf(to) < ring.indexOf(from)
     if (back) {
-      if (from === last) add({ from, to: story.anchor, kind: 'data', label, told: true })
-      add({ from: story.anchor, to, kind: 'data', label, told: true })
-    } else add({ from, to, kind: 'data', label, told: true })
+      if (from === last) add({ from, to: story.anchor, kind: 'data', label, told: true, ...probe })
+      add({ from: story.anchor, to, kind: 'data', label, told: true, ...probe })
+    } else add({ from, to, kind: 'data', label, told: true, ...probe })
   }
   // El orden de la vuelta: cabeza → primer paso → … → último → cabeza, donde no viaje ya un dato.
   const lap = [story.anchor, ...ring, story.anchor]

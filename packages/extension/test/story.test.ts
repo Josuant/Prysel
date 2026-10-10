@@ -139,6 +139,11 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
       // Hacia delante, o el cierre de la vuelta (a la cabeza).
       expect(to === 0 || to > from, `${title(link.from)} → ${title(link.to)}`).toBe(true)
     }
+    // Cada flecha de dato lleva una muestra de lo que se vio pasar: es lo que enseña su sonda.
+    const probed = drawn.links.filter((link) => link.kind === 'data' && link.told)
+    expect(probed.length).toBeGreaterThanOrEqual(3)
+    for (const link of probed) expect(link.sample, link.label).toMatch(/^\w[\w ]*: \S/)
+    expect(probed.find((link) => link.label === 'aptitudes ×8')?.sample).toMatch(/^aptitudes: \d/)
     // Ninguna flecha de «usa a», salvo que se pida.
     expect(drawn.links.some((link) => link.kind === 'call')).toBe(false)
     expect(

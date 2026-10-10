@@ -6883,6 +6883,44 @@ button.run-panel__line:hover {
   animation: arch-show 240ms ease-out forwards;
   animation-delay: calc(700ms + var(--i, 0) * 70ms);
 }
+/* Una pastilla con sonda: se puede pulsar, y enseña lo que se vio pasar por su flecha. */
+.arch-edge__label[data-probe] {
+  cursor: pointer;
+  pointer-events: auto;
+}
+.arch-edge__label[data-probe]:hover,
+.arch-edge__label[data-probe][aria-expanded='true'] {
+  border-color: var(--flow, var(--accent));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--flow, var(--accent)) 22%, transparent);
+}
+.arch-probe {
+  position: absolute;
+  z-index: 12;
+  display: flex;
+  max-width: 320px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--flow, var(--accent)) 60%, transparent);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lift);
+  pointer-events: none;
+}
+.arch-probe__head {
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.arch-probe__row {
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .arch-edge__label[data-kind='call'] {
   border-style: dashed;
   border-color: color-mix(in srgb, var(--ink-muted) 45%, transparent);
@@ -7372,7 +7410,6 @@ button.run-panel__line:hover {
   box-sizing: border-box;
   align-items: center;
   gap: 10px;
-  overflow: hidden;
   max-width: min(calc(100% - var(--avoid, 0px) - 20px), 760px);
   padding: 4px 12px 4px 4px;
   border: 1px solid var(--border-card);
@@ -7397,6 +7434,42 @@ button.run-panel__line:hover {
   font-size: 12px;
   font-weight: 650;
   cursor: pointer;
+}
+.arch-transport__guide {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.arch-transport__guide:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+/* La explicación de la visita guiada: sobre la barra, a tamaño de lectura. */
+.arch-guide {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  width: max-content;
+  max-width: min(560px, 92vw);
+  margin: 0;
+  padding: 10px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lift);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 22px;
+  text-align: center;
+  white-space: normal;
+  transform: translateX(-50%);
+  animation: arch-show 260ms ease-out backwards;
 }
 .arch-transport__steps {
   display: flex;

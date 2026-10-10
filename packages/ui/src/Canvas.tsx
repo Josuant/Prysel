@@ -2114,6 +2114,7 @@ function CanvasInner({
           turn: at,
           ...(live && beat ? { live: beat.serial, ms: beat.ms } : {}),
           ...(hue === undefined ? {} : { hue }),
+          ...(link.sample ? { sample: link.sample } : {}),
           ...(link.planned ? { planned: true } : {}),
           ...(touched === null
             ? {}

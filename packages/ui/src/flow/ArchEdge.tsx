@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { EdgeLabelRenderer, type EdgeProps, type Edge as FlowEdge } from '@xyflow/react'
 
 /**
@@ -42,6 +43,11 @@ export interface ArchEdgeData extends Record<string, unknown> {
   labelAt?: number
   /** El color de lo que viaja por ella: el mismo dato, el mismo color en todas sus flechas. */
   hue?: number
+  /**
+   * Lo que se vio pasar por ella al ejecutarlo (una línea por dato). Con ello la pastilla es una **sonda**:
+   * al pulsarla, enseña el valor.
+   */
+  sample?: string
 }
 
 export type ArchFlowEdge = FlowEdge<ArchEdgeData, 'arch'>
@@ -175,6 +181,8 @@ export function clearBend(from: Box, to: Box, others: readonly Box[], prefer = 0
 }
 
 export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
+  // La sonda: abierta, enseña lo que se vio pasar por la flecha.
+  const [probing, setProbing] = useState(false)
   if (!data) return null
   const { d, mid, end, angle } = archPath(data.from, data.to, data.bend, data.labelAt)
   const style = { '--i': data.turn ?? 0 } as React.CSSProperties
@@ -211,20 +219,62 @@ export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
       </g>
       {label && (
         <EdgeLabelRenderer>
-          <span
-            className="arch-edge__label"
-            data-kind={data.kind}
-            data-planned={data.planned ? '' : undefined}
-            data-emphasis={data.emphasis}
-            data-live={data.live === undefined ? undefined : ''}
-            data-hue={data.hue}
-            style={{
-              ...style,
-              transform: `translate(-50%, -50%) translate(${mid.x}px, ${mid.y}px)`,
-            }}
-          >
-            {label}
-          </span>
+          {data.sample ? (
+            <button
+              type="button"
+              className="arch-edge__label nodrag nopan"
+              data-kind={data.kind}
+              data-probe=""
+              data-emphasis={data.emphasis}
+              data-live={data.live === undefined ? undefined : ''}
+              data-hue={data.hue}
+              aria-expanded={probing}
+              title="Ver lo que pasó por aquí al ejecutarlo"
+              style={{
+                ...style,
+                transform: `translate(-50%, -50%) translate(${mid.x}px, ${mid.y}px)`,
+              }}
+              onClick={(event) => {
+                event.stopPropagation()
+                setProbing(!probing)
+              }}
+              onBlur={() => {
+                setProbing(false)
+              }}
+            >
+              {label}
+            </button>
+          ) : (
+            <span
+              className="arch-edge__label"
+              data-kind={data.kind}
+              data-planned={data.planned ? '' : undefined}
+              data-emphasis={data.emphasis}
+              data-live={data.live === undefined ? undefined : ''}
+              data-hue={data.hue}
+              style={{
+                ...style,
+                transform: `translate(-50%, -50%) translate(${mid.x}px, ${mid.y}px)`,
+              }}
+            >
+              {label}
+            </span>
+          )}
+          {data.sample && probing && (
+            <span
+              className="arch-probe"
+              data-hue={data.hue}
+              role="status"
+              style={{ transform: `translate(-50%, 0) translate(${mid.x}px, ${mid.y + 15}px)` }}
+            >
+              <span className="arch-probe__head">lo que pasó por aquí</span>
+              {data.sample.split('\n').map((row) => (
+                <span key={row} className="arch-probe__row">
+                  {row}
+                </span>
+              ))}
+            </span>
+          )}
         </EdgeLabelRenderer>
       )}
     </>

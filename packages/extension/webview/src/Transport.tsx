@@ -14,6 +14,8 @@ import { lapsSaid } from './outcome.ts'
 /** Lo que dura un paso, y lo que dura cuando se enseña solo (al acabar de construir): despacio. */
 const BEAT_MS = 1200
 const SLOW_MS = 2000
+/** En la visita guiada cada paso se explica: dura lo que se tarda en leerlo. */
+const GUIDE_MS = 3600
 /** Lo que se queda en el último paso antes de soltar el foco. */
 const REST_MS = 1400
 
@@ -24,7 +26,10 @@ export interface Playback {
   /** Cambia en cada paso: es lo que hace que la ficha vuelva a salir. */
   serial: number
   ms: number
-  play: (slow?: boolean) => void
+  /** Es una **visita guiada**: cada paso se explica con una frase (y se dice, si hay voz). */
+  guided: boolean
+  /** `slow`: despacio (al acabar de construir). `guided`: como visita, explicando cada paso. */
+  play: (slow?: boolean, guided?: boolean) => void
   pause: () => void
   go: (at: number) => void
   stop: () => void
@@ -39,7 +44,8 @@ export function usePlayback(count: number): Playback {
     serial: 0,
   })
   const [slow, setSlow] = useState(false)
-  const ms = slow ? SLOW_MS : BEAT_MS
+  const [guided, setGuided] = useState(false)
+  const ms = guided ? GUIDE_MS : slow ? SLOW_MS : BEAT_MS
   // Lo que se reproducía era de otra historia: ya no vale.
   const at = state.at !== null && state.of === count && state.at < count ? state.at : null
   const playing = state.playing && at !== null
@@ -61,9 +67,10 @@ export function usePlayback(count: number): Playback {
     }
   }, [playing, at, count, ms])
   const play = useCallback(
-    (slowly = false) => {
+    (slowly = false, asGuide = false) => {
       if (count === 0) return
       setSlow(slowly)
+      setGuided(asGuide)
       setState((now) => ({
         at: now.at !== null && now.of === count && now.at < count - 1 ? now.at : 0,
         of: count,
@@ -85,7 +92,17 @@ export function usePlayback(count: number): Playback {
   const stop = useCallback(() => {
     setState((now) => ({ ...now, at: null, playing: false }))
   }, [])
-  return { at, playing, serial: state.serial, ms, play, pause, go, stop }
+  return {
+    at,
+    playing,
+    serial: state.serial,
+    ms,
+    guided: guided && at !== null,
+    play,
+    pause,
+    go,
+    stop,
+  }
 }
 
 /** Lo que se dice de un paso, con palabras. */
@@ -176,6 +193,7 @@ export function Transport({
   titleOf,
   carriesOf,
   dock,
+  guide,
 }: {
   beats: readonly Beat[]
   playback: Playback
@@ -186,6 +204,8 @@ export function Transport({
   carriesOf: (link: string) => string | undefined
   /** Dónde va la barra respecto a la consola (`--avoid`, `--lift`): a su lado o encima. */
   dock?: React.CSSProperties
+  /** En la visita guiada: lo que se explica de cada paso (qué hace, qué recibe, cuánto se usó). */
+  guide?: string | null
 }) {
   const { at, playing } = playback
   const beat = at === null ? undefined : beats[at]
@@ -216,6 +236,24 @@ export function Transport({
         <span aria-hidden>{playing ? '❚❚' : '▶'}</span>
         {beat ? null : 'Ver una vuelta'}
       </button>
+      {!beat && (
+        <button
+          type="button"
+          className="arch-transport__guide"
+          title="Recorrerlo paso a paso, con una explicación de cada parte"
+          onClick={() => {
+            playback.play(false, true)
+          }}
+        >
+          Visita guiada
+        </button>
+      )}
+      {/* La explicación del paso, en grande, sobre la barra. */}
+      {playback.guided && guide && (
+        <p className="arch-guide" aria-live="polite" key={at}>
+          {guide}
+        </p>
+      )}
       {beat && (
         <ol className="arch-transport__steps">
           {beats.map((step, index) => (
