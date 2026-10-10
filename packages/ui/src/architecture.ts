@@ -331,19 +331,21 @@ export function withStory(
     // Lo que el último paso le deja al primero de la vuelta siguiente pasa por la cabeza del ciclo: es ella
     // quien decide si hay otra vuelta.
     if (from === last && to === first && ring.length > 1) {
-      add({ from, to: story.anchor, kind: 'data', label })
-      add({ from: story.anchor, to, kind: 'data', label })
-    } else add({ from, to, kind: 'data', label })
+      add({ from, to: story.anchor, kind: 'data', label, told: true })
+      add({ from: story.anchor, to, kind: 'data', label, told: true })
+    } else add({ from, to, kind: 'data', label, told: true })
   }
   // El orden de la vuelta: cabeza → primer paso → … → último → cabeza, donde no viaje ya un dato.
   const lap = [story.anchor, ...ring, story.anchor]
   for (let at = 0; at + 1 < lap.length; at++) {
-    add({ from: lap[at] ?? '', to: lap[at + 1] ?? '', kind: 'next' })
+    add({ from: lap[at] ?? '', to: lap[at + 1] ?? '', kind: 'next', told: true })
   }
   // Lo de antes entra al primer paso (o a quien le pase algo).
   for (const id of story.before) {
     if (!known.has(id) || ring.includes(id) || id === story.anchor) continue
-    if (!links.some((link) => link.from === id)) add({ from: id, to: first, kind: 'next' })
+    if (!links.some((link) => link.from === id)) {
+      add({ from: id, to: first, kind: 'next', told: true })
+    }
   }
   // Del análisis se conserva lo que la ejecución no contradice: los datos que no pasan por una llamada (los
   // que guarda un módulo y leen otros) y, si se piden, las llamadas.

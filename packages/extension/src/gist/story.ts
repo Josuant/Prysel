@@ -88,34 +88,44 @@ function tokenOf(value: Shown): Pick<Flow, 'size' | 'text'> {
  */
 function flowsIn(trace: Trace, own: ReadonlySet<string>, to: number): Flow[] {
   const fnOf = new Map<number, string>()
-  /** Lo último que devolvió cada cosa, por cómo se ve: quién fue. */
-  const returned = new Map<string, string>()
+  /** Los marcos en los que se está, de fuera adentro (el 0 es el programa). */
+  const stack: number[] = [0]
+  /**
+   * Lo último que devolvió cada cosa, por cómo se ve: quién fue y a qué marco se lo devolvió. Solo cuenta
+   * como «pasárselo» a otra función si es ese mismo marco quien la llama con ello: un valor que acaba
+   * llegando a otra parte tras dar vueltas (dentro de una lista, pasado de mano en mano) no es un paso de la
+   * historia. Y cada valor se entrega una vez: a la primera que lo recibe.
+   */
+  const returned = new Map<string, { fn: string; into: number }>()
   const flows: Flow[] = []
   for (let i = 0; i < to && i < trace.events.length; i++) {
     const event = trace.events[i]
     if (!event) continue
     if (event.k === 'call' && event.fn !== undefined) {
+      const caller = stack[stack.length - 1] ?? 0
       fnOf.set(event.f, event.fn)
+      stack.push(event.f)
       if (!own.has(event.fn)) continue
       for (const [name, value] of Object.entries(event.ch ?? {})) {
         if (!traceable(value)) continue
-        const from = returned.get(JSON.stringify(value))
-        if (from === undefined || from === event.fn) continue
-        if (
-          flows.some((flow) => flow.from === from && flow.to === event.fn && flow.name === name)
-        ) {
-          continue
-        }
-        flows.push({ from, to: event.fn, name, ...tokenOf(value) })
+        const key = JSON.stringify(value)
+        const from = returned.get(key)
+        if (from === undefined || from.fn === event.fn || from.into !== caller) continue
+        returned.delete(key)
+        if (flows.some((f) => f.from === from.fn && f.to === event.fn && f.name === name)) continue
+        flows.push({ from: from.fn, to: event.fn, name, ...tokenOf(value) })
       }
-    } else if (event.k === 'return' && event.v !== undefined) {
+    } else if (event.k === 'return') {
+      const at = stack.lastIndexOf(event.f)
+      if (at > 0) stack.splice(at)
       const fn = fnOf.get(event.f)
-      if (fn === undefined || !own.has(fn)) continue
-      if (traceable(event.v)) returned.set(JSON.stringify(event.v), fn)
+      if (fn === undefined || !own.has(fn) || event.v === undefined) continue
+      const into = stack[stack.length - 1] ?? 0
+      if (traceable(event.v)) returned.set(JSON.stringify(event.v), { fn, into })
       // Lo que se devuelve en un par («los dos padres») se reparte luego en dos nombres: cada uno cuenta.
       if (isShownList(event.v) && event.v.t === 'tuple' && event.v.l.length <= 4) {
         for (const part of event.v.l) {
-          if (traceable(part)) returned.set(JSON.stringify(part), fn)
+          if (traceable(part)) returned.set(JSON.stringify(part), { fn, into })
         }
       }
     }

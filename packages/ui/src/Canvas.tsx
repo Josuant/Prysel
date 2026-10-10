@@ -1645,7 +1645,7 @@ function CanvasInner({
       if (module.id === architecture.anchor) continue
       const users = new Set(
         architecture.links
-          .filter((link) => link.kind === 'data' && link.from === module.id)
+          .filter((link) => link.kind === 'data' && link.told !== true && link.from === module.id)
           .map((link) => link.to),
       )
       if (users.size >= SHARED_FROM) sharedBy[module.id] = users.size
@@ -1970,6 +1970,7 @@ function CanvasInner({
     // al seleccionarlo (o al seleccionar a quien lo usa).
     if (
       link.kind === 'data' &&
+      link.told !== true &&
       (sharedBy[link.from] ?? 0) > 0 &&
       !(lit?.has(link.from) || lit?.has(link.to))
     ) {

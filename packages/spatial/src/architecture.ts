@@ -51,6 +51,8 @@ export interface ArchLink {
   /** El nombre de lo que pasa (`gastos`) o de lo que se usa (`calcular_total`). */
   label?: string
   planned?: boolean
+  /** Sale de la ejecución (un paso de la historia), no del análisis del texto: se dibuja siempre. */
+  told?: boolean
 }
 
 /** Los módulos, en el orden del programa, y lo que los une. */

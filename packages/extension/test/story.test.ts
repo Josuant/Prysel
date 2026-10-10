@@ -71,6 +71,11 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
         'reemplazar_poblacion → evaluar_poblacion: poblacion',
       ]),
     )
+    // Solo lo que se pasa de mano en mano. Un hijo que acaba evaluándose en la vuelta siguiente (dentro de la
+    // población nueva) o unas notas que «reponer» le pasa a su vez a «elegir» no son otro paso de la historia.
+    expect(flows).not.toContain('cruzar_y_mutar → calcular_aptitud: individuo')
+    expect(flows).not.toContain('evaluar_poblacion → seleccionar_padres: aptitudes')
+    expect(flows.length).toBeLessThanOrEqual(5)
     const population = story?.flows.find((flow) => flow.name === 'poblacion')
     expect(population?.size).toBe(8)
   })
