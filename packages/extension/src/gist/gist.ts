@@ -221,8 +221,12 @@ export interface RunSummary {
   /** Con `error`: cuál, y en qué línea. Con `blocked`: por qué. */
   problem?: string
   line?: number
-  /** Las respuestas de teclado de ejemplo que se le dieron, en orden (si pide datos). */
+  /** Las respuestas de teclado que se le dieron, en orden (si pide datos). */
   typed?: string[]
+  /** Esas respuestas las tecleó quien lo usa (está jugando el programa): no son las de ejemplo. */
+  mine?: boolean
+  /** El programa pide datos por teclado: se puede jugar escribiendo las respuestas. */
+  asks?: boolean
   /**
    * De dónde salió cada línea de `output`: la línea del programa que se estaba ejecutando cuando se escribió
    * (`null` si no se sabe). Es lo que une la pantalla con el diagrama: pinchar una línea lleva a su paso.
@@ -249,7 +253,7 @@ export function outputSources(trace: Trace): (number | null)[] {
 }
 
 /** El resumen de una ejecución, a partir de su traza. */
-export function runSummary(trace: Trace, typed?: readonly string[]): RunSummary {
+export function runSummary(trace: Trace, typed?: readonly string[], mine = false): RunSummary {
   const waiting = trace.error?.name === 'NoMoreInput'
   const failed = trace.error !== null && !waiting
   return {
@@ -261,7 +265,8 @@ export function runSummary(trace: Trace, typed?: readonly string[]): RunSummary 
           ...(trace.error.line !== null ? { line: trace.error.line } : {}),
         }
       : {}),
-    ...(typed ? { typed: [...typed] } : {}),
+    ...(typed ? { typed: [...typed], asks: true } : {}),
+    ...(mine ? { mine: true } : {}),
     sources: alignedSources(trace),
   }
 }

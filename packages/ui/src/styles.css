@@ -6045,6 +6045,79 @@ button.fn-menu__crumb:hover {
   font-size: 11.5px;
   overflow-wrap: anywhere;
 }
+/* Jugar el programa: la consola pide el dato y se le contesta aquí. */
+.run-panel__badge[data-mine] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.run-panel__ask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 9px;
+  background: var(--void);
+}
+.run-panel__ask:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.run-panel__prompt {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.run-panel__field {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 22px;
+}
+.run-panel__field::placeholder {
+  color: var(--ink-faint);
+}
+.run-panel__send {
+  flex: none;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.run-panel__actions {
+  display: flex;
+  gap: 6px;
+}
+.run-panel__play {
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.run-panel__play[data-quiet] {
+  border-color: var(--border-card);
+  background: transparent;
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+.run-panel__play:disabled,
+.run-panel__send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .run-panel[data-ended='error'] .run-panel__end {
   color: var(--state-error);
 }

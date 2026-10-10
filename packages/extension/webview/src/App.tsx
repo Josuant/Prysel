@@ -2174,6 +2174,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   <RunPanel
                     run={ran}
                     lit={litLines}
+                    onPlay={(answers, fresh) => {
+                      post({ type: 'play', answers, ...(fresh ? { fresh: true } : {}) })
+                    }}
                     onPick={(line) => {
                       // El paso más interior que abarca esa línea; si está plegado, lo que lo guarda.
                       const node = [...program.nodes]

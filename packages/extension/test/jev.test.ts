@@ -640,6 +640,18 @@ describe('los mensajes de las órdenes se validan', () => {
     expect(parseHostMessage({ ...message, force: { intent: 'formatear el disco' } })).toBeNull()
     expect(parseHostMessage({ ...message, selected: 7 })).toBeNull()
     expect(parseHostMessage({ type: 'jevKey' })).toEqual({ type: 'jevKey' })
+    // Jugar el programa: las respuestas dadas (una vacía es pulsar Intro), o `null` para volver al ejemplo.
+    expect(parseHostMessage({ type: 'play', answers: ['50', ''], fresh: true })).toEqual({
+      type: 'play',
+      answers: ['50', ''],
+      fresh: true,
+    })
+    expect(parseHostMessage({ type: 'play', answers: null })).toEqual({
+      type: 'play',
+      answers: null,
+    })
+    expect(parseHostMessage({ type: 'play', answers: [7] })).toBeNull()
+    expect(parseHostMessage({ type: 'play' })).toBeNull()
   })
 
   it('una decisión del motor, y lo que llega después', () => {

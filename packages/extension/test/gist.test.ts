@@ -725,6 +725,29 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     expect(run.output.startsWith('Adivina: 50\n')).toBe(true)
   })
 
+  it('jugarlo: sin respuestas se para en la primera pregunta, y cada una lo lleva a la siguiente', async () => {
+    // Quien lo usa aún no ha escrito nada: el programa arranca y espera.
+    const start = runSummary(
+      await kernel.trace(GUESS, 20_000, false, true, { inputs: [], seed: 3 }),
+      [],
+      true,
+    )
+    expect(start).toMatchObject({ ended: 'waiting', mine: true, asks: true, typed: [] })
+    expect(start.output).toBe('Adivina: ')
+    // Su primera respuesta: el programa la lee, contesta y vuelve a preguntar.
+    const next = runSummary(
+      await kernel.trace(GUESS, 20_000, false, true, { inputs: ['0'], seed: 3 }),
+      ['0'],
+      true,
+    )
+    expect(next.ended).toBe('waiting')
+    expect(next.output).toBe('Adivina: 0\nMayor\nAdivina: ')
+    // Las de ejemplo no dicen que sean de nadie.
+    expect(
+      runSummary(await kernel.trace(GUESS, 20_000, false, true, { inputs: ['0'] }), ['0']).mine,
+    ).toBeUndefined()
+  })
+
   it('un programa que falla lo dice, con su línea', async () => {
     const source = lines('precios = [3, 4]', 'print(precios[5])')
     const run = runSummary(await kernel.trace(source))

@@ -98,8 +98,8 @@ export class WebHost {
       analyse: () => this.analyse(),
       // Ancha: las rejillas pequeñas llegan enteras, para dibujarlas como rejillas.
       // Con azar repetible (la misma partida de ejemplo cada vez) y, si pide datos, sus respuestas.
-      trace: (code, inputs) =>
-        this.session.trace(code, 20_000, false, true, { seed: 7, ...(inputs ? { inputs } : {}) }),
+      trace: (code, inputs, seed = 7) =>
+        this.session.trace(code, 20_000, false, true, { seed, ...(inputs ? { inputs } : {}) }),
       provider: () => {
         const provider = providerFrom(this.settings)
         return provider ? this.calls.provider(provider) : null
@@ -298,6 +298,9 @@ export class WebHost {
         return
       case 'listening':
         this.orders.listening(message.on, message.text)
+        return
+      case 'play':
+        void this.gists.play(message.answers, message.fresh === true)
         return
       case 'cover':
         this.orders.cover(message.what, message.parts, message.pieces, message.plan === true)

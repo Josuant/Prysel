@@ -42,7 +42,7 @@ export interface GistsPort {
    * Ejecuta un programa entero grabando su traza; `null` si no se pudo. `inputs`: las respuestas de teclado
    * de ejemplo, si el programa pide datos.
    */
-  trace(code: string, inputs?: readonly string[]): Promise<Trace | null>
+  trace(code: string, inputs?: readonly string[], seed?: number): Promise<Trace | null>
   provider(): AiProvider | null
   /** Quien elige entre varias reglas que la muestra confirma por igual. */
   decider(): Decider
@@ -53,6 +53,8 @@ export interface GistsPort {
 
 /** Lo que se espera, con el código quieto, antes de ejecutarlo. */
 const CALM_MS = 900
+/** La suerte de la sesión de ejemplo: siempre la misma, para que sus respuestas sigan valiendo. */
+const EXAMPLE_SEED = 7
 /** A cuántas funciones sin llamada se les propone una prueba en cada pasada. */
 const MAX_INVENTED = 6
 
@@ -67,6 +69,12 @@ export class Gists {
   private ran: RunSummary | null = null
   /** Las respuestas de teclado de ejemplo, por lo que el programa pregunta: mientras pregunte lo mismo, valen. */
   private readonly answers = new Map<string, string[]>()
+  /**
+   * Quien lo usa está jugando el programa: sus respuestas, para lo que el programa pregunta (`key`), y la
+   * suerte de esa partida. Mientras el programa pregunte lo mismo, valen en vez de las de ejemplo.
+   */
+  private mine: { key: string; answers: string[]; seed: number } | null = null
+  private playSeq = 0
 
   constructor(private readonly port: GistsPort) {}
 
@@ -92,6 +100,35 @@ export class Gists {
       this.timer = null
       void this.pass()
     }, CALM_MS)
+  }
+
+  /**
+   * Jugar el programa: se ejecuta con las respuestas que quien lo usa lleva dadas y se para en la siguiente
+   * pregunta. La pantalla se manda enseguida; las tarjetas se rehacen con esa partida cuando acaba.
+   * `null`: volver a la sesión de ejemplo. `fresh`: partida nueva, con otra suerte.
+   */
+  async play(answers: readonly string[] | null, fresh = false) {
+    const turn = ++this.playSeq
+    if (answers === null) {
+      this.mine = null
+      this.done = null
+      return this.touch()
+    }
+    const text = this.port.text()
+    if (!asksInput(text)) return
+    const version = this.port.version()
+    const seed = fresh ? 1 + Math.floor(Math.random() * 100_000) : (this.mine?.seed ?? EXAMPLE_SEED)
+    this.mine = { key: inputSignature(text), answers: [...answers], seed }
+    const raw = await this.port.trace(text, answers, seed).catch(() => null)
+    // Mientras se ejecutaba llegó otra respuesta, o el código cambió: esto ya no es lo último.
+    if (!raw || turn !== this.playSeq || this.port.version() !== version) return
+    this.ran = runSummary(raw, answers, true)
+    this.port.post(this.last, version, this.ran)
+    // La partida acabó: las tarjetas se rehacen con lo que de verdad pasó en ella.
+    if (this.ran.ended !== 'waiting') {
+      this.done = null
+      this.touch()
+    }
   }
 
   private async pass() {
@@ -123,7 +160,11 @@ export class Gists {
     // Un programa que pide datos por teclado se ejecuta con unas respuestas de ejemplo: las propone la IA
     // una vez, y valen mientras el programa siga preguntando lo mismo.
     let inputs: string[] | undefined
-    if (asksInput(text)) {
+    // Si quien lo usa lo está jugando, valen sus respuestas (y su suerte), no las de ejemplo.
+    const mine = asksInput(text) && this.mine?.key === inputSignature(text) ? this.mine : null
+    const seed = mine?.seed ?? EXAMPLE_SEED
+    if (mine) inputs = mine.answers
+    else if (asksInput(text)) {
       const key = inputSignature(text)
       inputs = this.answers.get(key)
       if (!inputs && provider) {
@@ -143,18 +184,19 @@ export class Gists {
       this.ran = {
         output: '',
         ended: 'blocked',
+        ...(waiting ? { asks: true } : {}),
         problem: !waiting
           ? blocked
           : provider
             ? 'Pide datos por teclado, y la IA no propuso respuestas de ejemplo.'
-            : 'Pide datos por teclado. Conecta la IA para verlo funcionar con respuestas de ejemplo.',
+            : 'Pide datos por teclado: juégalo tú, o conecta la IA para verlo con respuestas de ejemplo.',
       }
       return gistsOf(program, null)
     }
-    let raw = await this.port.trace(text, inputs)
+    let raw = await this.port.trace(text, inputs, seed)
     // La sesión de ejemplo se quedó esperando otra respuesta: la IA ve lo que ha salido y la continúa, hasta
     // que el programa acabe (o unas pocas rondas). Las respuestas que la llevan al final se guardan.
-    if (inputs && provider) {
+    if (inputs && provider && !mine) {
       const key = inputSignature(text)
       for (let round = 0; round < ANSWER_ROUNDS; round++) {
         if (raw?.error?.name !== 'NoMoreInput' || inputs.length >= MAX_ANSWERS) break
@@ -162,10 +204,10 @@ export class Gists {
         if (!more) break
         inputs = [...inputs, ...more].slice(0, MAX_ANSWERS)
         this.answers.set(key, inputs)
-        raw = await this.port.trace(text, inputs)
+        raw = await this.port.trace(text, inputs, seed)
       }
     }
-    if (raw) this.ran = runSummary(raw, inputs)
+    if (raw) this.ran = runSummary(raw, inputs, mine !== null)
     const trace = raw ? settled(raw) : null
     const nothing =
       facts.length === 0 &&
@@ -190,7 +232,7 @@ export class Gists {
       const tried = await invent(program, fact, {
         provider,
         trace: async (code) =>
-          (await this.port.trace(code, inputs)) ?? {
+          (await this.port.trace(code, inputs, seed)) ?? {
             events: [],
             truncated: false,
             error: null,

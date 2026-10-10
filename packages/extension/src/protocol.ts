@@ -387,6 +387,17 @@ export interface CoverMessage {
   plan?: boolean
 }
 
+/**
+ * Quien lo usa juega el programa: `answers` son todas las respuestas de teclado que lleva dadas, en orden (el
+ * programa se vuelve a ejecutar con ellas y se para en la siguiente pregunta). `null`: volver a la sesión de
+ * ejemplo. `fresh`: una partida nueva (si el programa tira de azar, con otra suerte).
+ */
+export interface PlayMessage {
+  type: 'play'
+  answers: string[] | null
+  fresh?: boolean
+}
+
 /** Olvidar las consultas apuntadas. */
 export interface ClearCallsMessage {
   type: 'clearCalls'
@@ -404,6 +415,7 @@ export type HostMessage =
   | UndoOrderMessage
   | ListeningMessage
   | CoverMessage
+  | PlayMessage
   | SpokenMessage
   | ClearCallsMessage
   | PickModelMessage
@@ -425,6 +437,9 @@ const MAX_RUN_IDS = 500
 /** Una orden es una frase: lo que pase de aquí no lo es. */
 export const MAX_COMMAND = 400
 const MAX_ID = 200
+
+/** Cuántas respuestas de teclado caben en una partida jugada a mano. */
+export const MAX_PLAY_ANSWERS = 80
 
 /** Cuántas partes de lo pedido y cuántas piezas del programa caben en una pregunta de `cover`. */
 export const MAX_COVER_PARTS = 6
@@ -713,6 +728,17 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return typeof text === 'string' && text !== ''
       ? { type: 'listening', on, text: text.slice(0, MAX_COMMAND) }
       : { type: 'listening', on }
+  }
+  if (type === 'play') {
+    const { answers, fresh } = value as { answers?: unknown; fresh?: unknown }
+    if (answers === null) return { type: 'play', answers: null }
+    if (!Array.isArray(answers) || answers.length > MAX_PLAY_ANSWERS) return null
+    if (!answers.every((one) => typeof one === 'string' && one.length <= MAX_COMMAND)) return null
+    return {
+      type: 'play',
+      answers: answers as string[],
+      ...(fresh === true ? { fresh: true } : {}),
+    }
   }
   if (type === 'cover') {
     const { what, parts, pieces } = value as { what?: unknown; parts?: unknown; pieces?: unknown }
