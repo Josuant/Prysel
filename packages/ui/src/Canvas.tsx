@@ -48,7 +48,14 @@ import { NoteNode, type NoteFlowNode } from './flow/NoteNode.tsx'
 import { NOTE, NOTE_GUTTER, noteSize, placeNotes, type NoteContent, type NoteSlot } from './note.ts'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
-import { ArchEdge, clearBend, type ArchFlowEdge } from './flow/ArchEdge.tsx'
+import {
+  ArchEdge,
+  archPath,
+  clearBend,
+  labelSize,
+  labelSpot,
+  type ArchFlowEdge,
+} from './flow/ArchEdge.tsx'
 import { FigureNode, type FigureFlowNode } from './flow/FigureNode.tsx'
 import { dragTerritory, territoryAt } from './drag.ts'
 import {
@@ -2174,6 +2181,28 @@ function CanvasInner({
         },
       ]
     : []
+  // Las pastillas de las flechas, cada una donde no tape a nadie: ni a un módulo, ni a una marca (la de
+  // arranque, la de salida), ni a otra pastilla ya puesta.
+  const labelObstacles: { x: number; y: number; w: number; h: number }[] = [
+    ...[...archModules.keys()].flatMap((id) => boxOf.get(id) ?? []),
+    ...[...startFigures, ...exitFigures].map((figure) => ({
+      x: figure.x + shiftX,
+      y: figure.y + shiftY,
+      // La marca mide lo que su texto, no lo que su hueco.
+      w: Math.min(figure.w, (figure.label?.length ?? 0) * 6.4 + 34),
+      h: figure.h,
+    })),
+  ]
+  const labelledEdges: ArchFlowEdge[] = archEdges.map((edge) => {
+    const text = typeof edge.label === 'string' ? edge.label : ''
+    if (text === '' || !edge.data) return edge
+    const size = labelSize(text)
+    const { from, to, bend = 0 } = edge.data
+    const labelAt = labelSpot(from, to, bend, size, labelObstacles)
+    const { mid } = archPath(from, to, bend, labelAt)
+    labelObstacles.push({ x: mid.x - size.w / 2, y: mid.y - size.h / 2, ...size })
+    return labelAt === 0.5 ? edge : { ...edge, data: { ...edge.data, labelAt } }
+  })
   // Al reproducir: el marco de «ahora está aquí», alrededor del módulo (o del resultado) al que se llega.
   const spotBox = !beat
     ? undefined
@@ -2708,7 +2737,7 @@ function CanvasInner({
         ]}
         // (Las de la arquitectura son otro tipo de arista; el lienzo solo las dibuja, no las edita.)
         edges={[
-          ...(archEdges as unknown as PryselFlowEdge[]),
+          ...(labelledEdges as unknown as PryselFlowEdge[]),
           ...(resultEdges as unknown as PryselFlowEdge[]),
           ...flowEdges,
           ...sideFlow.edges,

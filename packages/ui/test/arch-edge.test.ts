@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { archPath, clearBend, crosses } from '../src/flow/ArchEdge.tsx'
+import { archPath, clearBend, crosses, labelSize, labelSpot } from '../src/flow/ArchEdge.tsx'
 
 /**
  * Las flechas de la arquitectura van de borde a borde y no pasan por encima de ningún otro módulo: si hay uno
@@ -52,5 +52,50 @@ describe('una flecha entre dos módulos', () => {
   it('si nada la libra, se queda como se prefería: mejor una flecha que cruza que ninguna', () => {
     const wall = box(-2000, 150, 5000, 100)
     expect(clearBend(box(0, 0), box(0, 400), [wall], 22)).toBe(22)
+  })
+})
+
+describe('la pastilla de una flecha', () => {
+  const size = labelSize('poblacion ×12')
+  const boxAt = (from: ReturnType<typeof box>, to: ReturnType<typeof box>, t: number) => {
+    const { mid } = archPath(from, to, 0, t)
+    return { x: mid.x - size.w / 2, y: mid.y - size.h / 2, ...size }
+  }
+  const hit = (a: ReturnType<typeof box>, b: ReturnType<typeof box>) =>
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+
+  it('con sitio de sobra va en la mitad de la flecha', () => {
+    const from = box(0, 0)
+    const to = box(600, 0)
+    expect(labelSpot(from, to, 0, size, [from, to])).toBe(0.5)
+  })
+
+  it('en una flecha corta y en diagonal se corre hasta no tapar a ninguno de los dos módulos', () => {
+    // Dos módulos casi pegados, uno más abajo y a la derecha: en la mitad, la pastilla (más ancha que la
+    // flecha) pisa la esquina de uno.
+    const from = box(0, 0, 240, 90)
+    const to = box(150, 140, 240, 90)
+    expect([from, to].some((module) => hit(boxAt(from, to, 0.5), module))).toBe(false)
+    const tight = box(210, 110, 240, 90)
+    const spot = labelSpot(from, tight, 0, size, [from, tight])
+    const placed = boxAt(from, tight, spot)
+    const middle = boxAt(from, tight, 0.5)
+    const covered = (label: ReturnType<typeof box>) =>
+      [from, tight].reduce((sum, module) => {
+        const w = Math.min(label.x + label.w, module.x + module.w) - Math.max(label.x, module.x)
+        const h = Math.min(label.y + label.h, module.y + module.h) - Math.max(label.y, module.y)
+        return sum + (w > 0 && h > 0 ? w * h : 0)
+      }, 0)
+    // Nunca peor que en la mitad.
+    expect(covered(placed)).toBeLessThanOrEqual(covered(middle))
+  })
+
+  it('no se pone encima de otra pastilla que ya está', () => {
+    const from = box(0, 0)
+    const to = box(600, 0)
+    const taken = boxAt(from, to, 0.5)
+    const spot = labelSpot(from, to, 0, size, [from, to, taken])
+    expect(spot).not.toBe(0.5)
+    expect(hit(boxAt(from, to, spot), taken)).toBe(false)
   })
 })

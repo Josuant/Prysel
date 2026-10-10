@@ -298,6 +298,8 @@ function ring(ids: readonly string[], sizeOf: (id: string) => Size): Box[] {
   })
 }
 
+/** Entre dos pasos seguidos del anillo que van uno al lado del otro: cabe la pastilla de lo que se pasan. */
+const RING_GAP_X = 124
 /** Lo alto que se prueba el anillo, sobre lo mínimo: de apaisado a bien alto. */
 const RING_TALL = [1, 1.4, 1.8, 2.3, 2.9, 3.6]
 
@@ -317,7 +319,9 @@ function ringAt(ids: readonly string[], sizeOf: (id: string) => Size, ry: number
         if (j <= i) return true
         const next = j === i + 1 || (i === 0 && j === count - 1)
         // Seguidos: sitio para la flecha (en vertical) o para la flecha con su pastilla (en horizontal).
-        return next ? gapY(a, b) >= 44 || gapX(a, b) >= GAP.x : gapY(a, b) >= 20 || gapX(a, b) >= 28
+        return next
+          ? gapY(a, b) >= 44 || gapX(a, b) >= RING_GAP_X
+          : gapY(a, b) >= 20 || gapX(a, b) >= 28
       }),
     )
   for (let rx = 0; rx <= 1400; rx += 8) {

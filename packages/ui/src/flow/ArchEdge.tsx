@@ -38,6 +38,8 @@ export interface ArchEdgeData extends Record<string, unknown> {
    */
   live?: number
   ms?: number
+  /** En qué punto de la curva (de 0 a 1) va la pastilla: la mitad, salvo que ahí pise a alguien. */
+  labelAt?: number
 }
 
 export type ArchFlowEdge = FlowEdge<ArchEdgeData, 'arch'>
@@ -82,17 +84,61 @@ const along = ({ start, control, end }: ReturnType<typeof curveOf>, t: number): 
   y: (1 - t) * (1 - t) * start.y + 2 * (1 - t) * t * control.y + t * t * end.y,
 })
 
-/** El trazado: una curva suave de borde a borde, su punto medio (para la pastilla) y cómo llega (la punta). */
-export function archPath(from: Box, to: Box, bend = 0) {
+/**
+ * El trazado: una curva suave de borde a borde, el punto donde va su pastilla (`labelAt`: la mitad, si no se
+ * dice otro) y cómo llega (la punta).
+ */
+export function archPath(from: Box, to: Box, bend = 0, labelAt = 0.5) {
   const curve = curveOf(from, to, bend)
   const { start, control, end } = curve
   const angle = (Math.atan2(end.y - control.y, end.x - control.x) * 180) / Math.PI
   return {
     d: `M${start.x.toFixed(1)} ${start.y.toFixed(1)}Q${control.x.toFixed(1)} ${control.y.toFixed(1)} ${end.x.toFixed(1)} ${end.y.toFixed(1)}`,
-    mid: along(curve, 0.5),
+    mid: along(curve, labelAt),
     end,
     angle,
   }
+}
+
+/** Lo que mide la pastilla de una flecha con ese texto (letra de ancho fijo, con su relleno y su tope). */
+export const labelSize = (text: string) => ({ w: Math.min(180, text.length * 6.7 + 18), h: 19 })
+
+/** Los puntos de la curva que se prueban para la pastilla: la mitad primero, y de ahí hacia los extremos. */
+const LABEL_SPOTS = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82]
+
+/**
+ * En qué punto de su flecha va una pastilla para no tapar a nadie: en la mitad si cabe; si no, el punto de la
+ * curva donde menos pise (un módulo, una marca u otra pastilla). Con los módulos muy juntos una flecha es
+ * corta y su pastilla, más ancha que ella: se corre hacia donde hay hueco.
+ */
+export function labelSpot(
+  from: Box,
+  to: Box,
+  bend: number,
+  size: { w: number; h: number },
+  obstacles: readonly Box[],
+): number {
+  const curve = curveOf(from, to, bend)
+  const air = 3
+  const covered = (t: number) => {
+    const at = along(curve, t)
+    const left = at.x - size.w / 2 - air
+    const top = at.y - size.h / 2 - air
+    let area = 0
+    for (const box of obstacles) {
+      const w = Math.min(left + size.w + air * 2, box.x + box.w) - Math.max(left, box.x)
+      const h = Math.min(top + size.h + air * 2, box.y + box.h) - Math.max(top, box.y)
+      if (w > 0 && h > 0) area += w * h
+    }
+    return area
+  }
+  let best = { t: 0.5, area: Infinity }
+  for (const t of LABEL_SPOTS) {
+    const area = covered(t)
+    if (area === 0) return t
+    if (area < best.area) best = { t, area }
+  }
+  return best.t
 }
 
 /** ¿Pasa la flecha por encima de alguna de esas cajas? */
@@ -128,7 +174,7 @@ export function clearBend(from: Box, to: Box, others: readonly Box[], prefer = 0
 
 export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
   if (!data) return null
-  const { d, mid, end, angle } = archPath(data.from, data.to, data.bend)
+  const { d, mid, end, angle } = archPath(data.from, data.to, data.bend, data.labelAt)
   const style = { '--i': data.turn ?? 0 } as React.CSSProperties
   return (
     <>
