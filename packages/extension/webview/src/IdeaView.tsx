@@ -67,14 +67,20 @@ export function IdeaView({
   extras,
   live,
   onPick,
+  footer = 0,
 }: {
   idea: Idea
   extras: IdeaExtras
   /** Al reproducir una vuelta: la parte en la que se está. */
   live: string | null
   onPick: (id: string) => void
+  /** Lo que ocupan abajo las barras que flotan (la de ver una vuelta, la consola): el texto acaba antes. */
+  footer?: number
 }) {
   const { start, result } = extras
+  // La parte donde empieza el trabajo se dice la primera, no entre «lo demás».
+  const opener = start ? idea.parts.find((step) => step.id === start.at) : undefined
+  const parts = opener ? idea.parts.filter((step) => step !== opener) : idea.parts
   const isLive = (step: IdeaStep) => live !== null && (step.id === live || step.also.includes(live))
   const block = (label: string, steps: readonly IdeaStep[], kind: string) =>
     steps.length > 0 && (
@@ -89,65 +95,74 @@ export function IdeaView({
     )
   return (
     <div className="idea" role="region" aria-label="La idea del programa">
-      <div className="idea__flow">
-        {start && (
-          <p className="idea__start">
-            <span className="idea__play" aria-hidden>
-              ▶
-            </span>
-            {start.label}
-          </p>
-        )}
-        {block('Con', idea.uses, 'uses')}
-        {block(idea.loop ? 'Una vez, antes' : 'Primero', idea.before, 'before')}
-        {idea.loop && (
-          <section
-            className="idea__block"
-            data-kind="loop"
-            data-live={live === idea.loop.id ? '' : undefined}
-          >
-            <h3 className="idea__label">
-              <span className="idea__turn" aria-hidden>
-                ↻
-              </span>
-              Se repite
-              {extras.laps && <span className="idea__laps">{extras.laps}</span>}
-            </h3>
-            <ol className="idea__steps">
-              {idea.loop.steps.map((step, at) => (
-                <Step
-                  key={step.id}
-                  step={step}
-                  ordinal={at + 1}
-                  live={isLive(step)}
-                  onPick={onPick}
-                />
-              ))}
-            </ol>
-            {extras.exit && (
-              <p className="idea__exit">
-                <span aria-hidden>⤷</span> {extras.exit}
-              </p>
-            )}
-          </section>
-        )}
-        {block(idea.loop ? 'Además' : 'Sus partes', idea.parts, 'parts')}
-        {result && (
-          <section
-            className="idea__block"
-            data-kind="result"
-            data-planned={result.planned ? '' : undefined}
-            data-live={live === 'prysel:result' ? '' : undefined}
-          >
-            <h3 className="idea__label">{result.planned ? 'Daría' : 'Y al final'}</h3>
-            <div className="idea__result">
-              {result.lines.map((line, at) => (
-                <span key={at}>{line}</span>
-              ))}
-            </div>
-            <p className="idea__said">{result.said}</p>
-          </section>
-        )}
+      <div className="idea__scroll" style={{ bottom: footer }}>
+        <div className="idea__flow">
+          {start && (
+            <section className="idea__block" data-kind="start">
+              <h3 className="idea__label">
+                <span className="idea__play" aria-hidden>
+                  ▶
+                </span>
+                {start.label}
+              </h3>
+              {opener && (
+                <ol className="idea__steps">
+                  <Step step={opener} live={isLive(opener)} onPick={onPick} />
+                </ol>
+              )}
+            </section>
+          )}
+          {block('Con', idea.uses, 'uses')}
+          {block(idea.loop ? 'Una vez, antes' : 'Primero', idea.before, 'before')}
+          {idea.loop && (
+            <section
+              className="idea__block"
+              data-kind="loop"
+              data-live={live === idea.loop.id ? '' : undefined}
+            >
+              <h3 className="idea__label">
+                <span className="idea__turn" aria-hidden>
+                  ↻
+                </span>
+                Se repite
+                {extras.laps && <span className="idea__laps">{extras.laps}</span>}
+              </h3>
+              <ol className="idea__steps">
+                {idea.loop.steps.map((step, at) => (
+                  <Step
+                    key={step.id}
+                    step={step}
+                    ordinal={at + 1}
+                    live={isLive(step)}
+                    onPick={onPick}
+                  />
+                ))}
+              </ol>
+              {extras.exit && (
+                <p className="idea__exit">
+                  <span aria-hidden>⤷</span> {extras.exit}
+                </p>
+              )}
+            </section>
+          )}
+          {block(idea.loop ? 'Además' : 'Sus partes', parts, 'parts')}
+          {result && (
+            <section
+              className="idea__block"
+              data-kind="result"
+              data-planned={result.planned ? '' : undefined}
+              data-live={live === 'prysel:result' ? '' : undefined}
+            >
+              <h3 className="idea__label">{result.planned ? 'Daría' : 'Y al final'}</h3>
+              <div className="idea__result">
+                {result.lines.map((line, at) => (
+                  <span key={at}>{line}</span>
+                ))}
+              </div>
+              <p className="idea__said">{result.said}</p>
+            </section>
+          )}
+        </div>
       </div>
     </div>
   )

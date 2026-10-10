@@ -427,13 +427,21 @@ export function ideaOf(architecture: Architecture, facts: readonly ModuleFacts[]
   }
   const ids = architecture.modules.map((module) => module.id)
   const roleOfId = new Map(architecture.modules.map((module) => [module.id, module.role]))
+  /** Lo que el programa guarda para los demás: su papel es ese, o lo que deja lo leen dos o más. */
+  const kept = (id: string) =>
+    roleOfId.get(id) === 'datos' ||
+    new Set(
+      architecture.links
+        .filter((link) => link.kind === 'data' && link.told !== true && link.from === id)
+        .map((link) => link.to),
+    ).size >= 2
   const { anchor, order } = architecture
   if (anchor === undefined || order === undefined || order.length === 0) {
     return {
-      uses: merged(ids.filter((id) => roleOfId.get(id) === 'datos').map((id) => step(id))),
+      uses: merged(ids.filter(kept).map((id) => step(id))),
       before: [],
       loop: null,
-      parts: merged(ids.filter((id) => roleOfId.get(id) !== 'datos').map((id) => step(id))),
+      parts: merged(ids.filter((id) => !kept(id)).map((id) => step(id))),
     }
   }
   const told = architecture.links.filter((link) => link.told === true && link.kind !== 'call')
@@ -449,14 +457,14 @@ export function ideaOf(architecture: Architecture, facts: readonly ModuleFacts[]
       ),
     ].join(', ')
   return {
-    uses: merged(rest.filter((id) => roleOfId.get(id) === 'datos').map((id) => step(id))),
+    uses: merged(rest.filter(kept).map((id) => step(id))),
     before: merged(before.map((id) => step(id))),
     loop: {
       id: anchor,
       title: factOf.get(anchor)?.title ?? anchor,
       steps: merged(order.map((id) => step(id, brought(id)))),
     },
-    parts: merged(rest.filter((id) => roleOfId.get(id) !== 'datos').map((id) => step(id))),
+    parts: merged(rest.filter((id) => !kept(id)).map((id) => step(id))),
   }
 }
 

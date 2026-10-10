@@ -2503,6 +2503,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   idea={idea}
                   extras={ideaExtras}
                   live={beat?.at ?? null}
+                  footer={(reserve?.bottom ?? 0) + 8}
                   onPick={(id) => {
                     setDistance('partes')
                     setSelected(id)
