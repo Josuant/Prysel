@@ -109,7 +109,15 @@ export type GistPiece =
       type: 'strips'
       label: string
       strips: GistStrip[]
-      gauge?: { value: number; of: number; says: string }
+      /**
+       * Cómo se recorre, si se recorre: `columns`, posición a posición (en el paso `k`, la columna `k` de
+       * todas las filas); `rows`, fila a fila (la fila `k` llega en el paso `k`).
+       */
+      tour?: 'columns' | 'rows'
+      /** Recorrido por columnas: el tono de cada celda no se ve hasta que le toca (es un veredicto). */
+      reveal?: boolean
+      /** `running`: lo que marca tras cada paso del recorrido. */
+      gauge?: { value: number; of: number; says: string; running?: readonly number[] }
       foot?: string
     }
   /** Una frase suelta: «no recibe nada», o por qué no hay muestra. */
@@ -130,6 +138,8 @@ export interface GistStrip {
   /** En un podio: su puesto (`0`: se quedó fuera). */
   place?: number
   cells: { text: string; tone?: StripTone }[]
+  /** Recorrido por columnas: sus celdas no están hasta que les toca (es lo que sale). */
+  arrives?: boolean
   /** Cuántas celdas no se enseñan. */
   more?: number
   /** Lo que se dice a su derecha (su nota, lo que acaba de entrar). */
@@ -210,6 +220,8 @@ export const GIST = {
   maxLines: 6,
   maxFields: 5,
   maxText: 30,
+  /** Lo más ancho que es una lista en fila: más allá, sus elementos van en columna. */
+  maxRun: 380,
   minW: 220,
 }
 
@@ -254,7 +266,7 @@ export type GistShape =
       moreRows: number
       moreCols: number
     }
-  | { as: 'cells'; cells: string[]; widths: number[]; more: boolean }
+  | { as: 'cells'; cells: string[]; widths: number[]; more: boolean; stacked?: boolean }
   | { as: 'pairs'; rows: string[]; more: boolean }
   | { as: 'text'; text: string }
 
@@ -281,10 +293,24 @@ export function gistShape(value: GistValue): GistShape {
     value.items.every((item) => item.kind === 'atom')
   ) {
     const cells = value.items.slice(0, GIST.maxCells).map((item) => clip(gistText(item), 12))
+    const widths = cells.map(cellWidth)
+    // Unos cuantos textos largos en fila hacen una tarjeta de un metro: van uno debajo de otro.
+    const wide = widths.reduce((sum, width) => sum + width, 0) > GIST.maxRun
+    if (wide && cells.length >= 3) {
+      const shown = cells.slice(0, GIST.maxRows)
+      const widest = Math.max(...shown.map(cellWidth))
+      return {
+        as: 'cells',
+        cells: shown,
+        widths: shown.map(() => widest),
+        more: value.more || value.items.length > GIST.maxRows,
+        stacked: true,
+      }
+    }
     return {
       as: 'cells',
       cells,
-      widths: cells.map(cellWidth),
+      widths,
       more: value.more || value.items.length > GIST.maxCells,
     }
   }
@@ -308,6 +334,13 @@ function shapeSize(shape: GistShape): { w: number; h: number } {
     const rows = shape.rows.length + (shape.moreRows > 0 ? 1 : 0)
     return {
       w: cols * shape.cellW + (cols - 1) * GIST.cellGap,
+      h: rows * GIST.cell + (rows - 1) * GIST.cellGap,
+    }
+  }
+  if (shape.as === 'cells' && shape.stacked) {
+    const rows = shape.cells.length + (shape.more ? 1 : 0)
+    return {
+      w: Math.max(GIST.cell, ...shape.widths),
       h: rows * GIST.cell + (rows - 1) * GIST.cellGap,
     }
   }

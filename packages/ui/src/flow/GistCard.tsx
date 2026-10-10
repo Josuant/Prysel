@@ -139,7 +139,12 @@ function Value({ piece }: { piece: Datum }) {
   }
   if (shape.as === 'cells')
     return (
-      <div className="gist-cells" data-changed={mark} style={{ gap: GIST.cellGap }}>
+      <div
+        className="gist-cells"
+        data-changed={mark}
+        data-stacked={shape.stacked ? '' : undefined}
+        style={{ gap: GIST.cellGap }}
+      >
         {shape.cells.map((text, index) => (
           <span
             key={index}
@@ -206,7 +211,19 @@ function Console({ piece }: { piece: Extract<GistPiece, { type: 'console' }> }) 
 /** Unas tiras: filas de celdas alineadas, cada una con su tono (de dónde viene, si coincide, si es nueva). */
 function StripsPiece({ piece }: { piece: Extract<GistPiece, { type: 'strips' }> }) {
   const { strips, cellW, nameW, placed, noteW } = gistStrips(piece)
-  const share = piece.gauge && piece.gauge.of > 0 ? piece.gauge.value / piece.gauge.of : 0
+  const beat = useContext(Beat)
+  const byColumn = piece.tour === 'columns'
+  const byRow = piece.tour === 'rows'
+  // Lo que marca el medidor: lo que lleva en este paso del recorrido, o el total si ya acabó.
+  const running = piece.gauge?.running
+  const measured = !piece.gauge
+    ? 0
+    : running && running.length > 0 && Number.isFinite(beat)
+      ? beat < 0
+        ? 0
+        : (running[Math.min(beat, running.length - 1)] ?? piece.gauge.value)
+      : piece.gauge.value
+  const share = piece.gauge && piece.gauge.of > 0 ? measured / piece.gauge.of : 0
   return (
     <div className="gist-piece">
       <span className="gist-label">{piece.label}</span>
@@ -216,6 +233,8 @@ function StripsPiece({ piece }: { piece: Extract<GistPiece, { type: 'strips' }> 
             key={row}
             className="gist-strip"
             data-out={strip.place === 0 ? '' : undefined}
+            data-wait={byRow && beat < row ? '' : undefined}
+            data-now={byRow && beat === row ? '' : undefined}
             style={{ height: STRIP.row, '--i': row } as React.CSSProperties}
           >
             <span
@@ -240,7 +259,10 @@ function StripsPiece({ piece }: { piece: Extract<GistPiece, { type: 'strips' }> 
                 <span
                   key={at}
                   className="gist-cell"
-                  data-tone={cell.tone}
+                  // Un veredicto no se ve hasta que le toca; lo que sale, tampoco está antes.
+                  data-tone={byColumn && piece.reveal && beat < at ? undefined : cell.tone}
+                  data-wait={byColumn && strip.arrives && beat < at ? '' : undefined}
+                  data-now={byColumn && beat === at ? '' : undefined}
                   title={cell.text}
                   style={{ width: cellW, height: GIST.cell }}
                 >
@@ -271,7 +293,7 @@ function StripsPiece({ piece }: { piece: Extract<GistPiece, { type: 'strips' }> 
             <span className="gist-gauge__fill" style={{ width: `${Math.round(share * 100)}%` }} />
           </span>
           <span className="gist-gauge__text">
-            <b>{piece.gauge.value}</b> de {piece.gauge.of} {piece.gauge.says}
+            <b>{measured}</b> de {piece.gauge.of} {piece.gauge.says}
           </span>
         </span>
       )}

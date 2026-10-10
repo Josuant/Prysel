@@ -25,12 +25,14 @@ import {
   validCall,
   type Gist,
   type RunSummary,
+  mixTracer,
 } from '../../../packages/extension/src/gist/gist.ts'
 import { loopsIn } from '../../../packages/extension/src/gist/laps.ts'
 import { triesIn } from '../../../packages/extension/src/gist/net.ts'
 import { classesIn } from '../../../packages/extension/src/gist/blueprint.ts'
 import { conditionsIn } from '../../../packages/extension/src/gist/branch.ts'
 import { pickRule, verifiedRules } from '../../../packages/extension/src/gist/patterns.ts'
+import type { MixRule } from '../../../packages/extension/src/gist/mechanisms.ts'
 import type { Decider } from '../../../packages/extension/src/jev/client.ts'
 import type { Trace } from '../../../packages/extension/src/trace.ts'
 
@@ -87,6 +89,8 @@ export class Gists {
   private entry: Facts | null = null
   /** Las pruebas de quien lo usa: con qué llamada quiere ver cada función (por su nombre). */
   private readonly trials = new Map<string, string>()
+  /** Las mezclas vueltas a ver con datos trazadores, por el texto de su función (`null`: no hizo falta o no se pudo). */
+  private readonly tracers = new Map<string, MixRule | null>()
 
   constructor(private readonly port: GistsPort) {}
 
@@ -419,6 +423,26 @@ export class Gists {
       } catch {
         // Sin respuesta queda la más concreta, que también es verdad.
       }
+    }
+    // Una mezcla de dos padres que se parecen no deja ver de quién viene cada cosa: se vuelve a ejecutar con
+    // datos que se distinguen (una vez por función, mientras no cambie su texto).
+    for (const [at, gist] of gists.entries()) {
+      if (gist.rule?.kind !== 'mix' || trace?.error) continue
+      const fact = facts.find((candidate) => candidate.id === gist.id)
+      if (!fact) continue
+      const key = `${fact.owner ?? ''}.${fact.name}:${fact.hash}`
+      let tracer = this.tracers.get(key)
+      if (tracer === undefined) {
+        try {
+          tracer = await mixTracer(program, fact, gist, (code) =>
+            this.traced(code, inputs ? { answers: inputs, seed } : undefined),
+          )
+        } catch {
+          tracer = null
+        }
+        this.tracers.set(key, tracer)
+      }
+      if (tracer) gists[at] = { ...gist, tracer }
     }
     return gists
   }

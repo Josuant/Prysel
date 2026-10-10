@@ -6,8 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import { gistSize } from '@prysel/ui'
 import { withLaunch } from '../src/gist/entry.ts'
-import { gistsOf, type Gist } from '../src/gist/gist.ts'
-import { verifiedMechanisms } from '../src/gist/mechanisms.ts'
+import { functionsIn } from '../src/gist/facts.ts'
+import { gistsOf, mixTracer, type Gist } from '../src/gist/gist.ts'
+import { tracerCall, verifiedMechanisms } from '../src/gist/mechanisms.ts'
+import { ruleTells } from '../src/gist/patterns.ts'
 import type { Sample } from '../src/gist/sample.ts'
 import { parseLiteral, type Value } from '../src/gist/value.ts'
 import { Kernel } from '../src/kernel.ts'
@@ -72,7 +74,12 @@ describe.skipIf(!available)('los mecanismos de un algoritmo genético', () => {
     const { piece, scene } = strips(gist)
     expect(piece.strips.map((strip) => strip.name)).toEqual(['individuo', 'objetivo_texto'])
     expect(piece.strips[1]?.hidden).toBe(true)
-    expect(piece.gauge).toEqual({ value: same, of: 10, says: 'coinciden' })
+    expect(piece.gauge).toMatchObject({ value: same, of: 10, says: 'coinciden' })
+    // Se recorre letra a letra: el medidor va contando y acaba en lo que devuelve.
+    expect(scene.beats).toBe(10)
+    expect(piece).toMatchObject({ tour: 'columns', reveal: true })
+    expect(piece.gauge?.running?.length).toBe(10)
+    expect(piece.gauge?.running?.at(-1)).toBe(same)
     // El objetivo no se repite como entrada suelta: ya está en las tiras.
     const labels = scene.lanes
       .flat()
@@ -151,6 +158,96 @@ describe.skipIf(!available)('los mecanismos de un algoritmo genético', () => {
         if (piece.type === 'datum' && piece.hidden) expect(piece.label).not.toMatch(/programa/)
       }
     }
+  })
+})
+
+describe.skipIf(!available)('la muestra que se enseña es la que mejor cuenta el mecanismo', () => {
+  let kernel: Kernel
+  beforeAll(async () => {
+    kernel = await Kernel.start({ python })
+  }, 30_000)
+  afterAll(() => {
+    kernel.dispose()
+  })
+  const lines = (...rows: string[]) => rows.join('\n') + '\n'
+
+  it('una mutación que casi nunca cambia nada se enseña con una vez en que sí cambió', async () => {
+    const source = lines(
+      'import random',
+      '',
+      '# Mutar: cambia algún gen, de vez en cuando',
+      'def mutar(cromosoma, probabilidad):',
+      '    return [1 - gen if random.random() < probabilidad else gen for gen in cromosoma]',
+      '',
+      '# Probar: muchas veces',
+      'for _ in range(30):',
+      '    mutar([0, 1, 1, 0, 1, 0, 0, 1], 0.06)',
+    )
+    const trace = await kernel.trace(source, 20_000, false, true, { seed: 3 })
+    const gist = gistsOf(parse(source), trace).find((found) => found.name === 'mutar')
+    // De las treinta veces, la mayoría no cambió nada; se enseña una en la que se ve el retoque.
+    expect(gist?.rule).toMatchObject({ kind: 'tweak', input: 'cromosoma' })
+    const changed = gist?.rule?.kind === 'tweak' ? gist.rule.changed.filter(Boolean).length : 0
+    expect(changed).toBeGreaterThan(0)
+    const scene = gist ? sampleScene(gist) : null
+    // Y se recorre posición a posición: lo que sale llega cuando le toca.
+    expect(scene?.beats).toBe(8)
+    const piece = scene?.lanes.flat().find((found) => found.type === 'strips')
+    expect(piece).toMatchObject({ tour: 'columns' })
+    expect(piece?.type === 'strips' && piece.strips[1]?.arrives).toBe(true)
+  })
+
+  it('una mezcla de dos padres que se parecen se vuelve a ver con datos trazadores', async () => {
+    const source = lines(
+      '# Cruzar: el principio de uno y el final del otro',
+      'def cruzar(padre, madre, punto):',
+      '    return padre[:punto] + madre[punto:]',
+      '',
+      'hijo = cruzar([1, 1, 0, 1, 1, 1, 0, 1], [1, 1, 1, 1, 1, 0, 0, 1], 3)',
+      'print(hijo)',
+    )
+    const program = parse(source)
+    const trace = await kernel.trace(source, 20_000, false, true)
+    const gist = gistsOf(program, trace).find((found) => found.name === 'cruzar')
+    const rule = gist?.rule
+    if (!gist || rule?.kind !== 'mix' || !gist.sample) throw new Error(`regla: ${rule?.kind}`)
+    // En la muestra, casi todo es «de cualquiera de los dos».
+    expect(rule.from.filter((origin) => origin === 'both').length).toBeGreaterThanOrEqual(5)
+    // La llamada trazadora: los dos padres, del todo distintos; lo demás, igual.
+    expect(tracerCall('cruzar', gist.sample, rule)).toBe(
+      'cruzar([1, 1, 1, 1, 1, 1, 1, 1], [0, 0, 0, 0, 0, 0, 0, 0], 3)',
+    )
+    const [facts] = functionsIn(program)
+    if (!facts) throw new Error('sin función')
+    const tracer = await mixTracer(program, facts, gist, (code) => kernel.trace(code))
+    // Ejecutada de verdad: ahí sí se ve dónde corta.
+    expect(tracer?.from).toEqual(['a', 'a', 'a', 'b', 'b', 'b', 'b', 'b'])
+    const scene = sampleScene({ ...gist, ...(tracer ? { tracer } : {}) })
+    const labels = scene?.lanes
+      .flat()
+      .flatMap((found) => (found.type === 'strips' ? [found.label] : []))
+    expect(labels).toEqual(['mezcla', 'otra vez, con datos que se distinguen'])
+    // Una mezcla que ya se deja ver no necesita trazadores.
+    const clear = {
+      ...rule,
+      from: rule.from.map((origin, at) => (at < 3 ? 'a' : 'b') as typeof origin),
+    }
+    expect(tracerCall('cruzar', gist.sample, clear)).toBeNull()
+  })
+
+  it('cuánto enseña una regla: nada, algo, o más cuanto más deja ver', () => {
+    const mix = (from: string) => ({
+      kind: 'mix' as const,
+      input: 'a',
+      a: { name: 'a', cells: [...from] },
+      b: { name: 'b', cells: [...from] },
+      out: [...from],
+      from: [...from].map(
+        (letter) => (letter === 'a' ? 'a' : letter === 'b' ? 'b' : 'both') as 'a' | 'b' | 'both',
+      ),
+    })
+    expect(ruleTells(null)).toBe(0)
+    expect(ruleTells(mix('aaabbb'))).toBeGreaterThan(ruleTells(mix('a....b')))
   })
 })
 

@@ -303,6 +303,46 @@ function buildRules(sample: Sample): BuildRule[] {
   ]
 }
 
+/**
+ * La llamada con **datos trazadores** para una mezcla que no se deja ver: si los dos padres se parecen, de
+ * muchas posiciones del hijo no se puede decir de cuál vienen. Se vuelve a llamar con dos entradas del mismo
+ * largo que se distinguen del todo (una, toda de un símbolo; la otra, toda de otro, de los que ya usaba) y lo
+ * demás igual: ahí cada posición del resultado dice de quién es. `null` si la muestra ya lo deja ver, o si no
+ * se sabe escribir esa llamada (no hay dos símbolos, o algo de lo que recibe no es un valor que se pueda poner).
+ */
+export function tracerCall(name: string, sample: Sample, rule: MixRule): string | null {
+  const unsure = rule.from.filter((origin) => origin === 'both').length
+  if (unsure < Math.max(2, Math.ceil(rule.out.length * 0.25))) return null
+  const valueOf = (input: string) => sample.inputs.find((entry) => entry.name === input)?.value
+  const symbolsOf = (value: Value | undefined): string[] =>
+    value?.kind === 'atom' && value.type === 'text'
+      ? [...unquoted(value.text)]
+      : value?.kind === 'list'
+        ? value.items.map((item) => showValue(item))
+        : []
+  const [x, y] = [
+    ...new Set([...symbolsOf(valueOf(rule.a.name)), ...symbolsOf(valueOf(rule.b.name))]),
+  ]
+  if (x === undefined || y === undefined) return null
+  const filled = (value: Value | undefined, symbol: string): string | null => {
+    if (value?.kind === 'atom' && value.type === 'text')
+      return JSON.stringify(symbol.repeat(unquoted(value.text).length))
+    if (value?.kind !== 'list' || value.shape === 'set') return null
+    const items = value.items.map(() => symbol).join(', ')
+    return value.shape === 'tuple' ? `(${items},)` : `[${items}]`
+  }
+  const args = sample.inputs.map((input) =>
+    input.name === rule.a.name
+      ? filled(input.value, x)
+      : input.name === rule.b.name
+        ? filled(input.value, y)
+        : input.value.kind === 'opaque' || (input.value.kind !== 'atom' && input.value.more)
+          ? null
+          : showValue(input.value),
+  )
+  return args.some((arg) => arg === null) ? null : `${name}(${args.join(', ')})`
+}
+
 /** Los mecanismos que la muestra confirma, del más concreto al menos. */
 export function verifiedMechanisms(code: string, sample: Sample): Mechanism[] {
   if (sample.error !== undefined) return []

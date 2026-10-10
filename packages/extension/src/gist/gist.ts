@@ -6,8 +6,9 @@ import { bestLaps, loopsIn, type Laps } from './laps.ts'
 import { bestNet, triesIn, type Net } from './net.ts'
 import { bestLife, classesIn, type Life } from './blueprint.ts'
 import { bestSwitch, conditionsIn, type Switch } from './branch.ts'
-import { ruleFor, type Rule } from './patterns.ts'
-import { bestSample, samplesIn, type Sample } from './sample.ts'
+import { tracerCall, verifiedMechanisms, type MixRule } from './mechanisms.ts'
+import { ruleFor, ruleTells, type Rule } from './patterns.ts'
+import { bestSample, rankSamples, samplesIn, withRolls, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
 import type { Idleness } from './entry.ts'
 import type { Story } from './story.ts'
@@ -40,6 +41,11 @@ export interface Gist {
   rule?: Rule
   /** El programa nunca la llama: su muestra es una prueba aparte, con un ejemplo. */
   unused?: boolean
+  /**
+   * Su mezcla, vuelta a ver con **datos trazadores**: otra llamada, con dos entradas que se distinguen del
+   * todo, donde cada posición del resultado dice de quién viene (en la muestra, los padres se parecían).
+   */
+  tracer?: MixRule
   /** Con otro estado que `ok`: por qué no hay muestra. */
   why?: string
   /** Qué bloque es: una función (por defecto), un bucle, un `try` o una clase. */
@@ -70,6 +76,53 @@ export function unrunnable(source: string, scripted = false): string | null {
   return null
 }
 
+/** Entre cuántas de las veces que se ejecutó se busca la que mejor la enseña. */
+const MAX_SHOWN = 16
+
+/**
+ * De las veces que la función se ejecutó, la que mejor cuenta lo que hace: la de siempre (la que pisa más
+ * líneas sin ser larga), salvo que otra deje ver más de su regla. Una mutación que esa vez no cambió nada, o
+ * un cruce de dos padres iguales, son verdad pero no enseñan: si otra vez sí se vio, se enseña esa.
+ */
+function showing(facts: Facts, samples: readonly Sample[]): Sample | null {
+  const ranked = rankSamples(samples)
+  let best = ranked[0]
+  if (!best) return null
+  let top = ruleTells(ruleFor(facts.code, best))
+  for (const sample of ranked.slice(1, MAX_SHOWN)) {
+    if (sample.error !== undefined) continue
+    const tells = ruleTells(ruleFor(facts.code, sample))
+    if (tells > top) {
+      best = sample
+      top = tells
+    }
+  }
+  return withRolls(best, samples)
+}
+
+/**
+ * La mezcla de una función, vuelta a ver con datos trazadores (ver `tracerCall`): se ejecuta esa otra llamada
+ * de verdad y, si ahí cada posición del resultado dice de qué entrada viene, eso es lo que se devuelve.
+ * `null` si no hace falta, no se puede, o tampoco así se deja ver.
+ */
+export async function mixTracer(
+  program: Program,
+  facts: Facts,
+  gist: Gist,
+  run: (code: string) => Promise<Trace>,
+): Promise<MixRule | null> {
+  if (gist.rule?.kind !== 'mix' || !gist.sample || facts.owner !== null) return null
+  const call = tracerCall(facts.name, gist.sample, gist.rule)
+  const valid = call === null ? null : validCall(call, facts)
+  if (valid === null) return null
+  const { sample } = await sampleOfCall(program, facts, valid, run)
+  if (!sample) return null
+  const found = verifiedMechanisms(facts.code, sample).find(
+    (rule): rule is MixRule => rule.kind === 'mix',
+  )
+  return found && !found.from.includes('both') ? found : null
+}
+
 /** La función con su muestra y, si la muestra la confirma, su regla. */
 const proven = (facts: Facts, sample: Sample): Gist => {
   const rule = ruleFor(facts.code, sample)
@@ -92,7 +145,7 @@ export function gistsOf(program: Program, trace: Trace | null, scripted = false)
   const blocked = unrunnable(program.source, scripted)
   const index = trace ? indexOf(trace) : null
   const functions = functionsIn(program).map((facts): Gist => {
-    const sample = trace && index ? bestSample(samplesIn(trace, facts, { index })) : null
+    const sample = trace && index ? showing(facts, samplesIn(trace, facts, { index })) : null
     if (sample) return proven(facts, sample)
     if (blocked !== null)
       return { ...base(facts), status: 'no-ejecutable', sample: null, why: blocked }

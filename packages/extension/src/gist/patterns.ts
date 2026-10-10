@@ -492,6 +492,25 @@ export function ruleFor(code: string, sample: Sample): Rule | null {
   return verifiedRules(code, sample)[0] ?? null
 }
 
+/**
+ * Cuánto enseña una regla con esa muestra: nada si no la hay; algo si solo dice que una lista se llena; y más
+ * cuanto más deja ver (una mezcla en la que aportan los dos por igual, una comparación con aciertos y fallos).
+ * Sirve para elegir, entre las veces que se ejecutó una función, la que mejor cuenta lo que hace.
+ */
+export function ruleTells(rule: Rule | null): number {
+  if (!rule) return 0
+  if (rule.kind === 'build') return 1
+  if (rule.kind === 'mix') {
+    const count = (origin: string) => rule.from.filter((found) => found === origin).length
+    return 2 + Math.min(count('a'), count('b')) / rule.out.length + (count('new') > 0 ? 0.25 : 0)
+  }
+  if (rule.kind === 'match') {
+    const same = rule.hits.filter(Boolean).length
+    return 2 + Math.min(same, rule.hits.length - same) / rule.hits.length
+  }
+  return 2
+}
+
 /** La regla dicha en una frase: es lo que se le da a elegir al JEV, y lo que se lee en la tarjeta. */
 export function ruleSays(rule: Rule): string {
   if (

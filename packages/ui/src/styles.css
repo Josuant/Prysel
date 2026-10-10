@@ -5349,8 +5349,25 @@ button.fn-menu__crumb:hover {
   display: flex;
   align-items: center;
 }
+.gist-strip {
+  transition: opacity 220ms ease;
+}
 .gist-strip[data-out] {
   opacity: 0.5;
+}
+/* Recorrido fila a fila: la que aún no ha llegado, y la que llega ahora. */
+.gist-strip[data-wait] {
+  opacity: 0.08;
+}
+.gist-strip[data-now] .gist-cell:not([data-more]) {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.gist-gauge__fill {
+  transition: width 200ms ease;
+}
+/* Una lista de textos largos, uno debajo de otro. */
+.gist-cells[data-stacked] {
+  flex-direction: column;
 }
 .gist-strip__name {
   flex: none;

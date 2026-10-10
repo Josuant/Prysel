@@ -369,16 +369,24 @@ const SMALL = 60
  * el primer `return`. Si todas son largas, la más corta. Y a igualdad, la de entrada más pequeña.
  */
 export function bestSample(samples: readonly Sample[]): Sample | null {
+  const best = rankSamples(samples)[0]
+  return best ? withRolls(best, samples) : null
+}
+
+/** Las muestras, de la que mejor enseña la función a la que menos (con el criterio de `bestSample`). */
+export function rankSamples(samples: readonly Sample[]): Sample[] {
   const reach = (sample: Sample) => (sample.steps <= SMALL ? sample.steps : -sample.steps)
-  const ranked = [...samples].sort(
+  return [...samples].sort(
     (a, b) =>
       Number(a.error !== undefined) - Number(b.error !== undefined) ||
       b.lines - a.lines ||
       reach(b) - reach(a) ||
       weight(a) - weight(b),
   )
-  const best = ranked[0]
-  if (!best) return null
+}
+
+/** Esa muestra con sus «otras veces»: lo que la función devolvió en otras llamadas con las mismas entradas. */
+export function withRolls(best: Sample, samples: readonly Sample[]): Sample {
   // Con las mismas entradas, ¿dio otra cosa otras veces? Es lo que deja ver el azar.
   const key = (sample: Sample) =>
     JSON.stringify([

@@ -70,6 +70,8 @@ const asCells = (value: Value): { text: string }[] =>
     ? value.items.map((item) => ({ text: bare(showValue(item)) }))
     : [{ text: bare(showValue(value)) }]
 
+/** Cuántas celdas enseña una tira como mucho (lo mismo que mide `STRIP.maxCells` en la tarjeta). */
+const MAX_STRIP_CELLS = 14
 /** Cuántos candidatos de un podio se enseñan: los elegidos y los que les siguen. */
 const MAX_PODIUM = 7
 
@@ -77,8 +79,14 @@ const MAX_PODIUM = 7
  * La escena de una función con **mecanismo**: lo que no entra en él → sus tiras (de dónde viene cada cosa, qué
  * coincide, quién gana, cómo crece) → lo demás que deja. Todo es de la muestra.
  */
-function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes'> {
-  let strips: GistPiece
+function mechanismScene(
+  sample: Sample,
+  rule: Mechanism,
+  tracer?: Mechanism,
+): Pick<GistScene, 'lanes' | 'beats'> {
+  let strips: Extract<GistPiece, { type: 'strips' }>
+  // Lo que se añade debajo de las tiras (la misma mezcla, con datos trazadores).
+  const extra: GistPiece[] = []
   let shown: string[]
   // Lo que devuelve ya se ve en las tiras de una mezcla, de una comparación o de una lista que crece.
   let told = true
@@ -94,20 +102,50 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
         {
           name: 'devuelve',
           cells: rule.out.map((text, at) => ({ text, tone: rule.from[at] ?? ('both' as const) })),
+          arrives: true,
         },
       ],
+      tour: 'columns',
       ...(fresh > 0
         ? {
             foot: `${fresh} ${fresh === 1 ? 'no viene' : 'no vienen'} de ninguno: ${fresh === 1 ? 'es nuevo' : 'son nuevos'}`,
           }
         : {}),
     }
+    // Los padres se parecían: la misma mezcla, otra vez, con datos que se distinguen del todo.
+    if (tracer?.kind === 'mix')
+      extra.push({
+        type: 'strips',
+        label: 'otra vez, con datos que se distinguen',
+        strips: [
+          {
+            name: tracer.a.name,
+            cells: tracer.a.cells.map((text) => ({ text, tone: 'a' as const })),
+          },
+          {
+            name: tracer.b.name,
+            cells: tracer.b.cells.map((text) => ({ text, tone: 'b' as const })),
+          },
+          {
+            name: 'devuelve',
+            cells: tracer.out.map((text, at) => ({
+              text,
+              tone: tracer.from[at] ?? ('both' as const),
+            })),
+          },
+        ],
+      })
   } else if (rule.kind === 'match') {
     shown = [rule.input, rule.target.name]
     const tone = (at: number) => (rule.hits[at] ? ('hit' as const) : ('miss' as const))
     const same = rule.hits.filter(Boolean).length
+    // Lo que lleva el medidor tras cada posición: los aciertos (o los fallos) hasta ahí.
+    let so = 0
+    const running = rule.hits.map((hit) => (so += hit === (rule.counts === 'same') ? 1 : 0))
     strips = {
       type: 'strips',
+      tour: 'columns',
+      reveal: true,
       label: 'compara, posición a posición',
       strips: [
         { name: rule.input, cells: rule.cells.map((text, at) => ({ text, tone: tone(at) })) },
@@ -119,8 +157,8 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
       ],
       gauge:
         rule.counts === 'same'
-          ? { value: same, of: rule.hits.length, says: 'coinciden' }
-          : { value: rule.hits.length - same, of: rule.hits.length, says: 'no coinciden' },
+          ? { value: same, of: rule.hits.length, says: 'coinciden', running }
+          : { value: rule.hits.length - same, of: rule.hits.length, says: 'no coinciden', running },
     }
   } else if (rule.kind === 'podium') {
     shown = rule.scores ? [rule.input, rule.scores] : [rule.input]
@@ -144,6 +182,7 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
     if (inside) shown = [rule.input]
     strips = {
       type: 'strips',
+      tour: 'rows',
       // Las notas que no recibe (las calcula dentro) se dicen como lo que son.
       label: `${winners === 1 ? 'el' : `los ${winners}`} de ${rule.order === 'max' ? 'mayor' : 'menor'} ${rule.scores ?? 'valor'}${inside ? ' (lo calcula)' : ''}`,
       strips: rows.map((entry): GistStrip => ({
@@ -161,6 +200,7 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
     const count = rule.changed.filter(Boolean).length
     strips = {
       type: 'strips',
+      tour: 'columns',
       label: 'cambia unos pocos',
       strips: [
         { name: rule.input, cells: rule.cells.map((text) => ({ text })) },
@@ -170,6 +210,7 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
             text,
             ...(rule.changed[at] ? { tone: 'new' as const } : {}),
           })),
+          arrives: true,
         },
       ],
       foot: `${count} de ${rule.out.length} ${count === 1 ? 'cambia' : 'cambian'}`,
@@ -194,6 +235,7 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
     })
     strips = {
       type: 'strips',
+      tour: 'rows',
       label: `${rule.input} se va llenando`,
       // Si no se enseñan todos los pasos, se dice dónde faltan: antes del último.
       strips:
@@ -215,8 +257,18 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
     (piece) => !(told && piece.type === 'datum' && piece.label === 'devuelve'),
   )
   const rest = after.length === 1 && after[0]?.type === 'note' ? [] : after
+  // Los pasos del recorrido: las posiciones (hasta las que se enseñan) o las filas.
+  const beats =
+    strips.tour === 'rows'
+      ? strips.strips.length
+      : Math.min(MAX_STRIP_CELLS, Math.max(0, ...strips.strips.map((strip) => strip.cells.length)))
   return {
-    lanes: [...(before.length > 0 ? [before] : []), [strips], ...(rest.length > 0 ? [rest] : [])],
+    lanes: [
+      ...(before.length > 0 ? [before] : []),
+      [strips, ...extra],
+      ...(rest.length > 0 ? [rest] : []),
+    ],
+    ...(beats > 1 ? { beats } : {}),
   }
 }
 
@@ -279,8 +331,12 @@ const FOLDS: Record<FoldRule['op'], { label: string; symbol: string }> = {
  * La escena de una función con regla: lo que entró → la regla → lo que salió, y el **recorrido** que las
  * une (qué le pasa a cada elemento, en orden). Todo sale de la muestra: no se anima nada que no pasara.
  */
-function ruleScene(sample: Sample, rule: Rule): Pick<GistScene, 'lanes' | 'beats'> {
-  if (isMechanism(rule)) return mechanismScene(sample, rule)
+function ruleScene(
+  sample: Sample,
+  rule: Rule,
+  tracer?: Mechanism,
+): Pick<GistScene, 'lanes' | 'beats'> {
+  if (isMechanism(rule)) return mechanismScene(sample, rule, tracer)
   const steps =
     rule.kind === 'cases'
       ? rule.via.length
@@ -669,7 +725,7 @@ export function sampleScene(gist: Gist): GistScene | null {
   if (onlyTalks(gist.sample)) return null
   // Con regla, en medio va lo que la función hace con cada cosa: es su explicación.
   const scene = gist.rule
-    ? ruleScene(gist.sample, gist.rule)
+    ? ruleScene(gist.sample, gist.rule, gist.tracer)
     : { lanes: [entering(gist.sample), leaving(gist.sample)] }
   const dice = chance(gist.sample)
   const last = scene.lanes[scene.lanes.length - 1] ?? []
