@@ -173,6 +173,7 @@ export function Transport({
   loop,
   titleOf,
   carriesOf,
+  avoid = 0,
 }: {
   beats: readonly Beat[]
   playback: Playback
@@ -181,6 +182,8 @@ export function Transport({
   titleOf: (id: string) => string
   /** Lo que le llega por una flecha (`desde>hasta`), si lleva nombre. */
   carriesOf: (link: string) => string | undefined
+  /** Lo que ocupa, a lo ancho, lo que hay en el rincón de abajo a la derecha (la consola): se le deja sitio. */
+  avoid?: number
 }) {
   const { at, playing } = playback
   const beat = at === null ? undefined : beats[at]
@@ -193,7 +196,12 @@ export function Transport({
       )
     : null
   return (
-    <div className="canvas-float arch-transport" role="group" aria-label="Ver cómo funciona">
+    <div
+      className="canvas-float arch-transport"
+      role="group"
+      aria-label="Ver cómo funciona"
+      style={{ '--avoid': `${avoid}px` } as React.CSSProperties}
+    >
       <button
         type="button"
         className="arch-transport__play"

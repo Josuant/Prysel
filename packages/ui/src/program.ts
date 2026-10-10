@@ -1061,6 +1061,11 @@ export function viewOf(
           if (node.section && holding.has(node.id) && folded.has(node.id)) {
             const inner = node.contains?.map((id) => scenes.get(id)).find((scene) => scene)
             const peek = inner ? gistPeek(inner) : ''
+            // Como módulo de la arquitectura se lee de lejos: si su rótulo ya dice con palabras lo que hace,
+            // eso es lo que se enseña, y la muestra queda en su nota (al pasar por encima).
+            if (peek !== '' && asModules && tops.has(node.id) && node.section.subtitle) {
+              return { ...node, note: [node.note, peek].filter(Boolean).join('\n\n') }
+            }
             return peek === ''
               ? node
               : {

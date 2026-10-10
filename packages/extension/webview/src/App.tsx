@@ -2421,11 +2421,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       (other) => other.kind === 'data' && `${other.from}>${other.to}` === link,
                     )?.label
                   }
+                  avoid={consoleBox ? consoleBox.w + 16 : 0}
                 />
               )}
               {/* Cómo leer la arquitectura: qué forma tiene y qué dice cada flecha. */}
               {architecture && program.nodes.length > 0 && (
-                <div className="canvas-float arch-legend" role="note">
+                <div
+                  className="canvas-float arch-legend"
+                  role="note"
+                  style={
+                    { '--avoid': `${consoleBox ? consoleBox.w + 16 : 0}px` } as React.CSSProperties
+                  }
+                >
                   <span className="arch-legend__shape" title={SHAPE_WHY[architecture.shape]}>
                     {SHAPE_NAMES[architecture.shape]}
                   </span>

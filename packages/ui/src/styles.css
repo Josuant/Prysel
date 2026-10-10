@@ -6752,11 +6752,12 @@ button.run-panel__line:hover {
 /* La barra de transporte: ver pasar una vuelta. Encima de la leyenda. */
 .arch-transport {
   bottom: 48px;
-  left: 50%;
+  left: calc((100% - var(--avoid, 0px)) / 2);
   display: flex;
+  box-sizing: border-box;
   align-items: center;
   gap: 10px;
-  max-width: min(92%, 760px);
+  max-width: min(calc(100% - var(--avoid, 0px) - 20px), 760px);
   padding: 4px 12px 4px 4px;
   border: 1px solid var(--border-card);
   border-radius: var(--radius-full);
@@ -6768,6 +6769,7 @@ button.run-panel__line:hover {
 }
 .arch-transport__play {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 6px;
   height: 26px;
@@ -6782,6 +6784,7 @@ button.run-panel__line:hover {
 }
 .arch-transport__steps {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 4px;
   margin: 0;
@@ -6819,6 +6822,7 @@ button.run-panel__line:hover {
 /* La tira de vueltas: cuántas dio y por cuál va. */
 .arch-laps {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: 8px;
 }
@@ -6877,10 +6881,14 @@ button.run-panel__line:hover {
 /* Cómo se lee: la forma elegida y lo que dice cada trazo. Abajo, en el centro, sin estorbar al puntero. */
 .arch-legend {
   bottom: 14px;
-  left: 50%;
+  /* En el centro de lo que la consola (abajo, a la derecha) deja libre: `--avoid` es lo que ocupa. */
+  left: calc((100% - var(--avoid, 0px)) / 2);
   display: flex;
+  box-sizing: border-box;
+  max-width: calc(100% - var(--avoid, 0px) - 20px);
   align-items: center;
   gap: 12px;
+  overflow: hidden;
   padding: 4px 12px;
   border: 1px solid var(--border-card);
   border-radius: var(--radius-full);

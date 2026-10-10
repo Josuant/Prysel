@@ -541,7 +541,8 @@ export function sectionCardSize(card: {
     const width = Math.max(
       // El número, el papel, el título y el botón de abrirla.
       indent + SECTION.badge + Math.ceil(card.title.length * 8.2) + 10 + 20 + SECTION.pad,
-      lines === 0 ? 0 : indent + perLine * 6.6 + SECTION.pad,
+      // Con un poco de holgura: si el texto no cabe en sus líneas, se corta.
+      lines === 0 ? 0 : indent + perLine * 6.9 + SECTION.pad + 8,
     )
     return {
       w: snap(clamp(width, SECTION.plainMin, SECTION.max)),
