@@ -1,6 +1,9 @@
 import type { Decider } from '../jev/client.ts'
 import type { Sample } from './sample.ts'
 import { showValue, type Value } from './value.ts'
+import { mechanismSays, verifiedMechanisms, type Mechanism } from './mechanisms.ts'
+
+export type { Mechanism } from './mechanisms.ts'
 
 /**
  * La **regla** de una función: lo que hace con lo que recibe, dicho en una línea. «Cada celda: si es 1, un
@@ -12,7 +15,7 @@ import { showValue, type Value } from './value.ts'
  * de la regla, queda dicho **qué pasó con cada elemento** (por qué caso fue, si se quedó, cuánto llevaba la
  * cuenta): es lo que permite contarlo paso a paso.
  */
-export type Rule = CasesRule | FilterRule | FoldRule
+export type Rule = CasesRule | FilterRule | FoldRule | Mechanism
 
 interface Applied {
   /** La entrada a la que se aplica (su nombre entre lo que recibe la función). */
@@ -451,12 +454,26 @@ function pathRules(code: string, sample: Sample): CasesRule[] {
 export function verifiedRules(code: string, sample: Sample): Rule[] {
   if (sample.error !== undefined) return []
   const literal = casesRules(code, sample)
+  const mechanisms = verifiedMechanisms(code, sample)
+  // Un mecanismo dice más que una regla genérica sobre lo mismo: «cuenta las que coinciden con el objetivo»
+  // antes que «cuenta»; «los dos de mejor nota» antes que «se queda con algunos».
+  // (Salvo «el mayor de una lista de números»: eso ya es una cuenta que se lleva, y se cuenta mejor paso a
+  // paso; como podio queda de reserva, por si el código no deja leer la cuenta.)
+  const plain = (rule: Mechanism) =>
+    rule.kind === 'podium' &&
+    rule.scores === null &&
+    rule.ranked.filter((entry) => entry.place !== null).length === 1
+  const first = mechanisms.filter((rule) => rule.kind !== 'build' && !plain(rule))
   const all: Rule[] = [
+    ...first,
     ...literal,
     // Por caminos solo si no hay ya una regla por valores: dirían lo mismo, peor.
     ...(literal.length === 0 ? pathRules(code, sample) : []),
     ...filterRules(code, sample),
     ...foldRules(code, sample),
+    ...mechanisms.filter(plain),
+    // Que una lista se vaya llenando es lo último que se dice: vale para casi cualquier bucle que acumula.
+    ...mechanisms.filter((rule) => rule.kind === 'build'),
   ]
   // La misma regla leída dos veces (dos condiciones iguales) no es una duda.
   const seen = new Set<string>()
@@ -475,6 +492,13 @@ export function ruleFor(code: string, sample: Sample): Rule | null {
 
 /** La regla dicha en una frase: es lo que se le da a elegir al JEV, y lo que se lee en la tarjeta. */
 export function ruleSays(rule: Rule): string {
+  if (
+    rule.kind === 'mix' ||
+    rule.kind === 'match' ||
+    rule.kind === 'podium' ||
+    rule.kind === 'build'
+  )
+    return mechanismSays(rule)
   if (rule.kind === 'cases') {
     const cases = rule.cases
       .map((entry) => `${entry.when === null ? 'otro' : bare(entry.when)} → ${bare(entry.gives)}`)

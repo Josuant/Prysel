@@ -1,5 +1,6 @@
-import type { GistPiece, GistScene, LapCell, NetRow } from '@prysel/ui'
+import type { GistPiece, GistScene, GistStrip, LapCell, NetRow } from '@prysel/ui'
 import type { Gist } from '../../src/gist/gist.ts'
+import type { Mechanism } from '../../src/gist/mechanisms.ts'
 import { bare, type FoldRule, type Rule } from '../../src/gist/patterns.ts'
 import type { Sample } from '../../src/gist/sample.ts'
 import type { Laps } from '../../src/gist/laps.ts'
@@ -12,10 +13,166 @@ import { showValue, type Value } from '../../src/gist/value.ts'
  * cualquier función; no interpreta nada, solo coloca lo que pasó.
  */
 
-/** Lo que entró: sus argumentos (y nada más: el objeto de un método se enseña al otro lado, con su cambio). */
-function entering(sample: Sample): GistPiece[] {
-  if (sample.inputs.length === 0) return [{ type: 'note', text: 'sin entrada' }]
-  return sample.inputs.map((input) => ({ type: 'datum', label: input.name, value: input.value }))
+/** Cuántas cosas que lee del programa se enseñan junto a lo que recibe. */
+const MAX_READS_SHOWN = 2
+
+/**
+ * Lo que entró: sus argumentos (y nada más: el objeto de un método se enseña al otro lado, con su cambio) y,
+ * marcado, lo que usa sin recibirlo (un objetivo, un tamaño que lee del programa): sin ello no se entiende
+ * por qué da lo que da. `skip`: lo que ya se enseña en otra parte de la tarjeta.
+ */
+function entering(sample: Sample, skip: readonly string[] = []): GistPiece[] {
+  const reads = (sample.reads ?? [])
+    .filter((read) => !skip.includes(read.name))
+    .slice(0, MAX_READS_SHOWN)
+    .map((read): GistPiece => ({
+      type: 'datum',
+      label: read.name,
+      value: read.value,
+      hidden: true,
+    }))
+  const inputs = sample.inputs
+    .filter((input) => !skip.includes(input.name))
+    .map((input): GistPiece => ({ type: 'datum', label: input.name, value: input.value }))
+  if (inputs.length + reads.length === 0)
+    return skip.length > 0 ? [] : [{ type: 'note', text: 'sin entrada' }]
+  return [...inputs, ...reads]
+}
+
+/**
+ * El azar, dicho: si con las mismas entradas otras veces dio otra cosa, esas otras veces (es la prueba); si
+ * solo se sabe que su código lo usa, que lo usa.
+ */
+function chance(sample: Sample): GistPiece[] {
+  if (sample.rolls && sample.rolls.length > 0)
+    return [
+      {
+        type: 'strips',
+        label: sample.chance
+          ? 'al azar · con lo mismo, otras veces dio'
+          : 'con lo mismo, otras veces dio',
+        strips: sample.rolls.map((roll) => ({ name: '', cells: [{ text: showValue(roll) }] })),
+      },
+    ]
+  return sample.chance ? [{ type: 'note', text: 'usa el azar: es una de las veces posibles' }] : []
+}
+
+const isMechanism = (rule: Rule): rule is Mechanism =>
+  rule.kind === 'mix' || rule.kind === 'match' || rule.kind === 'podium' || rule.kind === 'build'
+
+/** Cuántos candidatos de un podio se enseñan: los elegidos y los que les siguen. */
+const MAX_PODIUM = 7
+
+/**
+ * La escena de una función con **mecanismo**: lo que no entra en él → sus tiras (de dónde viene cada cosa, qué
+ * coincide, quién gana, cómo crece) → lo demás que deja. Todo es de la muestra.
+ */
+function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes'> {
+  let strips: GistPiece
+  let shown: string[]
+  // Lo que devuelve ya se ve en las tiras de una mezcla, de una comparación o de una lista que crece.
+  let told = true
+  if (rule.kind === 'mix') {
+    shown = [rule.a.name, rule.b.name]
+    const fresh = rule.from.filter((origin) => origin === 'new').length
+    strips = {
+      type: 'strips',
+      label: 'mezcla',
+      strips: [
+        { name: rule.a.name, cells: rule.a.cells.map((text) => ({ text, tone: 'a' as const })) },
+        { name: rule.b.name, cells: rule.b.cells.map((text) => ({ text, tone: 'b' as const })) },
+        {
+          name: 'devuelve',
+          cells: rule.out.map((text, at) => ({ text, tone: rule.from[at] ?? ('both' as const) })),
+        },
+      ],
+      ...(fresh > 0
+        ? {
+            foot: `${fresh} ${fresh === 1 ? 'no viene' : 'no vienen'} de ninguno: ${fresh === 1 ? 'es nuevo' : 'son nuevos'}`,
+          }
+        : {}),
+    }
+  } else if (rule.kind === 'match') {
+    shown = [rule.input, rule.target.name]
+    const tone = (at: number) => (rule.hits[at] ? ('hit' as const) : ('miss' as const))
+    const same = rule.hits.filter(Boolean).length
+    strips = {
+      type: 'strips',
+      label: 'compara, posición a posición',
+      strips: [
+        { name: rule.input, cells: rule.cells.map((text, at) => ({ text, tone: tone(at) })) },
+        {
+          name: rule.target.name,
+          ...(rule.target.hidden ? { hidden: true } : {}),
+          cells: rule.target.cells.map((text, at) => ({ text, tone: tone(at) })),
+        },
+      ],
+      gauge:
+        rule.counts === 'same'
+          ? { value: same, of: rule.hits.length, says: 'coinciden' }
+          : { value: rule.hits.length - same, of: rule.hits.length, says: 'no coinciden' },
+    }
+  } else if (rule.kind === 'podium') {
+    shown = rule.scores ? [rule.input, rule.scores] : [rule.input]
+    told = false
+    const better = (x: number, y: number) => (rule.order === 'max' ? y - x : x - y)
+    // Como un podio: primero los elegidos, por su puesto; luego los demás, del mejor al peor.
+    const ordered = [...rule.ranked].sort((x, y) =>
+      x.place !== null && y.place !== null
+        ? x.place - y.place
+        : x.place !== null
+          ? -1
+          : y.place !== null
+            ? 1
+            : better(Number(x.score), Number(y.score)),
+    )
+    const rows = ordered.slice(0, MAX_PODIUM)
+    const left = ordered.length - rows.length
+    const winners = rule.ranked.filter((entry) => entry.place !== null).length
+    strips = {
+      type: 'strips',
+      label: `${winners === 1 ? 'el' : `los ${winners}`} de ${rule.order === 'max' ? 'mayor' : 'menor'} ${rule.scores ?? 'valor'}`,
+      strips: rows.map((entry): GistStrip => ({
+        name: '',
+        place: entry.place ?? 0,
+        cells: [{ text: entry.text, ...(entry.place !== null ? { tone: 'hit' as const } : {}) }],
+        note: entry.score,
+      })),
+      ...(left > 0 ? { foot: `… y ${left} más, por debajo` } : {}),
+    }
+  } else {
+    shown = []
+    // Elementos cortos, se leen en su celda; largos, la celda solo cuenta y lo que entra se dice al lado.
+    const short = rule.steps.every((step) => step.every((cell) => cell.length <= 3))
+    const rows: GistStrip[] = rule.steps.map((step, at) => {
+      const before = rule.steps[at - 1]?.length ?? 0
+      const added = step.slice(before)
+      return {
+        name: `${at === rule.steps.length - 1 && rule.skipped > 0 ? '…' : ''}${step.length}`,
+        cells: step.map((text, k) => ({
+          text: short ? text : '',
+          ...(k >= before && at > 0 ? { tone: 'new' as const } : {}),
+        })),
+        ...(short || added.length === 0 || at === 0
+          ? {}
+          : { note: `+ ${added[added.length - 1] ?? ''}` }),
+      }
+    })
+    strips = {
+      type: 'strips',
+      label: `${rule.input} se va llenando`,
+      strips: rows,
+      ...(rule.skipped > 0 ? { foot: `… ${rule.skipped} pasos más entre medias` } : {}),
+    }
+  }
+  const before = entering(sample, shown)
+  const after = leaving(sample).filter(
+    (piece) => !(told && piece.type === 'datum' && piece.label === 'devuelve'),
+  )
+  const rest = after.length === 1 && after[0]?.type === 'note' ? [] : after
+  return {
+    lanes: [...(before.length > 0 ? [before] : []), [strips], ...(rest.length > 0 ? [rest] : [])],
+  }
 }
 
 /** Lo que salió: lo que devolvió, lo que imprimió, lo que dejó cambiado, o el error con el que acabó. */
@@ -78,6 +235,7 @@ const FOLDS: Record<FoldRule['op'], { label: string; symbol: string }> = {
  * une (qué le pasa a cada elemento, en orden). Todo sale de la muestra: no se anima nada que no pasara.
  */
 function ruleScene(sample: Sample, rule: Rule): Pick<GistScene, 'lanes' | 'beats'> {
+  if (isMechanism(rule)) return mechanismScene(sample, rule)
   const steps =
     rule.kind === 'cases'
       ? rule.via.length
@@ -464,6 +622,12 @@ export function sampleScene(gist: Gist): GistScene | null {
   if (gist.block === 'condition') return conditionScene(gist)
   if (gist.status !== 'ok' || !gist.sample) return null
   if (onlyTalks(gist.sample)) return null
+  // Con regla, en medio va lo que la función hace con cada cosa: es su explicación.
+  const scene = gist.rule
+    ? ruleScene(gist.sample, gist.rule)
+    : { lanes: [entering(gist.sample), leaving(gist.sample)] }
+  const dice = chance(gist.sample)
+  const last = scene.lanes[scene.lanes.length - 1] ?? []
   return {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,
     ...(gist.title ? { title: gist.title } : {}),
@@ -473,9 +637,9 @@ export function sampleScene(gist: Gist): GistScene | null {
     ...(gist.owner === null && (gist.sample.inputs.length > 0 || gist.sample.tried)
       ? { editable: true }
       : {}),
-    // Con regla, en medio va lo que la función hace con cada cosa: es su explicación.
-    ...(gist.rule
-      ? ruleScene(gist.sample, gist.rule)
-      : { lanes: [entering(gist.sample), leaving(gist.sample)] }),
+    ...(gist.unused ? { unused: true } : {}),
+    ...scene,
+    // El azar se dice al final de lo que sale: es parte de por qué salió eso.
+    lanes: dice.length > 0 ? [...scene.lanes.slice(0, -1), [...last, ...dice]] : scene.lanes,
   }
 }

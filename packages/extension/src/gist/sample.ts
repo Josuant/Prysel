@@ -41,10 +41,64 @@ export interface Sample {
    * está.
    */
   paths?: number[][]
+  /**
+   * Lo que usa **sin recibirlo**: variables del programa que la función lee por su nombre (un objetivo, una
+   * tabla, un tamaño), con lo que valían en ese momento. Son entradas igual que las otras, solo que no se ven
+   * en su cabecera.
+   */
+  reads?: { name: string; value: Value }[]
+  /**
+   * La colección que va llenando hasta devolverla: cómo estaba cada vez que cambió, en orden. Solo si acaba
+   * siendo justo lo que devuelve.
+   */
+  built?: { name: string; steps: Value[] }
+  /**
+   * Con lo mismo, otras veces dio otra cosa: lo que devolvió en otras llamadas del programa con estas mismas
+   * entradas (hasta tres distintas). Es lo que deja ver que hay azar (o memoria) de por medio.
+   */
+  rolls?: Value[]
+  /** Usa el azar (`random`): lo que sale es una de las veces posibles. */
+  chance?: boolean
   /** Con `invented`: la llamada que se probó. */
   call?: string
   /** Esa llamada la escribió quien lo usa, para probar la función con sus propios datos. */
   tried?: boolean
+}
+
+/** Cuántas cosas del programa se enseñan como entradas ocultas, y cuántos estados de una colección que crece. */
+const MAX_READS = 3
+const MAX_BUILT = 60
+
+/** ¿Usa el azar? Lo dice su código: el módulo `random` o una de sus funciones de siempre. */
+export const usesChance = (code: string): boolean =>
+  /\brandom\s*\.|\b(?:randint|randrange|choice|choices|shuffle|uniform|gauss)\s*\(/.test(
+    code.replace(/"[^"\n]*"|'[^'\n]*'/g, '""').replace(/#.*$/gm, ''),
+  )
+
+/**
+ * Los nombres del programa que una función lee sin recibirlos: los que aparecen en su código, no son suyos
+ * (ni parámetros ni cosas que ella misma asigna) y existen fuera con un valor.
+ */
+function readNames(facts: Facts, outside: Readonly<Record<string, Shown>>): string[] {
+  const body = facts.code
+    .split('\n')
+    .slice(1)
+    .join('\n')
+    .replace(/"[^"\n]*"|'[^'\n]*'/g, '""')
+    .replace(/#.*$/gm, '')
+  const own = new Set(facts.takes)
+  for (const match of body.matchAll(
+    /^\s*(?:for\s+)?([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)\s*(?:=(?!=)|\bin\b)/gm,
+  )) {
+    for (const name of (match[1] ?? '').split(',')) own.add(name.trim())
+  }
+  const found: string[] = []
+  for (const match of body.matchAll(/(?<![.\w])([A-Za-z_]\w*)\b(?!\s*\()/g)) {
+    const name = match[1] ?? ''
+    if (own.has(name) || found.includes(name) || !(name in outside)) continue
+    found.push(name)
+  }
+  return found.slice(0, MAX_READS)
 }
 
 /** Cuántas llamadas se miran como mucho: de sobra para elegir, y no cuesta en un bucle largo. */
@@ -172,11 +226,21 @@ export function samplesIn(
     let last = call
     let end = -1
     const lines = new Set<number>()
+    // Las colecciones de la función, cada vez que cambian: la que acabe siendo lo que devuelve, se ve crecer.
+    const growing = new Map<string, { text: string; value: Value }[]>()
     for (let j = i + 1; j < events.length; j++) {
       const event = events[j]
       if (!event) continue
       if (event.o) printed += event.o
       if (event.f !== call.f) continue
+      for (const [name, shown] of Object.entries(event.ch ?? {})) {
+        const value = valueOf(shown)
+        if (value.kind !== 'list') continue
+        const states = growing.get(name) ?? []
+        const text = showValue(value)
+        if (states.at(-1)?.text !== text && states.length < MAX_BUILT) states.push({ text, value })
+        growing.set(name, states)
+      }
       if (event.k === 'return') {
         end = j
         break
@@ -230,6 +294,23 @@ export function samplesIn(
     else if (facts.returns || (events[end]?.v ?? null) !== null)
       sample.returned = valueOf(events[end]?.v)
     if (printed !== '') sample.printed = printed
+    // Lo que lee del programa sin recibirlo, con lo que valía al entrar.
+    const outside = before.frames.find((frame) => frame.id === 0)?.locals ?? {}
+    const reads = readNames(facts, outside).map((name) => ({
+      name,
+      value: valueOf(outside[name] as Shown),
+    }))
+    if (reads.length > 0 && call.f !== 0) sample.reads = reads
+    // La colección que fue llenando: la que acabó siendo justo lo que devuelve.
+    if (sample.returned !== undefined && sample.returned.kind === 'list') {
+      const final = showValue(sample.returned)
+      for (const [name, states] of growing) {
+        if (states.length < 3 || states.at(-1)?.text !== final) continue
+        sample.built = { name, steps: states.map((state) => state.value) }
+        break
+      }
+    }
+    if (usesChance(facts.code)) sample.chance = true
     // Lo que recibió y sigue siendo el mismo objeto, pero ya no vale lo mismo.
     const changed = facts.takes.flatMap((name) => {
       const was = entered?.locals[name]
@@ -275,5 +356,29 @@ export function bestSample(samples: readonly Sample[]): Sample | null {
       reach(b) - reach(a) ||
       weight(a) - weight(b),
   )
-  return ranked[0] ?? null
+  const best = ranked[0]
+  if (!best) return null
+  // Con las mismas entradas, ¿dio otra cosa otras veces? Es lo que deja ver el azar.
+  const key = (sample: Sample) =>
+    JSON.stringify([
+      sample.inputs.map((input) => showValue(input.value)),
+      sample.reads?.map((read) => showValue(read.value)),
+    ])
+  const mine = best.returned === undefined ? null : showValue(best.returned)
+  if (mine === null) return best
+  const rolls: Value[] = []
+  const seen = new Set([mine])
+  for (const other of samples) {
+    if (other === best || other.returned === undefined || other.error !== undefined) continue
+    if (key(other) !== key(best)) continue
+    const text = showValue(other.returned)
+    if (seen.has(text)) continue
+    seen.add(text)
+    rolls.push(other.returned)
+    if (rolls.length >= MAX_ROLLS) break
+  }
+  return rolls.length > 0 ? { ...best, rolls } : best
 }
+
+/** Cuántas «otras veces» se enseñan. */
+const MAX_ROLLS = 3

@@ -12,6 +12,11 @@ import {
   gistConsole,
   gistLapColumns,
   gistPieceSize,
+  gistStrips,
+  STRIP,
+  stripCell,
+  stripName,
+  stripNote,
   lapItemWidth,
   lapText,
   netDetail,
@@ -198,12 +203,102 @@ function Console({ piece }: { piece: Extract<GistPiece, { type: 'console' }> }) 
   )
 }
 
+/** Unas tiras: filas de celdas alineadas, cada una con su tono (de dónde viene, si coincide, si es nueva). */
+function StripsPiece({ piece }: { piece: Extract<GistPiece, { type: 'strips' }> }) {
+  const { strips, cellW, nameW, placed, noteW } = gistStrips(piece)
+  const share = piece.gauge && piece.gauge.of > 0 ? piece.gauge.value / piece.gauge.of : 0
+  return (
+    <div className="gist-piece">
+      <span className="gist-label">{piece.label}</span>
+      <div className="gist-strips">
+        {strips.map((strip, row) => (
+          <div
+            key={row}
+            className="gist-strip"
+            data-out={strip.place === 0 ? '' : undefined}
+            style={{ height: STRIP.row, '--i': row } as React.CSSProperties}
+          >
+            <span
+              className="gist-strip__name"
+              data-hidden={strip.hidden ? '' : undefined}
+              style={{ width: nameW }}
+              title={strip.hidden ? `${strip.name}: no lo recibe, lo lee del programa` : strip.name}
+            >
+              {stripName(strip.name)}
+            </span>
+            {placed && (
+              <span
+                className="gist-strip__place"
+                data-place={strip.place ? Math.min(strip.place, 4) : undefined}
+                style={{ width: STRIP.place }}
+              >
+                {strip.place ? strip.place : ''}
+              </span>
+            )}
+            <span className="gist-strip__cells" style={{ gap: GIST.cellGap }}>
+              {strip.cells.map((cell, at) => (
+                <span
+                  key={at}
+                  className="gist-cell"
+                  data-tone={cell.tone}
+                  title={cell.text}
+                  style={{ width: cellW, height: GIST.cell }}
+                >
+                  {stripCell(cell.text)}
+                </span>
+              ))}
+              {strip.more > 0 && (
+                <span
+                  className="gist-cell"
+                  data-more=""
+                  style={{ width: cellW, height: GIST.cell }}
+                >
+                  +{strip.more}
+                </span>
+              )}
+            </span>
+            {strip.note && (
+              <span className="gist-strip__note" style={{ width: noteW }} title={strip.note}>
+                {stripNote(strip.note)}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+      {piece.gauge && (
+        <span className="gist-gauge" style={{ height: STRIP.gauge }}>
+          <span className="gist-gauge__bar" aria-hidden>
+            <span className="gist-gauge__fill" style={{ width: `${Math.round(share * 100)}%` }} />
+          </span>
+          <span className="gist-gauge__text">
+            <b>{piece.gauge.value}</b> de {piece.gauge.of} {piece.gauge.says}
+          </span>
+        </span>
+      )}
+      {piece.foot && (
+        <span className="gist-note" style={{ height: GIST.row }} title={piece.foot}>
+          {piece.foot}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function Piece({ piece }: { piece: GistPiece }) {
   const beat = useContext(Beat)
+  if (piece.type === 'strips') return <StripsPiece piece={piece} />
   if (piece.type === 'datum')
     return (
       <div className="gist-piece">
-        {piece.label && <span className="gist-label">{piece.label}</span>}
+        {piece.label && (
+          <span
+            className="gist-label"
+            data-hidden={piece.hidden ? '' : undefined}
+            title={piece.hidden ? `${piece.label}: no lo recibe, lo lee del programa` : undefined}
+          >
+            {piece.label}
+          </span>
+        )}
         <Value piece={piece} />
       </div>
     )
@@ -749,7 +844,16 @@ export function GistCard({ scene, size, onToggle, onEdit }: GistCardProps) {
             tu prueba
           </span>
         )}
-        {scene.example && !scene.mine && (
+        {scene.unused && !scene.mine && (
+          <span
+            className="gist-card__example"
+            data-unused=""
+            title="El programa nunca la llama. Lo que se ve es una prueba aparte, con un ejemplo, para saber qué hace."
+          >
+            sin usar
+          </span>
+        )}
+        {scene.example && !scene.mine && !scene.unused && (
           <span
             className="gist-card__example"
             title="La entrada es un ejemplo propuesto para probarla. La salida es la que dio el programa al ejecutarse."

@@ -756,7 +756,13 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     )
     const gist = await ruled(source, 'dobles', 'dobles([1, -2, 3])')
     expect(gist.sample?.paths).toHaveLength(3)
-    expect(gist.rule).toBeUndefined()
+    // No hay regla por casos que valga. Lo que sí pasó, y se enseña, es que la lista se fue llenando.
+    expect(gist.rule?.kind).not.toBe('cases')
+    expect(gist.rule).toMatchObject({
+      kind: 'build',
+      input: 'salida',
+      steps: [[], ['2'], ['2', '0'], ['2', '0', '6']],
+    })
   })
 
   const GUESS = lines(

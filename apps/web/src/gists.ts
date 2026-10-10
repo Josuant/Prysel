@@ -375,7 +375,7 @@ export class Gists {
       const leads = fact.id === entry?.id
       const known = this.cache.get(fact)
       if (known) {
-        gists[at] = { ...known, id: fact.id }
+        gists[at] = { ...known, id: fact.id, ...(leads ? {} : { unused: true }) }
         if (leads) this.noteTrial(gists[at])
         continue
       }
@@ -404,7 +404,8 @@ export class Gists {
       })
       this.cache.set(tried)
       if (leads) this.noteTrial(tried)
-      gists[at] = tried
+      // Nadie la llamaba (y no es por donde arranca el programa): se dice, es un dato del programa.
+      gists[at] = leads ? tried : { ...tried, unused: true }
     }
     // Casi siempre hay una regla o ninguna. Si la muestra confirma varias, el JEV dice cuál es la intención.
     for (const [at, gist] of gists.entries()) {

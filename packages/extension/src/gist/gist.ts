@@ -38,6 +38,8 @@ export interface Gist {
   sample: Sample | null
   /** Su regla («si es 1, un asterisco; si no, un punto»), cuando la tiene y la muestra la confirma. */
   rule?: Rule
+  /** El programa nunca la llama: su muestra es una prueba aparte, con un ejemplo. */
+  unused?: boolean
   /** Con otro estado que `ok`: por qué no hay muestra. */
   why?: string
   /** Qué bloque es: una función (por defecto), un bucle, un `try` o una clase. */

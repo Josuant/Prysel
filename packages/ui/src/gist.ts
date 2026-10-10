@@ -26,6 +26,8 @@ export type GistPiece =
       label?: string
       value: GistValue
       changed?: boolean
+      /** No lo recibe: lo lee del programa (un objetivo, un tamaño). Se marca en su nombre. */
+      hidden?: boolean
       beats?: readonly (number | null)[]
       arrives?: boolean
       fades?: readonly boolean[]
@@ -98,8 +100,41 @@ export type GistPiece =
       none: number
       end: string
     }
+  /**
+   * Unas **tiras**: filas de celdas alineadas, cada celda con su tono. Es con lo que se enseña un mecanismo:
+   * de qué padre viene cada letra del hijo, qué posiciones coinciden con el objetivo, quién sube al podio,
+   * cómo se va llenando una lista. `gauge`: una medida al pie, cuánto de cuánto.
+   */
+  | {
+      type: 'strips'
+      label: string
+      strips: GistStrip[]
+      gauge?: { value: number; of: number; says: string }
+      foot?: string
+    }
   /** Una frase suelta: «no recibe nada», o por qué no hay muestra. */
   | { type: 'note'; text: string }
+
+/**
+ * El tono de una celda de una tira: viene de la primera entrada (`a`), de la segunda (`b`), de cualquiera de
+ * las dos (`both`), coincide (`hit`), no coincide (`miss`), o es nueva (`new`: no viene de ninguna, o acaba de
+ * entrar).
+ */
+export type StripTone = 'a' | 'b' | 'both' | 'hit' | 'miss' | 'new'
+
+export interface GistStrip {
+  /** Cómo se llama la fila (una entrada, «devuelve», el número de un paso). */
+  name: string
+  /** No lo recibe: lo lee del programa. */
+  hidden?: boolean
+  /** En un podio: su puesto (`0`: se quedó fuera). */
+  place?: number
+  cells: { text: string; tone?: StripTone }[]
+  /** Cuántas celdas no se enseñan. */
+  more?: number
+  /** Lo que se dice a su derecha (su nota, lo que acaba de entrar). */
+  note?: string
+}
 
 export interface GistScene {
   /** El nombre de la función (o la cabecera del bloque). */
@@ -114,6 +149,8 @@ export interface GistScene {
   example?: boolean
   /** La entrada la puso quien lo usa, para probarla con sus datos. */
   mine?: boolean
+  /** El programa nunca la llama: lo que se enseña es una prueba aparte. */
+  unused?: boolean
   /** Se puede probar con otros datos: la tarjeta ofrece cambiarlos. */
   editable?: boolean
   /** El código cambió después: se está volviendo a comprobar. */
@@ -389,7 +426,52 @@ export function gistLapColumns(piece: Extract<GistPiece, { type: 'laps' }>): num
   ]
 }
 
+/** Las medidas de unas tiras: cuántas celdas se enseñan por fila y lo que se lee de cada cosa. */
+export const STRIP = { maxCells: 14, row: GIST.cell + 3, place: 20, gauge: 20 }
+export const stripName = (text: string) => clip(text, 14)
+export const stripCell = (text: string) => clip(text, 12)
+export const stripNote = (text: string) => clip(text, 16)
+
+/** Cómo se colocan unas tiras: lo que mide la columna de los nombres, cada celda (todas igual: van alineadas) y la de las notas. */
+export function gistStrips(piece: Extract<GistPiece, { type: 'strips' }>) {
+  const strips = piece.strips.map((strip) => ({
+    ...strip,
+    cells: strip.cells.slice(0, STRIP.maxCells),
+    more: (strip.more ?? 0) + Math.max(0, strip.cells.length - STRIP.maxCells),
+  }))
+  const longest = Math.max(
+    0,
+    ...strips.flatMap((strip) => strip.cells.map((c) => stripCell(c.text).length)),
+  )
+  const cellW = Math.max(GIST.cell - 2, Math.ceil(longest * GIST.char) + 8)
+  const nameW =
+    Math.max(0, ...strips.map((strip) => Math.ceil(stripName(strip.name).length * 6.4))) + 8
+  const placed = strips.some((strip) => strip.place !== undefined)
+  const noteW = Math.max(
+    0,
+    ...strips.map((strip) => (strip.note ? Math.ceil(stripNote(strip.note).length * 6.6) + 10 : 0)),
+  )
+  const cells = Math.max(0, ...strips.map((strip) => strip.cells.length + (strip.more > 0 ? 1 : 0)))
+  return { strips, cellW, nameW, placed, noteW, cells }
+}
+
 export function gistPieceSize(piece: GistPiece): { w: number; h: number } {
+  if (piece.type === 'strips') {
+    const { strips, cellW, nameW, placed, noteW, cells } = gistStrips(piece)
+    return {
+      w: Math.max(
+        Math.ceil(piece.label.length * 6.4),
+        nameW + (placed ? STRIP.place : 0) + cells * (cellW + GIST.cellGap) + noteW,
+        piece.foot ? Math.ceil(clip(piece.foot, 48).length * 6.6) + 4 : 0,
+        piece.gauge ? 120 + Math.ceil(piece.gauge.says.length * 6.6) : 0,
+      ),
+      h:
+        GIST.label +
+        strips.length * STRIP.row +
+        (piece.gauge ? STRIP.gauge : 0) +
+        (piece.foot ? GIST.row : 0),
+    }
+  }
   if (piece.type === 'datum') {
     const box = shapeSize(gistShape(piece.value))
     const label = piece.label ? Math.ceil(piece.label.length * 6.4) : 0
@@ -512,7 +594,7 @@ export function gistSize(scene: GistScene): { w: number; h: number } {
   const head =
     30 +
     Math.ceil(scene.name.length * 8) +
-    (scene.mine ? 80 : scene.example ? 66 : 0) +
+    (scene.mine ? 80 : scene.unused ? 72 : scene.example ? 66 : 0) +
     (scene.editable ? 28 : 0) +
     34
   const sub = scene.title ? Math.min(52, scene.title.length) * 6.4 : 0

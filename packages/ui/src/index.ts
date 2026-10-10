@@ -84,6 +84,8 @@ export {
   titledScene,
   type GistPiece,
   type GistScene,
+  type GistStrip,
+  type StripTone,
   type GistValue,
   type LapCell,
   type NetRow,

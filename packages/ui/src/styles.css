@@ -5183,6 +5183,10 @@ button.fn-menu__crumb:hover {
   font-size: 10.5px;
   letter-spacing: 0.02em;
 }
+.gist-card__example[data-unused] {
+  border-color: color-mix(in srgb, var(--state-warning) 60%, transparent);
+  color: var(--state-warning);
+}
 .gist-card__example[data-mine] {
   border-style: solid;
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
@@ -5335,6 +5339,119 @@ button.fn-menu__crumb:hover {
 .gist-cell[data-more] {
   background: none;
   color: var(--ink-faint);
+}
+/* Las tiras de un mecanismo: filas de celdas alineadas, cada una con su tono. */
+.gist-strips {
+  display: flex;
+  flex-direction: column;
+}
+.gist-strip {
+  display: flex;
+  align-items: center;
+}
+.gist-strip[data-out] {
+  opacity: 0.5;
+}
+.gist-strip__name {
+  flex: none;
+  box-sizing: border-box;
+  padding-right: 8px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* No lo recibe: lo lee del programa. */
+.gist-label[data-hidden],
+.gist-strip__name[data-hidden] {
+  color: var(--ink-faint);
+  font-style: italic;
+  text-decoration: underline dotted;
+}
+.gist-strip__place {
+  display: inline-grid;
+  flex: none;
+  box-sizing: border-box;
+  height: 18px;
+  margin-right: 2px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 700;
+  place-items: center;
+}
+.gist-strip__place[data-place] {
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--state-warning) 26%, transparent);
+  color: var(--ink);
+}
+.gist-strip__place[data-place='1'] {
+  background: color-mix(in srgb, var(--state-warning) 70%, transparent);
+}
+.gist-strip__cells {
+  display: flex;
+  flex: none;
+}
+.gist-strip__note {
+  flex: none;
+  box-sizing: border-box;
+  padding-left: 8px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-cell[data-tone='a'] {
+  background: color-mix(in srgb, var(--accent) 30%, var(--field));
+  color: var(--ink);
+}
+.gist-cell[data-tone='b'] {
+  background: color-mix(in srgb, var(--state-success) 28%, var(--field));
+  color: var(--ink);
+}
+.gist-cell[data-tone='both'] {
+  background: var(--field);
+  color: var(--ink);
+}
+.gist-cell[data-tone='hit'] {
+  background: color-mix(in srgb, var(--state-success) 30%, var(--field));
+  color: var(--ink);
+}
+.gist-cell[data-tone='miss'] {
+  color: var(--ink-faint);
+}
+.gist-cell[data-tone='new'] {
+  background: color-mix(in srgb, var(--state-warning) 34%, var(--field));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--state-warning) 70%, transparent);
+  color: var(--ink);
+}
+/* Una medida: cuánto de cuánto. */
+.gist-gauge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.gist-gauge__bar {
+  position: relative;
+  width: 64px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--field);
+}
+.gist-gauge__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-full);
+  background: var(--state-success);
+}
+.gist-gauge__text b {
+  color: var(--ink);
 }
 .gist-pairs,
 .gist-state {
