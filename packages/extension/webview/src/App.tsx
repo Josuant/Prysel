@@ -1531,15 +1531,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // Las franjas que ocupan las barras que flotan sobre la arquitectura: arriba las migas; abajo la leyenda
   // y, si hay historia, la de ver una vuelta (y la consola, si van encima de ella).
   const hasStory = beats.length > 0
+  // (Arriba, además, la barra de las perillas y el dado, si el programa los tiene.)
+  const hasKnobs =
+    features.chat === true && (knobs.length > 0 || /random/.test(program?.source ?? ''))
   const reserve = useMemo(
     () =>
       architecture
         ? {
-            top: 40,
+            top: hasKnobs ? 90 : 40,
             bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
           }
         : null,
-    [architecture, hasStory, consoleBox, cramped],
+    [architecture, hasStory, hasKnobs, consoleBox, cramped],
   )
   const playingBeat = playback.at === null ? undefined : beats[playback.at]
   const beat = useMemo(
