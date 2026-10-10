@@ -701,9 +701,11 @@ export interface GistCardProps {
   size: { w: number; h: number }
   /** Abrir el diagrama de la función. */
   onToggle?: (() => void) | undefined
+  /** Probar la función con otros datos. */
+  onEdit?: (() => void) | undefined
 }
 
-export function GistCard({ scene, size, onToggle }: GistCardProps) {
+export function GistCard({ scene, size, onToggle, onEdit }: GistCardProps) {
   // Cada vez que se pulsa la flecha, la escena se vuelve a contar desde el principio.
   const [run, setRun] = useState(0)
   return (
@@ -738,13 +740,36 @@ export function GistCard({ scene, size, onToggle }: GistCardProps) {
         <span className="gist-card__name" title={scene.code}>
           {scene.name}
         </span>
-        {scene.example && (
+        {scene.mine && (
+          <span
+            className="gist-card__example"
+            data-mine=""
+            title="La entrada la pusiste tú. La salida es la que dio el programa al ejecutarse con ella."
+          >
+            tu prueba
+          </span>
+        )}
+        {scene.example && !scene.mine && (
           <span
             className="gist-card__example"
             title="La entrada es un ejemplo propuesto para probarla. La salida es la que dio el programa al ejecutarse."
           >
             ejemplo
           </span>
+        )}
+        {scene.editable && onEdit && (
+          <button
+            type="button"
+            className="node__action gist-card__toggle nodrag"
+            aria-label={`Probar ${scene.name} con otros datos`}
+            title="Probar con otros datos"
+            onClick={(event) => {
+              event.stopPropagation()
+              onEdit()
+            }}
+          >
+            <Icon name="pencil" size={13} />
+          </button>
         )}
         {onToggle && (
           <button

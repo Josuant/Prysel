@@ -14,6 +14,7 @@ import {
   proposeAnswers,
   runSummary,
   settled,
+  tested,
   unrunnable,
   type Gist,
   type RunSummary,
@@ -75,6 +76,8 @@ export class Gists {
    */
   private mine: { key: string; answers: string[]; seed: number } | null = null
   private playSeq = 0
+  /** Las pruebas de quien lo usa: con qué llamada quiere ver cada función (por su nombre). */
+  private readonly trials = new Map<string, string>()
 
   constructor(private readonly port: GistsPort) {}
 
@@ -129,6 +132,51 @@ export class Gists {
       this.done = null
       this.touch()
     }
+  }
+
+  /**
+   * Probar una función con otros datos: la llamada se ejecuta ya, y su tarjeta cambia. Se guarda: mientras
+   * la función exista, su tarjeta enseña esa prueba. `null`: volver a la muestra del programa.
+   */
+  async tryCall(id: string, call: string | null) {
+    const known = this.last.find((gist) => gist.id === id)
+    if (!known || known.block) return
+    const key = `${known.owner ?? ''}.${known.name}`
+    if (call === null) {
+      this.trials.delete(key)
+      this.done = null
+      return this.touch()
+    }
+    const version = this.port.version()
+    const program = await this.port.analyse()
+    const fact = functionsIn(program).find((candidate) => candidate.id === id)
+    if (!fact) return
+    const inputs = this.inputsNow(program.source)
+    const gist = await tested(program, fact, call, (code) => this.traced(code, inputs))
+    if (!gist || this.port.version() !== version) return
+    this.trials.set(key, call)
+    this.last = this.last.map((one) => (one.id === id ? gist : one))
+    this.port.post(this.last, version, this.ran)
+  }
+
+  /** Las respuestas de teclado con las que se ejecuta ahora el programa, si las pide. */
+  private inputsNow(text: string): { answers: string[]; seed: number } | undefined {
+    if (!asksInput(text)) return undefined
+    const key = inputSignature(text)
+    if (this.mine?.key === key) return { answers: this.mine.answers, seed: this.mine.seed }
+    const answers = this.answers.get(key)
+    return answers ? { answers, seed: EXAMPLE_SEED } : undefined
+  }
+
+  private async traced(code: string, inputs?: { answers: string[]; seed: number }): Promise<Trace> {
+    return (
+      (await this.port.trace(code, inputs?.answers, inputs?.seed ?? EXAMPLE_SEED)) ?? {
+        events: [],
+        truncated: false,
+        error: null,
+        output: '',
+      }
+    )
   }
 
   private async pass() {
@@ -217,6 +265,16 @@ export class Gists {
       conditionsIn(program).length === 0
     if (nothing) return []
     const gists = gistsOf(program, trace, inputs !== undefined)
+    // Lo que quien lo usa quiso probar manda sobre la muestra del programa: su tarjeta sigue con sus datos.
+    for (const [at, gist] of gists.entries()) {
+      const call = gist.block ? undefined : this.trials.get(`${gist.owner ?? ''}.${gist.name}`)
+      const fact = call ? facts.find((candidate) => candidate.id === gist.id) : undefined
+      if (!call || !fact || trace?.error) continue
+      const mine = await tested(program, fact, call, (code) =>
+        this.traced(code, inputs ? { answers: inputs, seed } : undefined),
+      )
+      if (mine) gists[at] = mine
+    }
     let invented = 0
     for (const [at, gist] of gists.entries()) {
       if (gist.status !== 'sin-muestra' || trace?.error) continue

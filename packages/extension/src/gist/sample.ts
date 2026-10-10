@@ -43,6 +43,8 @@ export interface Sample {
   paths?: number[][]
   /** Con `invented`: la llamada que se probó. */
   call?: string
+  /** Esa llamada la escribió quien lo usa, para probar la función con sus propios datos. */
+  tried?: boolean
 }
 
 /** Cuántas llamadas se miran como mucho: de sobra para elegir, y no cuesta en un bucle largo. */

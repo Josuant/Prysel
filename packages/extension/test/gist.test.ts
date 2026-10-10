@@ -1,3 +1,4 @@
+import { argsOf, callOf, fieldsOf } from '../webview/src/TryPanel.tsx'
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -12,6 +13,7 @@ import {
   gistsOf,
   inputSignature,
   invent,
+  tested,
   runSummary,
   settled,
   unrunnable,
@@ -359,6 +361,80 @@ describe.skipIf(!available)('la muestra: lo que pasó al ejecutarla de verdad', 
     expect(gists.find((gist) => gist.name === 'ladrar')).toMatchObject({
       status: 'sin-muestra',
       why: 'Nadie la llama.',
+    })
+  })
+
+  describe('probar una función con otros datos', () => {
+    const run = (code: string): Promise<Trace> => kernel.trace(code)
+    const EDAD = lines(
+      'def calcular_edad(anios):',
+      '    return anios * 7',
+      '',
+      'print(calcular_edad(3))',
+    )
+
+    it('la llamada de quien la usa se ejecuta de verdad: su tarjeta enseña lo que pasó', async () => {
+      const program = parse(EDAD)
+      const fact = one(program, 'calcular_edad')
+      const gist = await tested(program, fact, 'calcular_edad(10)', run)
+      expect(gist?.status).toBe('ok')
+      expect(gist?.sample).toMatchObject({ tried: true, invented: true, call: 'calcular_edad(10)' })
+      expect(gist?.sample?.inputs.map((i) => showValue(i.value))).toEqual(['10'])
+      expect(shown(gist?.sample?.returned)).toBe('70')
+    })
+
+    it('si con esos datos falla, la tarjeta enseña el error (también el de no llegar a entrar)', async () => {
+      const program = parse(EDAD)
+      const fact = one(program, 'calcular_edad')
+      const inside = await tested(program, fact, 'calcular_edad("tres")', run)
+      expect(inside?.sample?.tried).toBe(true)
+      const outside = await tested(program, fact, 'calcular_edad(1, 2)', run)
+      expect(outside?.sample?.inputs).toEqual([])
+      expect(outside?.sample?.error).toMatch(/^TypeError/)
+    })
+
+    it('solo valores, y solo esa función: lo demás no se ejecuta', async () => {
+      const program = parse(EDAD)
+      const fact = one(program, 'calcular_edad')
+      expect(await tested(program, fact, 'calcular_edad(open("x"))', run)).toBeNull()
+      expect(await tested(program, fact, 'print(1)', run)).toBeNull()
+    })
+
+    it('el panel: los campos salen de la última muestra, y de ellos, la llamada', () => {
+      const gist = {
+        id: 'f',
+        name: 'total',
+        owner: null,
+        hash: '',
+        title: null,
+        status: 'ok' as const,
+        sample: {
+          inputs: [
+            { name: 'importes', value: valueOf({ l: [25, 12], n: 2, t: 'list' }) },
+            { name: 'moneda', value: valueOf("'€'") },
+            // Una lista que se guardó recortada no se puede volver a escribir: su campo empieza vacío.
+            { name: 'muchos', value: valueOf({ l: [1, 2], n: 90, t: 'list' }) },
+          ],
+          steps: 3,
+          lines: 2,
+          invented: false,
+        },
+      }
+      expect(fieldsOf(gist)).toEqual([
+        { name: 'importes', text: '[25, 12]' },
+        { name: 'moneda', text: "'€'" },
+        { name: 'muchos', text: '' },
+      ])
+      expect(callOf('total', ['[3, 4]', ' "$" '])).toBe('total([3, 4], "$")')
+      expect(argsOf('total([3, 4], "a,b", {"k": (1, 2)})')).toEqual([
+        '[3, 4]',
+        '"a,b"',
+        '{"k": (1, 2)}',
+      ])
+      // Un campo vacío, algo que no es un valor, o dos datos en un campo: no hay llamada.
+      expect(callOf('total', ['[3, 4]', ''])).toBeNull()
+      expect(callOf('total', ['importes'])).toBeNull()
+      expect(callOf('total', ['1, 2'])).toBeNull()
     })
   })
 

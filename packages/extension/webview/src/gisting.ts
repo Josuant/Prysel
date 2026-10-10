@@ -468,6 +468,11 @@ export function sampleScene(gist: Gist): GistScene | null {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,
     ...(gist.title ? { title: gist.title } : {}),
     ...(gist.sample.invented ? { example: true } : {}),
+    ...(gist.sample.tried ? { mine: true } : {}),
+    // Una función suelta que recibe algo se puede probar con otros datos (un método necesita su objeto).
+    ...(gist.owner === null && (gist.sample.inputs.length > 0 || gist.sample.tried)
+      ? { editable: true }
+      : {}),
     // Con regla, en medio va lo que la función hace con cada cosa: es su explicación.
     ...(gist.rule
       ? ruleScene(gist.sample, gist.rule)

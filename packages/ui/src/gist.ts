@@ -112,6 +112,10 @@ export interface GistScene {
   code?: string
   /** La entrada no estaba en el programa: se propuso para probar. */
   example?: boolean
+  /** La entrada la puso quien lo usa, para probarla con sus datos. */
+  mine?: boolean
+  /** Se puede probar con otros datos: la tarjeta ofrece cambiarlos. */
+  editable?: boolean
   /** El código cambió después: se está volviendo a comprobar. */
   stale?: boolean
   /** Cuántos pasos tiene el recorrido (elemento a elemento); sin ellos, la escena no se recorre. */
@@ -505,7 +509,12 @@ export function gistSize(scene: GistScene): { w: number; h: number } {
   const lanes = scene.lanes.map(laneSize)
   const body = lanes.reduce((sum, lane) => sum + lane.w, 0) + (lanes.length - 1) * GIST.arrow
   // La cabecera: el icono, el nombre, la marca «ejemplo» y el botón de abrir.
-  const head = 30 + Math.ceil(scene.name.length * 8) + (scene.example ? 66 : 0) + 34
+  const head =
+    30 +
+    Math.ceil(scene.name.length * 8) +
+    (scene.mine ? 80 : scene.example ? 66 : 0) +
+    (scene.editable ? 28 : 0) +
+    34
   const sub = scene.title ? Math.min(52, scene.title.length) * 6.4 : 0
   // Dos píxeles de holgura: el ancho de una letra no es exacto.
   const w = GIST.pad * 2 + Math.max(GIST.minW - GIST.pad * 2, body + 2, head, sub)

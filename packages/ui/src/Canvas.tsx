@@ -206,6 +206,8 @@ export interface CanvasProps {
   onAction?: (action: NodeAction) => void
   /** Abrir un subproceso (la función, la clase o el método al que llama un nodo) desde su pastilla. */
   onOpen?: (id: string) => void
+  /** Probar con otros datos la función de una tarjeta «Qué hace». */
+  onGistEdit?: (id: string) => void
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -411,6 +413,7 @@ function CanvasInner({
   onControlChange,
   onAction: sentAction,
   onOpen,
+  onGistEdit,
   addTarget,
   palette,
   addToModule = true,
@@ -1644,6 +1647,7 @@ function CanvasInner({
           ...(onAction ? { onNodeEdit } : {}),
           ...(onEnter ? { onEnter } : {}),
           ...(onOpen ? { onOpen } : {}),
+          ...(onGistEdit ? { onGistEdit } : {}),
         },
       },
     ]

@@ -115,6 +115,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   onControlChange?: (id: string, next: ControlModel) => void
   onNodeEdit?: (id: string, edit: NodeEdit) => void
   onEnter?: (id: string) => void
+  /** Probar con otros datos la función de una tarjeta «Qué hace». */
+  onGistEdit?: (id: string) => void
   /** Abrir un subproceso (la función, la clase o el método al que llama) desde su pastilla. */
   onOpen?: (id: string) => void
 }
@@ -389,6 +391,13 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
               ? () => {
                   markOpening({ id, w: size.w, h: size.h, y: positionAbsoluteY })
                   data.onEnter?.(id)
+                }
+              : undefined
+          }
+          onEdit={
+            data.onGistEdit
+              ? () => {
+                  data.onGistEdit?.(id)
                 }
               : undefined
           }

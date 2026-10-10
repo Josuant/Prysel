@@ -78,6 +78,7 @@ import { conditionsIn } from '../../src/gist/branch.ts'
 import type { Gist, RunSummary } from '../../src/gist/gist.ts'
 import { RunPanel } from './RunPanel.tsx'
 import { sampleScene } from './gisting.ts'
+import { TryPanel } from './TryPanel.tsx'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -319,6 +320,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
+  /** La función que se está probando con otros datos (el id de su nodo): su panel está abierto. */
+  const [trying, setTrying] = useState<string | null>(null)
   /** Lo último que dijo el JEV de qué pieza cubre cada parte de lo pedido. */
   const [judged, setJudged] = useState<{ key: string; by: (string | null)[] } | null>(null)
   /** Y lo que dijo del plan: qué etapa se ocupará de cada parte, antes de que esté escrita. */
@@ -1179,6 +1182,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     building && stages.length > 1
       ? { done: Math.max(0, stages.length - pendingStages), total: stages.length }
       : null
+  const tryingGist =
+    trying === null ? null : (gists.find((gist) => gist.id === trying && gist.sample) ?? null)
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
   /** Lo que se está escribiendo o diciendo ahora, esbozado. */
   const drawing = sketchOf(typed ?? hearing ?? '')
@@ -1971,6 +1976,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 density={density}
                 onEnter={view.enter}
                 onOpen={view.descend}
+                onGistEdit={setTrying}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
@@ -2166,6 +2172,22 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   <span className="build-progress__text">
                     {progress.done} de {progress.total} partes
                   </span>
+                </div>
+              )}
+              {/* Probar una función con otros datos: su tarjeta cambia con lo que de verdad pasa. */}
+              {tryingGist && (
+                <div className="canvas-float try-panel">
+                  <TryPanel
+                    // Otra función, o su muestra cambió por fuera: los campos empiezan de lo que hay.
+                    key={`${tryingGist.id}:${tryingGist.sample?.call ?? ''}`}
+                    gist={tryingGist}
+                    onTry={(call) => {
+                      post({ type: 'tryCall', id: tryingGist.id, call })
+                    }}
+                    onClose={() => {
+                      setTrying(null)
+                    }}
+                  />
                 </div>
               )}
               {/* Lo que el programa saca por pantalla: a la vista mientras se construye. */}

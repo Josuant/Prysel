@@ -471,20 +471,52 @@ export async function invent(program: Program, facts: Facts, port: GistPort): Pr
       sample: null,
       why: 'No hubo un ejemplo válido.',
     }
+  const { sample, why } = await sampleOfCall(program, facts, call, port.trace)
+  if (!sample) return { ...base(facts), status: 'sin-muestra', sample: null, why }
+  return proven(facts, sample)
+}
+
+/** Lo que pasó al ejecutar el programa con esa llamada añadida al final: la muestra, o por qué no la hay. */
+async function sampleOfCall(
+  program: Program,
+  facts: Facts,
+  call: string,
+  run: (code: string) => Promise<Trace>,
+): Promise<{ sample: Sample | null; why: string }> {
   const { code, line } = withCall(program.source, call)
-  const trace = await port.trace(code)
+  const trace = await run(code)
   // Solo vale lo que pasó desde la llamada añadida: lo de antes es del programa.
   const from = trace.events.findIndex(
     (event) => event.k === 'line' && event.d === 0 && event.l === line,
   )
   const sample = from < 0 ? null : bestSample(samplesIn(trace, facts, { from }))
-  if (!sample) {
-    const why = trace.error
-      ? `${trace.error.name}: ${trace.error.message}`
-      : 'El ejemplo no llegó a ejecutarse.'
-    return { ...base(facts), status: 'sin-muestra', sample: null, why }
-  }
-  return proven(facts, { ...sample, invented: true, call })
+  const why = trace.error
+    ? `${trace.error.name}: ${trace.error.message}`
+    : 'El ejemplo no llegó a ejecutarse.'
+  return { sample: sample ? { ...sample, invented: true, call } : null, why }
+}
+
+/**
+ * Probar una función con los datos de quien la usa: su llamada (solo literales, como las propuestas) se
+ * ejecuta de verdad con el programa, y la tarjeta enseña lo que pasó. Si la llamada ni siquiera llega a
+ * entrar en la función (le sobran o le faltan datos), la muestra es ese error: también es lo que pasó.
+ * `null` si la llamada no es una llamada a esa función escrita con valores.
+ */
+export async function tested(
+  program: Program,
+  facts: Facts,
+  call: string,
+  run: (code: string) => Promise<Trace>,
+): Promise<Gist | null> {
+  const valid = validCall(call, facts)
+  if (valid === null) return null
+  const { sample, why } = await sampleOfCall(program, facts, valid, run)
+  return proven(
+    facts,
+    sample
+      ? { ...sample, tried: true }
+      : { inputs: [], error: why, steps: 0, lines: 0, invented: true, call: valid, tried: true },
+  )
 }
 
 /** Lo ya calculado, por el texto de cada función: mientras no cambie, no se vuelve a ejecutar ni a preguntar. */

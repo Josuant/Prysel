@@ -398,6 +398,17 @@ export interface PlayMessage {
   fresh?: boolean
 }
 
+/**
+ * Probar una función con otros datos: `call` es la llamada, escrita solo con valores (`total([3, 4])`); se
+ * ejecuta de verdad y su tarjeta enseña lo que pasó. `null`: volver a la muestra del programa.
+ */
+export interface TryCallMessage {
+  type: 'tryCall'
+  /** El id del nodo de la función. */
+  id: string
+  call: string | null
+}
+
 /** Olvidar las consultas apuntadas. */
 export interface ClearCallsMessage {
   type: 'clearCalls'
@@ -416,6 +427,7 @@ export type HostMessage =
   | ListeningMessage
   | CoverMessage
   | PlayMessage
+  | TryCallMessage
   | SpokenMessage
   | ClearCallsMessage
   | PickModelMessage
@@ -438,6 +450,8 @@ const MAX_RUN_IDS = 500
 export const MAX_COMMAND = 400
 const MAX_ID = 200
 
+/** Lo que puede medir la llamada con la que se prueba una función (sus datos caben de sobra). */
+const MAX_TRY_CALL = 2000
 /** Cuántas respuestas de teclado caben en una partida jugada a mano. */
 export const MAX_PLAY_ANSWERS = 80
 
@@ -728,6 +742,13 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return typeof text === 'string' && text !== ''
       ? { type: 'listening', on, text: text.slice(0, MAX_COMMAND) }
       : { type: 'listening', on }
+  }
+  if (type === 'tryCall') {
+    const { id, call } = value as { id?: unknown; call?: unknown }
+    if (typeof id !== 'string' || id === '' || id.length > MAX_ID) return null
+    if (call === null) return { type: 'tryCall', id, call: null }
+    if (typeof call !== 'string' || call.trim() === '' || call.length > MAX_TRY_CALL) return null
+    return { type: 'tryCall', id, call }
   }
   if (type === 'play') {
     const { answers, fresh } = value as { answers?: unknown; fresh?: unknown }
