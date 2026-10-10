@@ -383,12 +383,19 @@ export class Orders {
     // Una pregunta sobre el programa: se contesta mirándolo, y se señala dónde lo decide.
     if (directive.answer && provider) {
       const program = await port.analyse()
-      const chosen = program.nodes.find((n) => n.id === message.selected)
+      // Lo seleccionado puede ser un paso o una etapa entera (que no es una sentencia: son sus líneas).
+      const step = program.nodes.find((n) => n.id === message.selected)
+      const stage = (program.sections ?? []).find((item) => item.id === message.selected)
+      const chosen = step
+        ? { line: step.line, lineEnd: step.lineEnd ?? step.line }
+        : stage
+          ? { line: stage.line, lineEnd: stage.lineEnd }
+          : undefined
       const answer = await answerQuestion(
         provider,
         program,
         text,
-        chosen ? { from: chosen.line, to: chosen.lineEnd ?? chosen.line } : undefined,
+        chosen ? { from: chosen.line, to: chosen.lineEnd } : undefined,
       )
       if (answer) {
         // La sentencia más interior que abarca esa línea.
