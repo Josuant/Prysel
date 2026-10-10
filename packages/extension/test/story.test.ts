@@ -219,6 +219,40 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     expect(sayBeat(again, '', [], cut)).toBe('Y otra vez: así más de 7 vueltas')
   })
 
+  it('lo que viaja también se sigue cuando es algo más grande que una lista de valores sueltos', async () => {
+    const source = [
+      '# Crear: los grupos de partida',
+      'def crear(n):',
+      '    return [[i, i + 1] for i in range(n)]',
+      '',
+      '# Puntuar: la nota de cada grupo',
+      'def puntuar(grupos):',
+      '    return [sum(par) for par in grupos]',
+      '',
+      '# Mejorar: sube cada grupo',
+      'def mejorar(grupos, notas):',
+      '    return [[a + 1, b] for a, b in grupos]',
+      '',
+      '# Repetir: tres rondas',
+      'grupos = crear(4)',
+      'for _ in range(3):',
+      '    notas = puntuar(grupos)',
+      '    grupos = mejorar(grupos, notas)',
+      'print(grupos)',
+      '',
+    ].join('\n')
+    const story = storyOf(parse(source), await kernel.trace(source))
+    expect(story?.ring).toEqual(['puntuar', 'mejorar'])
+    expect(story?.loop).toMatchObject({ kind: 'for', laps: 3, ended: 'done' })
+    const flows = (story?.flows ?? []).map((flow) => `${flow.from} → ${flow.to}: ${flow.name}`)
+    // Una lista de listas no es una fila de valores sueltos, pero se le sigue la pista igual.
+    expect(flows).toEqual([
+      'crear → puntuar: grupos',
+      'puntuar → mejorar: notas',
+      'mejorar → puntuar: grupos',
+    ])
+  })
+
   it('un programa que no se repite llamando a sus funciones no tiene esta historia', async () => {
     const source = fixture('informe')
     expect(storyOf(parse(source), await kernel.trace(source))).toBeNull()

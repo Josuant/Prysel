@@ -74,11 +74,15 @@ function openAt(trace: Trace, step: number): Set<string> {
   return new Set(open.values())
 }
 
-/** Un valor con el que tiene sentido seguir la pista: una colección, o un texto de verdad. */
+/**
+ * Un valor con el que tiene sentido seguir la pista: una colección, un texto de verdad, o algo más grande (una
+ * lista de listas, un diccionario) del que la traza enseña cómo empieza. Un número suelto no: el mismo `3`
+ * sale de mil sitios.
+ */
 const traceable = (value: Shown): boolean =>
   isShownList(value)
     ? value.n > 0
-    : typeof value === 'string' && /^['"]/.test(value) && value.length >= 5
+    : typeof value === 'string' && /^['"[({]/.test(value) && value.length >= 5
 
 const clip = (text: string, max = 28) => (text.length <= max ? text : `${text.slice(0, max - 1)}…`)
 
