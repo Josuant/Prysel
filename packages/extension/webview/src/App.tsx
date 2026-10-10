@@ -7,6 +7,7 @@ import {
   Button,
   Canvas,
   beatsOf,
+  ideaOf,
   factsText,
   withPlan,
   withStory,
@@ -85,6 +86,7 @@ import { conditionsIn } from '../../src/gist/branch.ts'
 import type { Gist, RunSummary } from '../../src/gist/gist.ts'
 import { RunPanel } from './RunPanel.tsx'
 import { Transport, usePlayback } from './Transport.tsx'
+import { IdeaView } from './IdeaView.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
 import { moduleStory, outcomeOf } from './outcome.ts'
@@ -331,6 +333,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [typed, setTyped] = useState<string | null>(null)
   /** En un diagrama contado por su ejecución: enseñar también quién llama a quién. */
   const [showCalls, setShowCalls] = useState(false)
+  /**
+   * Desde dónde se mira el programa: su **idea** (qué hace, en unas líneas), sus **partes** (la arquitectura)
+   * o su **detalle** (el diagrama abierto, paso a paso).
+   */
+  const [distance, setDistance] = useState<Distance>('partes')
   /** El plan de lo que se construye, como arquitectura: cada módulo y de cuáles necesita algo. */
   const [planned, setPlanned] = useState<readonly PlannedModule[] | null>(null)
   /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
@@ -884,8 +891,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const view = useProgramView(gisted, program?.edges ?? NO_EDGES, density, {
     flow: true,
     sections: program?.sections ?? NO_SECTIONS,
-    // El primer nivel se lee como arquitectura. (Una lección va paso a paso por el código: sigue en columna.)
-    architecture: lesson === null,
+    // El primer nivel se lee como arquitectura. (Una lección va paso a paso por el código: sigue en columna;
+    // y «Detalle» es justo eso: el diagrama abierto.)
+    architecture: lesson === null && distance !== 'detalle',
   })
   // Durante la reproducción, si el paso ocurre dentro de una función o un método que no se está viendo, el
   // lienzo entra en él solo: si no, solo se vería la llamada que lo abrió, nunca la línea que se ejecuta.
@@ -1391,6 +1399,27 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     [architecture, outcome],
   )
   const playback = usePlayback(beats.length)
+  // La idea del programa: sus partes en unas líneas (ver `IdeaView`). Solo donde hay arquitectura que contar.
+  const idea = useMemo(
+    () => (architecture ? ideaOf(architecture, view.moduleFacts) : null),
+    [architecture, view.moduleFacts],
+  )
+  const ideaExtras = useMemo(
+    () => ({
+      start: outcome?.start ?? null,
+      laps: architecture?.caption ?? null,
+      exit: architecture?.order !== undefined ? (told?.exit ?? null) : null,
+      result: outcome?.result
+        ? {
+            said: outcome.result.content.subtitle ?? '',
+            lines: outcome.result.content.text ?? [],
+            planned: outcome.result.planned === true,
+          }
+        : null,
+    }),
+    [outcome, architecture, told],
+  )
+  const showIdea = distance === 'idea' && idea !== null
   // Las franjas que ocupan las barras que flotan sobre la arquitectura: arriba las migas; abajo la leyenda
   // y, si hay historia, la de ver una vuelta (y la consola, si van encima de ella).
   const hasStory = beats.length > 0
@@ -2439,6 +2468,47 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   </span>
                 </div>
               )}
+              {/* Desde dónde se mira: la idea, las partes o el detalle. Solo en el programa entero (no dentro
+                  de una función) y cuando tiene partes que contar. */}
+              {features.chat &&
+                lesson === null &&
+                view.focus === null &&
+                (architecture !== null || distance === 'detalle') &&
+                program.nodes.length > 0 && (
+                  <div
+                    className="canvas-float distance"
+                    role="group"
+                    aria-label="Desde dónde mirar"
+                  >
+                    {DISTANCES.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="distance__option"
+                        aria-pressed={distance === option.id}
+                        title={option.title}
+                        onClick={() => {
+                          setDistance(option.id)
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              {/* La idea: el programa en unas líneas, a tamaño de lectura. Va encima del diagrama, que sigue
+                  montado (no pierde su cámara). */}
+              {showIdea && (
+                <IdeaView
+                  idea={idea}
+                  extras={ideaExtras}
+                  live={beat?.at ?? null}
+                  onPick={(id) => {
+                    setDistance('partes')
+                    setSelected(id)
+                  }}
+                />
+              )}
               {/* Ver pasar una vuelta: lo que ya se ejecutó, paso a paso sobre el diagrama. */}
               {architecture && story && beats.length > 0 && (
                 <Transport
@@ -2457,7 +2527,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 />
               )}
               {/* Cómo leer la arquitectura: qué forma tiene y qué dice cada flecha. */}
-              {architecture && program.nodes.length > 0 && (
+              {architecture && program.nodes.length > 0 && !showIdea && (
                 <div className="canvas-float arch-legend" role="note" style={dock}>
                   <span className="arch-legend__shape" title={SHAPE_WHY[architecture.shape]}>
                     {SHAPE_NAMES[architecture.shape]}
@@ -2877,6 +2947,12 @@ const HEARD_LABELS: Record<string, string> = {
 
 /** El aire entre la consola y el diagrama (su separación del borde, y un poco más). */
 const CONSOLE_MARGIN = 28
+type Distance = 'idea' | 'partes' | 'detalle'
+const DISTANCES: readonly { id: Distance; label: string; title: string }[] = [
+  { id: 'idea', label: 'Idea', title: 'Qué hace, en unas pocas líneas' },
+  { id: 'partes', label: 'Partes', title: 'Sus partes y lo que se pasan' },
+  { id: 'detalle', label: 'Detalle', title: 'Cada parte abierta, paso a paso' },
+]
 /** Lo que necesitan, a lo ancho, las barras de abajo para ir al lado de la consola y no encima. */
 const DOCK_ROOM = 480
 

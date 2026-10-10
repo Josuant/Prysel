@@ -10,6 +10,7 @@ import { layoutArchitecture } from '@prysel/spatial'
 import {
   architectureOf,
   beatsOf,
+  ideaOf,
   moduleGraph,
   RESULT_BEAT,
   toCanvasNodes,
@@ -194,6 +195,32 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     // Aunque no se sepa qué módulo lo escribe, la reproducción acaba en el resultado.
     expect(beatsOf(drawn, []).at(-1)).toEqual({ at: RESULT_BEAT, links: [], phase: 'result' })
     expect(beatsOf(drawn).at(-1)?.phase).toBe('again')
+    // Y de más lejos, la idea: lo que guarda, lo de antes, lo que se repite (con lo que recibe cada paso, y
+    // los dos trozos de «Evaluar población» como una sola línea) y lo demás.
+    const idea = ideaOf(drawn, facts)
+    const line = (step: { title: string; says?: string; brings?: string }) =>
+      `${step.title}${step.says ? ` (${step.says})` : ''}${step.brings ? ` ← ${step.brings}` : ''}`
+    expect(idea.before.map(line)).toEqual([
+      'Generar población inicial (crea individuos aleatorios)',
+    ])
+    expect(idea.loop?.title).toBe('Iterar hasta condición')
+    expect(idea.loop?.steps.map(line)).toEqual([
+      'Evaluar población (calcula la aptitud de cada individuo) ← poblacion ×8',
+      'Reemplazar población (forma la nueva generación) ← aptitudes ×8',
+      'Seleccionar padres',
+      'Cruzar y mutar (genera descendencia con variación) ← padre1, padre2',
+    ])
+    expect(idea.loop?.steps[0]?.also.length).toBe(1)
+    // Lo que no es ni de antes ni de la vuelta: lo que el programa guarda («con»), o lo demás.
+    expect([...idea.uses, ...idea.parts].map(line)).toEqual([
+      'Definir el problema (establece objetivo, genes y aptitud)',
+      'Arrancar (prueba con un ejemplo)',
+    ])
+    // Sin historia, sus partes en el orden del programa.
+    const flat = ideaOf(architecture, facts)
+    expect(flat.loop).toBeNull()
+    expect(flat.before).toEqual([])
+    expect(flat.parts.map((step) => step.title)).toContain('Iterar hasta condición')
     // Sin historia no hay nada que reproducir.
     expect(beatsOf(architecture)).toEqual([])
     // Cómo se salió, con palabras: va en la marca de salida.

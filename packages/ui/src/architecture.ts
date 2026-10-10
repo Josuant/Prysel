@@ -25,6 +25,8 @@ import type { CanvasNode } from './Canvas.tsx'
 export interface ModuleFacts {
   id: string
   title: string
+  /** Lo que su rótulo dice que hace, con palabras (si lo dice). */
+  subtitle?: string
   /** Pide datos por teclado. */
   asks: boolean
   /** Escribe en pantalla. */
@@ -155,6 +157,10 @@ export function moduleGraph(
     return {
       id: top.id,
       title: top.section?.title ?? top.label,
+      // El del rótulo escrito (el de `all`): el que se dibuja puede haberse cambiado por una muestra.
+      ...(byId.get(top.id)?.section?.subtitle
+        ? { subtitle: byId.get(top.id)?.section?.subtitle ?? '' }
+        : {}),
       line: top.line ?? 0,
       lineEnd: top.lineEnd ?? top.line ?? 0,
       asks: own.some((node) => ASKS.test(node.code ?? node.text ?? '')),
@@ -365,6 +371,92 @@ export function withStory(
     anchor: story.anchor,
     order: ring,
     caption: story.caption,
+  }
+}
+
+/** Una parte del programa, dicha en una línea de la idea. */
+export interface IdeaStep {
+  id: string
+  title: string
+  /** Lo que su rótulo dice que hace. */
+  says?: string
+  /** Lo que recibe de otra parte (en lo que se repite). */
+  brings?: string
+  /** Otros módulos que cuentan como esta misma línea (dos seguidos con el mismo título). */
+  also: string[]
+}
+
+/**
+ * La **idea** del programa: sus partes dichas en unas pocas líneas, en el orden en que pasan. Es la más lejana
+ * de las tres distancias (Idea · Partes · Detalle).
+ *
+ * Contada por su ejecución: lo que guarda y usan los demás, lo que se hace una vez antes, lo que se repite (en
+ * su orden, con lo que recibe cada paso) y lo demás. Sin historia, las partes en el orden del programa.
+ */
+export interface Idea {
+  uses: IdeaStep[]
+  before: IdeaStep[]
+  loop: { id: string; title: string; steps: IdeaStep[] } | null
+  parts: IdeaStep[]
+}
+
+export function ideaOf(architecture: Architecture, facts: readonly ModuleFacts[]): Idea {
+  const factOf = new Map(facts.map((fact) => [fact.id, fact]))
+  const step = (id: string, brings?: string): IdeaStep => {
+    const fact = factOf.get(id)
+    return {
+      id,
+      title: fact?.title ?? id,
+      ...(fact?.subtitle ? { says: fact.subtitle } : {}),
+      ...(brings ? { brings } : {}),
+      also: [],
+    }
+  }
+  /** Dos seguidos con el mismo título son una sola línea (una etapa partida en dos trozos del archivo). */
+  const merged = (steps: readonly IdeaStep[]): IdeaStep[] => {
+    const out: IdeaStep[] = []
+    for (const next of steps) {
+      const last = out[out.length - 1]
+      if (last && last.title === next.title) {
+        last.also.push(next.id)
+        if (!last.says && next.says) last.says = next.says
+        if (!last.brings && next.brings) last.brings = next.brings
+      } else out.push({ ...next, also: [...next.also] })
+    }
+    return out
+  }
+  const ids = architecture.modules.map((module) => module.id)
+  const roleOfId = new Map(architecture.modules.map((module) => [module.id, module.role]))
+  const { anchor, order } = architecture
+  if (anchor === undefined || order === undefined || order.length === 0) {
+    return {
+      uses: merged(ids.filter((id) => roleOfId.get(id) === 'datos').map((id) => step(id))),
+      before: [],
+      loop: null,
+      parts: merged(ids.filter((id) => roleOfId.get(id) !== 'datos').map((id) => step(id))),
+    }
+  }
+  const told = architecture.links.filter((link) => link.told === true && link.kind !== 'call')
+  const turning = new Set([anchor, ...order])
+  const before = ids.filter((id) => !turning.has(id) && told.some((link) => link.from === id))
+  const rest = ids.filter((id) => !turning.has(id) && !before.includes(id))
+  const brought = (id: string) =>
+    [
+      ...new Set(
+        told
+          .filter((link) => link.to === id && link.kind === 'data' && link.label)
+          .map((link) => link.label ?? ''),
+      ),
+    ].join(', ')
+  return {
+    uses: merged(rest.filter((id) => roleOfId.get(id) === 'datos').map((id) => step(id))),
+    before: merged(before.map((id) => step(id))),
+    loop: {
+      id: anchor,
+      title: factOf.get(anchor)?.title ?? anchor,
+      steps: merged(order.map((id) => step(id, brought(id)))),
+    },
+    parts: merged(rest.filter((id) => roleOfId.get(id) !== 'datos').map((id) => step(id))),
   }
 }
 
