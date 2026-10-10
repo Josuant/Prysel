@@ -1533,7 +1533,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const hasStory = beats.length > 0
   // (Arriba, además, la barra de las perillas y el dado, si el programa los tiene.)
   const hasKnobs =
-    features.chat === true && (knobs.length > 0 || /random/.test(program?.source ?? ''))
+    features.chat === true && (knobs.length > 0 || /\brandom\b/.test(program?.source ?? ''))
   const reserve = useMemo(
     () =>
       architecture
