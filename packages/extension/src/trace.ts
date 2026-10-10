@@ -71,6 +71,32 @@ export interface TraceEvent {
   h?: Record<string, HeapObject>
 }
 
+export interface CoastedLoop {
+  l: number
+  f: number
+  n: number
+  e: 'done' | 'break' | 'return' | 'error' | null
+}
+
+/** Lo que el motor dice de los bucles que siguieron tras dejar de grabar, tal como llega (o nada, si no vale). */
+export function coastOf(raw: unknown): { coast: CoastedLoop[] } | Record<string, never> {
+  if (!Array.isArray(raw)) return {}
+  const ends = ['done', 'break', 'return', 'error']
+  const coast = raw.flatMap((item): CoastedLoop[] => {
+    const loop = item as Partial<Record<keyof CoastedLoop, unknown>> | null
+    if (!loop || typeof loop.l !== 'number' || typeof loop.f !== 'number') return []
+    return [
+      {
+        l: loop.l,
+        f: loop.f,
+        n: typeof loop.n === 'number' ? loop.n : 0,
+        e: ends.includes(loop.e as string) ? (loop.e as CoastedLoop['e']) : null,
+      },
+    ]
+  })
+  return coast.length > 0 ? { coast } : {}
+}
+
 export interface Trace {
   events: TraceEvent[]
   /** Se llegó al tope de pasos: la traza está cortada (y, salvo `finished`, el programa no acabó). */
@@ -80,6 +106,13 @@ export interface Trace {
    * (`output`) está entero; lo que falta es el detalle de sus últimos pasos.
    */
   finished?: boolean
+  /**
+   * De los bucles que seguían dando vueltas cuando se dejó de grabar: cuántas veces más se pasó por su
+   * cabecera y cómo se salió de ellos (`null`: no se les vio salir; se acabó el tiempo). `l` es la línea de
+   * la cabecera y `f`, el marco. Con esto se sabe cuántas vueltas dio de verdad un bucle del que solo se
+   * grabaron las primeras.
+   */
+  coast?: CoastedLoop[]
   error: { name: string; message: string; line: number | null } | null
   /** Todo lo que imprimió el programa (el final, si es muy largo). */
   output: string

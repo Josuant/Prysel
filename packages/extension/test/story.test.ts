@@ -280,6 +280,99 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     ])
   })
 
+  describe('cuando la traza se corta, el motor sigue contando las vueltas', () => {
+    /** Un bucle largo que usa dos funciones en cada vuelta. `body`: lo que va al final de cada vuelta. */
+    const program = (laps: number, body = '') =>
+      [
+        '# Sumar: acumula',
+        'def sumar(total, i):',
+        '    return total + i',
+        '',
+        '# Recortar: lo deja en tres cifras',
+        'def recortar(x):',
+        '    return x % 1000',
+        '',
+        '# Repetir: muchas vueltas',
+        'total = 0',
+        `for i in range(${laps}):`,
+        '    total = sumar(total, i)',
+        '    total = recortar(total)',
+        ...(body ? [body] : []),
+        'print(total)',
+        '',
+      ].join('\n')
+    /** Con un tope de pasos corto (se graban unas pocas vueltas) y dejando que acabe. */
+    const cut = (source: string) => kernel.trace(source, 150, false, true, { finish: true })
+
+    it('un bucle que acaba solo: se sabe cuántas dio de verdad, y que salió al acabarlas', async () => {
+      const source = program(300)
+      const trace = await cut(source)
+      // Se grabó solo el principio, pero el programa acabó.
+      expect(trace.truncated).toBe(true)
+      expect(trace.finished).toBe(true)
+      expect(trace.output.trim()).toBe(
+        String(Array.from({ length: 300 }, (_, i) => i).reduce((t, i) => (t + i) % 1000, 0)),
+      )
+      const story = storyOf(parse(source), trace)
+      expect(story?.ring).toEqual(['sumar', 'recortar'])
+      expect(story?.loop).toMatchObject({ laps: 300, ended: 'done' })
+      expect(lapsSaid(story?.loop ?? { laps: 0, ended: 'cut' })).toBe('300')
+      // Sin dejarlo acabar, se sigue sin saber: son «más de» las que se grabaron.
+      const short = await kernel.trace(source, 150, false, true)
+      const unknown = storyOf(parse(source), short)
+      expect(unknown?.loop.ended).toBe('cut')
+      expect(unknown?.loop.laps).toBeLessThan(300)
+    })
+
+    it('uno que se corta con un `break`: en qué vuelta', async () => {
+      const source = program(300, '    if i == 249:\n        break')
+      const story = storyOf(parse(source), await cut(source))
+      expect(story?.loop).toMatchObject({ laps: 250, ended: 'break' })
+      expect(exitOf(story?.loop ?? { line: 0, kind: 'for', head: '', laps: 0, ended: 'cut' })).toBe(
+        'sale antes de acabar, en la vuelta 250',
+      )
+    })
+
+    it('uno dentro de una función que devuelve desde dentro', async () => {
+      const source = [
+        '# Probar: mira un candidato',
+        'def probar(n):',
+        '    return n * n',
+        '',
+        '# Juzgar: dice si vale',
+        'def juzgar(valor):',
+        '    return valor > 40000',
+        '',
+        '# Buscar: hasta dar con uno',
+        'def buscar():',
+        '    for n in range(1000):',
+        '        valor = probar(n)',
+        '        if juzgar(valor):',
+        '            return n',
+        '    return -1',
+        '',
+        'print(buscar())',
+        '',
+      ].join('\n')
+      const trace = await cut(source)
+      expect(trace.output.trim()).toBe('201')
+      const story = storyOf(parse(source), trace)
+      // 201 no vale (0…200) y la 202.ª sí: sale con el resultado en esa vuelta.
+      expect(story?.loop).toMatchObject({ laps: 202, ended: 'return' })
+    })
+
+    it('si tampoco entonces acaba, se dice lo que se llegó a contar, sin prometer más', async () => {
+      const source = program(300).replace('for i in range(300):', 'i = 0\nwhile True:')
+      const trace = await kernel.trace(source, 150, false, true, { finish: 0.2 })
+      expect(trace.finished).not.toBe(true)
+      const story = storyOf(parse(source), trace)
+      expect(story?.loop.ended).toBe('cut')
+      // Más de las que se grabaron: las que dio mientras se le dejó seguir.
+      expect(story?.loop.laps).toBeGreaterThan(100)
+      expect(lapsSaid(story?.loop ?? { laps: 0, ended: 'done' })).toMatch(/^más de \d+$/)
+    })
+  })
+
   it('un programa que no se repite llamando a sus funciones no tiene esta historia', async () => {
     const source = fixture('informe')
     expect(storyOf(parse(source), await kernel.trace(source))).toBeNull()

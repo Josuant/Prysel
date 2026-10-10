@@ -214,6 +214,10 @@ export function storyOf(program: Program, trace: Trace): Story | null {
     // «lo de antes»: son donde ocurre todo.
     const around = openAt(trace, episode.start)
     const before = calledBetween(trace, own, 0, episode.start).filter((fn) => !around.has(fn))
+    // Si la traza se cortó dentro pero el motor siguió contando, las vueltas y la salida son las de verdad:
+    // las grabadas más las que dio después. (Si tampoco se le vio salir, siguen siendo «más de».)
+    const passes = episode.heads.length + (episode.coast?.heads ?? 0)
+    const ended = episode.coast?.ended ?? episode.ended
     best = {
       start: episode.start,
       loop,
@@ -224,11 +228,8 @@ export function storyOf(program: Program, trace: Trace): Story | null {
           kind: loop.kind,
           head: loop.head,
           // Pasar por la cabecera una vez más de las que se entra es lo normal: la última comprueba y sale.
-          laps: Math.max(
-            1,
-            episode.ended === 'done' ? episode.heads.length - 1 : episode.heads.length,
-          ),
-          ended: episode.ended,
+          laps: Math.max(1, ended === 'done' ? passes - 1 : passes),
+          ended,
         },
         before: before.filter((fn) => !relevant.has(fn)),
         ring,
@@ -242,6 +243,8 @@ export function storyOf(program: Program, trace: Trace): Story | null {
     }
   }
   if (!best) return null
-  const series = seriesOf(trace, best.loop, best.episode)
+  // La cuenta vuelta a vuelta solo se da si se grabaron todas: de un bucle que se dejó de mirar a medias,
+  // lo último grabado no es cómo acabó.
+  const series = best.episode.ended === 'cut' ? undefined : seriesOf(trace, best.loop, best.episode)
   return series ? { ...best.story, loop: { ...best.story.loop, series } } : best.story
 }

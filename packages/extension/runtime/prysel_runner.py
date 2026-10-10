@@ -748,6 +748,28 @@ def _is_data(name, value):
     )
 
 
+def _loops(tree):
+    """Los bucles del programa: la línea de su cabecera, la última suya y de qué función son.
+
+    La función se dice por su primera línea (la de su primer decorador, si los lleva: es la que da su código);
+    `0` es el programa. Sirve para seguir contando las vueltas de un bucle cuando ya no se graba su paso a paso.
+    """
+    found = []
+
+    def walk(node, scope):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                first = min([child.lineno] + [mark.lineno for mark in child.decorator_list])
+                walk(child, first)
+                continue
+            if isinstance(child, (ast.For, ast.AsyncFor, ast.While)):
+                found.append((child.lineno, getattr(child, "end_lineno", None) or child.lineno, scope))
+            walk(child, scope)
+
+    walk(tree, 0)
+    return found
+
+
 def _comprehension_only(tree):
     """Los nombres que solo existen como variable de una comprensión: no son variables del programa.
 
@@ -856,9 +878,15 @@ class _Tracer:
     en las variables del marco (`ch`), y lo que se imprimió desde el evento anterior (`o`).
     """
 
-    def __init__(self, filename, limit, out, hidden=frozenset(), finish=0.0):
+    def __init__(self, filename, limit, out, hidden=frozenset(), finish=0.0, loops=()):
         self.filename = filename
         self.hidden = hidden
+        # Los bucles del programa (ver `_loops`), y los que estaban dando vueltas al dejar de grabar: a esos
+        # se les siguen contando las vueltas, y se apunta cómo salen. Es barato (un marco, una línea) y es lo
+        # que permite decir «dio 40 vueltas» de un programa del que solo se grabaron las 23 primeras.
+        self.loops = loops
+        self.watch = {}
+        self.coasted = []
         self.limit = limit
         self.out = out
         # Al llegar al tope de pasos, en vez de cortar: dejar de grabar y dejar que el programa acabe (con
@@ -902,12 +930,63 @@ class _Tracer:
                 raise _TraceLimit()
             self.coasting = True
             self.deadline = time.perf_counter() + self.finish
+            self.watch_open()
+
+    def watch_open(self):
+        """Al dejar de grabar: en cada función abierta, los bucles en los que se está, para seguirlos."""
+        for key, record in self.by_frame.items():
+            line = record.get("line")
+            if line is None:
+                continue
+            scope = record.get("scope", 0)
+            inside = [
+                {"l": head, "end": end, "f": record["id"], "n": 0, "last": line, "e": None, "x": False}
+                for head, end, owner in self.loops
+                if owner == scope and head <= line <= end
+            ]
+            if inside:
+                self.watch[key] = inside
+                self.coasted.extend(inside)
 
     def coast(self, frame, event, arg):
-        """Ya no se graba: solo se vigila, de vez en cuando, que el programa no se quede dando vueltas."""
+        """Ya no se graba: se vigila, de vez en cuando, que el programa no se quede dando vueltas; y a los
+        bucles que estaban abiertos se les cuentan las vueltas que les quedan y se apunta cómo salen."""
         self.ticks += 1
         if self.ticks & 255 == 0 and time.perf_counter() > self.deadline:
             raise _TraceLimit()
+        loops = self.watch.get(id(frame))
+        if loops is not None:
+            if event == "line":
+                line = frame.f_lineno
+                for loop in loops:
+                    if loop["e"] is not None:
+                        continue
+                    # Siguió adelante tras un error: lo atrapó un `try`. No es un fallo del bucle.
+                    loop["x"] = False
+                    if line == loop["l"]:
+                        loop["n"] += 1
+                        loop["last"] = line
+                    elif loop["l"] < line <= loop["end"]:
+                        loop["last"] = line
+                    else:
+                        # Ya está fuera: salió desde la cabecera (se acabó) o desde dentro (un `break`).
+                        loop["e"] = "done" if loop["last"] == loop["l"] else "break"
+            elif event == "exception":
+                for loop in loops:
+                    if loop["e"] is None:
+                        loop["x"] = True
+            elif event == "return":
+                for loop in loops:
+                    if loop["e"] is not None:
+                        continue
+                    if loop["x"]:
+                        loop["e"] = "error"
+                    elif loop["last"] == loop["l"]:
+                        loop["e"] = "done"
+                    else:
+                        # Una función se va con `return`; el programa, simplemente acaba.
+                        loop["e"] = "return" if loop["f"] != 0 else "break"
+                del self.watch[id(frame)]
         return self.coast
 
     def changes(self, record, frame):
@@ -939,7 +1018,12 @@ class _Tracer:
         if event != "call":
             return None
         module = code.co_name == "<module>"
-        record = {"id": 0 if module else self.next_id, "last": {}, "depth": len(self.stack)}
+        record = {
+            "id": 0 if module else self.next_id,
+            "last": {},
+            "depth": len(self.stack),
+            "scope": 0 if module else code.co_firstlineno,
+        }
         if not module:
             self.next_id += 1
         self.by_frame[id(frame)] = record
@@ -1099,9 +1183,11 @@ class Runner:
         out = io.StringIO()
         source = request.get("code", "")
         error = None
+        loops = ()
         try:
             tree = ast.parse(source)
             hidden = _comprehension_only(tree)
+            loops = _loops(tree)
             if safe:
                 _check_safe(tree)
         except SyntaxError:
@@ -1113,7 +1199,7 @@ class Runner:
         # segundos), para no quedarse sin saber qué da.
         finish = request.get("finish")
         budget = 0.0 if not finish else (2.5 if finish is True else float(finish))
-        tracer = _Tracer(filename, limit, out, hidden, budget)
+        tracer = _Tracer(filename, limit, out, hidden, budget, loops)
         finished = False
         namespace = {"__name__": "__main__"}
         if isinstance(inputs, list):
@@ -1163,6 +1249,11 @@ class Runner:
                 "events": tracer.events,
                 "truncated": truncated,
                 "finished": finished,
+                # De los bucles que seguían dando vueltas al dejar de grabar: cuántas más dieron y cómo salieron.
+                "coast": [
+                    {"l": loop["l"], "f": loop["f"], "n": loop["n"], "e": loop["e"]}
+                    for loop in tracer.coasted
+                ],
                 "error": error,
                 "output": out.getvalue()[-MAX_TEXT:],
             }

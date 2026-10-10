@@ -139,6 +139,11 @@ export interface Episode {
   ended: Laps['ended']
   error?: string
   frame: number
+  /**
+   * La traza se cortó dentro (`ended: 'cut'`), pero el programa siguió sin grabarse y el motor le fue
+   * contando: cuántas veces más pasó por la cabecera y cómo salió (`null`: no se le vio salir).
+   */
+  coast?: { heads: number; ended: 'done' | 'break' | 'return' | 'error' | null }
 }
 
 /** Cada vez que la ejecución entra en el bucle y sale de él. */
@@ -211,7 +216,13 @@ export function episodesOf(trace: Trace, facts: LoopFacts): Episode[] {
       })
     }
   }
-  for (const episode of open.values()) if (episodes.length < MAX_EPISODES) episodes.push(episode)
+  for (const episode of open.values()) {
+    if (episodes.length >= MAX_EPISODES) break
+    // Seguía dando vueltas al dejar de grabar: lo que el motor contó después.
+    const after = trace.coast?.find((loop) => loop.l === facts.line && loop.f === episode.frame)
+    if (after) episode.coast = { heads: after.n, ended: after.e }
+    episodes.push(episode)
+  }
   return episodes
 }
 
