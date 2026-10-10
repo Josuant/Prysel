@@ -1246,7 +1246,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       title: fact.title,
       does: factsText(fact, pendingModules.has(fact.id)),
     }))
-    const shapes = shapeCandidates(plannedArchitecture).map((candidate) => candidate.shape)
+    // «Capas» cuadra siempre: es lo que queda cuando ninguna otra forma dice más, no una opción entre ellas.
+    // Al JEV solo se le pregunta cuando hay varias formas de verdad entre las que elegir.
+    const shapes = shapeCandidates(plannedArchitecture)
+      .map((candidate) => candidate.shape)
+      .filter((shape) => shape !== 'capas')
     return { key: JSON.stringify([modules, shapes]), modules, shapes }
   }, [plannedArchitecture, view.moduleFacts, pendingModules])
   useEffect(() => {

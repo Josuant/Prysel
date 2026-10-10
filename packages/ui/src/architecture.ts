@@ -144,7 +144,13 @@ export function moduleGraph(
   const facts = tops.map((top): ModuleFacts => {
     const own = [...(inside.get(top.id) ?? [])].flatMap((id) => byId.get(id) ?? [])
     const members = membersOf(top).flatMap((id) => byId.get(id) ?? [])
-    const loop = members.find((node) => node.kind === 'control.loop')
+    // Lo que repite: un bucle suyo, o el de la función que define (un `def correr()` con su `while` dentro).
+    const loop =
+      members.find((node) => node.kind === 'control.loop') ??
+      members
+        .filter((node) => getKind(node.kind).role === 'abstraction')
+        .flatMap((node) => (node.contains ?? []).flatMap((id) => byId.get(id) ?? []))
+        .find((node) => node.kind === 'control.loop')
     const looped = loop ? deep([loop.id]) : new Set<string>()
     return {
       id: top.id,

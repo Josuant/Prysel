@@ -132,6 +132,43 @@ describe('un bucle de juego', () => {
   })
 })
 
+describe('un bucle metido en una función', () => {
+  it('el módulo que define la función que repite también es el que repite: sigue siendo un ciclo', () => {
+    const source = [
+      '# Avanzar: mueve cada caracol',
+      'def avanzar(posiciones):',
+      '    return [p + 1 for p in posiciones]',
+      '',
+      '# Dibujar: enseña la pista',
+      'def dibujar(posiciones):',
+      '    print(posiciones)',
+      '',
+      '# Bucle de carrera: repite hasta la meta',
+      'def correr():',
+      '    posiciones = [0, 0, 0]',
+      '    while max(posiciones) < 5:',
+      '        posiciones = avanzar(posiciones)',
+      '        dibujar(posiciones)',
+      '',
+      '# Arrancar: empieza la carrera',
+      'correr()',
+      '',
+    ].join('\n')
+    const program = parse(source)
+    const all = withSections(toCanvasNodes(program.nodes), program.edges, program.sections ?? [])
+    const { graph, facts } = moduleGraph(all, all, program.edges)
+    const loop = facts.find((fact) => fact.title === 'Bucle de carrera')
+    expect(loop?.loops).toBe(true)
+    expect(graph.modules.find((module) => module.id === loop?.id)).toMatchObject({
+      role: 'control',
+      loop: true,
+    })
+    const architecture = architectureOf(all, all, program.edges)
+    expect(architecture?.shape).toBe('ciclo')
+    expect(architecture?.anchor).toBe(loop?.id)
+  })
+})
+
 describe('lo que converge y lo que se reparte', () => {
   it('dos fuentes que se juntan en una: un embudo', () => {
     const { links, architecture, named } = seen('embudo')
