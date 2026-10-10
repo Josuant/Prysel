@@ -36,6 +36,7 @@ import { indentationOk } from '../../../packages/extension/src/jev/modify.ts'
 import {
   DONE_THRESHOLD,
   judgeDone,
+  judgeCover,
   judgeHeard,
   judgeInterruption,
   type Interruption,
@@ -108,6 +109,7 @@ export class Orders {
   /** Las últimas órdenes y lo que se hizo con cada una: la conversación. */
   private turns: { order: string; did: string }[] = []
   private heardSeq = 0
+  private coverSeq = 0
 
   constructor(private readonly port: OrderPort) {}
 
@@ -516,6 +518,16 @@ export class Orders {
     void judgeHeard(this.port.decider(), text)
       .then(({ kind, complete }) => {
         if (turn === this.heardSeq) this.port.post({ type: 'preview', kind, text, complete })
+      })
+      .catch(() => undefined)
+  }
+
+  /** Qué pieza del programa cubre cada parte de lo que se pidió: lo dice el JEV; si llega tarde, no vale. */
+  cover(what: string, parts: string[], pieces: string[]) {
+    const turn = ++this.coverSeq
+    void judgeCover(this.port.decider(), what, parts, pieces)
+      .then((by) => {
+        if (turn === this.coverSeq) this.port.post({ type: 'covered', parts, pieces, by })
       })
       .catch(() => undefined)
   }

@@ -22,6 +22,8 @@ import {
 import { actionEdits } from '@prysel/python/edits'
 import type { NodeAction, TemplateId } from '@prysel/morphology'
 import {
+  MAX_COVER_PARTS,
+  MAX_COVER_PIECES,
   parseWebviewMessage,
   type DecisionMessage,
   type GeneratedMessage,
@@ -37,7 +39,7 @@ import { CommandBar } from './CommandBar.tsx'
 import { answerTo, rejection } from './answering.ts'
 import { dissolve, dragChips, flyNode, gesture } from './dragging.ts'
 import { morph } from './effects.ts'
-import { draftOf, filledBy, piecesOf, sketchOf, type Sketch } from './drafting.ts'
+import { coverOf, draftOf, filledBy, piecesOf, sketchOf, type Sketch } from './drafting.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -317,6 +319,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
+  /** Lo último que dijo el JEV de qué pieza cubre cada parte de lo pedido. */
+  const [judged, setJudged] = useState<{ key: string; by: (string | null)[] } | null>(null)
   /** El esbozo de lo último que se pidió sobre un lienzo vacío: sigue a la vista mientras se construye. */
   const [asked, setAsked] = useState<{ sketch: Sketch; kind: string | null } | null>(null)
   /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
@@ -411,6 +415,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setGists(message.gists)
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
+      } else if (message.type === 'covered') {
+        setJudged({ key: coverKey(message.parts, message.pieces), by: message.by })
       } else if (message.type === 'preview') {
         // Si la frase está entera o a medias: el micrófono lo consulta antes de mandarla.
         if (message.complete !== undefined) {
@@ -1003,7 +1009,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       ? (thinking ?? preview.text)
       : (thinking ?? (deciding ? 'Decidiendo qué hacer…' : null))
     const busyTitle = drafting ? guess : 'La IA está pensando'
-    if (busy !== null) {
+    // Con el esbozo de lo pedido a la vista, en qué va la IA se lee en él: una caja más, colgada del
+    // diagrama, diría lo mismo dos veces (y acababa tapada por el esbozo).
+    if (busy !== null && asked === null) {
       // Donde trabaja: el hueco que espera contenido, lo último que tocó, lo seleccionado o el final.
       const hole = view.nodes.find((n) => byId.get(n.id)?.generating !== undefined)?.id
       const anchor =
@@ -1036,7 +1044,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       }
     }
     return { nodes, links, busy }
-  }, [program, view.nodes, view.representative, thinking, deciding, wanted, selected, preview])
+  }, [
+    program,
+    view.nodes,
+    view.representative,
+    thinking,
+    deciding,
+    wanted,
+    selected,
+    preview,
+    asked,
+  ])
   const canvasNodes = useMemo(
     () => [...view.nodes, ...viewers.nodes, ...notes.nodes, ...extras.nodes],
     [view.nodes, viewers.nodes, notes.nodes, extras.nodes],
@@ -1172,6 +1190,34 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       window.clearTimeout(timer)
     }
   }, [asked, working])
+  // Las piezas que ya están escritas. Mientras se construye, una etapa es solo el plan: lo escrito son las
+  // funciones y clases que existen. Al acabar, también vale la etapa (hay programas sin funciones).
+  const programText = program?.source ?? ''
+  const written = useMemo(
+    () =>
+      asked === null
+        ? NO_PIECES
+        : piecesOf(programText, building ? [] : stages.map((stage) => stage.title)).slice(
+            0,
+            MAX_COVER_PIECES,
+          ),
+    [asked, programText, building, stages],
+  )
+  // Qué pieza cubre cada parte lo dice el JEV, que entiende que «ver el total» es `calcular_suma`; mientras
+  // llega su respuesta (o si no hay JEV), valen las palabras que comparten.
+  const parts = asked?.sketch.parts
+  const what = asked?.sketch.what
+  useEffect(() => {
+    if (parts === undefined || what === undefined || parts.length === 0 || written.length === 0) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      post({ type: 'cover', what, parts: parts.slice(0, MAX_COVER_PARTS), pieces: written })
+    }, COVER_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [parts, what, written])
   const goTo = (id: string) => {
     // Se selecciona lo que se ve: si el paso está dentro de algo plegado, eso que lo guarda.
     setSelected(shownIds.has(id) ? id : (view.representative(id) ?? id))
@@ -1326,6 +1372,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     setOrder({ phase: 'deciding', text })
     // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
     const drawn = program && program.nodes.length > 0 ? null : sketchOf(text)
+    setJudged(null)
     setAsked(
       drawn && force === undefined
         ? {
@@ -1984,16 +2031,21 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               <SketchCard
                 sketch={asked.sketch}
                 kind={asked.kind}
-                // Mientras se construye, una etapa es solo el plan: lo escrito son las funciones y clases que
-                // ya existen. Al acabar, también vale la etapa (hay programas sin funciones).
-                filled={filledBy(
-                  asked.sketch,
-                  piecesOf(program.source, building ? [] : stages.map((stage) => stage.title)),
+                filled={coverOf(
+                  filledBy(asked.sketch, written),
+                  // Un «ninguna» dicho de un programa que ya ha cambiado no vale: puede haber llegado la pieza.
+                  judged && judged.by.length === asked.sketch.parts.length
+                    ? judged.key === coverKey(asked.sketch.parts, written)
+                      ? judged.by
+                      : judged.by.map((piece) => (piece === '' ? null : piece))
+                    : null,
+                  written,
                 )}
                 planned={filledBy(
                   asked.sketch,
                   stages.map((stage) => stage.title),
                 )}
+                hint={thinking}
                 pinned
               />
             </div>
@@ -2448,6 +2500,12 @@ const HEARD_LABELS: Record<string, string> = {
   cambio: 'Un cambio',
   explicacion: 'Una explicación',
 }
+
+/** Cuánto se espera a que el programa deje de cambiar antes de preguntar al JEV qué cubre cada parte. */
+const COVER_WAIT_MS = 350
+const NO_PIECES: string[] = []
+const coverKey = (parts: readonly string[], pieces: readonly string[]) =>
+  `${parts.join('')}${pieces.join('')}`
 
 /** Cuánto se queda el esbozo de lo pedido cuando ya está construido: lo justo para verlo completo. */
 const SKETCH_LINGER_MS = 3200

@@ -6257,6 +6257,16 @@ button.run-panel__line:hover {
   border-radius: 10px;
   animation: none;
 }
+/* En qué va la IA: una línea, sin empujar el esbozo. */
+.sketch[data-pinned] .sketch__hint {
+  overflow: hidden;
+  margin: 0;
+  padding: 0 4px;
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sketch[data-pinned] .sketch__name {
   font-size: 13px;
 }

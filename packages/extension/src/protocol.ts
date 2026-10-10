@@ -226,8 +226,21 @@ export interface GistsMessage {
   run?: RunSummary
 }
 
+/**
+ * Extensión → webview: qué pieza del programa cubre cada parte de lo que se pidió, según el JEV. Va con las
+ * mismas `parts` y `pieces` que se preguntaron. Por parte: el nombre de la pieza, `''` si está seguro de que
+ * ninguna la cubre, o `null` si no lo sabe.
+ */
+export interface CoveredMessage {
+  type: 'covered'
+  parts: string[]
+  pieces: string[]
+  by: (string | null)[]
+}
+
 export type WebviewMessage =
   | GistsMessage
+  | CoveredMessage
   | DecisionMessage
   | GeneratedMessage
   | StepMessage
@@ -359,6 +372,17 @@ export interface ListeningMessage {
   text?: string
 }
 
+/**
+ * Lo que se pidió (`what`) nombraba unas partes, y el programa ya tiene unas piezas: ¿cuál cubre cada parte?
+ * Lo decide el JEV (una pregunta cerrada por parte); la respuesta llega en `covered`.
+ */
+export interface CoverMessage {
+  type: 'cover'
+  what: string
+  parts: string[]
+  pieces: string[]
+}
+
 /** Olvidar las consultas apuntadas. */
 export interface ClearCallsMessage {
   type: 'clearCalls'
@@ -375,6 +399,7 @@ export type HostMessage =
   | StopOrderMessage
   | UndoOrderMessage
   | ListeningMessage
+  | CoverMessage
   | SpokenMessage
   | ClearCallsMessage
   | PickModelMessage
@@ -396,6 +421,15 @@ const MAX_RUN_IDS = 500
 /** Una orden es una frase: lo que pase de aquí no lo es. */
 export const MAX_COMMAND = 400
 const MAX_ID = 200
+
+/** Cuántas partes de lo pedido y cuántas piezas del programa caben en una pregunta de `cover`. */
+export const MAX_COVER_PARTS = 6
+export const MAX_COVER_PIECES = 24
+
+/** Una lista de nombres cortos, como los de las partes de lo pedido o las piezas del programa. */
+const namesOf = (value: unknown): value is string[] =>
+  Array.isArray(value) &&
+  value.every((one) => typeof one === 'string' && one !== '' && one.length <= MAX_COMMAND)
 
 const DIRECTIVE_KINDS = ['do', 'ask', 'several', 'ignored', 'unknown', 'failed']
 
@@ -575,6 +609,14 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (typeof gen !== 'string' || typeof text !== 'string' || text === '') return null
     return { type: 'progress', gen, text }
   }
+  if (type === 'covered') {
+    const { parts, pieces, by } = value as { parts?: unknown; pieces?: unknown; by?: unknown }
+    if (!namesOf(parts) || !namesOf(pieces) || !Array.isArray(by)) return null
+    if (by.length !== parts.length || !by.every((one) => one === null || typeof one === 'string')) {
+      return null
+    }
+    return { type: 'covered', parts, pieces, by: by as (string | null)[] }
+  }
   if (type === 'preview') {
     const { kind, text } = value as Partial<PreviewMessage>
     const complete = (value as { complete?: unknown }).complete
@@ -661,6 +703,14 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return typeof text === 'string' && text !== ''
       ? { type: 'listening', on, text: text.slice(0, MAX_COMMAND) }
       : { type: 'listening', on }
+  }
+  if (type === 'cover') {
+    const { what, parts, pieces } = value as { what?: unknown; parts?: unknown; pieces?: unknown }
+    if (typeof what !== 'string' || !namesOf(parts) || !namesOf(pieces)) return null
+    if (parts.length === 0 || parts.length > MAX_COVER_PARTS || pieces.length > MAX_COVER_PIECES) {
+      return null
+    }
+    return { type: 'cover', what: what.slice(0, MAX_COMMAND), parts, pieces }
   }
   if (type === 'spoken') {
     const { seq, spoke } = value as { seq?: unknown; spoke?: unknown }

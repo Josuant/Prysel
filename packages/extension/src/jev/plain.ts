@@ -770,6 +770,48 @@ export async function judgeHeard(
   return { kind, complete: whole?.type === 'noul' ? whole.noul : 1, ms }
 }
 
+// ───────────────────────── lo pedido y lo construido: ¿qué pieza cubre cada parte? ─────────────────────────
+
+/** Con cuánta certeza del JEV se da una parte por cubierta (o por no cubierta) por una pieza. */
+export const COVER_THRESHOLD = 0.5
+
+/**
+ * Quien pide un programa nombra sus partes con sus palabras («ver el total»), y la IA las escribe con las
+ * suyas (`calcular_suma`). El JEV dice, parte a parte, cuál de las piezas que ya existen la cubre. Por parte:
+ * el nombre de la pieza; `''` si está seguro de que ninguna; `null` si no lo sabe (decide quien pregunta).
+ */
+export async function judgeCover(
+  decider: Decider,
+  what: string,
+  parts: readonly string[],
+  pieces: readonly string[],
+): Promise<(string | null)[]> {
+  if (pieces.length === 0) return parts.map(() => null)
+  const offered = Object.fromEntries(pieces.map((piece, at) => [`p${at}`, piece]))
+  const { answers } = await decider.decide({
+    state: { pedido: what, piezas: [...pieces] },
+    questions: Object.fromEntries(
+      parts.map((part, at) => [
+        `parte${at}`,
+        {
+          type: 'choice' as const,
+          instructions: `Alguien pidió un programa en Python (campo \`pedido\`) que, entre otras cosas, sirva para: «${part}». El programa ya tiene las funciones, clases y etapas de \`piezas\`. ¿Cuál de ellas es la que hace eso?`,
+          criteria: {
+            ...offered,
+            ninguna: 'Ninguna de esas piezas hace eso: aún no está escrito.',
+          },
+        },
+      ]),
+    ),
+  })
+  return parts.map((_, at) => {
+    const answer = answers[`parte${at}`]
+    if (answer?.type !== 'choice' || answer.confidence < COVER_THRESHOLD) return null
+    if (answer.choice === 'ninguna') return ''
+    return pieces[Number(answer.choice.slice(1))] ?? null
+  })
+}
+
 // ───────────────────────── al reescribir, ¿se quería quitar eso? ─────────────────────────
 
 /**

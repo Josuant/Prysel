@@ -303,6 +303,9 @@ export function localDecider(): Decider {
               ? SURE
               : 0.1,
           }
+        } else if (/^parte\d+$/.test(id)) {
+          // Sin un modelo que lea no se sabe qué pieza cubre qué: lo decide quien pregunta, por las palabras.
+          answers[id] = pick('ninguna', UNSURE)
         } else if (id === 'hecho') {
           // Sin un modelo que lea el programa no se sabe: no se da nada por hecho.
           answers[id] = { type: 'noul', noul: 0.1 }

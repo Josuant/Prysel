@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Decider, JevAnswer } from '../src/jev/client.ts'
 import { localDecider } from '../src/jev/local.ts'
-import { judgeDone } from '../src/jev/plain.ts'
+import { judgeCover, judgeDone } from '../src/jev/plain.ts'
 import { bestMatch, locate } from '../webview/src/marking.ts'
 import {
   CodeStream,
@@ -402,5 +402,42 @@ describe('un paso de una orden larga que ya está hecho', () => {
     expect(
       await judgeDone(localDecider(), 'Pon el tablero en el programa', 'x = 1\n', []),
     ).toBeLessThan(0.6)
+  })
+})
+
+describe('lo pedido y lo construido: qué pieza cubre cada parte', () => {
+  const parts = ['ver el total', 'exportar a un archivo', 'añadir un gasto']
+  const pieces = ['añadir_gasto', 'calcular_suma']
+
+  it('una pregunta cerrada por parte, con las piezas como opciones; la duda no decide', async () => {
+    const offered: unknown[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, unknown> }) => {
+        offered.push(request.questions)
+        return Promise.resolve({
+          ms: 1,
+          answers: {
+            parte0: { type: 'choice' as const, choice: 'p1', confidence: 0.9 },
+            parte1: { type: 'choice' as const, choice: 'ninguna', confidence: 0.8 },
+            parte2: { type: 'choice' as const, choice: 'p0', confidence: 0.3 },
+          },
+        })
+      },
+    }
+    // Segura de la pieza, segura de que ninguna, y sin saberlo.
+    expect(await judgeCover(jev, 'llevar la cuenta de mis gastos', parts, pieces)).toEqual([
+      'calcular_suma',
+      '',
+      null,
+    ])
+    expect(offered[0]).toMatchObject({
+      parte0: { type: 'choice', criteria: { p0: 'añadir_gasto', p1: 'calcular_suma' } },
+    })
+  })
+
+  it('el motor local no lo sabe, y sin piezas no se pregunta', async () => {
+    expect(await judgeCover(localDecider(), 'gastos', parts, pieces)).toEqual([null, null, null])
+    expect(await judgeCover(localDecider(), 'gastos', parts, [])).toEqual([null, null, null])
   })
 })

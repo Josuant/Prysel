@@ -299,6 +299,9 @@ export class WebHost {
       case 'listening':
         this.orders.listening(message.on, message.text)
         return
+      case 'cover':
+        this.orders.cover(message.what, message.parts, message.pieces)
+        return
       case 'clearCalls':
         this.calls.clear()
         return

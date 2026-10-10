@@ -83,6 +83,23 @@ export function filledBy(sketch: Sketch, pieces: readonly string[]): (string | n
   })
 }
 
+/**
+ * Lo que dijo el JEV de cada parte (`judged`: la pieza, `''` si ninguna, `null` si no lo sabe), sobre lo que
+ * dicen las palabras (`worded`). Manda el JEV cuando opina; una pieza que ya no existe no cuenta.
+ */
+export function coverOf(
+  worded: readonly (string | null)[],
+  judged: readonly (string | null)[] | null,
+  pieces: readonly string[],
+): (string | null)[] {
+  return worded.map((word, at) => {
+    const said = judged?.[at] ?? null
+    if (said === null) return word
+    if (said === '') return null
+    return pieces.includes(said) ? said : word
+  })
+}
+
 /** Los nombres de lo que un programa ya tiene: sus etapas y sus funciones y clases. */
 export function piecesOf(source: string, stages: readonly string[]): string[] {
   const named = [...source.matchAll(/^[ \t]*(?:async\s+)?(?:def|class)\s+([^\s(:]+)/gm)].map(

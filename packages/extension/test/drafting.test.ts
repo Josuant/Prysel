@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftOf, filledBy, piecesOf, sketchOf } from '../webview/src/drafting.ts'
+import { coverOf, draftOf, filledBy, piecesOf, sketchOf } from '../webview/src/drafting.ts'
 
 /**
  * La caja de lo que se está pidiendo se rellena con lo que la frase ya dice, palabra a palabra: su nombre,
@@ -116,5 +116,25 @@ describe('el esbozo se llena con lo que se construye', () => {
 
   it('sin nada construido, todo son huecos', () => {
     expect(filledBy(sketch, [])).toEqual([null, null, null, null])
+  })
+})
+
+describe('qué pieza cubre cada parte lo dice el JEV; las palabras, mientras tanto', () => {
+  const pieces = ['añadir_gasto', 'calcular_suma']
+
+  it('donde el JEV opina, manda: une lo que las palabras no unen y desune lo que unen mal', () => {
+    // «ver el total» no comparte palabras con `calcular_suma`; «añadir» sí con `añadir_gasto`.
+    expect(coverOf([null, 'añadir_gasto'], ['calcular_suma', ''], pieces)).toEqual([
+      'calcular_suma',
+      null,
+    ])
+  })
+
+  it('donde no opina, o nombra una pieza que ya no está, valen las palabras', () => {
+    expect(coverOf(['añadir_gasto', null], [null, 'borrada'], pieces)).toEqual([
+      'añadir_gasto',
+      null,
+    ])
+    expect(coverOf(['añadir_gasto', null], null, pieces)).toEqual(['añadir_gasto', null])
   })
 })
