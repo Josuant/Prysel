@@ -71,6 +71,7 @@ import { gistSize, titledScene, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
 import { archRunFor, roomFor, runFor } from './fit.ts'
+import { RESULT_BEAT } from './architecture.ts'
 import type { StepInfo } from './steps.ts'
 import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
@@ -232,6 +233,13 @@ export interface CanvasProps {
   result?: { content: ViewerContent; from: readonly string[]; planned?: boolean } | null
   /** Dónde **empieza** el trabajo: el módulo que lo arranca y lo que se dice de ello. */
   start?: { at: string; label: string } | null
+  /** Por dónde **se sale** de lo que se repite (el módulo que lleva el ciclo) y cómo acabó. */
+  exit?: { at: string; label: string } | null
+  /**
+   * Al **reproducir** la historia: el módulo en el que se está (o `RESULT_BEAT`, el resultado), las flechas
+   * por las que le llega algo (`desde>hasta`), y lo que dura el paso. `serial` cambia en cada paso.
+   */
+  beat?: { at: string; links: readonly string[]; serial: number; ms: number } | null
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -404,7 +412,7 @@ const COMMON_CALLS = [
 const MODULE_TRAY_AT = { x: 28, y: 28 }
 const EDGE_TYPES = { prysel: PryselEdge, arch: ArchEdge }
 /** El nodo del resultado del programa, y lo que se separa de la arquitectura. */
-const RESULT_ID = 'prysel:result'
+const RESULT_ID = RESULT_BEAT
 const RESULT_GAP = 110
 const RESULT_NODE: CanvasNode = { id: RESULT_ID, kind: 'output.display', label: 'Resultado' }
 /** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
@@ -450,6 +458,8 @@ function CanvasInner({
   avoid = null,
   result = null,
   start = null,
+  exit = null,
+  beat = null,
   addTarget,
   palette,
   addToModule = true,
@@ -1995,6 +2005,7 @@ function CanvasInner({
     })
     const bend = clearBend(from, to, others, prefer)
     const touched = lit ? lit.has(link.from) || lit.has(link.to) : null
+    const live = beat?.links.includes(`${link.from}>${link.to}`) === true
     return [
       {
         id: `arch:${link.kind}:${link.from}:${link.to}`,
@@ -2006,13 +2017,14 @@ function CanvasInner({
         selectable: false,
         focusable: false,
         ...(link.label === undefined ? {} : { label: link.label }),
-        zIndex: touched ? 10 : 2,
+        zIndex: touched || live ? 10 : 2,
         data: {
           kind: link.kind,
           from,
           to,
           bend,
           turn: at,
+          ...(live && beat ? { live: beat.serial, ms: beat.ms } : {}),
           ...(link.planned ? { planned: true } : {}),
           ...(touched === null
             ? {}
@@ -2072,6 +2084,7 @@ function CanvasInner({
           to: resultAt,
           bend: clearBend(from, resultAt, others, 0),
           turn: at,
+          ...(beat?.links.includes(`${id}>${RESULT_ID}`) ? { live: beat.serial, ms: beat.ms } : {}),
           ...(result?.planned ? { planned: true } : {}),
         },
       },
@@ -2091,16 +2104,55 @@ function CanvasInner({
         },
       ]
     : []
+  // Por dónde se sale del ciclo: bajo quien lo lleva, hacia dentro del anillo (ahí no hay nadie).
+  const exitBox = exit && archModules.has(exit.at) ? boxOf.get(exit.at) : undefined
+  const exitFigures: Figure[] = exitBox
+    ? [
+        {
+          id: 'gate',
+          kind: 'gate',
+          x: exitBox.x - shiftX - 40,
+          y: exitBox.y - shiftY + exitBox.h + 6,
+          w: exitBox.w + 80,
+          h: 22,
+          label: exit?.label ?? '',
+        },
+      ]
+    : []
+  // Al reproducir: el marco de «ahora está aquí», alrededor del módulo (o del resultado) al que se llega.
+  const spotBox = !beat
+    ? undefined
+    : beat.at === RESULT_ID
+      ? (resultAt ?? undefined)
+      : archModules.has(beat.at)
+        ? boxOf.get(beat.at)
+        : undefined
+  const SPOT_AIR = 7
+  const spotFigures: Figure[] = spotBox
+    ? [
+        {
+          id: 'spot',
+          kind: 'spot',
+          x: spotBox.x - shiftX - SPOT_AIR,
+          y: spotBox.y - shiftY - SPOT_AIR,
+          w: spotBox.w + SPOT_AIR * 2,
+          h: spotBox.h + SPOT_AIR * 2,
+        },
+      ]
+    : []
   /** Las figuras de fondo que dicen la forma: van detrás de todo y no se tocan. */
   const figureNodes: FigureFlowNode[] = (
-    archModules.size > 0 ? [...(figures ?? []), ...startFigures] : []
+    archModules.size > 0
+      ? [...(figures ?? []), ...startFigures, ...exitFigures, ...spotFigures]
+      : []
   ).map((figure) => ({
     id: `figure:${figure.id}`,
     type: 'figure' as const,
     position: { x: figure.x + shiftX, y: figure.y + shiftY },
     ...nodeFrame({ w: figure.w, h: figure.h }),
-    // La marca de arranque va por delante: se apoya en el borde de su módulo.
-    zIndex: figure.kind === 'start' ? 6 : -1,
+    // Las marcas van por delante: se apoyan en el borde de su módulo.
+    zIndex: figure.kind === 'start' || figure.kind === 'gate' || figure.kind === 'spot' ? 6 : -1,
+    ...(figure.kind === 'spot' ? { className: 'arch-spot-node' } : {}),
     draggable: false,
     selectable: false,
     focusable: false,

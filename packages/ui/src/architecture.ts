@@ -292,6 +292,8 @@ export interface ModuleStory {
   flows: readonly { from: string; to: string; label: string }[]
   /** Lo que se dice en el centro del ciclo. */
   caption: string
+  /** Cómo se salió del ciclo, con palabras: va en la marca de salida de quien lo lleva. */
+  exit?: string
 }
 
 /**
@@ -364,6 +366,54 @@ export function withStory(
     order: ring,
     caption: story.caption,
   }
+}
+
+/** El último paso de la reproducción llega al nodo del resultado (que no es un módulo). */
+export const RESULT_BEAT = 'prysel:result'
+
+/**
+ * Un paso de la **reproducción** de la historia: a qué módulo se llega y por qué flechas le llega algo en ese
+ * momento (`desde>hasta`). `before`: lo que se hace una vez, antes; `lap`: la vuelta; `again`: se cierra la
+ * vuelta y se repite; `result`: lo que sale al final.
+ */
+export interface Beat {
+  at: string
+  links: string[]
+  phase: 'before' | 'lap' | 'again' | 'result'
+}
+
+/**
+ * La historia, paso a paso, para verla pasar: lo de antes, una vuelta entera en su orden (cada paso con lo
+ * que recibe), el cierre de la vuelta y, si lo hay, el resultado (`result`: los módulos que lo escriben).
+ * Vacío si la arquitectura no está contada por su ejecución.
+ */
+export function beatsOf(
+  architecture: Architecture,
+  result: readonly string[] | null = null,
+): Beat[] {
+  const { anchor, order } = architecture
+  if (anchor === undefined || order === undefined || order.length === 0) return []
+  const told = architecture.links.filter((link) => link.told === true && link.kind !== 'call')
+  const turning = new Set([anchor, ...order])
+  const into = (id: string, from: (id: string) => boolean) =>
+    told
+      .filter((link) => link.to === id && from(link.from))
+      .map((link) => `${link.from}>${link.to}`)
+  const before = architecture.modules
+    .map((module) => module.id)
+    .filter((id) => !turning.has(id) && told.some((link) => link.from === id))
+  const beats: Beat[] = before.map((id) => ({ at: id, links: [], phase: 'before' }))
+  beats.push({ at: anchor, links: into(anchor, (id) => !turning.has(id)), phase: 'lap' })
+  for (const id of order) beats.push({ at: id, links: into(id, () => true), phase: 'lap' })
+  beats.push({ at: anchor, links: into(anchor, (id) => turning.has(id)), phase: 'again' })
+  if (result && result.length > 0) {
+    beats.push({
+      at: RESULT_BEAT,
+      links: result.map((id) => `${id}>${RESULT_BEAT}`),
+      phase: 'result',
+    })
+  }
+  return beats
 }
 
 const SAYS: [keyof ModuleFacts, string][] = [

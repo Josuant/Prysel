@@ -6,6 +6,7 @@ import {
   AddNodeMenu,
   Button,
   Canvas,
+  beatsOf,
   factsText,
   withPlan,
   withStory,
@@ -83,6 +84,7 @@ import { classesIn } from '../../src/gist/blueprint.ts'
 import { conditionsIn } from '../../src/gist/branch.ts'
 import type { Gist, RunSummary } from '../../src/gist/gist.ts'
 import { RunPanel } from './RunPanel.tsx'
+import { Transport, usePlayback } from './Transport.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
 import { moduleStory, outcomeOf } from './outcome.ts'
@@ -1337,11 +1339,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // vuelta (los pasos en su orden, lo que viaja entre ellos), no quién llama a quién. Mientras se construye
   // no: lo que se ejecutó era otro programa.
   const story = constructing ? undefined : ran?.story
-  const architecture = useMemo(() => {
-    if (!heldArchitecture || !story || !program) return heldArchitecture
-    const told = moduleStory(story, program.nodes, view.moduleFacts)
-    return told ? withStory(heldArchitecture, told, { calls: showCalls }) : heldArchitecture
-  }, [heldArchitecture, story, program, view.moduleFacts, showCalls])
+  const told = useMemo(
+    () => (story && program ? moduleStory(story, program.nodes, view.moduleFacts) : null),
+    [story, program, view.moduleFacts],
+  )
+  const architecture = useMemo(
+    () =>
+      heldArchitecture && told
+        ? withStory(heldArchitecture, told, { calls: showCalls })
+        : heldArchitecture,
+    [heldArchitecture, told, showCalls],
+  )
   // Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final.
   const outcome = useMemo(
     () =>
@@ -1356,6 +1364,46 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         : null,
     [ran, architecture, program, view.moduleFacts],
   )
+  // Ver pasar una vuelta: los pasos de la historia, y el mando que los recorre.
+  const beats = useMemo(
+    () =>
+      architecture?.order === undefined
+        ? []
+        : beatsOf(architecture, outcome?.result?.planned ? null : (outcome?.result?.from ?? null)),
+    [architecture, outcome],
+  )
+  const playback = usePlayback(beats.length)
+  const playingBeat = playback.at === null ? undefined : beats[playback.at]
+  const beat = useMemo(
+    () =>
+      playingBeat
+        ? {
+            at: playingBeat.at,
+            links: playingBeat.links,
+            serial: playback.serial,
+            ms: Math.round(playback.ms * 0.72),
+          }
+        : null,
+    [playingBeat, playback.serial, playback.ms],
+  )
+  // Al acabar de construir, el programa se enseña solo una vez, despacio: es la primera vez que se ve entero.
+  const justBuilt = useRef(false)
+  const playStory = playback.play
+  useEffect(() => {
+    if (constructing) justBuilt.current = true
+  }, [constructing])
+  useEffect(() => {
+    if (constructing || !justBuilt.current || beats.length === 0) return
+    justBuilt.current = false
+    if (reducedMotion) return
+    // Un momento para que el diagrama se asiente (y se encuadre) antes de echar a andar.
+    const timer = window.setTimeout(() => {
+      playStory(true)
+    }, 1200)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [constructing, beats.length, reducedMotion, playStory])
   const tryingGist =
     trying === null ? null : (gists.find((gist) => gist.id === trying && gist.sample) ?? null)
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
@@ -2156,6 +2204,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 avoid={consoleBox}
                 result={outcome?.result ?? null}
                 start={outcome?.start ?? null}
+                exit={
+                  architecture?.order !== undefined && told?.exit !== undefined
+                    ? { at: told.anchor, label: told.exit }
+                    : null
+                }
+                beat={beat}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
@@ -2352,6 +2406,22 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     {progress.done} de {progress.total} partes
                   </span>
                 </div>
+              )}
+              {/* Ver pasar una vuelta: lo que ya se ejecutó, paso a paso sobre el diagrama. */}
+              {architecture && story && beats.length > 0 && (
+                <Transport
+                  beats={beats}
+                  playback={playback}
+                  loop={story.loop}
+                  titleOf={(id) =>
+                    view.moduleFacts.find((fact) => fact.id === id)?.title ?? 'el resultado'
+                  }
+                  carriesOf={(link) =>
+                    architecture.links.find(
+                      (other) => other.kind === 'data' && `${other.from}>${other.to}` === link,
+                    )?.label
+                  }
+                />
               )}
               {/* Cómo leer la arquitectura: qué forma tiene y qué dice cada flecha. */}
               {architecture && program.nodes.length > 0 && (

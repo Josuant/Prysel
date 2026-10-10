@@ -108,6 +108,28 @@ export function outcomeOf(
 }
 
 /**
+ * Cómo se salió del ciclo, con palabras. Es un hecho de la ejecución (se acabaron sus vueltas, dejó de
+ * cumplirse la condición, se cortó desde dentro…), no una interpretación de para qué sirve.
+ */
+export function exitOf(loop: Story['loop']): string {
+  const lap = `en la vuelta ${loop.laps}`
+  switch (loop.ended) {
+    case 'done':
+      return loop.kind === 'for'
+        ? 'sale al acabar sus vueltas'
+        : 'sale cuando deja de cumplirse su condición'
+    case 'break':
+      return `sale antes de acabar, ${lap}`
+    case 'return':
+      return `sale con el resultado, ${lap}`
+    case 'cut':
+      return 'seguía dando vueltas: se cortó aquí'
+    case 'error':
+      return `se paró por un error, ${lap}`
+  }
+}
+
+/**
  * La historia de la ejecución, dicha con los módulos del diagrama: cada función, en el módulo donde está
  * definida; el bucle, en el suyo. `null` si el bucle no cae en ningún módulo (no hay a quién contársela).
  */
@@ -136,11 +158,12 @@ export function moduleStory(
       const from = moduleOf(flow.from)
       const to = moduleOf(flow.to)
       if (from === undefined || to === undefined) return []
-      // Una colección se dice con cuántos lleva: «poblacion ×20».
-      return [
-        { from, to, label: flow.size === undefined ? flow.name : `${flow.name} ×${flow.size}` },
-      ]
+      // Con palabras, no como se escribe en el código (`mejor_nota` → «mejor nota»); y una colección, con
+      // cuántos lleva: «poblacion ×20».
+      const name = flow.name.replace(/_+/g, ' ').trim() || flow.name
+      return [{ from, to, label: flow.size === undefined ? name : `${name} ×${flow.size}` }]
     }),
     caption: `${laps} ${laps === 1 ? 'vuelta' : 'vueltas'}`,
+    exit: exitOf(story.loop),
   }
 }

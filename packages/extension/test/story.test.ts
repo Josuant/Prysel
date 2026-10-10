@@ -7,8 +7,17 @@ import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import { withLaunch } from '../src/gist/entry.ts'
 import { storyOf } from '../src/gist/story.ts'
 import { layoutArchitecture } from '@prysel/spatial'
-import { architectureOf, moduleGraph, toCanvasNodes, withSections, withStory } from '@prysel/ui'
-import { moduleStory } from '../webview/src/outcome.ts'
+import {
+  architectureOf,
+  beatsOf,
+  moduleGraph,
+  RESULT_BEAT,
+  toCanvasNodes,
+  withSections,
+  withStory,
+} from '@prysel/ui'
+import { exitOf, moduleStory } from '../webview/src/outcome.ts'
+import { sayBeat } from '../webview/src/Transport.tsx'
 import { Kernel } from '../src/kernel.ts'
 
 /**
@@ -144,6 +153,62 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     expect(at(ring[1] ?? '').x).toBeGreaterThan(at(told.anchor).x)
     expect(at(ring[ring.length - 1] ?? '').x).toBeLessThan(at(told.anchor).x)
     expect(figures.find((figure) => figure.kind === 'ring')?.label).toBe(told.caption)
+
+    // Y se puede ver pasar: lo de antes, la cabeza, cada paso en su orden con lo que recibe, el cierre de la
+    // vuelta y el resultado.
+    const beats = beatsOf(drawn, [told.anchor])
+    expect(beats.map((beat) => `${beat.phase}: ${title(beat.at)}`)).toEqual([
+      'before: Generar población inicial',
+      'lap: Iterar hasta condición',
+      'lap: Evaluar población',
+      'lap: Evaluar población',
+      'lap: Reemplazar población',
+      'lap: Seleccionar padres',
+      'lap: Cruzar y mutar',
+      'again: Iterar hasta condición',
+      `result: ${RESULT_BEAT}`,
+    ])
+    // Cada flecha que se enciende existe en el diagrama, y llega al módulo del paso.
+    const drawnLinks = new Set(drawn.links.map((link) => `${link.from}>${link.to}`))
+    for (const beat of beats.filter((step) => step.phase !== 'result')) {
+      for (const link of beat.links) {
+        expect(drawnLinks.has(link), link).toBe(true)
+        expect(link.endsWith(`>${beat.at}`)).toBe(true)
+      }
+    }
+    // A evaluar le llega la población (la recién generada y la que le da la cabeza); a reponer, las notas.
+    const carried = (at: number) =>
+      (beats[at]?.links ?? []).flatMap(
+        (link) => drawn.links.find((l) => `${l.from}>${l.to}` === link)?.label ?? [],
+      )
+    expect(carried(2)).toEqual(['poblacion ×8', 'poblacion ×8'])
+    expect(carried(4)).toContain('aptitudes ×8')
+    // El cierre de la vuelta enciende la flecha que vuelve a la cabeza.
+    expect(beats[7]?.links.length).toBe(1)
+    const first = beats[2]
+    if (!first) throw new Error('sin pasos')
+    expect(sayBeat(first, 'Evaluar población', ['poblacion ×8'], 23)).toBe(
+      'Evaluar población · recibe poblacion ×8',
+    )
+    // Sin historia no hay nada que reproducir.
+    expect(beatsOf(architecture)).toEqual([])
+    // Cómo se salió, con palabras: va en la marca de salida.
+    expect(told.exit).toBe(exitOf(story.loop))
+    expect(told.exit).toMatch(/^sale /)
+  })
+
+  it('cómo se sale de un ciclo, dicho con palabras', () => {
+    const loop = { line: 1, head: '', laps: 7 }
+    expect(exitOf({ ...loop, kind: 'for', ended: 'done' })).toBe('sale al acabar sus vueltas')
+    expect(exitOf({ ...loop, kind: 'while', ended: 'done' })).toBe(
+      'sale cuando deja de cumplirse su condición',
+    )
+    expect(exitOf({ ...loop, kind: 'for', ended: 'break' })).toBe(
+      'sale antes de acabar, en la vuelta 7',
+    )
+    expect(exitOf({ ...loop, kind: 'while', ended: 'cut' })).toBe(
+      'seguía dando vueltas: se cortó aquí',
+    )
   })
 
   it('un programa que no se repite llamando a sus funciones no tiene esta historia', async () => {
@@ -157,5 +222,12 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     expect(story?.ring).toEqual(['leer_jugada', 'mover', 'dibujar'])
     expect(story?.before).toEqual([])
     expect(story?.loop).toMatchObject({ head: 'while posicion < meta', ended: 'done' })
+    // La cuenta que lleva el bucle: dónde estaba al empezar cada vuelta, y al salir.
+    expect(story?.loop.kind).toBe('while')
+    expect(story?.loop.series?.name).toBe('posicion')
+    const values = story?.loop.series?.values ?? []
+    expect(values[0]).toBe(0)
+    expect(values.length).toBe((story?.loop.laps ?? 0) + 1)
+    expect(values[values.length - 1]).toBeGreaterThanOrEqual(5)
   })
 })

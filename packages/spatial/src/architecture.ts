@@ -81,7 +81,11 @@ export interface Architecture extends ArchGraph, ShapeCandidate {
 /** Un dibujo de fondo que dice la forma: no es un módulo ni una flecha. */
 export interface Figure {
   id: string
-  kind: 'ring' | 'band' | 'spokes' | 'track' | 'funnel' | 'fan' | 'start'
+  /**
+   * Las de la forma, y tres marcas que se apoyan en un módulo: `start` (dónde empieza el trabajo), `gate`
+   * (por dónde y cómo se sale de lo que se repite) y `spot` (dónde está ahora, al reproducirlo).
+   */
+  kind: 'ring' | 'band' | 'spokes' | 'track' | 'funnel' | 'fan' | 'start' | 'gate' | 'spot'
   x: number
   y: number
   w: number

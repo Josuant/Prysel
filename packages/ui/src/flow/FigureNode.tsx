@@ -32,6 +32,19 @@ export function FigureNode({ data }: NodeProps<FigureFlowNode>) {
         {figure.label}
       </div>
     )
+  // Por dónde y cómo se sale de lo que se repite: una marca bajo quien lleva el ciclo.
+  if (figure.kind === 'gate')
+    return (
+      <div className="arch-gate" style={{ width: w, height: h }} aria-hidden>
+        <span className="arch-gate__pill">
+          <span className="arch-gate__mark">⤷</span>
+          {figure.label}
+        </span>
+      </div>
+    )
+  // Al reproducir: dónde está ahora. Un marco que va de módulo en módulo.
+  if (figure.kind === 'spot')
+    return <div className="arch-spot" style={{ width: w, height: h }} aria-hidden />
   if (figure.kind === 'track')
     return (
       <div className="arch-figure" data-kind="track" style={{ width: w, height: h }} aria-hidden>

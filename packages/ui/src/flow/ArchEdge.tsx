@@ -32,6 +32,12 @@ export interface ArchEdgeData extends Record<string, unknown> {
   emphasis?: 'active' | 'dim'
   /** El turno en que se traza al aparecer, para que entren una detrás de otra. */
   turn?: number
+  /**
+   * Al reproducir: por esta flecha pasa algo ahora. El número cambia en cada paso (la ficha vuelve a salir) y
+   * `ms` es lo que tarda en llegar.
+   */
+  live?: number
+  ms?: number
 }
 
 export type ArchFlowEdge = FlowEdge<ArchEdgeData, 'arch'>
@@ -131,6 +137,7 @@ export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
         data-kind={data.kind}
         data-planned={data.planned ? '' : undefined}
         data-emphasis={data.emphasis}
+        data-live={data.live === undefined ? undefined : ''}
         style={style}
       >
         <path className="arch-edge__line" d={d} pathLength={1} />
@@ -143,6 +150,15 @@ export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
           d="M-8 -4.5L0 0L-8 4.5z"
           transform={`translate(${end.x.toFixed(1)} ${end.y.toFixed(1)}) rotate(${angle.toFixed(1)})`}
         />
+        {/* Al reproducir: la ficha de lo que pasa, de un módulo al otro, una vez por paso. */}
+        {data.live !== undefined && (
+          <circle
+            key={data.live}
+            className="arch-edge__token"
+            r={6}
+            style={{ offsetPath: `path("${d}")`, animationDuration: `${data.ms ?? 900}ms` }}
+          />
+        )}
       </g>
       {label && (
         <EdgeLabelRenderer>
@@ -151,6 +167,7 @@ export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
             data-kind={data.kind}
             data-planned={data.planned ? '' : undefined}
             data-emphasis={data.emphasis}
+            data-live={data.live === undefined ? undefined : ''}
             style={{
               ...style,
               transform: `translate(-50%, -50%) translate(${mid.x}px, ${mid.y}px)`,

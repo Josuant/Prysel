@@ -1,7 +1,7 @@
 import type { Program } from '@prysel/python'
-import { isShownList, type Shown, type Trace } from '../trace.ts'
+import { indexOf, isShownList, stateAt, type Shown, type Trace } from '../trace.ts'
 import { functionsIn } from './facts.ts'
-import { episodesOf, loopsIn, type Laps } from './laps.ts'
+import { episodesOf, loopsIn, type Episode, type Laps, type LoopFacts } from './laps.ts'
 
 /**
  * La **historia** de una ejecución: no quién llama a quién, sino qué pasa, en qué orden, y qué viaja de un
@@ -30,7 +30,18 @@ export interface Flow {
 
 export interface Story {
   /** El bucle que lleva el programa: su cabecera, cuántas vueltas dio y cómo acabó. */
-  loop: { line: number; head: string; laps: number; ended: Laps['ended'] }
+  loop: {
+    line: number
+    kind: LoopFacts['kind']
+    head: string
+    laps: number
+    ended: Laps['ended']
+    /**
+     * Una cuenta que el bucle va llevando: lo que valía al empezar cada vuelta (y al salir). Es la primera
+     * variable suya que es un número y cambia.
+     */
+    series?: { name: string; values: number[] }
+  }
   /** Las funciones que se usaron antes de la primera vuelta, en su orden. */
   before: string[]
   /** Las de cada vuelta, en el orden en que entran (también las que llama otra función de la vuelta). */
@@ -133,6 +144,31 @@ function flowsIn(trace: Trace, own: ReadonlySet<string>, to: number): Flow[] {
   return flows
 }
 
+/** Cuántas vueltas se miran, como mucho, para sacar la cuenta que lleva el bucle. */
+const MAX_SERIES = 240
+
+/** La cuenta que lleva el bucle, vuelta a vuelta: la primera variable suya con un número que cambia. */
+function seriesOf(
+  trace: Trace,
+  loop: LoopFacts,
+  episode: Episode,
+): Story['loop']['series'] | undefined {
+  const index = indexOf(trace)
+  const rows = episode.heads
+    .slice(0, MAX_SERIES)
+    .map(
+      (step) =>
+        stateAt(index, step).frames.find((frame) => frame.id === episode.frame)?.locals ?? {},
+    )
+  for (const name of Object.keys(rows[rows.length - 1] ?? {})) {
+    if (loop.targets.includes(name) || loop.inner.includes(name) || name.startsWith('__')) continue
+    const values = rows.map((row) => row[name])
+    if (!values.every((value): value is number => typeof value === 'number')) continue
+    if (new Set(values).size >= 2) return { name, values }
+  }
+  return undefined
+}
+
 /**
  * La historia del programa tal como se ejecutó, o `null` si no la lleva un bucle que use al menos dos de sus
  * funciones en cada vuelta (un programa que no se repite se cuenta de otra manera).
@@ -140,7 +176,7 @@ function flowsIn(trace: Trace, own: ReadonlySet<string>, to: number): Flow[] {
 export function storyOf(program: Program, trace: Trace): Story | null {
   const own = new Set(functionsIn(program).map((fact) => fact.name))
   if (own.size < 2) return null
-  let best: { story: Story; start: number } | null = null
+  let best: { story: Story; start: number; loop: LoopFacts; episode: Episode } | null = null
   for (const loop of loopsIn(program)) {
     // De las veces que se entró en este bucle, la que más vueltas dio.
     const episode = episodesOf(trace, loop).sort((a, b) => b.heads.length - a.heads.length)[0]
@@ -176,9 +212,12 @@ export function storyOf(program: Program, trace: Trace): Story | null {
     const before = calledBetween(trace, own, 0, episode.start).filter((fn) => !around.has(fn))
     best = {
       start: episode.start,
+      loop,
+      episode,
       story: {
         loop: {
           line: loop.line,
+          kind: loop.kind,
           head: loop.head,
           // Pasar por la cabecera una vez más de las que se entra es lo normal: la última comprueba y sale.
           laps: Math.max(
@@ -198,5 +237,7 @@ export function storyOf(program: Program, trace: Trace): Story | null {
       },
     }
   }
-  return best?.story ?? null
+  if (!best) return null
+  const series = seriesOf(trace, best.loop, best.episode)
+  return series ? { ...best.story, loop: { ...best.story.loop, series } } : best.story
 }
