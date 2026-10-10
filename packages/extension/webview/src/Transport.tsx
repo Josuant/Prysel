@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Beat } from '@prysel/ui'
 import type { Story } from '../../src/gist/story.ts'
+import { lapsSaid } from './outcome.ts'
 
 /**
  * **Ver pasar una vuelta.** La arquitectura contada por su ejecución ya dice qué pasa y en qué orden; aquí se
@@ -92,14 +93,17 @@ export function sayBeat(
   beat: Beat,
   title: string,
   carries: readonly string[],
-  laps: number,
+  loop: Pick<Story['loop'], 'laps' | 'ended'>,
 ): string {
-  const brings = carries.length > 0 ? ` · recibe ${carries.join(', ')}` : ''
+  const { laps } = loop
+  // Lo mismo por dos flechas (la población recién hecha, y la que deja la vuelta anterior) se dice una vez.
+  const names = [...new Set(carries)]
+  const brings = names.length > 0 ? ` · recibe ${names.join(', ')}` : ''
   switch (beat.phase) {
     case 'before':
       return `Antes de empezar: ${title}`
     case 'again':
-      return laps > 1 ? `Y otra vez: así ${laps} vueltas` : 'Y hasta aquí la vuelta'
+      return laps > 1 ? `Y otra vez: así ${lapsSaid(loop)} vueltas` : 'Y hasta aquí la vuelta'
     case 'result':
       return 'Al salir, enseña el resultado'
     case 'lap':
@@ -110,7 +114,7 @@ export function sayBeat(
 const SPARK = { w: 56, h: 16 }
 
 /** La tira de vueltas: cuántas dio, por cuál va, y (si el bucle lleva una cuenta) cómo fue cambiando. */
-function LapStrip({ loop, full }: { loop: Story['loop']; full: boolean }) {
+function LapStrip({ loop, full, idle }: { loop: Story['loop']; full: boolean; idle: boolean }) {
   const { laps, series } = loop
   const lap = full ? laps : 1
   const values = series?.values ?? []
@@ -131,7 +135,9 @@ function LapStrip({ loop, full }: { loop: Story['loop']; full: boolean }) {
         />
       </span>
       <span className="arch-laps__text">
-        vuelta {lap} de {laps}
+        {idle
+          ? `${lapsSaid(loop)} ${laps === 1 ? 'vuelta' : 'vueltas'}`
+          : `vuelta ${lap} de ${lapsSaid(loop)}`}
       </span>
       {series && here && (
         <>
@@ -183,7 +189,7 @@ export function Transport({
         beat,
         titleOf(beat.at),
         beat.links.flatMap((link) => carriesOf(link) ?? []),
-        loop.laps,
+        loop,
       )
     : null
   return (
@@ -210,8 +216,8 @@ export function Transport({
                 data-phase={step.phase}
                 data-done={at !== null && index < at ? '' : undefined}
                 aria-current={index === at ? 'step' : undefined}
-                aria-label={sayBeat(step, titleOf(step.at), [], loop.laps)}
-                title={sayBeat(step, titleOf(step.at), [], loop.laps)}
+                aria-label={sayBeat(step, titleOf(step.at), [], loop)}
+                title={sayBeat(step, titleOf(step.at), [], loop)}
                 onClick={() => {
                   playback.go(index)
                 }}
@@ -225,7 +231,11 @@ export function Transport({
           {said}
         </span>
       )}
-      <LapStrip loop={loop} full={beat?.phase === 'again' || beat?.phase === 'result'} />
+      <LapStrip
+        loop={loop}
+        full={beat?.phase === 'again' || beat?.phase === 'result'}
+        idle={beat === undefined}
+      />
     </div>
   )
 }

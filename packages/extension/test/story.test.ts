@@ -16,7 +16,7 @@ import {
   withSections,
   withStory,
 } from '@prysel/ui'
-import { exitOf, moduleStory } from '../webview/src/outcome.ts'
+import { exitOf, lapsSaid, moduleStory } from '../webview/src/outcome.ts'
 import { sayBeat } from '../webview/src/Transport.tsx'
 import { Kernel } from '../src/kernel.ts'
 
@@ -187,9 +187,13 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     expect(beats[7]?.links.length).toBe(1)
     const first = beats[2]
     if (!first) throw new Error('sin pasos')
-    expect(sayBeat(first, 'Evaluar población', ['poblacion ×8'], 23)).toBe(
+    // Lo mismo por dos flechas se dice una vez.
+    expect(sayBeat(first, 'Evaluar población', ['poblacion ×8', 'poblacion ×8'], story.loop)).toBe(
       'Evaluar población · recibe poblacion ×8',
     )
+    // Aunque no se sepa qué módulo lo escribe, la reproducción acaba en el resultado.
+    expect(beatsOf(drawn, []).at(-1)).toEqual({ at: RESULT_BEAT, links: [], phase: 'result' })
+    expect(beatsOf(drawn).at(-1)?.phase).toBe('again')
     // Sin historia no hay nada que reproducir.
     expect(beatsOf(architecture)).toEqual([])
     // Cómo se salió, con palabras: va en la marca de salida.
@@ -206,9 +210,13 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     expect(exitOf({ ...loop, kind: 'for', ended: 'break' })).toBe(
       'sale antes de acabar, en la vuelta 7',
     )
-    expect(exitOf({ ...loop, kind: 'while', ended: 'cut' })).toBe(
-      'seguía dando vueltas: se cortó aquí',
-    )
+    // Si no se le vio salir, no se promete cuántas dio ni cómo acabó.
+    const cut = { ...loop, kind: 'while' as const, ended: 'cut' as const }
+    expect(exitOf(cut)).toBe('siguió dando vueltas: aquí se dejó de mirar')
+    expect(lapsSaid(cut)).toBe('más de 7')
+    expect(lapsSaid({ ...loop, kind: 'for', ended: 'done' })).toBe('7')
+    const again = { at: 'x', links: [], phase: 'again' as const }
+    expect(sayBeat(again, '', [], cut)).toBe('Y otra vez: así más de 7 vueltas')
   })
 
   it('un programa que no se repite llamando a sus funciones no tiene esta historia', async () => {

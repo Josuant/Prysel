@@ -107,6 +107,10 @@ export function outcomeOf(
   }
 }
 
+/** Cuántas vueltas dio, dicho sin prometer de más: si no se le vio salir, son «más de» las que se contaron. */
+export const lapsSaid = (loop: Pick<Story['loop'], 'laps' | 'ended'>): string =>
+  loop.ended === 'cut' ? `más de ${loop.laps}` : String(loop.laps)
+
 /**
  * Cómo se salió del ciclo, con palabras. Es un hecho de la ejecución (se acabaron sus vueltas, dejó de
  * cumplirse la condición, se cortó desde dentro…), no una interpretación de para qué sirve.
@@ -123,7 +127,8 @@ export function exitOf(loop: Story['loop']): string {
     case 'return':
       return `sale con el resultado, ${lap}`
     case 'cut':
-      return 'seguía dando vueltas: se cortó aquí'
+      // No se vio salir: la traza deja de mirar a partir de cierto punto (el programa puede haber seguido).
+      return 'siguió dando vueltas: aquí se dejó de mirar'
     case 'error':
       return `se paró por un error, ${lap}`
   }
@@ -163,7 +168,7 @@ export function moduleStory(
       const name = flow.name.replace(/_+/g, ' ').trim() || flow.name
       return [{ from, to, label: flow.size === undefined ? name : `${name} ×${flow.size}` }]
     }),
-    caption: `${laps} ${laps === 1 ? 'vuelta' : 'vueltas'}`,
+    caption: `${lapsSaid(story.loop)} ${laps === 1 ? 'vuelta' : 'vueltas'}`,
     exit: exitOf(story.loop),
   }
 }

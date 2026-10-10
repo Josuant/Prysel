@@ -154,6 +154,8 @@ export interface SectionCardProps {
   usedBy?: number | undefined
   /** Lo que dice el rótulo en sus demás líneas. */
   note?: string | undefined
+  /** Solo con palabras: sin los nombres del código (en la arquitectura; el código queda a un gesto). */
+  plain?: boolean | undefined
   size: { w: number; h: number }
   signal: number
   onToggle?: (() => void) | undefined
@@ -167,17 +169,20 @@ export function SectionCard({
   role,
   usedBy,
   note,
+  plain,
   size,
   signal,
   onToggle,
   onOpen,
   onRetitle,
 }: SectionCardProps) {
-  const fit = sectionFlowFit(
-    info.uses,
-    info.leaves.map((leaf) => leaf.name),
-    size.w,
-  )
+  const fit = plain
+    ? { rows: 0, uses: 0, leaves: 0 }
+    : sectionFlowFit(
+        info.uses,
+        info.leaves.map((leaf) => leaf.name),
+        size.w,
+      )
   const uses = info.uses.slice(0, fit.uses)
   const leaves = info.leaves.slice(0, fit.leaves)
   const usesChips = (
@@ -221,6 +226,7 @@ export function SectionCard({
   return (
     <div
       className="section-card"
+      data-plain={plain ? '' : undefined}
       style={{ width: size.w, height: size.h }}
       role="group"
       aria-label={`Etapa ${info.ordinal}: ${info.title}`}
@@ -274,7 +280,7 @@ export function SectionCard({
           </div>
         </>
       )}
-      {info.opens.length + info.glyphs.length > 0 && (
+      {!plain && info.opens.length + info.glyphs.length > 0 && (
         <div className="section-card__foot">
           <Subprocesses opens={info.opens} onOpen={onOpen} />
           {info.glyphs.map((glyph) => (

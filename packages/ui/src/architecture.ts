@@ -384,7 +384,8 @@ export interface Beat {
 
 /**
  * La historia, paso a paso, para verla pasar: lo de antes, una vuelta entera en su orden (cada paso con lo
- * que recibe), el cierre de la vuelta y, si lo hay, el resultado (`result`: los módulos que lo escriben).
+ * que recibe), el cierre de la vuelta y, si lo hay, el resultado (`result`: los módulos que lo escriben; puede
+ * no saberse cuáles, y aun así es donde acaba).
  * Vacío si la arquitectura no está contada por su ejecución.
  */
 export function beatsOf(
@@ -406,7 +407,7 @@ export function beatsOf(
   beats.push({ at: anchor, links: into(anchor, (id) => !turning.has(id)), phase: 'lap' })
   for (const id of order) beats.push({ at: id, links: into(id, () => true), phase: 'lap' })
   beats.push({ at: anchor, links: into(anchor, (id) => turning.has(id)), phase: 'again' })
-  if (result && result.length > 0) {
+  if (result) {
     beats.push({
       at: RESULT_BEAT,
       links: result.map((id) => `${id}>${RESULT_BEAT}`),

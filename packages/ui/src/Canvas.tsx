@@ -838,6 +838,9 @@ function CanvasInner({
                       leaves: node.section.leaves.map((leaf) => leaf.name),
                       callees: node.section.opens.map((open) => open.name),
                       glyphs: node.section.glyphs.length,
+                      // Como módulo de la arquitectura se dice con palabras: se lee de lejos.
+                      plain:
+                        flow && architecture?.modules.some((module) => module.id === node.id),
                     })
                   : flow && isDecision(node)
                     ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.

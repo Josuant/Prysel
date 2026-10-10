@@ -483,6 +483,9 @@ export const SECTION = {
   /** Cuántos chips caben a cada lado de la flecha; el resto se cuenta («+2»). */
   uses: 3,
   leaves: 4,
+  /** Dicha solo con palabras (en la arquitectura): lo que cabe en una línea del subtítulo, y su ancho mínimo. */
+  plainLine: 34,
+  plainMin: 200,
 } as const
 
 /** Lo que mide un chip o una pastilla con ese nombre en una tarjeta de etapa. */
@@ -522,8 +525,29 @@ export function sectionCardSize(card: {
   callees: readonly string[]
   /** Cuántos glifos de lo que esconde (bucle, decisión, salida) lleva. */
   glyphs: number
+  /**
+   * Dicha solo con palabras: su título y su subtítulo (en dos líneas si es largo), sin los nombres del código
+   * (lo que usa, lo que deja, a quién llama). Así es un módulo en la arquitectura: se lee de lejos, y el
+   * código queda a un gesto (abrirla).
+   */
+  plain?: boolean
 }): { w: number; h: number } {
   const indent = SECTION.pad + SECTION.badge + 10
+  if (card.plain) {
+    const text = card.subtitle ?? ''
+    const lines = text.length === 0 ? 0 : text.length > SECTION.plainLine ? 2 : 1
+    const perLine =
+      lines === 2 ? Math.min(SECTION.plainLine + 6, Math.ceil(text.length / 2) + 6) : text.length
+    const width = Math.max(
+      // El número, el papel, el título y el botón de abrirla.
+      indent + SECTION.badge + Math.ceil(card.title.length * 8.2) + 10 + 20 + SECTION.pad,
+      lines === 0 ? 0 : indent + perLine * 6.6 + SECTION.pad,
+    )
+    return {
+      w: snap(clamp(width, SECTION.plainMin, SECTION.max)),
+      h: snap(SECTION.pad * 2 + SECTION.head + lines * SECTION.sub),
+    }
+  }
   const chips = (names: readonly string[], max: number) =>
     names.slice(0, max).reduce((sum, name) => sum + sectionChipWidth(name) + 4, 0) +
     (names.length > max ? 30 : 0)

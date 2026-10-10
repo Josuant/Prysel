@@ -521,6 +521,7 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
             role={data.role}
             usedBy={data.usedBy}
             note={node.note}
+            plain={data.role !== undefined}
             size={size}
             signal={data.renameSignal ?? 0}
             onToggle={toggle}
