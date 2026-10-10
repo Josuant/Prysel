@@ -331,8 +331,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
-  /** En un diagrama contado por su ejecución: enseñar también quién llama a quién. */
-  const [showCalls, setShowCalls] = useState(false)
+  /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
+  const [xray, setXray] = useState(false)
   /**
    * Desde dónde se mira el programa: su **idea** (qué hace, en unas líneas), sus **partes** (la arquitectura)
    * o su **detalle** (el diagrama abierto, paso a paso).
@@ -1374,9 +1374,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const architecture = useMemo(
     () =>
       heldArchitecture && told
-        ? withStory(heldArchitecture, told, { calls: showCalls })
+        ? withStory(heldArchitecture, told, { calls: xray })
         : heldArchitecture,
-    [heldArchitecture, told, showCalls],
+    [heldArchitecture, told, xray],
   )
   // Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final.
   const outcome = useMemo(
@@ -2295,6 +2295,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 beat={beat}
                 reserve={reserve}
                 moduleStates={states}
+                xray={xray}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
@@ -2572,19 +2573,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       usa a
                     </span>
                   )}
-                  {architecture.order !== undefined && (
-                    // Contado por su ejecución, quién llama a quién sobra… salvo para quien quiera verlo.
-                    <button
-                      type="button"
-                      className="arch-legend__toggle"
-                      aria-pressed={showCalls}
-                      onClick={() => {
-                        setShowCalls(!showCalls)
-                      }}
-                    >
-                      quién llama a quién
-                    </button>
-                  )}
+                  {/* La radiografía: lo que el diagrama dice con palabras, visto por dentro. Cada módulo
+                      enseña los nombres que usa y deja, y vuelven las flechas de quién llama a quién. */}
+                  <button
+                    type="button"
+                    className="arch-legend__toggle"
+                    aria-pressed={xray}
+                    title="Ver el código por dentro: los nombres que usa y deja cada parte, y quién llama a quién"
+                    onClick={() => {
+                      setXray(!xray)
+                    }}
+                  >
+                    radiografía
+                  </button>
                   {architecture.links.some((link) => link.planned) && (
                     <span className="arch-legend__key" data-kind="planned">
                       planeado

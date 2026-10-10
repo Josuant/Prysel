@@ -258,6 +258,11 @@ export interface CanvasProps {
    * leyenda): el encuadre deja esas franjas libres, y la arquitectura se coloca para lo que queda.
    */
   reserve?: { top?: number; bottom?: number } | null
+  /**
+   * La **radiografía** de la arquitectura: sus módulos, que se dicen con palabras, enseñan además lo que
+   * llevan dentro (los nombres que usan y que dejan, a quién llaman). El código, a un gesto.
+   */
+  xray?: boolean
   /** En la arquitectura: el estado de cada módulo tras ejecutar el programa (por su id). */
   moduleStates?: Readonly<Record<string, ModuleState>> | null
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
@@ -481,6 +486,7 @@ function CanvasInner({
   beat = null,
   reserve = null,
   moduleStates = null,
+  xray = false,
   addTarget,
   palette,
   addToModule = true,
@@ -882,7 +888,11 @@ function CanvasInner({
                       callees: node.section.opens.map((open) => open.name),
                       glyphs: node.section.glyphs.length,
                       // Como módulo de la arquitectura se dice con palabras: se lee de lejos.
-                      plain: flow && architecture?.modules.some((module) => module.id === node.id),
+                      // (Salvo en la radiografía, que enseña también sus nombres.)
+                      plain:
+                        !xray &&
+                        flow &&
+                        architecture?.modules.some((module) => module.id === node.id),
                     })
                   : flow && isDecision(node)
                     ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
@@ -972,6 +982,7 @@ function CanvasInner({
     archFrame,
     tailSize,
     gateSize,
+    xray,
   ])
 
   /**
@@ -1766,6 +1777,7 @@ function CanvasInner({
           renameSignal: renaming.id === node.id ? renaming.n : 0,
           // En la arquitectura, el papel del módulo: su icono y su tinte.
           ...(roleOf[node.id] === undefined ? {} : { role: roleOf[node.id] }),
+          ...(xray ? { xray: true } : {}),
           ...(sharedBy[node.id] === undefined ? {} : { usedBy: sharedBy[node.id] }),
           ...(roleOf[node.id] !== undefined && moduleStates?.[node.id]
             ? { moduleState: moduleStates[node.id] }

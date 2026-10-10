@@ -121,6 +121,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   role?: ModuleRole
   /** En la arquitectura: cuántos módulos usan lo que este guarda (cuando son muchos, se dice aquí). */
   usedBy?: number
+  /** En la arquitectura: se enseña por dentro (sus nombres), no solo con palabras. */
+  xray?: boolean
   /** En la arquitectura: cómo le fue a este módulo al ejecutar el programa. */
   moduleState?: ModuleState
   /** Abrir un subproceso (la función, la clase o el método al que llama) desde su pastilla. */
@@ -524,7 +526,7 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
             usedBy={data.usedBy}
             state={data.moduleState}
             note={node.note}
-            plain={data.role !== undefined}
+            plain={data.role !== undefined && data.xray !== true}
             size={size}
             signal={data.renameSignal ?? 0}
             onToggle={toggle}
