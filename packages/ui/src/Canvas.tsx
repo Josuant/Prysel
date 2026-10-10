@@ -262,6 +262,12 @@ export interface CanvasProps {
    */
   settle?: number
   /**
+   * Si la cámara acompaña a lo que se señala (lo normal). En falso —mientras se construye un programa
+   * entero— lo señalado se sigue iluminando, pero la vista se queda en el conjunto: se ve crecer todo, y no
+   * se pierde de vista lo que ya estaba.
+   */
+  follow?: boolean
+  /**
    * El nodo por el que va la reproducción de una traza: se marca con un anillo y, si se sale de la vista,
    * la cámara lo sigue. Sin él, no hay reproducción.
    */
@@ -426,6 +432,7 @@ function CanvasInner({
   fitMode,
   fitKey = '',
   settle = 0,
+  follow = true,
   cursor = null,
   spotlight = null,
   echo,
@@ -2175,7 +2182,7 @@ function CanvasInner({
       const whole = Math.min(byWidth, byHeight)
       const zoom = Math.min(
         1,
-        mode === 'width' ? (settled && whole >= 0.6 ? whole : byWidth) : whole,
+        mode === 'width' ? ((settled || !follow) && whole >= 0.5 ? whole : byWidth) : whole,
       )
       const first = lastFit.current === ''
       lastFit.current = shape
@@ -2195,7 +2202,19 @@ function CanvasInner({
     return () => {
       observer.disconnect()
     }
-  }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive, fitKey, settle])
+  }, [
+    shape,
+    taken,
+    setViewport,
+    animate,
+    bounds.w,
+    bounds.h,
+    fitMode,
+    interactive,
+    fitKey,
+    settle,
+    follow,
+  ])
 
   // El foco de una orden: la cámara va a donde el nodo **va a quedar** (no a donde está a medio camino de
   // su animación), a un tamaño que se lea. Desde ahí la cámara ya no se reencuadra sola: se movió a propósito.
@@ -2205,6 +2224,11 @@ function CanvasInner({
     const frame = frameRef.current
     const gesture = spotlight ? `${spotlight.key}:${spotlight.id}` : ''
     if (!frame || !spotlight || spotDone.current === gesture) return
+    // Mientras se construye, la vista es la del conjunto: el gesto se da por hecho sin mover la cámara.
+    if (!follow) {
+      spotDone.current = gesture
+      return
+    }
     const target = spotlight.camera ?? spotlight.id
     const item = motionItems.find((entry) => entry.id === target)
     if (!item) return
@@ -2236,7 +2260,7 @@ function CanvasInner({
       // Hacia una caja que crece, despacio: es un acompañar, no un salto.
       duration: animate ? (spotlight.camera ? 700 : 450) : 0,
     })
-  }, [spotlight, motionItems, setCenter, animate, fitKey])
+  }, [spotlight, motionItems, setCenter, animate, fitKey, follow])
 
   // Un lienzo de trabajo (que se ajusta al ancho) pliega sus filas según el ancho que tiene.
   const narrowing = interactive && (fitMode ?? 'width') === 'width'

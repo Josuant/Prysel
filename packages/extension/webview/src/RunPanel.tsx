@@ -48,11 +48,26 @@ const ENDED: Record<RunSummary['ended'], string> = {
   blocked: 'No se ejecuta solo',
 }
 
-export function RunPanel({ run }: { run: RunSummary }) {
+export interface RunPanelProps {
+  run: RunSummary
+  /** Pinchar una línea de la salida: a qué línea del programa lleva (el paso que la escribió). */
+  onPick?: ((line: number) => void) | undefined
+  /** Lo seleccionado en el diagrama, como líneas del programa: lo que escribió se resalta en la salida. */
+  lit?: { from: number; to: number } | undefined
+}
+
+export function RunPanel({ run, onPick, lit }: RunPanelProps) {
   const [open, setOpen] = useState(true)
   const all = run.output === '' ? [] : runLines(run.output, run.typed)
-  const lines = all.slice(-MAX_LINES)
-  const hidden = all.length - lines.length
+  const from = Math.max(0, all.length - MAX_LINES)
+  const lines = all.slice(from)
+  const hidden = from
+  /** La línea del programa que escribió la línea `index` de las que se enseñan. */
+  const sourceOf = (index: number) => run.sources?.[from + index] ?? null
+  const isLit = (index: number) => {
+    const source = sourceOf(index)
+    return lit !== undefined && source !== null && source >= lit.from && source <= lit.to
+  }
   return (
     <section className="run-panel" data-ended={run.ended} aria-label="Al ejecutar el programa">
       <header className="run-panel__head">
@@ -91,16 +106,42 @@ export function RunPanel({ run }: { run: RunSummary }) {
               }}
             >
               {hidden > 0 && <span className="run-panel__more">… {hidden} líneas antes</span>}
-              {lines.map((line, index) => (
-                <span
-                  key={index}
-                  className="run-panel__line"
-                  style={{ '--i': index } as React.CSSProperties}
-                >
-                  {line.text === '' && line.typed === undefined ? ' ' : line.text}
-                  {line.typed !== undefined && <kbd className="run-panel__typed">{line.typed}</kbd>}
-                </span>
-              ))}
+              {lines.map((line, index) => {
+                const source = sourceOf(index)
+                const body = (
+                  <>
+                    {line.text === '' && line.typed === undefined ? ' ' : line.text}
+                    {line.typed !== undefined && (
+                      <kbd className="run-panel__typed">{line.typed}</kbd>
+                    )}
+                  </>
+                )
+                // Una línea de la que se sabe el paso que la escribió lleva a él.
+                return source !== null && onPick ? (
+                  <button
+                    key={index}
+                    type="button"
+                    className="run-panel__line"
+                    data-lit={isLit(index) ? '' : undefined}
+                    style={{ '--i': index } as React.CSSProperties}
+                    title="Ver en el diagrama el paso que escribió esto"
+                    onClick={() => {
+                      onPick(source)
+                    }}
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <span
+                    key={index}
+                    className="run-panel__line"
+                    data-lit={isLit(index) ? '' : undefined}
+                    style={{ '--i': index } as React.CSSProperties}
+                  >
+                    {body}
+                  </span>
+                )
+              })}
             </pre>
           ) : (
             run.ended !== 'blocked' && <p className="run-panel__empty">No imprime nada.</p>

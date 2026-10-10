@@ -223,6 +223,29 @@ export interface RunSummary {
   line?: number
   /** Las respuestas de teclado de ejemplo que se le dieron, en orden (si pide datos). */
   typed?: string[]
+  /**
+   * De dónde salió cada línea de `output`: la línea del programa que se estaba ejecutando cuando se escribió
+   * (`null` si no se sabe). Es lo que une la pantalla con el diagrama: pinchar una línea lleva a su paso.
+   */
+  sources?: (number | null)[]
+}
+
+/**
+ * Qué línea del programa escribió cada línea de la salida. Lo impreso viaja en el evento siguiente al que lo
+ * produjo, así que es de la línea que se estaba ejecutando justo antes.
+ */
+export function outputSources(trace: Trace): (number | null)[] {
+  const sources: (number | null)[] = []
+  let running: number | null = null
+  let fresh = true
+  for (const event of trace.events) {
+    for (const char of event.o ?? '') {
+      if (fresh) sources.push(running)
+      fresh = char === '\n'
+    }
+    if (event.k === 'line' || event.k === 'call') running = event.l
+  }
+  return sources
 }
 
 /** El resumen de una ejecución, a partir de su traza. */
@@ -239,7 +262,15 @@ export function runSummary(trace: Trace, typed?: readonly string[]): RunSummary 
         }
       : {}),
     ...(typed ? { typed: [...typed] } : {}),
+    sources: alignedSources(trace),
   }
+}
+
+/** Las fuentes de las líneas de `trace.output` (que puede ser solo el final de todo lo impreso). */
+function alignedSources(trace: Trace): (number | null)[] {
+  const all = outputSources(trace)
+  const shown = trace.output.replace(/\n$/, '').split('\n').length
+  return all.slice(Math.max(0, all.length - shown))
 }
 
 /** La traza, sin contar como fallo que se acabaran las respuestas de ejemplo: el programa iba bien. */

@@ -442,12 +442,28 @@ export function tryScene(gist: Gist): GistScene | null {
 }
 
 /** La escena de una función con muestra; `null` si no la tiene (entonces se ve su diagrama, como siempre). */
+/**
+ * Una función que no recibe nada y solo escribe en pantalla (un menú, un «mostrar») no gana nada con una
+ * tarjeta: enseñaría un trozo de la misma sesión que ya está entera en «Al ejecutarlo». Su historia se
+ * cuenta allí (y pinchando sus líneas se llega a ella).
+ */
+export function onlyTalks(sample: Sample): boolean {
+  return (
+    sample.inputs.length === 0 &&
+    sample.returned === undefined &&
+    sample.error === undefined &&
+    (sample.changed ?? []).length === 0 &&
+    sample.self === undefined
+  )
+}
+
 export function sampleScene(gist: Gist): GistScene | null {
   if (gist.block === 'loop') return loopScene(gist)
   if (gist.block === 'try') return tryScene(gist)
   if (gist.block === 'class') return classScene(gist)
   if (gist.block === 'condition') return conditionScene(gist)
   if (gist.status !== 'ok' || !gist.sample) return null
+  if (onlyTalks(gist.sample)) return null
   return {
     name: gist.owner ? `${gist.owner}.${gist.name}` : gist.name,
     ...(gist.title ? { title: gist.title } : {}),

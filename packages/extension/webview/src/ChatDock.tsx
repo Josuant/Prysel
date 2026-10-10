@@ -34,6 +34,11 @@ export interface ChatDockProps {
   /** La IA que redacta (`null`: falta su clave). */
   ai: string | null
   suggestions: string[]
+  /**
+   * Lo que está seleccionado en el diagrama: se ofrece qué hacer con ello sin tener que escribirlo (preguntar
+   * qué hace, cambiarlo, quitarlo). La orden habla de «esto», y va con la selección.
+   */
+  about?: { label: string } | undefined
   onSubmit: (text: string) => void
   onChoose: (option: AskOption) => void
   onStop: () => void
@@ -104,6 +109,7 @@ export function ChatDock({
   voice,
   ai,
   suggestions,
+  about,
   onSubmit,
   onChoose,
   onStop,
@@ -115,6 +121,7 @@ export function ChatDock({
   judged,
 }: ChatDockProps) {
   const [text, setText] = useState('')
+  const composer = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [listening, setListening] = useState(false)
   const recognition = useRef<Recognition | null>(null)
@@ -352,7 +359,32 @@ export function ChatDock({
         </button>
       )}
 
-      {entries.length === 0 && suggestions.length > 0 && (
+      {about && !building && (
+        <div className="chat__chips chat__chips--about">
+          <span className="chat__about" title={about.label}>
+            {about.label.length > 28 ? `${about.label.slice(0, 27)}…` : about.label}
+          </span>
+          <button type="button" className="chat__chip" onClick={() => send('¿Qué hace esto?')}>
+            ¿Qué hace?
+          </button>
+          <button
+            type="button"
+            className="chat__chip"
+            onClick={() => {
+              // Se deja empezada la frase: falta decir cómo se quiere.
+              setText('Cambia esto para que ')
+              composer.current?.focus()
+            }}
+          >
+            Cámbialo…
+          </button>
+          <button type="button" className="chat__chip" onClick={() => send('Quita esto')}>
+            Quítalo
+          </button>
+        </div>
+      )}
+
+      {!about && entries.length === 0 && suggestions.length > 0 && (
         <div className="chat__chips">
           {suggestions.map((suggestion) => (
             <button
@@ -384,6 +416,7 @@ export function ChatDock({
           <Icon name={open ? 'chevron' : 'chevron-up'} size={18} />
         </button>
         <input
+          ref={composer}
           className="chat__input"
           type="text"
           value={text}

@@ -133,6 +133,24 @@ export function titledScene(scene: GistScene, named: { stage?: string; note?: st
   return { ...scene, name: said, code: scene.code ?? scene.name }
 }
 
+/**
+ * Una escena dicha en una línea: lo primero que entró → lo último que salió (`25 12 8 40 → 85`). Es lo que
+ * enseña el rótulo de una etapa plegada de lo que guarda dentro, para leer el programa como un mapa.
+ */
+export function gistPeek(scene: GistScene): string {
+  const say = (piece: GistPiece | undefined): string => {
+    if (!piece) return ''
+    if (piece.type === 'datum') return clip(gistText(piece.value), 22)
+    if (piece.type === 'console') return clip(piece.text.split('\n')[0] ?? '', 22)
+    if (piece.type === 'error') return 'falla'
+    if (piece.type === 'note') return ''
+    return ''
+  }
+  const first = say(scene.lanes[0]?.[0])
+  const last = scene.lanes.length > 1 ? say(scene.lanes.at(-1)?.[0]) : ''
+  return [first, last].filter((part) => part !== '').join(' → ')
+}
+
 /** Lo que mide cada cosa: el dibujo usa estas mismas medidas, así el lienzo reserva el sitio justo. */
 export const GIST = {
   pad: 12,

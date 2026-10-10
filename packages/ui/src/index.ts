@@ -32,6 +32,7 @@ export {
   resolveSectionAction,
   toCanvasNodes,
   useProgramView,
+  MAP_FROM,
   viewOf,
   withSections,
   type FoldedView,
@@ -59,6 +60,7 @@ export type { NodeMenuItem } from './NodeMenu.tsx'
 export { viewerSize, type ViewerContent } from './viewer.ts'
 export {
   gistSize,
+  gistPeek,
   gistText,
   titledScene,
   type GistPiece,

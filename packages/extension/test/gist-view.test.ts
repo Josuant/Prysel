@@ -4,6 +4,8 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import {
   functionsOf,
+  MAP_FROM,
+  gistPeek,
   gistSize,
   titledScene,
   toCanvasNodes,
@@ -18,6 +20,9 @@ import type { Gist } from '../src/gist/gist.ts'
 import type { Sample } from '../src/gist/sample.ts'
 import { valueOf } from '../src/gist/value.ts'
 import { sampleScene, spokenHead } from '../webview/src/gisting.ts'
+import { runLines } from '../webview/src/RunPanel.tsx'
+import { outputSources } from '../src/gist/gist.ts'
+import type { Trace } from '../src/trace.ts'
 
 /**
  * La tarjeta «Qué hace»: de la muestra ejecutada a lo que se dibuja (lo que entró → lo que salió), y cómo
@@ -107,7 +112,10 @@ describe('de la muestra a la escena', () => {
     expect(sampleScene(gistOf({ error: 'ZeroDivisionError: division by zero' }))?.lanes[1]).toEqual(
       [{ type: 'error', text: 'ZeroDivisionError: division by zero' }],
     )
-    expect(sampleScene(gistOf({}))?.lanes.map(types)).toEqual([['note'], ['note']])
+    // Lo que no recibe nada ni deja nada (solo escribe en pantalla, o ni eso) no lleva tarjeta: su historia
+    // está en «Al ejecutarlo».
+    expect(sampleScene(gistOf({}))).toBeNull()
+    expect(sampleScene(gistOf({ printed: '1. Añadir\n2. Salir\n' }))).toBeNull()
   })
 
   it('sin muestra no hay tarjeta: se ve el diagrama de siempre', () => {
@@ -364,5 +372,69 @@ describe('una etapa que guarda una función con tarjeta', () => {
     const nodes = shown(true)
     // La de los datos (dos asignaciones) no enseña sus sentencias.
     expect(nodes.some((node) => node.label === 'ancho')).toBe(false)
+  })
+})
+
+describe('la salida y el diagrama se hablan', () => {
+  it('cada línea de la salida sabe qué línea del programa la escribió', () => {
+    // Lo impreso viaja en el evento siguiente al que lo produjo.
+    const trace: Trace = {
+      truncated: false,
+      error: null,
+      output: 'Menú\nElige: 2\nTotal: 5\n',
+      events: [
+        { k: 'line', l: 1, d: 0, f: 0 },
+        { k: 'call', l: 10, d: 1, f: 1, fn: 'menu' },
+        { k: 'line', l: 11, d: 1, f: 1 },
+        { k: 'line', l: 12, d: 1, f: 1, o: 'Menú\n' },
+        { k: 'return', l: 12, d: 1, f: 1, o: 'Elige: 2\n' },
+        { k: 'line', l: 3, d: 0, f: 0 },
+        { k: 'end', l: 3, d: 0, f: 0, o: 'Total: 5\n' },
+      ],
+    }
+    expect(outputSources(trace)).toEqual([11, 12, 3])
+    expect(runLines(trace.output, ['2']).map((line) => line.text)).toEqual([
+      'Menú',
+      'Elige: ',
+      'Total: 5',
+    ])
+  })
+})
+
+describe('el programa como mapa', () => {
+  const scene: GistScene = {
+    name: 'total',
+    lanes: [
+      [{ type: 'datum', label: 'importes', value: valueOf({ l: [25, 12], n: 2, t: 'list' }) }],
+      [{ type: 'fold', label: 'suma', symbol: 'Σ' }],
+      [{ type: 'datum', label: 'devuelve', value: valueOf(37) }],
+    ],
+  }
+
+  it('una tarjeta se dice en una línea: lo que entró → lo que salió', () => {
+    expect(gistPeek(scene)).toBe('[25, 12] → 37')
+  })
+
+  it('con muchas etapas que guardan tarjetas, cada una se queda en su rótulo, diciendo lo que hace', () => {
+    const count = MAP_FROM + 1
+    const source = Array.from({ length: count }, (_, at) =>
+      lines(`# Parte ${at}: lo que hace`, `def f${at}(n):`, '    return n + 1', ''),
+    ).join('')
+    const program = parse(`${source}print(f0(1))\n`)
+    const nodes = toCanvasNodes(program.nodes).map((node) =>
+      node.kind === 'abstraction.collapsed' ? { ...node, gist: scene } : node,
+    )
+    const all = withSections(nodes, program.edges, program.sections ?? [])
+    const shown = viewOf(all, program.edges, functionsOf(all, program.edges), {
+      focus: null,
+      flow: true,
+      density: 'normal',
+    }).view.nodes
+    // Ninguna función a la vista: todas dentro de su etapa plegada…
+    expect(shown.filter((node) => node.kind === 'abstraction.collapsed')).toEqual([])
+    // …y la etapa dice lo que hace lo que guarda.
+    const stages = shown.filter((node) => node.kind === 'space.section')
+    expect(stages).toHaveLength(count)
+    expect(stages[0]?.section?.subtitle).toBe('[25, 12] → 37')
   })
 })

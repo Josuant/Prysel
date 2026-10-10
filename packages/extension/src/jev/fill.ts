@@ -172,6 +172,8 @@ export async function answerQuestion(
   provider: AiProvider,
   program: Program,
   question: string,
+  /** Lo que estaba seleccionado al preguntar («esto»): sus líneas. */
+  about?: { from: number; to: number },
 ): Promise<{ said: string; line: number | null } | null> {
   const numbered = program.source
     .split(/\r?\n/)
@@ -185,7 +187,7 @@ export async function answerQuestion(
         'Primera línea de tu respuesta: solo «LINEA: n», con el número de la línea del programa que lo decide. ' +
         'Después, una o dos frases cortas en español, sin código ni formato: se leerán en voz alta. ' +
         'Habla de lo que hace ESTE programa, no de programación en general.',
-      prompt: `La pregunta: ${question}\n\nEl programa, con sus números de línea:\n${numbered}`,
+      prompt: `La pregunta: ${question}${about ? `\n\n«Esto» es lo que va de la línea ${about.from} a la ${about.to}.` : ''}\n\nEl programa, con sus números de línea:\n${numbered}`,
       maxTokens: 300,
     })
     const found = /^\s*L[IÍ]NEA:\s*(\d+)/i.exec(raw)

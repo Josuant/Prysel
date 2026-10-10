@@ -1121,6 +1121,24 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     if (previous) view.descend(previous.id)
     else view.open(null)
   }
+  /** Lo seleccionado, como líneas del programa: lo que eso escribió se resalta en la salida. */
+  const picked = selected === null ? undefined : view.nodes.find((node) => node.id === selected)
+  const litLines =
+    picked?.line === undefined
+      ? undefined
+      : { from: picked.line, to: picked.lineEnd ?? picked.line }
+  /** Lo que se dice de lo seleccionado en el chat: su nombre, para ofrecer qué hacer con ello. */
+  const about = picked ? { label: picked.gist?.name ?? picked.label } : undefined
+  /** Cuánto lleva lo que se está construyendo por etapas: las que ya tienen código, de las que hay. */
+  const stages = program?.sections ?? NO_SECTIONS
+  const pendingStages = program
+    ? program.nodes.filter((node) => node.generating !== undefined).length
+    : 0
+  const building = order.phase === 'done' && order.building === true
+  const progress =
+    building && stages.length > 1
+      ? { done: Math.max(0, stages.length - pendingStages), total: stages.length }
+      : null
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
   const goTo = (id: string) => {
     setSelected(id)
@@ -1871,6 +1889,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 height="fill"
                 fitKey={view.viewKey}
                 settle={settled}
+                // Mientras se construye se ve el conjunto: la cámara no persigue cada pieza que nace.
+                follow={!building}
                 cursor={cursor}
                 spotlight={spotlight}
                 echo={echo}
@@ -1972,10 +1992,39 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   </div>
                 </>
               )}
+              {/* Cuánto lleva lo que se construye: las partes del plan que ya tienen código. */}
+              {progress && (
+                <div
+                  className="build-progress"
+                  role="progressbar"
+                  aria-label="Lo que lleva construido"
+                  aria-valuemin={0}
+                  aria-valuemax={progress.total}
+                  aria-valuenow={progress.done}
+                >
+                  <span
+                    className="build-progress__bar"
+                    style={{ width: `${(progress.done / progress.total) * 100}%` }}
+                  />
+                  <span className="build-progress__text">
+                    {progress.done} de {progress.total} partes
+                  </span>
+                </div>
+              )}
               {/* Lo que el programa saca por pantalla: a la vista mientras se construye. */}
               {ran && program && program.nodes.length > 0 && (
                 <div className="canvas-float" data-at="bottom-right">
-                  <RunPanel run={ran} />
+                  <RunPanel
+                    run={ran}
+                    lit={litLines}
+                    onPick={(line) => {
+                      // El paso más interior que abarca esa línea; si está plegado, lo que lo guarda.
+                      const node = [...program.nodes]
+                        .filter((n) => n.range && n.line <= line && (n.lineEnd ?? n.line) >= line)
+                        .sort((a, b) => b.line - a.line)[0]
+                      if (node) goTo(node.id)
+                    }}
+                  />
                 </div>
               )}
               {features.orders && !features.chat && (
@@ -2137,6 +2186,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           building={order.phase === 'done' && order.building === true}
           voice={voice}
           ai={models ? models.ai : ''}
+          about={about}
           // Con el lienzo vacío se propone algo que construir; con un programa delante, qué hacer con él.
           suggestions={
             (program?.nodes.length ?? 0) === 0

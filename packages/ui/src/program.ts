@@ -1,3 +1,4 @@
+import { gistPeek } from './gist.ts'
 import { useCallback, useMemo, useState } from 'react'
 import {
   getKind,
@@ -605,6 +606,9 @@ export interface FoldedView {
   edges: SemanticEdge[]
 }
 
+/** A partir de cuántas etapas con tarjeta dentro el programa se enseña como un mapa (todas en su rótulo). */
+export const MAP_FROM = 3
+
 /**
  * Lo que se ve del programa: o el flujo del archivo (`focus` nulo) o el contenido de una
  * función. Las definiciones usadas se quitan del flujo —su cuerpo se ve en su propio lienzo—
@@ -1001,11 +1005,14 @@ export function viewOf(
       .filter((node) => isSection(node) && node.contains?.some((id) => gisted.has(id)))
       .map((node) => node.id),
   )
+  // …pero con muchas así el programa no cabe en una pantalla: entonces se lee como un mapa (cada parte en
+  // su rótulo, con lo que hace en una línea) y se abre la que interese.
+  const map = holding.size > MAP_FROM
   const byDefault = (id: string) =>
     density === 'compact'
       ? true
       : density === 'normal'
-        ? (leaves.has(id) && !holding.has(id)) || gisted.has(id)
+        ? (leaves.has(id) && (map || !holding.has(id))) || gisted.has(id)
         : false
   const folded = new Set(
     scopes
@@ -1018,10 +1025,23 @@ export function viewOf(
   )
   // Plegado, el `if` recoge sus ramas (y se ve su tarjeta); abierto, es el rombo de siempre, con su chevron
   // para volver a plegarlo.
+  const scenes = new Map(base.nodes.flatMap((node) => (node.gist ? [[node.id, node.gist]] : [])))
   const prepared =
-    branched.size === 0
+    branched.size === 0 && holding.size === 0
       ? base.nodes
       : base.nodes.map((node) => {
+          // Una etapa plegada que guarda algo con tarjeta dice, en su rótulo, lo que eso hace.
+          if (node.section && holding.has(node.id) && folded.has(node.id)) {
+            const inner = node.contains?.map((id) => scenes.get(id)).find((scene) => scene)
+            const peek = inner ? gistPeek(inner) : ''
+            return peek === ''
+              ? node
+              : {
+                  ...node,
+                  section: { ...node.section, subtitle: peek },
+                  note: [node.section.subtitle, node.note].filter(Boolean).join('\n\n'),
+                }
+          }
           const members = branched.get(node.id)
           if (!members) return node
           if (folded.has(node.id)) return { ...node, contains: members, openable: true }
