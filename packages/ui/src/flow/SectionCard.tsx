@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { sectionFlowFit, type IconId } from '@prysel/morphology'
+import type { ModuleRole } from '@prysel/spatial'
 import { Icon } from '../Icon.tsx'
 import { RenameBox } from '../MorphNode.tsx'
 import type { SectionGlyph, SectionInfo, Subprocess } from '../program.ts'
@@ -49,6 +50,25 @@ const GLYPHS: Record<SectionGlyph, { icon: IconId; label: string }> = {
   loop: { icon: 'loop', label: 'Dentro repite algo' },
   branch: { icon: 'branch', label: 'Dentro decide algo' },
   output: { icon: 'globe', label: 'Dentro enseña o imprime algo' },
+}
+
+/** El papel de un módulo en la arquitectura: su icono y cómo se dice. */
+const ROLES: Record<ModuleRole, { icon: IconId; label: string }> = {
+  entrada: { icon: 'pencil', label: 'Entrada: recoge datos de quien lo usa' },
+  datos: { icon: 'table', label: 'Datos: lo que el programa guarda' },
+  logica: { icon: 'function', label: 'Lógica: calcula o transforma' },
+  control: { icon: 'switch', label: 'Control: decide qué se hace y cuándo' },
+  salida: { icon: 'globe', label: 'Salida: enseña el resultado' },
+}
+
+/** La insignia del papel: va junto al número de la etapa. */
+function RoleBadge({ role }: { role?: ModuleRole | undefined }) {
+  if (!role) return null
+  return (
+    <span className="section__role" data-role={role} title={ROLES[role].label}>
+      <Icon name={ROLES[role].icon} size={12} />
+    </span>
+  )
 }
 
 /** El texto que se edita: el rótulo entero (título y subtítulo), como está en el comentario. */
@@ -128,6 +148,10 @@ function Toggle({
 
 export interface SectionCardProps {
   info: SectionInfo
+  /** En la arquitectura: su papel. */
+  role?: ModuleRole | undefined
+  /** En la arquitectura: cuántos módulos usan lo que guarda (sus flechas salen al seleccionarlo). */
+  usedBy?: number | undefined
   /** Lo que dice el rótulo en sus demás líneas. */
   note?: string | undefined
   size: { w: number; h: number }
@@ -140,6 +164,8 @@ export interface SectionCardProps {
 /** La etapa plegada: se lee su fase sin abrirla. */
 export function SectionCard({
   info,
+  role,
+  usedBy,
   note,
   size,
   signal,
@@ -206,7 +232,16 @@ export function SectionCard({
         <span className="section__ordinal" aria-hidden>
           {info.ordinal}
         </span>
+        <RoleBadge role={role} />
         <SectionTitle info={info} signal={signal} onRetitle={onRetitle} />
+        {usedBy !== undefined && (
+          <span
+            className="section__shared"
+            title={`Lo usan ${usedBy} módulos. Selecciónalo para ver cuáles.`}
+          >
+            lo usan {usedBy}
+          </span>
+        )}
         {onToggle && <Toggle info={info} open={false} onToggle={onToggle} />}
       </header>
       {info.subtitle && (
@@ -256,6 +291,7 @@ export function SectionCard({
 /** La etapa abierta: un marco con su cabecera; dentro, sus sentencias. */
 export function SectionFrame({
   info,
+  role,
   note,
   size,
   signal,
@@ -273,6 +309,7 @@ export function SectionFrame({
         <span className="section__ordinal" aria-hidden>
           {info.ordinal}
         </span>
+        <RoleBadge role={role} />
         <div className="section-frame__text">
           <SectionTitle info={info} signal={signal} onRetitle={onRetitle} />
           {info.subtitle && (

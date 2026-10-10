@@ -164,6 +164,8 @@ export function LiveParser() {
   const view = useProgramView(canvasNodes, program?.edges ?? NO_EDGES, density, {
     flow: true,
     sections: program?.sections ?? NO_SECTIONS,
+    // `?arch=0` vuelve a la columna de etapas, para comparar con la arquitectura.
+    architecture: new URLSearchParams(location.search).get('arch') !== '0',
   })
   const nodes = view.nodes
   // `?fn=nombre` abre esa función al cargar: para capturar la vista de una función sin pasar por el menú.
@@ -256,6 +258,7 @@ export function LiveParser() {
             interactive
             onEnter={view.enter}
             onOpen={view.descend}
+            architecture={view.architecture}
             onControlChange={changeControl}
             onAction={act}
             addTarget={'into' in place ? place.into : null}

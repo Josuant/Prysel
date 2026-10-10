@@ -30,3 +30,18 @@ export function runFor(width: number): number | undefined {
   const wanted = Math.ceil(width / LEGIBLE_ZOOM / RUN_STEP) * RUN_STEP
   return wanted >= DEFAULT_MAX_RUN ? undefined : Math.max(MIN_RUN, wanted)
 }
+
+/** El zoom al que la arquitectura todavía se lee: son tarjetas con título, aguantan algo más lejos. */
+export const ARCH_ZOOM = 0.62
+/** Lo que se reserva a un lado para lo que no es el diagrama (la cajita de funciones y variables). */
+const ARCH_SIDE = 280
+
+/**
+ * Lo más ancho que puede ser una fila de módulos de la arquitectura en un lienzo de `width` píxeles: lo que
+ * cabe a un zoom legible. `undefined` si aún no se ha medido.
+ */
+export function archRunFor(width: number): number | undefined {
+  if (!Number.isFinite(width) || width <= 0) return undefined
+  const wanted = Math.floor(width / ARCH_ZOOM / RUN_STEP) * RUN_STEP - ARCH_SIDE
+  return Math.max(560, wanted)
+}

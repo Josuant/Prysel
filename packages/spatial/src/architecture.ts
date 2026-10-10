@@ -1,0 +1,412 @@
+import type { Point, Size } from './types.ts'
+
+/**
+ * La **arquitectura** de un programa: sus módulos (las etapas de primer nivel) colocados en el plano según
+ * cómo se relacionan, no según el orden en que están escritos.
+ *
+ * Una lista de pasos dice en qué orden se ejecuta algo; no dice cómo funciona. Aquí cada programa se mira
+ * como un grafo de módulos unidos por dos clases de relación —un **dato** que pasa de uno a otro, y uno que
+ * **usa** (llama) a otro— y se busca la forma que mejor lo cuenta: una tubería, un centro con satélites, un
+ * ciclo, unas capas.
+ *
+ * Las formas son un catálogo cerrado. Cada una **se comprueba contra el grafo** (`shapeCandidates`): solo se
+ * ofrece la que el programa tiene de verdad. Entre las que cuadran elige quien llama (el JEV; sin él, la
+ * primera). `capas` cuadra siempre: es la que queda cuando ninguna otra dice más.
+ *
+ * Cada forma trae su **figura auxiliar** (un anillo, unas bandas, un carril): un dibujo de fondo que dice la
+ * forma antes de leer una sola flecha.
+ */
+
+/** El papel de un módulo en el programa. */
+export type ModuleRole = 'entrada' | 'datos' | 'logica' | 'control' | 'salida'
+
+export const MODULE_ROLES: readonly ModuleRole[] = [
+  'entrada',
+  'datos',
+  'logica',
+  'control',
+  'salida',
+]
+
+export type ArchShape = 'capas' | 'tuberia' | 'centro' | 'ciclo' | 'embudo' | 'abanico'
+
+export interface ArchModule {
+  id: string
+  role: ModuleRole
+  /** Repite algo: es (o contiene, en su primer nivel) un bucle. */
+  loop?: boolean
+  /** Decide entre varios caminos (un menú que elige qué hacer). */
+  branches?: boolean
+}
+
+/**
+ * Una relación entre dos módulos. `data`: `from` deja un valor que `to` usa. `call`: `from` usa (llama) algo
+ * que `to` define. `planned`: aún no está en el código; lo propuso el plan.
+ */
+export interface ArchLink {
+  from: string
+  to: string
+  kind: 'data' | 'call'
+  /** El nombre de lo que pasa (`gastos`) o de lo que se usa (`calcular_total`). */
+  label?: string
+  planned?: boolean
+}
+
+/** Los módulos, en el orden del programa, y lo que los une. */
+export interface ArchGraph {
+  modules: readonly ArchModule[]
+  links: readonly ArchLink[]
+}
+
+/** Una forma que el grafo tiene de verdad, con el módulo que la ancla (el centro, la cabeza del ciclo). */
+export interface ShapeCandidate {
+  shape: ArchShape
+  anchor?: string
+}
+
+export interface Architecture extends ArchGraph, ShapeCandidate {}
+
+/** Un dibujo de fondo que dice la forma: no es un módulo ni una flecha. */
+export interface Figure {
+  id: string
+  kind: 'ring' | 'band' | 'spokes' | 'track'
+  x: number
+  y: number
+  w: number
+  h: number
+  label?: string
+}
+
+export interface ArchLayout {
+  positions: Map<string, Point>
+  figures: Figure[]
+  bounds: Size
+}
+
+/** Los vecinos distintos de un módulo por una clase de relación y un sentido. */
+function neighbours(graph: ArchGraph, id: string, kind: ArchLink['kind'], way: 'out' | 'in') {
+  const found = new Set<string>()
+  for (const link of graph.links) {
+    if (link.kind !== kind || link.from === link.to) continue
+    if (way === 'out' && link.from === id) found.add(link.to)
+    if (way === 'in' && link.to === id) found.add(link.from)
+  }
+  return found
+}
+
+/**
+ * Las formas que el grafo tiene de verdad, de la que más dice a la que menos. `capas` va siempre la última.
+ *
+ * - **ciclo**: un módulo que repite y, en cada vuelta, usa a otros dos o más.
+ * - **centro**: un módulo que usa a tres o más de los demás (un menú, un despachador), o un dato que usan tres
+ *   o más.
+ * - **tubería**: cada módulo le pasa un dato al siguiente, de principio a fin, sin que nadie mande.
+ */
+export function shapeCandidates(graph: ArchGraph): ShapeCandidate[] {
+  const { modules } = graph
+  const found: ShapeCandidate[] = []
+  if (modules.length >= 3) {
+    const byCalls = [...modules].sort(
+      (a, b) =>
+        neighbours(graph, b.id, 'call', 'out').size - neighbours(graph, a.id, 'call', 'out').size,
+    )
+    const loop = byCalls.find(
+      (module) => module.loop === true && neighbours(graph, module.id, 'call', 'out').size >= 2,
+    )
+    const hub = byCalls.find((module) => neighbours(graph, module.id, 'call', 'out').size >= 3)
+    const store = [...modules]
+      .sort(
+        (a, b) =>
+          neighbours(graph, b.id, 'data', 'out').size - neighbours(graph, a.id, 'data', 'out').size,
+      )
+      .find((module) => neighbours(graph, module.id, 'data', 'out').size >= 3)
+    const cycle: ShapeCandidate[] = loop ? [{ shape: 'ciclo', anchor: loop.id }] : []
+    const centre: ShapeCandidate[] = hub
+      ? [{ shape: 'centro', anchor: hub.id }]
+      : store
+        ? [{ shape: 'centro', anchor: store.id }]
+        : []
+    // Un bucle que elige entre varios caminos (un menú) se cuenta mejor como un centro; uno que hace todos
+    // sus pasos en cada vuelta (un juego), como un ciclo.
+    found.push(...(loop?.branches ? [...centre, ...cycle] : [...cycle, ...centre]))
+    const chained = modules.every((module, at) => {
+      const next = modules[at + 1]
+      return next === undefined || neighbours(graph, module.id, 'data', 'out').has(next.id)
+    })
+    if (chained && !hub) found.push({ shape: 'tuberia' })
+  }
+  return [...found, { shape: 'capas' }]
+}
+
+/** La forma con la que se queda quien no puede preguntar: la que más dice de las que cuadran. */
+export function defaultShape(graph: ArchGraph): ShapeCandidate {
+  return shapeCandidates(graph)[0] ?? { shape: 'capas' }
+}
+
+// ───────────────────────── la colocación ─────────────────────────
+
+/** El aire entre dos módulos: a lo ancho cabe la pastilla con el nombre del dato que pasa. */
+const GAP = { x: 88, y: 76 }
+const PAD = 28
+/** Lo que mide una fila de módulos si nadie dice cuánto hay: una pantalla grande. */
+const DEFAULT_WIDTH = 1400
+
+const BAND_LABEL: Record<'control' | 'proceso' | 'datos', string> = {
+  control: 'Quién manda',
+  proceso: 'Lo que hace',
+  datos: 'Lo que guarda',
+}
+
+interface Box {
+  id: string
+  /** El centro. */
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+const overlap = (a: Box, b: Box, margin: number) =>
+  Math.abs(a.x - b.x) < (a.w + b.w) / 2 + margin && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + margin
+
+/** Si dos módulos se pisan (o se quedan sin aire), se abren todos desde el centro hasta que no. */
+function spread(boxes: Box[], centre: Point, margin: number) {
+  for (let round = 0; round < 24; round++) {
+    const touching = boxes.some((a, i) => boxes.slice(i + 1).some((b) => overlap(a, b, margin)))
+    if (!touching) return
+    for (const box of boxes) {
+      box.x = centre.x + (box.x - centre.x) * 1.12
+      box.y = centre.y + (box.y - centre.y) * 1.12
+    }
+  }
+}
+
+/** Una fila de módulos, de izquierda a derecha, centrada en `cx` y con su parte de arriba en `top`. */
+function row(ids: readonly string[], sizeOf: (id: string) => Size, cx: number, top: number): Box[] {
+  const width = ids.reduce((sum, id) => sum + sizeOf(id).w, 0) + GAP.x * Math.max(0, ids.length - 1)
+  const height = Math.max(0, ...ids.map((id) => sizeOf(id).h))
+  let x = cx - width / 2
+  return ids.map((id) => {
+    const size = sizeOf(id)
+    const box = { id, x: x + size.w / 2, y: top + height / 2, w: size.w, h: size.h }
+    x += size.w + GAP.x
+    return box
+  })
+}
+
+const heightOf = (boxes: readonly Box[]) => Math.max(0, ...boxes.map((box) => box.h))
+
+/**
+ * Los módulos repartidos sobre una elipse, en el sentido del reloj y empezando por arriba. La elipse es más
+ * alta que ancha para lo que mide una tarjeta (que es apaisada): así el de arriba y el de al lado se libran
+ * por la altura y el anillo no se estira a lo ancho. Si aun así se pisan, `spread` lo abre.
+ */
+function ring(ids: readonly string[], sizeOf: (id: string) => Size): Box[] {
+  const sizes = ids.map(sizeOf)
+  const rx = Math.max(120, ...sizes.map((size) => size.w)) * 0.68
+  const ry = Math.max(60, ...sizes.map((size) => size.h)) + 44
+  return ids.map((id, at) => {
+    const angle = -Math.PI / 2 + (2 * Math.PI * at) / ids.length
+    const size = sizeOf(id)
+    return { id, x: Math.cos(angle) * rx, y: Math.sin(angle) * ry, w: size.w, h: size.h }
+  })
+}
+
+/** El rectángulo que abarca unos módulos, por sus centros (para un anillo) o por sus bordes. */
+function frame(boxes: readonly Box[], by: 'centre' | 'edge') {
+  const half = (box: Box, axis: 'w' | 'h') => (by === 'edge' ? box[axis] / 2 : 0)
+  const left = Math.min(...boxes.map((box) => box.x - half(box, 'w')))
+  const right = Math.max(...boxes.map((box) => box.x + half(box, 'w')))
+  const top = Math.min(...boxes.map((box) => box.y - half(box, 'h')))
+  const bottom = Math.max(...boxes.map((box) => box.y + half(box, 'h')))
+  return { x: left, y: top, w: right - left, h: bottom - top }
+}
+
+/**
+ * Dónde va cada módulo y qué figuras lo acompañan. Mide con los tamaños que se le dan (los de verdad), así
+ * que un módulo abierto en su sitio empuja a los demás en vez de taparlos. Los módulos de la arquitectura que
+ * no tengan tamaño (no se dibujan) se ignoran.
+ */
+export function layoutArchitecture(
+  architecture: Architecture,
+  sizes: ReadonlyMap<string, Size>,
+  options: {
+    /** Lo más ancho que puede ser una fila de módulos: a partir de ahí, se parte en dos (como un texto). */
+    maxWidth?: number
+  } = {},
+): ArchLayout {
+  const maxWidth = options.maxWidth ?? DEFAULT_WIDTH
+  const modules = architecture.modules.filter((module) => sizes.has(module.id))
+  const sizeOf = (id: string): Size => sizes.get(id) ?? { w: 0, h: 0 }
+  const ids = modules.map((module) => module.id)
+  const anchor = modules.find((module) => module.id === architecture.anchor)?.id
+  const of = (role: ModuleRole) => modules.filter((m) => m.role === role).map((m) => m.id)
+  let boxes: Box[] = []
+  const figures: Figure[] = []
+  /** Los módulos en filas que caben en el ancho que hay: cada fila, los que entren (uno al menos). */
+  const packed = (line: readonly string[]): string[][] => {
+    const rows: string[][] = []
+    let width = 0
+    for (const id of line) {
+      const own = sizeOf(id).w
+      const last = rows[rows.length - 1]
+      if (last && width + GAP.x + own <= maxWidth) {
+        last.push(id)
+        width += GAP.x + own
+      } else {
+        rows.push([id])
+        width = own
+      }
+    }
+    return rows
+  }
+
+  const layers = () => {
+    // Por papel: quién manda arriba; en medio, lo que entra → lo que se hace → lo que sale; abajo, los datos.
+    const bands: { key: keyof typeof BAND_LABEL; rows: string[][] }[] = [
+      { key: 'control', rows: packed(of('control')) },
+      {
+        key: 'proceso',
+        rows: packed([...of('entrada'), ...of('logica'), ...of('salida')]),
+      },
+      { key: 'datos', rows: packed(of('datos')) },
+    ]
+    let top = 0
+    const placed: { key: keyof typeof BAND_LABEL; boxes: Box[] }[] = []
+    for (const band of bands) {
+      if (band.rows.length === 0) continue
+      const own: Box[] = []
+      for (const line of band.rows) {
+        const made = row(line, sizeOf, 0, top)
+        own.push(...made)
+        top += heightOf(made) + GAP.y * 0.6
+      }
+      top += GAP.y * 0.9
+      placed.push({ key: band.key, boxes: own })
+    }
+    boxes = placed.flatMap((band) => band.boxes)
+    // Las bandas solo dicen algo si hay más de una.
+    if (placed.length > 1) {
+      const all = frame(boxes, 'edge')
+      for (const band of placed) {
+        const own = frame(band.boxes, 'edge')
+        figures.push({
+          id: `band:${band.key}`,
+          kind: 'band',
+          x: all.x - 28,
+          y: own.y - 26,
+          w: all.w + 56,
+          h: own.h + 44,
+          label: BAND_LABEL[band.key],
+        })
+      }
+    }
+  }
+
+  if (architecture.shape === 'tuberia') {
+    let top = 0
+    for (const line of packed(ids)) {
+      const made = row(line, sizeOf, 0, top)
+      boxes.push(...made)
+      const own = frame(made, 'centre')
+      figures.push({
+        id: `track:${figures.length}`,
+        kind: 'track',
+        x: own.x,
+        y: own.y - 9,
+        w: own.w,
+        h: 18,
+      })
+      top += heightOf(made) + GAP.y
+    }
+  } else if (architecture.shape === 'centro' && anchor !== undefined) {
+    // Alrededor del centro, en filas por encima y por debajo: así el conjunto queda compacto y cada radio es
+    // corto. Arriba, lo que entra y lo que manda; abajo, lo que sale y lo que se guarda.
+    const ORDER: ModuleRole[] = ['entrada', 'control', 'logica', 'salida', 'datos']
+    const around = ORDER.flatMap((role) => of(role)).filter((id) => id !== anchor)
+    const centre = sizeOf(anchor)
+    const half = Math.ceil(around.length / 2)
+    /** Unas filas apiladas desde el centro hacia arriba (`-1`) o hacia abajo (`1`). */
+    const stack = (lines: string[][], way: 1 | -1): Box[] => {
+      const placed: Box[] = []
+      let edge = centre.h / 2 + GAP.y
+      for (const line of way === 1 ? lines : [...lines].reverse()) {
+        const made = row(line, sizeOf, 0, 0)
+        const tall = heightOf(made)
+        for (const box of made) box.y += way === 1 ? edge : -(edge + tall)
+        placed.push(...made)
+        edge += tall + GAP.y * 0.6
+      }
+      return placed
+    }
+    const satellites = [
+      ...stack(packed(around.slice(0, half)), -1),
+      ...stack(packed(around.slice(half)), 1),
+    ]
+    boxes = [{ id: anchor, x: 0, y: 0, w: centre.w, h: centre.h }, ...satellites]
+    const halo = frame(satellites, 'centre')
+    figures.push({ id: 'spokes', kind: 'spokes', ...halo })
+  } else if (architecture.shape === 'ciclo' && anchor !== undefined) {
+    // En el anillo, la cabeza del ciclo y lo que usa en cada vuelta, en su orden; lo demás (lo que se prepara
+    // antes) espera a su izquierda.
+    const used = new Set(
+      architecture.links
+        .filter((link) => link.kind === 'call' && link.from === anchor)
+        .map((link) => link.to),
+    )
+    const members = [anchor, ...ids.filter((id) => used.has(id))]
+    const outside = ids.filter((id) => !members.includes(id))
+    const circle = ring(members, sizeOf)
+    spread(circle, { x: 0, y: 0 }, 28)
+    const round = frame(circle, 'centre')
+    figures.push({ id: 'ring', kind: 'ring', ...round })
+    const edge = frame(circle, 'edge')
+    const column: Box[] = []
+    let top = 0
+    for (const id of outside) {
+      const size = sizeOf(id)
+      column.push({ id, x: 0, y: top + size.h / 2, w: size.w, h: size.h })
+      top += size.h + GAP.y * 0.7
+    }
+    // Arriba, a la altura de la cabeza del ciclo: es a ella a quien le dan lo suyo, y así su flecha no cruza
+    // el anillo.
+    const wide = Math.max(0, ...column.map((box) => box.w))
+    for (const box of column) {
+      box.x = edge.x - GAP.x - wide / 2
+      box.y += edge.y
+    }
+    boxes = [...circle, ...column]
+  } else {
+    layers()
+  }
+
+  // De centros sueltos a un plano que empieza en el margen.
+  const everything = [
+    ...boxes.map((box) => ({ x: box.x - box.w / 2, y: box.y - box.h / 2, w: box.w, h: box.h })),
+    ...figures,
+  ]
+  const left = Math.min(0, ...everything.map((item) => item.x))
+  const top = Math.min(0, ...everything.map((item) => item.y))
+  const shift = { x: PAD - left, y: PAD - top }
+  const positions = new Map(
+    boxes.map((box) => [
+      box.id,
+      { x: Math.round(box.x - box.w / 2 + shift.x), y: Math.round(box.y - box.h / 2 + shift.y) },
+    ]),
+  )
+  const moved = figures.map((figure) => ({
+    ...figure,
+    x: Math.round(figure.x + shift.x),
+    y: Math.round(figure.y + shift.y),
+    w: Math.round(figure.w),
+    h: Math.round(figure.h),
+  }))
+  return {
+    positions,
+    figures: moved,
+    bounds: {
+      w: Math.round(Math.max(0, ...everything.map((item) => item.x + item.w)) + shift.x + PAD),
+      h: Math.round(Math.max(0, ...everything.map((item) => item.y + item.h)) + shift.y + PAD),
+    },
+  }
+}

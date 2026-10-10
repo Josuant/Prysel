@@ -17,7 +17,7 @@ import {
   type Density,
   type NodeState,
 } from '@prysel/morphology'
-import { SCOPE_FRAME, type Axis } from '@prysel/spatial'
+import { SCOPE_FRAME, type Axis, type ModuleRole } from '@prysel/spatial'
 import { MorphNode, type MeasuredSlot, type NodeEdit } from '../MorphNode.tsx'
 import type { ControlModel } from '../controls.tsx'
 import type { MotionPhase } from '../motion.ts'
@@ -117,6 +117,10 @@ export interface PryselNodeData extends Record<string, unknown> {
   onEnter?: (id: string) => void
   /** Probar con otros datos la función de una tarjeta «Qué hace». */
   onGistEdit?: (id: string) => void
+  /** En la arquitectura: el papel de este módulo (entrada, datos, lógica, control, salida). */
+  role?: ModuleRole
+  /** En la arquitectura: cuántos módulos usan lo que este guarda (cuando son muchos, se dice aquí). */
+  usedBy?: number
   /** Abrir un subproceso (la función, la clase o el método al que llama) desde su pastilla. */
   onOpen?: (id: string) => void
 }
@@ -431,6 +435,7 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
         className="flow-node"
         data-phase={phase}
         data-section=""
+        data-role={data.role}
         data-selected={selected ? '' : undefined}
         data-add-target={data.addTarget ? '' : undefined}
         data-cursor={data.cursor ? '' : undefined}
@@ -503,6 +508,7 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
         {container ? (
           <SectionFrame
             info={stage}
+            role={data.role}
             note={node.note}
             size={size}
             signal={data.renameSignal ?? 0}
@@ -512,6 +518,8 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
         ) : (
           <SectionCard
             info={stage}
+            role={data.role}
+            usedBy={data.usedBy}
             note={node.note}
             size={size}
             signal={data.renameSignal ?? 0}

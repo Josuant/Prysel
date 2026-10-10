@@ -12,10 +12,12 @@ import {
   channelOf,
   collapse,
   groupsFromContainers,
+  type Architecture,
   type SemanticEdge,
   type SemanticGraph,
 } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
+import { architectureOf } from './architecture.ts'
 import { isTerritory } from './flow/frame.ts'
 
 /**
@@ -954,6 +956,11 @@ export interface ProgramView extends FoldedView {
   representative: (id: string) => string | null
   /** Qué vista enseña el cuerpo de una función: la del programa (`null`) si está desplegada ahí. */
   homeOf: (id: string) => string | null
+  /**
+   * La arquitectura del programa (sus módulos, lo que los une y su forma), si se pidió y la tiene: es lo que
+   * el lienzo necesita para colocar el primer nivel. `null` dentro de una función o sin al menos dos módulos.
+   */
+  architecture: Architecture | null
   /** Cuántos ámbitos hay plegados ahora. */
   folded: number
   /** Cambia con lo que se ve: es la señal para que el lienzo se reencuadre. */
@@ -979,6 +986,11 @@ export function viewOf(
     flipped?: ReadonlySet<string>
     /** Lo que se abrió para enseñar algo (un momento de la lección). */
     revealed?: ReadonlySet<string>
+    /**
+     * El primer nivel se lee como arquitectura: cada etapa de arriba es un módulo, y empieza plegada en su
+     * tarjeta (se abre la que interese). Sin esto, las etapas se pliegan o no según lo que guarden.
+     */
+    modules?: boolean
   },
 ): {
   base: FoldedView
@@ -1009,11 +1021,22 @@ export function viewOf(
   // …pero con muchas así el programa no cabe en una pantalla: entonces se lee como un mapa (cada parte en
   // su rótulo, con lo que hace en una línea) y se abre la que interese.
   const map = holding.size > MAP_FROM
+  // Como arquitectura, las etapas de arriba del todo son módulos: cada una en su tarjeta, para que quepan
+  // todas a la vez y se vea lo que las une.
+  const within = new Set(base.nodes.flatMap((node) => node.contains ?? []))
+  const tops = new Set(
+    options.modules === true && focus === null
+      ? base.nodes.filter((node) => node.section && !within.has(node.id)).map((node) => node.id)
+      : [],
+  )
+  const asModules = tops.size >= 2
   const byDefault = (id: string) =>
     density === 'compact'
       ? true
       : density === 'normal'
-        ? (leaves.has(id) && (map || !holding.has(id))) || gisted.has(id)
+        ? (asModules && tops.has(id)) ||
+          (leaves.has(id) && (map || !holding.has(id))) ||
+          gisted.has(id)
         : false
   const folded = new Set(
     scopes
@@ -1072,6 +1095,8 @@ export function useProgramView(
     flow?: boolean
     /** Las etapas del programa (solo en el diagrama de flujo). */
     sections?: readonly SourceSection[]
+    /** El primer nivel se lee como arquitectura: módulos colocados según su forma (ver `architecture.ts`). */
+    architecture?: boolean
   } = {},
 ): ProgramView {
   const flow = options.flow === true
@@ -1122,8 +1147,15 @@ export function useProgramView(
         density: mode,
         flipped,
         revealed,
+        modules: flow && options.architecture === true,
       }),
-    [all, edges, functions, focus, flow, mode, flipped, revealed],
+    [all, edges, functions, focus, flow, mode, flipped, revealed, options.architecture],
+  )
+  // La arquitectura del programa, tal como sale de su análisis. Solo en el programa (no dentro de una función).
+  const wantsArchitecture = flow && options.architecture === true && focus === null
+  const architecture = useMemo(
+    () => (wantsArchitecture ? architectureOf(view.nodes, all, edges) : null),
+    [wantsArchitecture, view, all, edges],
   )
 
   const toggle = useCallback(
@@ -1196,6 +1228,7 @@ export function useProgramView(
     reveal,
     representative,
     homeOf,
+    architecture,
     folded: foldedSet.size,
     viewKey: focus?.id ?? PROGRAM,
   }

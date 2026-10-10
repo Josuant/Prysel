@@ -6502,6 +6502,252 @@ button.run-panel__line:hover {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
+/*
+ * ── La arquitectura: el primer nivel como módulos ──
+ * Cada módulo lleva la insignia de su papel; lo que los une son dos flechas distintas (un dato que pasa, o
+ * uno que usa a otro); y detrás, una figura dice la forma del conjunto.
+ */
+.section__role {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--role-tint, var(--ink-muted)) 16%, var(--surface));
+  color: var(--role-tint, var(--ink-muted));
+}
+/* Va sobre el borde, como una pestaña: no le quita sitio al título. */
+.section__shared {
+  position: absolute;
+  top: -10px;
+  right: 16px;
+  background: var(--surface-raised);
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-full);
+  color: var(--accent);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.flow-node[data-role='entrada'] {
+  --role-tint: var(--state-warning);
+}
+.flow-node[data-role='datos'] {
+  --role-tint: var(--state-success);
+}
+.flow-node[data-role='logica'] {
+  --role-tint: var(--accent);
+}
+.flow-node[data-role='control'] {
+  --role-tint: var(--ink);
+}
+.flow-node[data-role='salida'] {
+  --role-tint: var(--state-error);
+}
+.flow-node[data-role] .section-card {
+  border-top: 2px solid color-mix(in srgb, var(--role-tint) 70%, transparent);
+}
+
+.arch-edge__line {
+  fill: none;
+  stroke: var(--ink-muted);
+  stroke-linecap: round;
+  stroke-width: 1.4;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: arch-draw 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(360ms + var(--i, 0) * 70ms);
+}
+.arch-edge__head {
+  fill: var(--ink-muted);
+  opacity: 0;
+  animation: arch-show 200ms ease-out forwards;
+  animation-delay: calc(760ms + var(--i, 0) * 70ms);
+}
+/* Un dato que pasa: el trazo principal, continuo y con el color del acento. */
+.arch-edge[data-kind='data'] .arch-edge__line {
+  stroke: var(--accent);
+  stroke-width: 2.2;
+}
+.arch-edge[data-kind='data'] .arch-edge__head {
+  fill: var(--accent);
+}
+/* Uno que usa a otro: fino y a trazos. (Se dibuja entero: el trazo ya es discontinuo.) */
+.arch-edge[data-kind='call'] .arch-edge__line {
+  stroke-dasharray: 0.035 0.03;
+  stroke-dashoffset: 0;
+  opacity: 0;
+  animation-name: arch-show;
+}
+/* Aún no está en el código: lo propuso el plan. */
+.arch-edge[data-planned] .arch-edge__line {
+  stroke-dasharray: 0.012 0.03;
+  stroke-dashoffset: 0;
+  opacity: 0;
+  animation-name: arch-show-faint;
+}
+.arch-edge[data-planned] .arch-edge__head {
+  animation-name: arch-show-faint;
+}
+/* Lo que viaja: un punto de luz que recorre la flecha en el sentido en que pasa el dato. */
+.arch-edge__pulse {
+  fill: none;
+  stroke: var(--surface);
+  stroke-linecap: round;
+  stroke-width: 2.2;
+  stroke-dasharray: 0.06 0.94;
+  stroke-dashoffset: 1.06;
+  opacity: 0.75;
+  animation: arch-travel 2600ms linear infinite;
+  animation-delay: calc(1200ms + var(--i, 0) * 260ms);
+}
+.arch-edge[data-emphasis='dim'] {
+  opacity: 0.22;
+}
+.arch-edge[data-emphasis='active'] .arch-edge__line {
+  stroke-width: 2.6;
+}
+.arch-edge__label {
+  position: absolute;
+  z-index: 3;
+  max-width: 180px;
+  padding: 1px 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 17px;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  animation: arch-show 240ms ease-out forwards;
+  animation-delay: calc(700ms + var(--i, 0) * 70ms);
+}
+.arch-edge__label[data-kind='call'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+}
+.arch-edge__label[data-planned] {
+  border-style: dotted;
+  font-style: italic;
+  animation-name: arch-show-faint;
+}
+.arch-edge__label[data-emphasis='dim'] {
+  visibility: hidden;
+}
+@keyframes arch-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes arch-show {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes arch-show-faint {
+  to {
+    opacity: 0.55;
+  }
+}
+@keyframes arch-travel {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.arch-figure {
+  display: block;
+  box-sizing: border-box;
+  pointer-events: none;
+  animation: arch-show 600ms ease-out backwards;
+}
+.arch-figure[data-kind='band'] {
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 22%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ink-muted) 4%, transparent);
+}
+.arch-figure__label {
+  position: absolute;
+  top: 6px;
+  left: 14px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.arch-figure[data-kind='track'] {
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.arch-figure__flow {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 22px,
+    color-mix(in srgb, var(--accent) 28%, transparent) 22px 30px
+  );
+  animation: arch-slide 1400ms linear infinite;
+}
+@keyframes arch-slide {
+  to {
+    transform: translateX(30px);
+  }
+}
+.arch-figure__ring {
+  fill: color-mix(in srgb, var(--accent) 3%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 26%, transparent);
+  stroke-width: 1.5;
+}
+.arch-figure[data-kind='spokes'] .arch-figure__ring {
+  stroke-dasharray: 3 7;
+}
+.arch-figure[data-kind='ring'] .arch-figure__ring {
+  stroke-width: 10;
+  stroke: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Lo que se repite: una marca que da la vuelta al anillo, en el sentido en que se ejecuta. */
+.arch-figure__turn {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 60%, transparent);
+  stroke-linecap: round;
+  stroke-width: 3;
+  stroke-dasharray: 0.08 0.92;
+  animation: arch-orbit 5200ms linear infinite;
+}
+@keyframes arch-orbit {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arch-edge__line,
+  .arch-edge__head,
+  .arch-edge__label,
+  .arch-figure {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+  .arch-edge__pulse,
+  .arch-figure__flow,
+  .arch-figure__turn {
+    display: none;
+  }
+}
+
 /* En la cabecera de un bucle que encabeza una etapa, el número va entre su icono y su título. */
 .node__head .section__ordinal {
   min-width: 22px;

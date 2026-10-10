@@ -815,6 +815,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const view = useProgramView(gisted, program?.edges ?? NO_EDGES, density, {
     flow: true,
     sections: program?.sections ?? NO_SECTIONS,
+    // El primer nivel se lee como arquitectura. (Una lección va paso a paso por el código: sigue en columna.)
+    architecture: lesson === null,
   })
   // Durante la reproducción, si el paso ocurre dentro de una función o un método que no se está viendo, el
   // lienzo entra en él solo: si no, solo se vería la llamada que lo abrió, nunca la línea que se ejecuta.
@@ -1977,6 +1979,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 onEnter={view.enter}
                 onOpen={view.descend}
                 onGistEdit={setTrying}
+                architecture={view.architecture}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
