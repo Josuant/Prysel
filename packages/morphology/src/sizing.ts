@@ -546,7 +546,10 @@ export function sectionCardSize(card: {
     )
     return {
       w: snap(clamp(width, SECTION.plainMin, SECTION.max)),
-      h: snap(SECTION.pad * 2 + SECTION.head + lines * SECTION.sub),
+      // Bajo la cabecera, el hueco de la tarjeta y sus líneas.
+      h: snap(
+        SECTION.pad * 2 + SECTION.head + (lines === 0 ? 0 : SECTION.gap + lines * SECTION.sub),
+      ),
     }
   }
   const chips = (names: readonly string[], max: number) =>
