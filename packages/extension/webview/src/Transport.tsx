@@ -173,7 +173,7 @@ export function Transport({
   loop,
   titleOf,
   carriesOf,
-  avoid = 0,
+  dock,
 }: {
   beats: readonly Beat[]
   playback: Playback
@@ -182,8 +182,8 @@ export function Transport({
   titleOf: (id: string) => string
   /** Lo que le llega por una flecha (`desde>hasta`), si lleva nombre. */
   carriesOf: (link: string) => string | undefined
-  /** Lo que ocupa, a lo ancho, lo que hay en el rincón de abajo a la derecha (la consola): se le deja sitio. */
-  avoid?: number
+  /** Dónde va la barra respecto a la consola (`--avoid`, `--lift`): a su lado o encima. */
+  dock?: React.CSSProperties
 }) {
   const { at, playing } = playback
   const beat = at === null ? undefined : beats[at]
@@ -200,7 +200,7 @@ export function Transport({
       className="canvas-float arch-transport"
       role="group"
       aria-label="Ver cómo funciona"
-      style={{ '--avoid': `${avoid}px` } as React.CSSProperties}
+      style={dock}
     >
       <button
         type="button"

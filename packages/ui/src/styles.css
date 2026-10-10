@@ -6751,12 +6751,13 @@ button.run-panel__line:hover {
 }
 /* La barra de transporte: ver pasar una vuelta. Encima de la leyenda. */
 .arch-transport {
-  bottom: 48px;
+  bottom: calc(48px + var(--lift, 0px));
   left: calc((100% - var(--avoid, 0px)) / 2);
   display: flex;
   box-sizing: border-box;
   align-items: center;
   gap: 10px;
+  overflow: hidden;
   max-width: min(calc(100% - var(--avoid, 0px) - 20px), 760px);
   padding: 4px 12px 4px 4px;
   border: 1px solid var(--border-card);
@@ -6880,8 +6881,9 @@ button.run-panel__line:hover {
 }
 /* Cómo se lee: la forma elegida y lo que dice cada trazo. Abajo, en el centro, sin estorbar al puntero. */
 .arch-legend {
-  bottom: 14px;
-  /* En el centro de lo que la consola (abajo, a la derecha) deja libre: `--avoid` es lo que ocupa. */
+  bottom: calc(14px + var(--lift, 0px));
+  /* En el centro de lo que la consola (abajo, a la derecha) deja libre: `--avoid` es lo que ocupa a lo
+     ancho. Si a su lado no caben, van encima de ella: `--lift` es lo que ocupa a lo alto. */
   left: calc((100% - var(--avoid, 0px)) / 2);
   display: flex;
   box-sizing: border-box;

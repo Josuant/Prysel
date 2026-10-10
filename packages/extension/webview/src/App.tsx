@@ -341,22 +341,31 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * ese sitio. `null` si no está.
    */
   const [consoleBox, setConsoleBox] = useState<{ w: number; h: number } | null>(null)
+  /**
+   * Junto a la consola no queda sitio para las barras de abajo (la de ver una vuelta, la leyenda): el lienzo
+   * es estrecho. Entonces van encima de ella, no a su lado.
+   */
+  const [cramped, setCramped] = useState(false)
   const consoleWatch = useRef<ResizeObserver | null>(null)
   const watchConsole = useCallback((element: HTMLDivElement | null) => {
     consoleWatch.current?.disconnect()
     consoleWatch.current = null
     if (!element) {
       setConsoleBox(null)
+      setCramped(false)
       return
     }
+    const around = element.offsetParent
     const measure = () => {
       // Redondeado a saltos: que la consola crezca una línea no reencuadra el diagrama.
       const w = Math.ceil((element.offsetWidth + CONSOLE_MARGIN) / 20) * 20
       const h = Math.ceil((element.offsetHeight + CONSOLE_MARGIN) / 20) * 20
       setConsoleBox((known) => (known?.w === w && known.h === h ? known : { w, h }))
+      setCramped(around !== null && around.clientWidth - w < DOCK_ROOM)
     }
     const observer = new ResizeObserver(measure)
     observer.observe(element)
+    if (around) observer.observe(around)
     consoleWatch.current = observer
     measure()
   }, [])
@@ -1363,6 +1372,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           )
         : null,
     [ran, architecture, program, view.moduleFacts],
+  )
+  // Dónde van las barras de abajo: al lado de la consola si caben; si no, encima de ella.
+  const dock = useMemo(
+    () =>
+      ({
+        '--avoid': `${consoleBox && !cramped ? consoleBox.w : 0}px`,
+        '--lift': `${consoleBox && cramped ? consoleBox.h : 0}px`,
+      }) as React.CSSProperties,
+    [consoleBox, cramped],
   )
   // Ver pasar una vuelta: los pasos de la historia, y el mando que los recorre.
   const beats = useMemo(
@@ -2421,18 +2439,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       (other) => other.kind === 'data' && `${other.from}>${other.to}` === link,
                     )?.label
                   }
-                  avoid={consoleBox ? consoleBox.w + 16 : 0}
+                  dock={dock}
                 />
               )}
               {/* Cómo leer la arquitectura: qué forma tiene y qué dice cada flecha. */}
               {architecture && program.nodes.length > 0 && (
-                <div
-                  className="canvas-float arch-legend"
-                  role="note"
-                  style={
-                    { '--avoid': `${consoleBox ? consoleBox.w + 16 : 0}px` } as React.CSSProperties
-                  }
-                >
+                <div className="canvas-float arch-legend" role="note" style={dock}>
                   <span className="arch-legend__shape" title={SHAPE_WHY[architecture.shape]}>
                     {SHAPE_NAMES[architecture.shape]}
                   </span>
@@ -2851,6 +2863,8 @@ const HEARD_LABELS: Record<string, string> = {
 
 /** El aire entre la consola y el diagrama (su separación del borde, y un poco más). */
 const CONSOLE_MARGIN = 28
+/** Lo que necesitan, a lo ancho, las barras de abajo para ir al lado de la consola y no encima. */
+const DOCK_ROOM = 480
 
 /** Cómo se dice cada forma de la arquitectura, y por qué se eligió. */
 const SHAPE_NAMES: Record<ArchShape, string> = {
