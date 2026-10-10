@@ -146,6 +146,88 @@ export function echoEdits(source: string): { start: number; end: number; text: s
     }
     offset += row.length + 1
   }
+  // En orden: quien las aplica las espera de arriba abajo.
+  return [...edits, ...twinEdits(source, new Set(edits.map((edit) => edit.start)))].sort(
+    (a, b) => a.start - b.start,
+  )
+}
+
+/** Un título, sin tildes, mayúsculas ni puntuación: para saber si dos rótulos nombran la misma etapa. */
+const sameTitle = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+/**
+ * La misma etapa rotulada dos veces. Además del rótulo del plan (`# Título: qué hace`), la IA a veces pone el
+ * suyo (`# Título`, a secas) unas líneas más abajo, o justo antes: el lienzo ve dos etapas con el mismo
+ * nombre, y cada una se queda con medio trabajo. Son la misma:
+ *
+ * - si el rótulo a secas va **después** (sin otro rótulo en medio), se quita: lo suyo sigue en la etapa;
+ * - si va **antes**, es donde de verdad empieza la etapa: el rótulo completo sube a su sitio.
+ *
+ * `taken`: dónde empiezan las líneas que ya se van a quitar por otra razón.
+ */
+function twinEdits(
+  source: string,
+  taken: ReadonlySet<number>,
+): { start: number; end: number; text: string }[] {
+  interface Label {
+    start: number
+    end: number
+    indent: string
+    title: string
+    full: boolean
+    row: string
+  }
+  const labels: Label[] = []
+  let offset = 0
+  for (const raw of source.split('\n')) {
+    const row = raw.replace(/\r$/, '')
+    const comment = /^(\s*)#\s?(.*)$/.exec(row)
+    if (comment && !/prysel:/.test(row) && !taken.has(offset)) {
+      const text = (comment[2] ?? '').trim()
+      const full = /^[^:]{2,60}:\s+\S/.test(text)
+      const title = sameTitle(full ? (text.split(':')[0] ?? '') : text)
+      if (title !== '') {
+        labels.push({
+          start: offset,
+          end: offset + raw.length + 1,
+          indent: comment[1] ?? '',
+          title,
+          full,
+          row: raw,
+        })
+      }
+    }
+    offset += raw.length + 1
+  }
+  const edits: { start: number; end: number; text: string }[] = []
+  const used = new Set<Label>()
+  labels.forEach((label, at) => {
+    if (!label.full || used.has(label)) return
+    const level = (other: Label) => other.indent === label.indent
+    // Hacia abajo, hasta el siguiente rótulo completo de su altura: sus repeticiones a secas sobran.
+    for (const other of labels.slice(at + 1).filter(level)) {
+      if (other.full) break
+      if (other.title !== label.title || used.has(other)) continue
+      used.add(other)
+      edits.push({ start: other.start, end: other.end, text: '' })
+    }
+    // Hacia arriba, hasta el rótulo completo anterior: si la etapa ya se había anunciado a secas, empieza ahí.
+    const above = labels.slice(0, at).filter(level).reverse()
+    for (const other of above) {
+      if (other.full) break
+      if (other.title !== label.title || used.has(other)) continue
+      used.add(other)
+      edits.push({ start: other.start, end: other.end, text: `${label.row}\n` })
+      edits.push({ start: label.start, end: label.end, text: '' })
+      break
+    }
+  })
   return edits
 }
 

@@ -427,6 +427,78 @@ describe('el comentario que repite al rótulo de su etapa', () => {
     )
   })
 
+  it('la misma etapa rotulada dos veces es una sola: el rótulo a secas de más abajo sobra', () => {
+    // Tal como quedó en una sesión real: el lienzo veía dos módulos «Preparar la carrera».
+    const source = lines(
+      '# Preparar la carrera: define longitud de pista y nombres de caracoles',
+      'import random',
+      '',
+      '# Preparar la carrera',
+      'longitud_pista = 20',
+      'nombres = ["Turbo", "Rayo", "Lento"]',
+      '',
+      '# Dibujar la pista',
+      'def dibujar_pista():',
+      '    print(nombres)',
+    )
+    expect(clean(source)).toBe(
+      lines(
+        '# Preparar la carrera: define longitud de pista y nombres de caracoles',
+        'import random',
+        '',
+        'longitud_pista = 20',
+        'nombres = ["Turbo", "Rayo", "Lento"]',
+        '',
+        '# Dibujar la pista',
+        'def dibujar_pista():',
+        '    print(nombres)',
+      ),
+    )
+  })
+
+  it('si el rótulo a secas va antes, la etapa empieza ahí: el completo sube a su sitio', () => {
+    // De la misma sesión: «Anunciar ganador» abría con una línea suya antes del rótulo del plan.
+    const source = lines(
+      '# Bucle de carrera: repite turnos hasta que haya ganador',
+      'def correr():',
+      '    return 0',
+      '',
+      '# Anunciar ganador',
+      'ganador = correr()',
+      '',
+      '# Anunciar ganador: muestra el caracol que llegó primero',
+      'print(ganador)',
+    )
+    expect(clean(source)).toBe(
+      lines(
+        '# Bucle de carrera: repite turnos hasta que haya ganador',
+        'def correr():',
+        '    return 0',
+        '',
+        '# Anunciar ganador: muestra el caracol que llegó primero',
+        'ganador = correr()',
+        '',
+        'print(ganador)',
+      ),
+    )
+  })
+
+  it('dos etapas distintas con el mismo arranque, o una nota dentro de una función, no se tocan', () => {
+    const source = lines(
+      '# Leer: pide el primer número',
+      'a = 1',
+      '',
+      '# Sumar: los junta',
+      'def sumar(a, b):',
+      '    # Leer',
+      '    return a + b',
+      '',
+      '# Leer: pide el segundo número',
+      'b = 2',
+    )
+    expect(clean(source)).toBe(source)
+  })
+
   it('un comentario que dice otra cosa, o que no va bajo un rótulo, se queda', () => {
     const source = lines(
       '# Preparar: los datos de entrada',
