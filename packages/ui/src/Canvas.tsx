@@ -1019,7 +1019,10 @@ function CanvasInner({
   // El destino tiene que ser estable entre renders: si cambia de identidad en cada uno,
   // la animación se relanzaría sin parar en vez de avanzar.
   // La cajita del programa va arriba del todo, y el resto del plano baja lo que ocupa.
-  const moduleTray = plan.trays.get(MODULE)
+  // Como arquitectura, la cajita de variables y funciones del programa no se enseña: repite, con sus nombres
+  // en código, lo que ya dicen los módulos, y le quita al diagrama un tercio del ancho.
+  const asArchitecture = flow && architecture !== null && figures !== undefined
+  const moduleTray = asArchitecture ? undefined : plan.trays.get(MODULE)
   // Los pasos van por el centro. A la izquierda, lo auxiliar (la cajita de variables y los visores); a la
   // derecha, las notas. Leído en horizontal, la cajita va arriba y el resto del plano baja lo que ocupa.
   const sideW = aside
@@ -1737,6 +1740,7 @@ function CanvasInner({
     const positionOf = new Map(animated.map((item) => [item.id, item.position]))
     for (const [context, tray] of plan.trays) {
       let origin: Point | undefined
+      if (context === MODULE && asArchitecture) continue
       if (context === MODULE) {
         origin = MODULE_TRAY_AT
         dockedNodes.push({

@@ -114,8 +114,19 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
     expect(said).toContain('Generar población inicial → Evaluar población [poblacion ×8]')
     expect(said).toContain('Evaluar población → Reemplazar población [aptitudes ×8]')
     expect(said).toContain('Seleccionar padres → Cruzar y mutar [padre1, padre2]')
-    // Lo que una vuelta le deja a la siguiente pasa por la cabeza del ciclo.
+    // Lo que una vuelta le deja a la siguiente se lo da la cabeza del ciclo: nada va contra el sentido del
+    // anillo ni lo cruza por el centro.
     expect(said).toContain('Cruzar y mutar › Iterar hasta condición')
+    expect(said).toContain('Iterar hasta condición → Evaluar población [poblacion ×8]')
+    expect(said).not.toContain('Reemplazar población → Evaluar población [poblacion ×8]')
+    const turn = [told.anchor, ...(drawn.order ?? [])]
+    for (const link of drawn.links) {
+      const from = turn.indexOf(link.from)
+      const to = turn.indexOf(link.to)
+      if (from < 0 || to < 0) continue
+      // Hacia delante, o el cierre de la vuelta (a la cabeza).
+      expect(to === 0 || to > from, `${title(link.from)} → ${title(link.to)}`).toBe(true)
+    }
     // Ninguna flecha de «usa a», salvo que se pida.
     expect(drawn.links.some((link) => link.kind === 'call')).toBe(false)
     expect(

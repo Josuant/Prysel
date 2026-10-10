@@ -328,10 +328,12 @@ export function withStory(
   const last = ring[ring.length - 1] ?? ''
   for (const { from, to, labels } of carried.values()) {
     const label = labels.slice(0, 2).join(', ')
-    // Lo que el último paso le deja al primero de la vuelta siguiente pasa por la cabeza del ciclo: es ella
-    // quien decide si hay otra vuelta.
-    if (from === last && to === first && ring.length > 1) {
-      add({ from, to: story.anchor, kind: 'data', label, told: true })
+    // Lo que un paso le deja a uno anterior es para la vuelta siguiente: se lo da la cabeza del ciclo, que es
+    // quien decide si hay otra vuelta. Dibujado directo iría contra el sentido del anillo y por su centro; el
+    // camino de vuelta ya lo cuenta el cierre del anillo, que lleva el dato si quien lo deja es el último.
+    const back = ring.includes(from) && ring.includes(to) && ring.indexOf(to) < ring.indexOf(from)
+    if (back) {
+      if (from === last) add({ from, to: story.anchor, kind: 'data', label, told: true })
       add({ from: story.anchor, to, kind: 'data', label, told: true })
     } else add({ from, to, kind: 'data', label, told: true })
   }
