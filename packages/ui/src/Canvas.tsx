@@ -2131,37 +2131,51 @@ function CanvasInner({
           },
         ]
       : []
-  const resultEdges: ArchFlowEdge[] = (result && resultAt ? result.from : []).flatMap((id, at) => {
-    const from = archModules.has(id) ? boxOf.get(id) : undefined
-    if (!from || !resultAt) return []
-    const others = [...archModules.keys()].flatMap((other) => {
-      const box = other === id ? undefined : boxOf.get(other)
-      return box ? [box] : []
-    })
-    return [
-      {
-        id: `arch:result:${id}`,
-        source: id,
-        target: RESULT_ID,
-        sourceHandle: 'note-out',
-        targetHandle: 'in',
-        type: 'arch' as const,
-        selectable: false,
-        focusable: false,
-        label: result?.planned ? 'daría' : 'enseña',
-        zIndex: 2,
-        data: {
-          kind: 'data' as const,
-          from,
-          to: resultAt,
-          bend: clearBend(from, resultAt, others, 0),
-          turn: at,
-          ...(beat?.links.includes(`${id}>${RESULT_ID}`) ? { live: beat.serial, ms: beat.ms } : {}),
-          ...(result?.planned ? { planned: true } : {}),
+  // Quién escribe el resultado le tiende una flecha… salvo en un ciclo con su compuerta de salida: ahí el
+  // resultado llega «al salir», y esa es la única flecha que lo dice (la de quien lo escribe, que está fuera
+  // de la vuelta, tendría que cruzar el anillo para decir lo mismo).
+  const viaGate =
+    exit !== null &&
+    archModules.has(exit.at) &&
+    figures?.some((figure) => figure.kind === 'gate') === true &&
+    architecture?.order !== undefined &&
+    result !== null &&
+    !result.from.some((id) => architecture.order?.includes(id))
+  const resultEdges: ArchFlowEdge[] = (result && resultAt && !viaGate ? result.from : []).flatMap(
+    (id, at) => {
+      const from = archModules.has(id) ? boxOf.get(id) : undefined
+      if (!from || !resultAt) return []
+      const others = [...archModules.keys()].flatMap((other) => {
+        const box = other === id ? undefined : boxOf.get(other)
+        return box ? [box] : []
+      })
+      return [
+        {
+          id: `arch:result:${id}`,
+          source: id,
+          target: RESULT_ID,
+          sourceHandle: 'note-out',
+          targetHandle: 'in',
+          type: 'arch' as const,
+          selectable: false,
+          focusable: false,
+          label: result?.planned ? 'daría' : 'enseña',
+          zIndex: 2,
+          data: {
+            kind: 'data' as const,
+            from,
+            to: resultAt,
+            bend: clearBend(from, resultAt, others, 0),
+            turn: at,
+            ...(beat?.links.includes(`${id}>${RESULT_ID}`)
+              ? { live: beat.serial, ms: beat.ms }
+              : {}),
+            ...(result?.planned ? { planned: true } : {}),
+          },
         },
-      },
-    ]
-  })
+      ]
+    },
+  )
   const startBox = start && archModules.has(start.at) ? boxOf.get(start.at) : undefined
   const startFigures: Figure[] = startBox
     ? [
@@ -2603,7 +2617,9 @@ function CanvasInner({
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
   const avoidW = avoid?.w ?? 0
   const avoidH = avoid?.h ?? 0
-  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}|${reserveTop}:${reserveBottom}`
+  /** Se está viendo la arquitectura: el encuadre la enseña entera. */
+  const picture = asArchitecture
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}|${reserveTop}:${reserveBottom}|${picture}`
   const lastSettle = useRef(settle)
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
@@ -2640,9 +2656,15 @@ function CanvasInner({
         1,
         // Mientras se construye basta con ver el conjunto; al acabar, entero solo si se lee.
         mode === 'width'
-          ? whole >= (follow ? 0.6 : 0.5) && (settled || !follow)
-            ? whole
-            : byWidth
+          ? // La arquitectura es un dibujo que se ve de una vez (y se colocó para caber en este lienzo): entera,
+            // salvo que entera ya no se lea.
+            picture
+            ? whole >= 0.35
+              ? whole
+              : byWidth
+            : whole >= (follow ? 0.6 : 0.5) && (settled || !follow)
+              ? whole
+              : byWidth
           : whole,
       )
       const first = lastFit.current === ''
@@ -2679,6 +2701,7 @@ function CanvasInner({
     avoidH,
     reserveTop,
     reserveBottom,
+    picture,
   ])
 
   // El foco de una orden: la cámara va a donde el nodo **va a quedar** (no a donde está a medio camino de
