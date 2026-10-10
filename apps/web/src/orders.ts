@@ -36,6 +36,7 @@ import { indentationOk } from '../../../packages/extension/src/jev/modify.ts'
 import {
   DONE_THRESHOLD,
   judgeDone,
+  judgeArchitecture,
   judgeCover,
   judgeHeard,
   judgeInterruption,
@@ -523,6 +524,15 @@ export class Orders {
       .catch(() => undefined)
   }
 
+  /** El papel de cada módulo y la forma del programa: lo dice el JEV; la respuesta lleva la clave de la pregunta. */
+  arch(key: string, modules: { title: string; does: string }[], shapes: string[]) {
+    void judgeArchitecture(this.port.decider(), modules, shapes)
+      .then(({ roles, shape }) => {
+        this.port.post({ type: 'arched', key, roles, shape })
+      })
+      .catch(() => undefined)
+  }
+
   /** Qué pieza del programa cubre cada parte de lo que se pidió: lo dice el JEV; si llega tarde, no vale. */
   cover(what: string, parts: string[], pieces: string[], plan = false) {
     // Lo escrito y lo planeado se preguntan por separado: una respuesta no deja vieja a la otra.
@@ -584,6 +594,10 @@ export class Orders {
         }
         if (event.type === 'progress') {
           port.post({ type: 'progress', gen: effect.gen, text: event.text })
+          return
+        }
+        if (event.type === 'architecture') {
+          port.post({ type: 'architecture', modules: event.modules })
           return
         }
         const seq = event.say === '' ? undefined : ++this.speechSeq

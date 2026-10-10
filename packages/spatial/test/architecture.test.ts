@@ -197,6 +197,47 @@ describe('dónde va cada módulo', () => {
     expect(figures.map((figure) => figure.kind)).toEqual(['spokes'])
   })
 
+  it('alrededor de un centro, dos satélites que se pasan algo quedan del mismo lado: su flecha no lo cruza', () => {
+    // El que guarda los gastos se los pasa a los dos que los enseñan; un cuarto solo recibe órdenes del menú.
+    const graph: ArchGraph = {
+      modules: [
+        mod('menu_texto', 'salida'),
+        mod('anadir', 'entrada'),
+        mod('total', 'salida'),
+        mod('caro', 'salida'),
+        mod('bucle', 'control', { loop: true, branches: true }),
+      ],
+      links: [
+        data('anadir', 'total', 'gastos'),
+        data('anadir', 'caro', 'gastos'),
+        call('bucle', 'menu_texto'),
+        call('bucle', 'anadir'),
+        call('bucle', 'total'),
+        call('bucle', 'caro'),
+      ],
+    }
+    const sizes = sizesOf(graph)
+    sizes.set('bucle', { w: 190, h: 190 })
+    const { positions } = layoutArchitecture(shaped(graph, 'centro', 'bucle'), sizes)
+    expect(collisions(positions, sizes)).toEqual([])
+    const middle = (id: string) => {
+      const at = positions.get(id) ?? { x: 0, y: 0 }
+      const size = sizes.get(id) ?? SIZE
+      return { x: at.x + size.w / 2, y: at.y + size.h / 2 }
+    }
+    const hub = positions.get('bucle') ?? { x: 0, y: 0 }
+    for (const to of ['total', 'caro']) {
+      const a = middle('anadir')
+      const b = middle(to)
+      const through = Array.from({ length: 19 }, (_, k) => (k + 1) / 20).some((t) => {
+        const x = a.x + (b.x - a.x) * t
+        const y = a.y + (b.y - a.y) * t
+        return x > hub.x && x < hub.x + 190 && y > hub.y && y < hub.y + 190
+      })
+      expect(through).toBe(false)
+    }
+  })
+
   it('el ciclo pone en el anillo la cabeza y lo que usa; lo que se prepara antes espera a su izquierda', () => {
     const { positions, figures } = layoutArchitecture(
       shaped(JUEGO, 'ciclo', 'bucle'),

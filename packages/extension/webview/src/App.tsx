@@ -6,6 +6,10 @@ import {
   AddNodeMenu,
   Button,
   Canvas,
+  factsText,
+  withPlan,
+  withVerdict,
+  type PlannedModule,
   type CanvasNode,
   type ViewerContent,
   type NodeMenuItem,
@@ -32,6 +36,7 @@ import {
   type Theme,
 } from '../../src/protocol.ts'
 import type { Forced } from '../../src/jev/engine.ts'
+import { MODULE_ROLES, shapeCandidates, type ModuleRole } from '@prysel/spatial'
 import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { ChatDock, type ChatEntry } from './ChatDock.tsx'
@@ -320,6 +325,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
+  /** El plan de lo que se construye, como arquitectura: cada módulo y de cuáles necesita algo. */
+  const [planned, setPlanned] = useState<readonly PlannedModule[] | null>(null)
+  /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
+  const [archVerdicts, setArchVerdicts] = useState<Readonly<Record<string, ArchVerdict>>>({})
+  const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
   /** La función que se está probando con otros datos (el id de su nodo): su panel está abierto. */
   const [trying, setTrying] = useState<string | null>(null)
   /** Lo último que dijo el JEV de qué pieza cubre cada parte de lo pedido. */
@@ -420,6 +430,26 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setGists(message.gists)
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
+      } else if (message.type === 'architecture') {
+        setPlanned(message.modules)
+      } else if (message.type === 'arched') {
+        // Los papeles se guardan por el título de su módulo: así siguen valiendo si el programa cambia.
+        try {
+          const [modules] = JSON.parse(message.key) as [{ title: string }[]]
+          const verdict = {
+            roles: Object.fromEntries(
+              modules.map((module, at) => [module.title, asRole(message.roles[at])]),
+            ),
+            shape: message.shape,
+          }
+          setArchVerdicts((known) => ({
+            ...(Object.keys(known).length > 40 ? {} : known),
+            [message.key]: verdict,
+          }))
+          setArchLast(verdict)
+        } catch {
+          // Una clave que no es la nuestra: no hay a quién aplicarla.
+        }
       } else if (message.type === 'covered') {
         const verdict = { key: coverKey(message.parts, message.pieces), by: message.by }
         if (message.plan) setForeseen(verdict)
@@ -1184,6 +1214,62 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     building && stages.length > 1
       ? { done: Math.max(0, stages.length - pendingStages), total: stages.length }
       : null
+  // ── La arquitectura que se dibuja: la del análisis, con lo que el plan prometió de lo que aún no tiene
+  // código y con lo que el JEV dijo de sus papeles y su forma. ──
+  const generatingLines = useMemo(
+    () => (program?.nodes ?? []).filter((node) => node.generating !== undefined).map((n) => n.line),
+    [program],
+  )
+  /** Los módulos que aún no tienen código: su hueco sigue esperando. */
+  const pendingModules = useMemo(
+    () =>
+      new Set(
+        view.moduleFacts
+          .filter((fact) =>
+            generatingLines.some((line) => line >= fact.line && line <= fact.lineEnd),
+          )
+          .map((fact) => fact.id),
+      ),
+    [view.moduleFacts, generatingLines],
+  )
+  const plannedArchitecture = useMemo(
+    () =>
+      view.architecture && planned && pendingModules.size > 0
+        ? withPlan(view.architecture, view.moduleFacts, planned, pendingModules)
+        : view.architecture,
+    [view.architecture, view.moduleFacts, planned, pendingModules],
+  )
+  /** Lo que se le pregunta al JEV: cada módulo con lo que su código deja ver, y las formas que cuadran. */
+  const archQuestion = useMemo(() => {
+    if (!plannedArchitecture) return null
+    const modules = view.moduleFacts.map((fact) => ({
+      title: fact.title,
+      does: factsText(fact, pendingModules.has(fact.id)),
+    }))
+    const shapes = shapeCandidates(plannedArchitecture).map((candidate) => candidate.shape)
+    return { key: JSON.stringify([modules, shapes]), modules, shapes }
+  }, [plannedArchitecture, view.moduleFacts, pendingModules])
+  useEffect(() => {
+    if (archQuestion === null || archQuestion.key in archVerdicts) return
+    // Se espera a que el programa deje de cambiar: mientras se escribe, cada pieza cambiaría la pregunta.
+    const timer = window.setTimeout(() => {
+      post({ type: 'arch', ...archQuestion })
+    }, ARCH_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [archQuestion, archVerdicts])
+  const architecture = useMemo(() => {
+    if (!plannedArchitecture || archQuestion === null) return plannedArchitecture
+    // Lo último que dijo el JEV de estos mismos módulos vale aunque el programa haya seguido cambiando: los
+    // papeles van por título; la forma, solo si sigue siendo una de las que cuadran.
+    const verdict = archVerdicts[archQuestion.key] ?? archLast
+    if (!verdict) return plannedArchitecture
+    const roles = Object.fromEntries(
+      view.moduleFacts.map((fact) => [fact.id, verdict.roles[fact.title] ?? null]),
+    )
+    return withVerdict(plannedArchitecture, { roles, shape: verdict.shape })
+  }, [plannedArchitecture, archQuestion, archVerdicts, archLast, view.moduleFacts])
   const tryingGist =
     trying === null ? null : (gists.find((gist) => gist.id === trying && gist.sample) ?? null)
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
@@ -1403,6 +1489,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
     const drawn = program && program.nodes.length > 0 ? null : sketchOf(text)
     setJudged(null)
+    setPlanned(null)
     setForeseen(null)
     setAsked(
       drawn && force === undefined
@@ -1979,7 +2066,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 onEnter={view.enter}
                 onOpen={view.descend}
                 onGistEdit={setTrying}
-                architecture={view.architecture}
+                architecture={architecture}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
@@ -2548,6 +2635,16 @@ const HEARD_LABELS: Record<string, string> = {
   cambio: 'Un cambio',
   explicacion: 'Una explicación',
 }
+
+/** Lo que dijo el JEV de una arquitectura: el papel de cada módulo (por su título) y la forma. */
+interface ArchVerdict {
+  roles: Record<string, ModuleRole | null>
+  shape: string | null
+}
+const asRole = (role: string | null | undefined): ModuleRole | null =>
+  MODULE_ROLES.find((known) => known === role) ?? null
+/** Cuánto se espera a que el programa deje de cambiar antes de preguntarle al JEV por su arquitectura. */
+const ARCH_WAIT_MS = 500
 
 /** Cuánto se espera a que el programa deje de cambiar antes de preguntar al JEV qué cubre cada parte. */
 const COVER_WAIT_MS = 350

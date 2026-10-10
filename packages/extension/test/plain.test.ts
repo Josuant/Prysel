@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Decider, JevAnswer } from '../src/jev/client.ts'
 import { localDecider } from '../src/jev/local.ts'
-import { judgeCover, judgeDone } from '../src/jev/plain.ts'
+import { codePrompt, judgeArchitecture, judgeCover, judgeDone } from '../src/jev/plain.ts'
 import { bestMatch, locate } from '../webview/src/marking.ts'
 import {
   CodeStream,
@@ -457,5 +457,97 @@ describe('lo pedido y lo construido: qué pieza cubre cada parte', () => {
   it('el motor local no lo sabe, y sin piezas no se pregunta', async () => {
     expect(await judgeCover(localDecider(), 'gastos', parts, pieces)).toEqual([null, null, null])
     expect(await judgeCover(localDecider(), 'gastos', parts, [])).toEqual([null, null, null])
+  })
+})
+
+describe('el plan dice cómo encajan sus partes', () => {
+  it('lo que va detrás de «<-» son las partes de las que esa necesita algo', () => {
+    expect(stageFromLine('Mostrar el total: suma todos los precios <- Lista de gastos')).toEqual({
+      title: 'Mostrar el total',
+      goal: 'suma todos los precios',
+      needs: ['Lista de gastos'],
+    })
+    expect(
+      stageFromLine('3. Menú: deja elegir <- Añadir gasto, Mostrar total y Buscar más caro'),
+    ).toEqual({
+      title: 'Menú',
+      goal: 'deja elegir',
+      needs: ['Añadir gasto', 'Mostrar total', 'Buscar más caro'],
+    })
+    // Sin «<-» (o con «ninguna»), la parte es la de siempre.
+    expect(stageFromLine('Lista de gastos: los gastos de ejemplo')).toEqual({
+      title: 'Lista de gastos',
+      goal: 'los gastos de ejemplo',
+    })
+    expect(stageFromLine('Lista de gastos: los gastos <- ninguna')?.needs).toBeUndefined()
+  })
+
+  it('el código se pide sabiendo de quién usa algo cada parte', () => {
+    const prompt = codePrompt({
+      command: 'gastos',
+      where: 'al final',
+      context: '',
+      stages: [
+        { title: 'Lista', goal: 'los datos' },
+        { title: 'Total', goal: 'suma', needs: ['Lista'] },
+      ],
+    })
+    expect(prompt).toContain('2. Total: suma (usa lo de: Lista)')
+    expect(prompt).toContain('1. Lista: los datos\n')
+  })
+})
+
+describe('la arquitectura: el JEV dice el papel de cada módulo y la forma', () => {
+  const modules = [
+    { title: 'Lista de gastos', does: 'Su código: solo guarda valores.' },
+    { title: 'Menú', does: 'Su código: repite algo; usa a 3 de los otros módulos.' },
+  ]
+
+  it('una sola llamada: una pregunta cerrada por módulo y, si hay varias formas que cuadran, otra', async () => {
+    const asked: Record<string, { criteria?: Record<string, unknown> }>[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, { criteria?: Record<string, unknown> }> }) => {
+        asked.push(request.questions)
+        return Promise.resolve({
+          ms: 1,
+          answers: {
+            papel0: { type: 'choice' as const, choice: 'datos', confidence: 0.92 },
+            // Del menú no está seguro: se queda en lo que el código deje ver.
+            papel1: { type: 'choice' as const, choice: 'salida', confidence: 0.31 },
+            forma: { type: 'choice' as const, choice: 'centro', confidence: 0.8 },
+          },
+        })
+      },
+    }
+    const verdict = await judgeArchitecture(jev, modules, ['ciclo', 'centro', 'capas'])
+    expect(verdict).toEqual({ roles: ['datos', null], shape: 'centro' })
+    expect(Object.keys(asked[0] ?? {})).toEqual(['papel0', 'papel1', 'forma'])
+    // Solo se ofrecen las formas que el grafo tiene: ni una más.
+    expect(Object.keys(asked[0]?.forma?.criteria ?? {})).toEqual(['ciclo', 'centro', 'capas'])
+  })
+
+  it('con una sola forma no se pregunta cuál; y una que no se ofreció no se acepta', async () => {
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, unknown> }) =>
+        Promise.resolve({
+          ms: 1,
+          answers: {
+            ...('forma' in request.questions
+              ? { forma: { type: 'choice' as const, choice: 'embudo', confidence: 0.9 } }
+              : {}),
+          },
+        }),
+    }
+    expect((await judgeArchitecture(jev, modules, ['capas'])).shape).toBeNull()
+    expect((await judgeArchitecture(jev, modules, ['tuberia', 'capas'])).shape).toBeNull()
+  })
+
+  it('el motor local no lo sabe: todo se queda en lo que el código deja ver', async () => {
+    expect(await judgeArchitecture(localDecider(), modules, ['ciclo', 'centro', 'capas'])).toEqual({
+      roles: [null, null],
+      shape: null,
+    })
   })
 })

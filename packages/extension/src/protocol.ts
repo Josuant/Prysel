@@ -240,9 +240,31 @@ export interface CoveredMessage {
   plan?: boolean
 }
 
+/**
+ * Extensión → webview: la arquitectura **planeada** de lo que se está construyendo. Cada módulo, por su
+ * título, y de cuáles de los otros necesita algo. Vale para los módulos que aún no tienen código.
+ */
+export interface ArchitectureMessage {
+  type: 'architecture'
+  modules: { title: string; needs: string[] }[]
+}
+
+/**
+ * Extensión → webview: lo que dijo el JEV de la arquitectura que se le preguntó (`key` es la de la pregunta).
+ * El papel de cada módulo, en su orden (`null`: no lo sabe), y la forma (`null`: no elige).
+ */
+export interface ArchedMessage {
+  type: 'arched'
+  key: string
+  roles: (string | null)[]
+  shape: string | null
+}
+
 export type WebviewMessage =
   | GistsMessage
   | CoveredMessage
+  | ArchitectureMessage
+  | ArchedMessage
   | DecisionMessage
   | GeneratedMessage
   | StepMessage
@@ -388,6 +410,18 @@ export interface CoverMessage {
 }
 
 /**
+ * El programa, visto como módulos: de cada uno, su título y lo que su código deja ver; y las formas que su
+ * grafo tiene de verdad. El JEV dice el papel de cada uno y qué forma lo cuenta mejor (llega en `arched`).
+ */
+export interface ArchMessage {
+  type: 'arch'
+  /** Lo que identifica la pregunta: la respuesta la trae de vuelta. */
+  key: string
+  modules: { title: string; does: string }[]
+  shapes: string[]
+}
+
+/**
  * Quien lo usa juega el programa: `answers` son todas las respuestas de teclado que lleva dadas, en orden (el
  * programa se vuelve a ejecutar con ellas y se para en la siguiente pregunta). `null`: volver a la sesión de
  * ejemplo. `fresh`: una partida nueva (si el programa tira de azar, con otra suerte).
@@ -426,6 +460,7 @@ export type HostMessage =
   | UndoOrderMessage
   | ListeningMessage
   | CoverMessage
+  | ArchMessage
   | PlayMessage
   | TryCallMessage
   | SpokenMessage
@@ -452,6 +487,9 @@ const MAX_ID = 200
 
 /** Lo que puede medir la llamada con la que se prueba una función (sus datos caben de sobra). */
 const MAX_TRY_CALL = 2000
+/** Cuántos módulos caben en una arquitectura, y lo que puede medir la clave de su pregunta. */
+const MAX_ARCH_MODULES = 16
+const MAX_ARCH_KEY = 6000
 /** Cuántas respuestas de teclado caben en una partida jugada a mano. */
 export const MAX_PLAY_ANSWERS = 80
 
@@ -642,6 +680,24 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (typeof gen !== 'string' || typeof text !== 'string' || text === '') return null
     return { type: 'progress', gen, text }
   }
+  if (type === 'architecture') {
+    const { modules } = value as { modules?: unknown }
+    if (!Array.isArray(modules) || modules.length > MAX_ARCH_MODULES) return null
+    const read = modules.flatMap((module: unknown) => {
+      const { title, needs } = (module ?? {}) as { title?: unknown; needs?: unknown }
+      return typeof title === 'string' && title !== '' && namesOf(needs ?? [])
+        ? [{ title, needs: (needs ?? []) as string[] }]
+        : []
+    })
+    return read.length === modules.length ? { type: 'architecture', modules: read } : null
+  }
+  if (type === 'arched') {
+    const { key, roles, shape } = value as { key?: unknown; roles?: unknown; shape?: unknown }
+    if (typeof key !== 'string' || !Array.isArray(roles)) return null
+    if (!roles.every((role) => role === null || typeof role === 'string')) return null
+    if (shape !== null && typeof shape !== 'string') return null
+    return { type: 'arched', key, roles: roles as (string | null)[], shape }
+  }
   if (type === 'covered') {
     const { parts, pieces, by } = value as { parts?: unknown; pieces?: unknown; by?: unknown }
     if (!namesOf(parts) || !namesOf(pieces) || !Array.isArray(by)) return null
@@ -742,6 +798,20 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return typeof text === 'string' && text !== ''
       ? { type: 'listening', on, text: text.slice(0, MAX_COMMAND) }
       : { type: 'listening', on }
+  }
+  if (type === 'arch') {
+    const { key, modules, shapes } = value as { key?: unknown; modules?: unknown; shapes?: unknown }
+    if (typeof key !== 'string' || key.length > MAX_ARCH_KEY || !namesOf(shapes)) return null
+    if (!Array.isArray(modules) || modules.length < 2 || modules.length > MAX_ARCH_MODULES) {
+      return null
+    }
+    const read = modules.flatMap((module: unknown) => {
+      const { title, does } = (module ?? {}) as { title?: unknown; does?: unknown }
+      return typeof title === 'string' && title !== '' && typeof does === 'string'
+        ? [{ title: title.slice(0, 80), does: does.slice(0, 300) }]
+        : []
+    })
+    return read.length === modules.length ? { type: 'arch', key, modules: read, shapes } : null
   }
   if (type === 'tryCall') {
     const { id, call } = value as { id?: unknown; call?: unknown }

@@ -44,7 +44,17 @@ export {
   type SourceSection,
   type Subprocess,
 } from './program.ts'
-export { architectureOf, moduleGraph, roleOf, type ModuleFacts } from './architecture.ts'
+export {
+  architectureOf,
+  described,
+  factsText,
+  moduleGraph,
+  roleOf,
+  withPlan,
+  withVerdict,
+  type ModuleFacts,
+  type PlannedModule,
+} from './architecture.ts'
 export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'
 export { AddNodeMenu, findTemplates, type AddNodeMenuProps } from './AddNodeMenu.tsx'
 export {

@@ -395,6 +395,8 @@ export function buildStepsPrompt(request: {
 export interface Stage {
   title: string
   goal: string
+  /** De cuáles de las otras partes necesita algo (sus títulos, como los dijo el plan). */
+  needs?: string[]
 }
 
 export const MAX_STAGES = 7

@@ -17,7 +17,7 @@ import {
   type SemanticGraph,
 } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
-import { architectureOf } from './architecture.ts'
+import { described, type ModuleFacts } from './architecture.ts'
 import { isTerritory } from './flow/frame.ts'
 
 /**
@@ -961,6 +961,8 @@ export interface ProgramView extends FoldedView {
    * el lienzo necesita para colocar el primer nivel. `null` dentro de una función o sin al menos dos módulos.
    */
   architecture: Architecture | null
+  /** De cada módulo de la arquitectura, lo que su código deja ver. */
+  moduleFacts: readonly ModuleFacts[]
   /** Cuántos ámbitos hay plegados ahora. */
   folded: number
   /** Cambia con lo que se ve: es la señal para que el lienzo se reencuadre. */
@@ -968,6 +970,7 @@ export interface ProgramView extends FoldedView {
 }
 
 const NO_SECTIONS: readonly SourceSection[] = []
+const NO_FACTS: readonly ModuleFacts[] = []
 
 /**
  * Lo que se ve, de una vez y sin estado (el hook solo guarda lo que el usuario plegó o abrió): el programa o la
@@ -1153,8 +1156,11 @@ export function useProgramView(
   )
   // La arquitectura del programa, tal como sale de su análisis. Solo en el programa (no dentro de una función).
   const wantsArchitecture = flow && options.architecture === true && focus === null
-  const architecture = useMemo(
-    () => (wantsArchitecture ? architectureOf(view.nodes, all, edges) : null),
+  const { architecture, facts: moduleFacts } = useMemo(
+    () =>
+      wantsArchitecture
+        ? described(view.nodes, all, edges)
+        : { architecture: null, facts: NO_FACTS },
     [wantsArchitecture, view, all, edges],
   )
 
@@ -1229,6 +1235,7 @@ export function useProgramView(
     representative,
     homeOf,
     architecture,
+    moduleFacts,
     folded: foldedSet.size,
     viewKey: focus?.id ?? PROGRAM,
   }

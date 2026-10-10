@@ -22,6 +22,19 @@ import type { Decider, JevAnswer, JevQuestion } from './client.ts'
 
 /** Lee una etapa de una línea de la lista. `null` si esa línea no es una etapa (vacía, una introducción). */
 export function stageFromLine(line: string): Stage | null {
+  // Lo que va detrás de `<-` son las partes de las que esta necesita algo: no es parte de lo que hace.
+  const [own = '', ...after] = line.split(/\s*(?:<-|←|<=)\s*/)
+  const needs = after
+    .join(',')
+    .split(/\s*[,;]\s*|\s+y\s+/)
+    .map((name) => name.replace(/\*\*|__|`|[.«»"]/g, '').trim())
+    .filter((name) => name !== '' && name.length <= 60 && !/^(nada|ninguna?|nadie)$/i.test(name))
+  const stage = stageOwn(own)
+  return stage && needs.length > 0 ? { ...stage, needs: needs.slice(0, 6) } : stage
+}
+
+/** La parte en sí: su título y lo que hace. */
+function stageOwn(line: string): Stage | null {
   const text = line
     .replace(/^\s*(?:[-*•–]|\d+[.)-]|#+)\s*/, '')
     .replace(/\*\*|__|`/g, '')
@@ -818,6 +831,86 @@ export async function judgeCover(
   })
 }
 
+// ───────────────────────── la arquitectura: qué papel hace cada módulo y qué forma tiene ─────────────────────────
+
+/** Los papeles que puede hacer un módulo, y cómo se le explican al JEV. */
+export const MODULE_ROLES = {
+  entrada: 'Recoge datos de quien lo usa: pregunta, lee del teclado.',
+  datos: 'Guarda o define los datos con los que trabaja el programa.',
+  logica: 'Calcula, transforma o comprueba algo con los datos.',
+  control:
+    'Coordina: decide qué se hace y cuándo, y usa a los demás (un menú, el bucle principal, el arranque).',
+  salida: 'Enseña resultados a quien lo usa: imprime, dibuja, muestra.',
+} as const
+export type ModuleRoleId = keyof typeof MODULE_ROLES
+
+/** Las formas que puede tener un programa visto como módulos, y cómo se le explican al JEV. */
+export const ARCH_SHAPES = {
+  tuberia: 'Una cadena: cada parte le pasa su resultado a la siguiente, de principio a fin.',
+  centro:
+    'Un módulo reparte el trabajo: según lo que se elija, usa a uno u otro de los demás (un menú).',
+  ciclo:
+    'Un bucle que en cada vuelta hace todos sus pasos, uno tras otro (un juego, una simulación).',
+  embudo: 'De mucho a poco: se va filtrando o resumiendo hasta quedarse con un resultado.',
+  abanico: 'Una fuente de datos que alimenta a varias partes independientes entre sí.',
+  capas:
+    'Unas partes guardan datos, otras calculan y otras enseñan, sin que ninguna otra forma lo cuente mejor.',
+} as const
+export type ArchShapeId = keyof typeof ARCH_SHAPES
+
+/** Con cuánta certeza del JEV se acepta un papel o una forma. */
+export const ARCH_THRESHOLD = 0.5
+
+/**
+ * Un programa visto como módulos: el JEV dice qué papel hace cada uno (por su título y por lo que su código
+ * deja ver) y, de las formas que el grafo de módulos tiene de verdad (`shapes`), cuál lo cuenta mejor. Una
+ * sola llamada. Donde duda, `null`: decide quien pregunta, con lo que ve en el código.
+ */
+export async function judgeArchitecture(
+  decider: Decider,
+  modules: readonly { title: string; does: string }[],
+  shapes: readonly string[],
+): Promise<{ roles: (ModuleRoleId | null)[]; shape: ArchShapeId | null }> {
+  const offered = shapes.filter((shape): shape is ArchShapeId => shape in ARCH_SHAPES)
+  const { answers } = await decider.decide({
+    state: { modulos: modules.map((module) => module.title) },
+    questions: {
+      ...Object.fromEntries(
+        modules.map((module, at) => [
+          `papel${at}`,
+          {
+            type: 'choice' as const,
+            instructions: `Un programa en Python está hecho de los módulos de \`modulos\`. Uno de ellos se llama «${module.title}». ${module.does} ¿Qué papel hace en el programa?`,
+            criteria: { ...MODULE_ROLES },
+          },
+        ]),
+      ),
+      ...(offered.length > 1
+        ? {
+            forma: {
+              type: 'choice' as const,
+              instructions:
+                'Un programa en Python está hecho de los módulos de `modulos`. Visto en conjunto, ¿cuál de estas formas cuenta mejor cómo funciona?',
+              criteria: Object.fromEntries(offered.map((shape) => [shape, ARCH_SHAPES[shape]])),
+            },
+          }
+        : {}),
+    },
+  })
+  const sure = (id: string) => {
+    const answer = answers[id]
+    return answer?.type === 'choice' && answer.confidence >= ARCH_THRESHOLD ? answer.choice : null
+  }
+  const shape = sure('forma')
+  return {
+    roles: modules.map((_, at) => {
+      const role = sure(`papel${at}`)
+      return role !== null && role in MODULE_ROLES ? (role as ModuleRoleId) : null
+    }),
+    shape: shape !== null && offered.includes(shape as ArchShapeId) ? (shape as ArchShapeId) : null,
+  }
+}
+
 // ───────────────────────── al reescribir, ¿se quería quitar eso? ─────────────────────────
 
 /**
@@ -940,6 +1033,7 @@ export function planSystem(teach: boolean): string {
       ? `${TEACH} Piensa las partes de la EXPLICACIÓN (qué pasa primero, qué después), no partes de un programa cualquiera.`
       : 'Alguien te pide un programa en Python y tú lo vas a construir explicándolo. Antes de escribir nada, piensa el plan.',
     'Lista las partes por las que pasa, en orden, una por línea: un título de dos a cuatro palabras y, si quieres, detrás de dos puntos, qué ocurre en esa parte en menos de diez palabras.',
+    'Piensa también cómo encajan: si una parte necesita lo que otra guarda o hace, dilo al final de su línea, detrás de «<-», con el título exacto de esa otra parte (varias, separadas por comas). Ejemplo: «Mostrar el total: suma todos los precios <- Lista de gastos». La que no necesita a ninguna no lleva «<-».',
     'Entre 2 y 7 partes. Solo la lista: sin introducción, sin código y sin despedida.',
   ].join('\n')
 }
@@ -972,7 +1066,12 @@ export function codePrompt(request: {
     `Orden: ${request.command}`,
     request.stages.length >= 2
       ? `El plan:\n${request.stages
-          .map((stage, i) => `${i + 1}. ${stage.title}${stage.goal ? `: ${stage.goal}` : ''}`)
+          .map(
+            (stage, i) =>
+              `${i + 1}. ${stage.title}${stage.goal ? `: ${stage.goal}` : ''}${
+                stage.needs?.length ? ` (usa lo de: ${stage.needs.join(', ')})` : ''
+              }`,
+          )
           .join('\n')}`
       : '',
     `Dónde va: ${request.where}.`,

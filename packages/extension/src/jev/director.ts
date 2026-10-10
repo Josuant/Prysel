@@ -119,6 +119,11 @@ export interface Stagehand {
 export type Shown =
   /** En qué se está pensando ahora: lo que se lee mientras no hay nada nuevo que ver. */
   | { type: 'progress'; text: string }
+  /**
+   * La arquitectura planeada: los módulos que va a tener lo que se construye y de cuáles necesita algo cada
+   * uno. El lienzo los coloca según su forma antes de que exista su código.
+   */
+  | { type: 'architecture'; modules: { title: string; needs: string[] }[] }
   /** Algo que decir sin señalar ninguna pieza: el comentario de entrada. */
   /** `aside`: un comentario al margen de lo que se va escribiendo: se lee y se dice sin parar nada. */
   | { type: 'say'; say: string; aside?: boolean }
@@ -488,6 +493,11 @@ export async function build(
       if ((await host.write(placed.change)) !== null) return false
       skeleton.commit(step, placed)
       stages.push(stage)
+      // El plan, tal como va: el lienzo ya puede decir qué necesita cada parte de las demás.
+      await host.show({
+        type: 'architecture',
+        modules: stages.map((one) => ({ title: one.title, needs: one.needs ?? [] })),
+      })
       await host.show({
         type: 'step',
         index: stages.length,

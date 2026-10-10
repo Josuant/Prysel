@@ -5,8 +5,11 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import {
   architectureOf,
+  factsText,
   functionsOf,
   moduleGraph,
+  withPlan,
+  withVerdict,
   toCanvasNodes,
   viewOf,
   withSections,
@@ -183,4 +186,65 @@ describe('medidas: la arquitectura cabe a un tamaño que se lee', () => {
       expect(fits(plane.bounds)).toBeGreaterThanOrEqual(0.6)
     },
   )
+})
+
+describe('lo planeado y lo que dice el JEV, sobre lo que sale del análisis', () => {
+  const whole = (name: string) => {
+    const program = parse(fixture(name))
+    const all = withSections(toCanvasNodes(program.nodes), program.edges, program.sections ?? [])
+    return moduleGraph(all, all, program.edges)
+  }
+
+  it('de un módulo que aún no tiene código vale el plan (planeado); del que ya lo tiene, el análisis', () => {
+    const { architecture, graph, named } = seen('gastos')
+    if (!architecture) throw new Error('sin arquitectura')
+    const { facts } = whole('gastos')
+    const id = (title: string) => graph.modules.find((m) => named(m.id) === title)?.id ?? ''
+    const plan = [
+      { title: 'Lista de gastos', needs: [] },
+      { title: 'Mostrar total', needs: ['Lista de gastos'] },
+      // El plan lo dijo con otras palabras: «la lista» es «Lista de gastos».
+      { title: 'Buscar más caro', needs: ['lista'] },
+    ]
+    // Nadie pendiente: el plan no añade nada.
+    expect(withPlan(architecture, facts, plan, new Set())).toBe(architecture)
+    // Pendientes, pero lo prometido ya está de verdad en el código: no se duplica.
+    const both = new Set([id('Mostrar total'), id('Buscar más caro')])
+    expect(withPlan(architecture, facts, plan, both).links.some((link) => link.planned)).toBe(false)
+    // Sin esas flechas de verdad (el código aún no las tiene), salen las del plan, como planeadas.
+    const bare = { ...architecture, links: architecture.links.filter((l) => l.kind !== 'data') }
+    const fresh = withPlan(bare, facts, plan, both)
+    expect(
+      fresh.links.filter((l) => l.planned).map((l) => `${named(l.from)} → ${named(l.to)}`),
+    ).toEqual(['Lista de gastos → Mostrar total', 'Lista de gastos → Buscar más caro'])
+    // Y solo de los pendientes: de «Buscar más caro», ya escrito, no vale el plan.
+    const one = withPlan(bare, facts, plan, new Set([id('Mostrar total')]))
+    expect(one.links.filter((l) => l.planned)).toHaveLength(1)
+  })
+
+  it('el JEV corrige papeles y elige la forma, pero solo entre las que el grafo tiene', () => {
+    const { architecture, graph, named } = seen('gastos')
+    if (!architecture) throw new Error('sin arquitectura')
+    const id = (title: string) => graph.modules.find((m) => named(m.id) === title)?.id ?? ''
+    const judged = withVerdict(architecture, {
+      roles: { [id('Buscar más caro')]: 'logica', [id('Menú')]: null },
+      shape: 'ciclo',
+    })
+    const roleOf = (title: string) => judged.modules.find((m) => m.id === id(title))?.role
+    expect(roleOf('Buscar más caro')).toBe('logica')
+    expect(roleOf('Menú')).toBe('control')
+    expect(judged.shape).toBe('ciclo')
+    // Una tubería no cuadra con este programa: se queda la que tenía.
+    expect(withVerdict(architecture, { roles: {}, shape: 'tuberia' }).shape).toBe('centro')
+  })
+
+  it('lo que el código de un módulo deja ver se dice en una frase', () => {
+    const { facts } = whole('gastos')
+    const said = Object.fromEntries(facts.map((fact) => [fact.title, factsText(fact, false)]))
+    expect(said['Lista de gastos']).toBe('Su código: solo guarda valores.')
+    expect(said['Añadir gasto']).toContain('pide datos por teclado')
+    const first = facts[0]
+    if (!first) throw new Error('sin módulos')
+    expect(factsText(first, true)).toBe('Aún no tiene código.')
+  })
 })

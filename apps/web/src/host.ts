@@ -299,6 +299,9 @@ export class WebHost {
       case 'listening':
         this.orders.listening(message.on, message.text)
         return
+      case 'arch':
+        this.orders.arch(message.key, message.modules, message.shapes)
+        return
       case 'tryCall':
         void this.gists.tryCall(message.id, message.call)
         return

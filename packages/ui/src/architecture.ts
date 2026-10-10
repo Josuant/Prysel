@@ -2,6 +2,7 @@ import { getKind } from '@prysel/morphology'
 import {
   channelOf,
   defaultShape,
+  shapeCandidates,
   type ArchGraph,
   type ArchLink,
   type ArchModule,
@@ -38,6 +39,9 @@ export interface ModuleFacts {
   branches: boolean
   /** A cuántos de los demás módulos llama. */
   calls: number
+  /** De qué línea a qué línea va en el archivo. */
+  line: number
+  lineEnd: number
 }
 
 const ASKS = /\binput\s*\(/
@@ -145,6 +149,8 @@ export function moduleGraph(
     return {
       id: top.id,
       title: top.section?.title ?? top.label,
+      line: top.line ?? 0,
+      lineEnd: top.lineEnd ?? top.line ?? 0,
       asks: own.some((node) => ASKS.test(node.code ?? node.text ?? '')),
       prints: own.some((node) => node.kind === 'effect.io' || node.kind === 'output.display'),
       defines:
@@ -179,7 +185,111 @@ export function architectureOf(
   all: readonly CanvasNode[],
   edges: readonly SemanticEdge[],
 ): Architecture | null {
-  const { graph } = moduleGraph(view, all, edges)
-  if (graph.modules.length < 2) return null
+  return described(view, all, edges).architecture
+}
+
+/** La arquitectura y, de cada módulo, lo que su código deja ver (para quien quiera juzgar su papel). */
+export function described(
+  view: readonly CanvasNode[],
+  all: readonly CanvasNode[],
+  edges: readonly SemanticEdge[],
+): { architecture: Architecture | null; facts: ModuleFacts[] } {
+  const { graph, facts } = moduleGraph(view, all, edges)
+  if (graph.modules.length < 2) return { architecture: null, facts }
+  return { architecture: { ...graph, ...defaultShape(graph) }, facts }
+}
+
+/** Un módulo del plan: cómo se llama y de cuáles de los otros necesita algo. */
+export interface PlannedModule {
+  title: string
+  needs: readonly string[]
+}
+
+const plainTitle = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+/**
+ * La arquitectura con lo que **el plan prometió** de los módulos que aún no tienen código (`pending`): de
+ * quién necesita algo cada uno, como una flecha planeada. Un módulo ya escrito no lleva nada del plan: de él
+ * manda el análisis. La forma se vuelve a elegir con lo que hay.
+ */
+export function withPlan(
+  architecture: Architecture,
+  facts: readonly ModuleFacts[],
+  plan: readonly PlannedModule[],
+  pending: ReadonlySet<string>,
+): Architecture {
+  const byTitle = new Map(facts.map((fact) => [plainTitle(fact.title), fact.id]))
+  const find = (title: string) => {
+    const wanted = plainTitle(title)
+    if (wanted === '') return undefined
+    const exact = byTitle.get(wanted)
+    if (exact !== undefined) return exact
+    // El plan dice «la lista» y el módulo se llama «Lista de gastos»: vale si uno contiene al otro.
+    for (const [known, id] of byTitle) {
+      if (known.includes(wanted) || wanted.includes(known)) return id
+    }
+    return undefined
+  }
+  const links = [...architecture.links]
+  for (const module of plan) {
+    const to = find(module.title)
+    if (to === undefined || !pending.has(to)) continue
+    for (const need of module.needs) {
+      const from = find(need)
+      if (from === undefined || from === to) continue
+      const known = links.some(
+        (link) => (link.from === from && link.to === to) || (link.from === to && link.to === from),
+      )
+      if (!known) links.push({ from, to, kind: 'data', planned: true })
+    }
+  }
+  if (links.length === architecture.links.length) return architecture
+  const graph = { modules: architecture.modules, links }
   return { ...graph, ...defaultShape(graph) }
+}
+
+/**
+ * La arquitectura con lo que dijo quien sabe más (el JEV): el papel de cada módulo y, de las formas que el
+ * grafo tiene de verdad, cuál lo cuenta mejor. Una forma que el grafo no tiene no se acepta.
+ */
+export function withVerdict(
+  architecture: Architecture,
+  verdict: {
+    roles: Readonly<Record<string, ModuleRole | null | undefined>>
+    shape?: string | null
+  },
+): Architecture {
+  const modules = architecture.modules.map((module) => {
+    const role = verdict.roles[module.id]
+    return role ? { ...module, role } : module
+  })
+  const graph = { modules, links: architecture.links }
+  const chosen = shapeCandidates(graph).find((candidate) => candidate.shape === verdict.shape)
+  const { shape, anchor } = chosen ?? architecture
+  return { ...graph, shape, ...(anchor === undefined ? {} : { anchor }) }
+}
+
+const SAYS: [keyof ModuleFacts, string][] = [
+  ['asks', 'pide datos por teclado'],
+  ['prints', 'escribe en pantalla'],
+  ['stores', 'solo guarda valores'],
+  ['defines', 'solo define funciones'],
+  ['loops', 'repite algo'],
+  ['branches', 'elige entre varios caminos'],
+]
+
+/** Lo que el código de un módulo hace, dicho en una frase (para preguntarle a alguien por su papel). */
+export function factsText(fact: ModuleFacts, pending: boolean): string {
+  if (pending) return 'Aún no tiene código.'
+  const said = SAYS.filter(([key]) => fact[key] === true).map(([, text]) => text)
+  if (fact.calls > 0) said.push(`usa a ${fact.calls} de los otros módulos`)
+  return said.length === 0
+    ? 'Su código calcula o transforma algo.'
+    : `Su código: ${said.join('; ')}.`
 }

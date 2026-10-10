@@ -169,6 +169,28 @@ interface Box {
 const overlap = (a: Box, b: Box, margin: number) =>
   Math.abs(a.x - b.x) < (a.w + b.w) / 2 + margin && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + margin
 
+/** Hasta cuántos satélites se prueban todos los repartos alrededor de un centro. */
+const SEARCH_MAX = 6
+
+/** ¿Pasa por encima de `box` la recta que une los centros de `from` y `to`? */
+function hits(from: Box, to: Box, box: Box): boolean {
+  for (let step = 1; step < 20; step++) {
+    const t = step / 20
+    const x = from.x + (to.x - from.x) * t
+    const y = from.y + (to.y - from.y) * t
+    if (Math.abs(x - box.x) < box.w / 2 + 6 && Math.abs(y - box.y) < box.h / 2 + 6) return true
+  }
+  return false
+}
+
+/** Todas las maneras de ordenar unos pocos elementos. */
+function permutations<T>(items: readonly T[]): T[][] {
+  if (items.length <= 1) return [[...items]]
+  return items.flatMap((item, at) =>
+    permutations([...items.slice(0, at), ...items.slice(at + 1)]).map((rest) => [item, ...rest]),
+  )
+}
+
 /** Si dos módulos se pisan (o se quedan sin aire), se abren todos desde el centro hasta que no. */
 function spread(boxes: Box[], centre: Point, margin: number) {
   for (let round = 0; round < 24; round++) {
@@ -339,10 +361,48 @@ export function layoutArchitecture(
       }
       return placed
     }
-    const satellites = [
-      ...stack(packed(around.slice(0, half)), -1),
-      ...stack(packed(around.slice(half)), 1),
+    const place = (order: readonly string[], above: number): Box[] => [
+      ...stack(packed(order.slice(0, above)), -1),
+      ...stack(packed(order.slice(above)), 1),
     ]
+    // Dos satélites que se pasan algo entre sí no deberían tener el centro en medio: se busca el reparto
+    // (quién arriba, quién abajo y en qué orden) en el que menos flechas entre satélites cruzan a alguien.
+    // Entre los que empatan, el más parejo y el que menos se aparta del orden por papeles.
+    const between = architecture.links.filter(
+      (link) => around.includes(link.from) && around.includes(link.to) && link.from !== link.to,
+    )
+    let satellites = place(around, half)
+    if (between.length > 0 && around.length <= SEARCH_MAX) {
+      const hub: Box = { id: anchor, x: 0, y: 0, w: centre.w, h: centre.h }
+      const crossed = (boxes: readonly Box[]) => {
+        const at = new Map(boxes.map((box) => [box.id, box]))
+        return between.filter((link) => {
+          const from = at.get(link.from)
+          const to = at.get(link.to)
+          if (!from || !to) return false
+          const others = [hub, ...boxes.filter((box) => box !== from && box !== to)]
+          return others.some((box) => hits(from, to, box))
+        }).length
+      }
+      let best = { cost: crossed(satellites), uneven: 0, moved: 0 }
+      for (const order of permutations(around)) {
+        const moved = order.reduce((sum, id, at) => sum + Math.abs(at - around.indexOf(id)), 0)
+        for (let above = 1; above < order.length; above++) {
+          const boxes = place(order, above)
+          const tried = { cost: crossed(boxes), uneven: Math.abs(above - half), moved }
+          const better =
+            tried.cost !== best.cost
+              ? tried.cost < best.cost
+              : tried.uneven !== best.uneven
+                ? tried.uneven < best.uneven
+                : tried.moved < best.moved
+          if (better) {
+            best = tried
+            satellites = boxes
+          }
+        }
+      }
+    }
     boxes = [{ id: anchor, x: 0, y: 0, w: centre.w, h: centre.h }, ...satellites]
     const halo = frame(satellites, 'centre')
     figures.push({ id: 'spokes', kind: 'spokes', ...halo })
