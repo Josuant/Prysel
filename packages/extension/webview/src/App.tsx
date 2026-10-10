@@ -1920,7 +1920,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             </ErrorBoundary>
           ) : (
             <EmptyState
-              thinking={extras.busy}
+              // Lo que se teclea ya se lee en su campo: repetirlo bajo el esbozo no dice nada (con la voz sí,
+              // que no tiene dónde verse escrita).
+              thinking={
+                typed !== null &&
+                extras.busy != null &&
+                (typed.trim().startsWith(extras.busy.trim()) ||
+                  extras.busy.trim().startsWith(typed.trim()))
+                  ? null
+                  : extras.busy
+              }
               title={
                 thinking === null && preview && preview.kind !== 'nada'
                   ? (HEARD_LABELS[preview.kind] ?? null)

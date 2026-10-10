@@ -727,7 +727,7 @@ const GIVES_NAME = /(?:^|\s)(?:a|como|por)\s+[«"'`]?[\p{L}_][\p{L}\p{N}_]*[.!?�
 
 /** Pedir salir a la vista general: eso sí es solo mover la vista, aunque no nombre nada. */
 const LEAVES =
-  /(programa|principal|main|general|inicio|sal|salir|salgamos|fuera|atras|vuelve|volver|todo)/
+  /\b(programa|principal|main|general|inicio|sal|salir|salgamos|fuera|atras|vuelve|volver|todo)\b/
 
 /** Lo que suena a pregunta o a pedir una explicación. */
 const ASKS =
@@ -1550,7 +1550,12 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         })
       }
       if (!target) {
-        return done({ kind: 'unknown', say: 'Dime a qué te refieres: selecciónalo o nómbralo.' })
+        // Sin programa no hay nada que señalar: quien escribe una idea y no tiene IA conectada necesita
+        // saber qué falta, no que le pidan seleccionar algo de un lienzo vacío.
+        return done({
+          kind: 'unknown',
+          say: hasCode ? 'Dime a qué te refieres: selecciónalo o nómbralo.' : notUnderstood,
+        })
       }
       if (intent === 'plegar') {
         return done({
