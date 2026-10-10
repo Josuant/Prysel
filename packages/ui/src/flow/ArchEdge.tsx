@@ -91,7 +91,7 @@ export function archPath(from: Box, to: Box, bend = 0) {
 /** ¿Pasa la flecha por encima de alguna de esas cajas? */
 export function crosses(from: Box, to: Box, bend: number, others: readonly Box[]): boolean {
   const curve = curveOf(from, to, bend)
-  const air = 10
+  const air = 6
   for (let step = 1; step < 16; step++) {
     const at = along(curve, step / 16)
     const hit = others.some(
@@ -107,7 +107,7 @@ export function crosses(from: Box, to: Box, bend: number, others: readonly Box[]
 }
 
 /** Lo que se prueba a combar una flecha, de menos a más y a los dos lados, hasta que no pise a nadie. */
-const BENDS = [30, 56, 88, 124, 168, 220]
+const BENDS = [30, 56, 88, 124, 168, 220, 280, 350]
 
 /**
  * Cuánto se comba una flecha para no pasar por encima de ningún otro módulo: lo que se prefiera (`0`, recta),
