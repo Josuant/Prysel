@@ -68,7 +68,7 @@ const isMechanism = (rule: Rule): rule is Mechanism =>
 const asCells = (value: Value): { text: string }[] =>
   value.kind === 'list' && !value.more && value.items.every((item) => item.kind === 'atom')
     ? value.items.map((item) => ({ text: bare(showValue(item)) }))
-    : [{ text: showValue(value) }]
+    : [{ text: bare(showValue(value)) }]
 
 /** Cuántos candidatos de un podio se enseñan: los elegidos y los que les siguen. */
 const MAX_PODIUM = 7
@@ -149,7 +149,9 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
       strips: rows.map((entry): GistStrip => ({
         name: '',
         place: entry.place ?? 0,
-        cells: [{ text: entry.text, ...(entry.place !== null ? { tone: 'hit' as const } : {}) }],
+        cells: [
+          { text: bare(entry.text), ...(entry.place !== null ? { tone: 'hit' as const } : {}) },
+        ],
         note: entry.score,
       })),
       ...(left > 0 ? { foot: `… y ${left} más, por debajo` } : {}),

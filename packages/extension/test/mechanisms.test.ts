@@ -132,6 +132,12 @@ describe.skipIf(!available)('los mecanismos de un algoritmo genético', () => {
     expect(of('generar_poblacion').sample?.chance).toBe(true)
   })
 
+  it('una función que el programa no llama lo dice en su tarjeta', () => {
+    const gist = of('calcular_aptitud')
+    expect(sampleScene(gist)?.unused).toBeUndefined()
+    expect(sampleScene({ ...gist, unused: true })?.unused).toBe(true)
+  })
+
   it('toda tarjeta mide algo razonable, con mecanismo o sin él', () => {
     for (const gist of gists.filter((candidate) => !candidate.block && candidate.sample)) {
       const scene = sampleScene(gist)
