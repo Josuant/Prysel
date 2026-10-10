@@ -1275,7 +1275,11 @@ async function runDirected(
         return
       }
       if (event.type === 'architecture') {
-        postToAll({ type: 'architecture', modules: event.modules })
+        postToAll({
+          type: 'architecture',
+          modules: event.modules,
+          ...(event.complete ? { complete: true } : {}),
+        })
         return
       }
       // La versión que se eligió para una petición abierta: aquí no hay dónde ofrecer las otras.

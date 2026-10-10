@@ -133,7 +133,12 @@ export type Shown =
    * La arquitectura planeada: los módulos que va a tener lo que se construye y de cuáles necesita algo cada
    * uno. El lienzo los coloca según su forma antes de que exista su código.
    */
-  | { type: 'architecture'; modules: { title: string; needs: string[] }[] }
+  | {
+      type: 'architecture'
+      modules: { title: string; needs: string[] }[]
+      /** El plan ya está entero: no llegan más partes. Es el momento de decidir su forma, una sola vez. */
+      complete?: boolean
+    }
   /**
    * La petición era abierta y se eligió una versión concreta: cuáles se propusieron y cuál se hace. El lienzo
    * la dice y deja cambiar a otra.
@@ -587,6 +592,14 @@ export async function build(
       if (!(await draw(stage))) break
     }
     await source.finished
+    // El plan está entero: con todas sus partes a la vista se decide qué forma tiene, y ya no cambia.
+    if (stages.length >= 2 && !host.signal.aborted) {
+      await host.show({
+        type: 'architecture',
+        modules: stages.map((one) => ({ title: one.title, needs: one.needs ?? [] })),
+        complete: true,
+      })
+    }
   }
   const planned = stages.length >= 2
 

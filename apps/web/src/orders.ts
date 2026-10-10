@@ -632,7 +632,11 @@ export class Orders {
           return
         }
         if (event.type === 'architecture') {
-          port.post({ type: 'architecture', modules: event.modules })
+          port.post({
+            type: 'architecture',
+            modules: event.modules,
+            ...(event.complete ? { complete: true } : {}),
+          })
           return
         }
         if (event.type === 'flavours') {

@@ -247,6 +247,8 @@ export interface CoveredMessage {
 export interface ArchitectureMessage {
   type: 'architecture'
   modules: { title: string; needs: string[] }[]
+  /** El plan ya está entero (no llegan más partes): se puede decidir su forma. */
+  complete?: boolean
 }
 
 /**
@@ -732,7 +734,10 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
         ? [{ title, needs: (needs ?? []) as string[] }]
         : []
     })
-    return read.length === modules.length ? { type: 'architecture', modules: read } : null
+    const { complete } = value as { complete?: unknown }
+    return read.length === modules.length
+      ? { type: 'architecture', modules: read, ...(complete === true ? { complete: true } : {}) }
+      : null
   }
   if (type === 'arched') {
     const { key, roles, shape } = value as { key?: unknown; roles?: unknown; shape?: unknown }

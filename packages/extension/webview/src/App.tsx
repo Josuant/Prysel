@@ -86,6 +86,7 @@ import { conditionsIn } from '../../src/gist/branch.ts'
 import type { Gist, RunSummary } from '../../src/gist/gist.ts'
 import { RunPanel } from './RunPanel.tsx'
 import { Transport, usePlayback } from './Transport.tsx'
+import { holdShape, sameHeld, type Held } from './holding.ts'
 import { IdeaView } from './IdeaView.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
@@ -360,6 +361,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   )
   /** El plan de lo que se construye, como arquitectura: cada módulo y de cuáles necesita algo. */
   const [planned, setPlanned] = useState<readonly PlannedModule[] | null>(null)
+  /** El plan ya está entero (no llegan más partes), y ya se esperó lo que dice el JEV de él. */
+  const [planDone, setPlanDone] = useState(false)
+  const [planWaited, setPlanWaited] = useState(false)
   /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
   const [archVerdicts, setArchVerdicts] = useState<Readonly<Record<string, ArchVerdict>>>({})
   const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
@@ -500,6 +504,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setFlavours({ command: message.command, options: message.options, chosen: message.chosen })
       } else if (message.type === 'architecture') {
         setPlanned(message.modules)
+        if (message.complete) setPlanDone(true)
       } else if (message.type === 'arched') {
         // Los papeles se guardan por el título de su módulo: así siguen valiendo si el programa cambia.
         try {
@@ -1347,19 +1352,42 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // que el grafo se queda sin lo que la sostenía (ya no están las flechas del plan y aún no las del código).
   // Si la forma se cae a «capas» en uno de esos ratos, se mantiene la que había, con su ancla (por su título:
   // los módulos cambian de línea mientras se escribe). Al acabar, manda lo que haya.
+  //
+  // Y con un plan, la forma se decide **una sola vez**: cuando el plan está entero y el JEV ha dicho de él (o
+  // se le ha esperado un rato). Mientras llega, filas; después, esa forma hasta acabar (ver `holding.ts`).
   const constructing = order.phase === 'deciding' || building || thinking !== null || intro !== null
-  const [held, setHeld] = useState<{ shape: ArchShape; anchor: string | null } | null>(null)
+  const [held, setHeld] = useState<Held | null>(null)
   const titleOf = (id: string | undefined) =>
     view.moduleFacts.find((fact) => fact.id === id)?.title ?? null
-  const holding =
-    !constructing || !judgedArchitecture
-      ? null
-      : judgedArchitecture.shape !== 'capas'
-        ? { shape: judgedArchitecture.shape, anchor: titleOf(judgedArchitecture.anchor) }
-        : held
-  if (holding?.shape !== held?.shape || holding?.anchor !== held?.anchor) setHeld(holding)
+  useEffect(() => {
+    if (!planDone) return
+    const timer = window.setTimeout(() => {
+      setPlanWaited(true)
+    }, PLAN_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [planDone])
+  const holding = holdShape({
+    constructing,
+    planning: planned !== null,
+    decidable:
+      planDone && (planWaited || (archQuestion !== null && archQuestion.key in archVerdicts)),
+    held,
+    judged: judgedArchitecture
+      ? { shape: judgedArchitecture.shape, anchor: titleOf(judgedArchitecture.anchor) }
+      : null,
+    alive: (title) => view.moduleFacts.some((fact) => fact.title === title),
+  })
+  if (!sameHeld(holding, held)) setHeld(holding)
   const heldArchitecture = useMemo(() => {
-    if (!judgedArchitecture || judgedArchitecture.shape !== 'capas' || !held)
+    if (!judgedArchitecture || !held) return judgedArchitecture
+    // Ya es la que hay: no hay nada que mantener.
+    if (
+      held.shape === judgedArchitecture.shape &&
+      held.anchor ===
+        (view.moduleFacts.find((fact) => fact.id === judgedArchitecture.anchor)?.title ?? null)
+    )
       return judgedArchitecture
     const anchor =
       held.anchor === null
@@ -1725,6 +1753,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     const drawn = flavour || !(program && program.nodes.length > 0) ? sketchOf(text) : null
     setJudged(null)
     setPlanned(null)
+    setPlanDone(false)
+    setPlanWaited(false)
     setForeseen(null)
     setAsked(
       drawn && force === undefined
@@ -2999,6 +3029,8 @@ const HEARD_LABELS: Record<string, string> = {
 
 /** El aire entre la consola y el diagrama (su separación del borde, y un poco más). */
 const CONSOLE_MARGIN = 28
+/** Lo que se espera a que el JEV diga la forma del plan entero antes de elegirla sin él. */
+const PLAN_WAIT_MS = 3500
 type Distance = 'idea' | 'partes' | 'detalle'
 /** Lo que se tiene por una pantalla estrecha (la misma medida que usa la hoja de estilos). */
 const NARROW = '(max-width: 560px)'
