@@ -54,6 +54,8 @@ export {
   withStory,
   withVerdict,
   beatsOf,
+  flowHues,
+  flowName,
   ideaOf,
   RESULT_BEAT,
   type Beat,

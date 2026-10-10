@@ -10,6 +10,7 @@ import { layoutArchitecture } from '@prysel/spatial'
 import {
   architectureOf,
   beatsOf,
+  flowHues,
   ideaOf,
   moduleGraph,
   RESULT_BEAT,
@@ -216,6 +217,13 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
       'Definir el problema (establece objetivo, genes y aptitud)',
       'Arrancar (prueba con un ejemplo)',
     ])
+    // Cada dato que viaja lleva su color: el mismo en todas sus flechas y en la idea; datos distintos, otro.
+    const hues = flowHues(drawn.links)
+    expect([...hues.keys()]).toEqual(expect.arrayContaining(['poblacion', 'aptitudes', 'padre1']))
+    expect(new Set(hues.values()).size).toBe(hues.size)
+    expect(idea.loop?.steps[0]?.hue).toBe(hues.get('poblacion'))
+    expect(idea.loop?.steps[1]?.hue).toBe(hues.get('aptitudes'))
+    expect(idea.loop?.steps[2]?.hue).toBeUndefined()
     // Sin historia, sus partes en el orden del programa.
     const flat = ideaOf(architecture, facts)
     expect(flat.loop).toBeNull()

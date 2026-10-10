@@ -91,8 +91,9 @@ describe('la pastilla de una flecha', () => {
   })
 
   it('no se pone encima de otra pastilla que ya está', () => {
+    // (Con sitio para dos: si no caben, se queda donde menos pise.)
     const from = box(0, 0)
-    const to = box(600, 0)
+    const to = box(720, 0)
     const taken = boxAt(from, to, 0.5)
     const spot = labelSpot(from, to, 0, size, [from, to, taken])
     expect(spot).not.toBe(0.5)

@@ -80,7 +80,7 @@ import { gistSize, titledScene, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
 import { archRunFor, roomFor, runFor } from './fit.ts'
-import { RESULT_BEAT } from './architecture.ts'
+import { flowHues, flowName, RESULT_BEAT } from './architecture.ts'
 import type { StepInfo } from './steps.ts'
 import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
@@ -2039,6 +2039,8 @@ function CanvasInner({
               parentOf[edge.to] === undefined
             ),
         )
+  // Cada dato que viaja, con su color: el mismo en todas las flechas por las que pasa.
+  const hues = flowHues(archModules.size > 0 && architecture ? architecture.links : [])
   const archEdges: ArchFlowEdge[] = (
     archModules.size > 0 && architecture ? architecture.links : []
   ).flatMap((link, at, links) => {
@@ -2071,6 +2073,7 @@ function CanvasInner({
     })
     const bend = clearBend(from, to, others, prefer)
     const touched = lit ? lit.has(link.from) || lit.has(link.to) : null
+    const hue = link.kind === 'data' && link.label ? hues.get(flowName(link.label)) : undefined
     const live = beat?.links.includes(`${link.from}>${link.to}`) === true
     return [
       {
@@ -2091,6 +2094,7 @@ function CanvasInner({
           bend,
           turn: at,
           ...(live && beat ? { live: beat.serial, ms: beat.ms } : {}),
+          ...(hue === undefined ? {} : { hue }),
           ...(link.planned ? { planned: true } : {}),
           ...(touched === null
             ? {}

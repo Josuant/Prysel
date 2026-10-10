@@ -374,6 +374,28 @@ export function withStory(
   }
 }
 
+/** Cuántos colores hay para lo que viaja: con más datos distintos, se repiten. */
+export const FLOW_HUES = 5
+
+/** El nombre de lo que viaja por una flecha: el primero de su etiqueta, sin cuántos lleva (`poblacion ×12`). */
+export const flowName = (label: string): string =>
+  (label.split(',')[0] ?? '').replace(/\s*×\d+\s*$/, '').trim()
+
+/**
+ * El **color de cada dato que viaja**: el mismo dato lleva el mismo color en todas las flechas por las que
+ * pasa (y en la idea), y datos distintos, colores distintos. Así se le sigue la pista a la población por todo
+ * el ciclo sin leer cada pastilla. Los colores se reparten por orden de aparición.
+ */
+export function flowHues(links: readonly ArchLink[]): Map<string, number> {
+  const hues = new Map<string, number>()
+  for (const link of links) {
+    if (link.kind !== 'data' || !link.label) continue
+    const name = flowName(link.label)
+    if (name !== '' && !hues.has(name)) hues.set(name, hues.size % FLOW_HUES)
+  }
+  return hues
+}
+
 /** Una parte del programa, dicha en una línea de la idea. */
 export interface IdeaStep {
   id: string
@@ -382,6 +404,8 @@ export interface IdeaStep {
   says?: string
   /** Lo que recibe de otra parte (en lo que se repite). */
   brings?: string
+  /** El color de eso que recibe (el mismo que lleva en el diagrama). */
+  hue?: number
   /** Otros módulos que cuentan como esta misma línea (dos seguidos con el mismo título). */
   also: string[]
 }
@@ -402,13 +426,16 @@ export interface Idea {
 
 export function ideaOf(architecture: Architecture, facts: readonly ModuleFacts[]): Idea {
   const factOf = new Map(facts.map((fact) => [fact.id, fact]))
+  const hues = flowHues(architecture.links)
   const step = (id: string, brings?: string): IdeaStep => {
     const fact = factOf.get(id)
+    const hue = brings ? hues.get(flowName(brings)) : undefined
     return {
       id,
       title: fact?.title ?? id,
       ...(fact?.subtitle ? { says: fact.subtitle } : {}),
       ...(brings ? { brings } : {}),
+      ...(hue === undefined ? {} : { hue }),
       also: [],
     }
   }
@@ -420,7 +447,10 @@ export function ideaOf(architecture: Architecture, facts: readonly ModuleFacts[]
       if (last && last.title === next.title) {
         last.also.push(next.id)
         if (!last.says && next.says) last.says = next.says
-        if (!last.brings && next.brings) last.brings = next.brings
+        if (!last.brings && next.brings) {
+          last.brings = next.brings
+          if (next.hue !== undefined) last.hue = next.hue
+        }
       } else out.push({ ...next, also: [...next.also] })
     }
     return out

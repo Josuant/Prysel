@@ -40,6 +40,8 @@ export interface ArchEdgeData extends Record<string, unknown> {
   ms?: number
   /** En qué punto de la curva (de 0 a 1) va la pastilla: la mitad, salvo que ahí pise a alguien. */
   labelAt?: number
+  /** El color de lo que viaja por ella: el mismo dato, el mismo color en todas sus flechas. */
+  hue?: number
 }
 
 export type ArchFlowEdge = FlowEdge<ArchEdgeData, 'arch'>
@@ -101,10 +103,10 @@ export function archPath(from: Box, to: Box, bend = 0, labelAt = 0.5) {
 }
 
 /** Lo que mide la pastilla de una flecha con ese texto (letra de ancho fijo, con su relleno y su tope). */
-export const labelSize = (text: string) => ({ w: Math.min(180, text.length * 6.7 + 18), h: 19 })
+export const labelSize = (text: string) => ({ w: Math.min(200, text.length * 7.3 + 20), h: 21 })
 
 /** Los puntos de la curva que se prueban para la pastilla: la mitad primero, y de ahí hacia los extremos. */
-const LABEL_SPOTS = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82]
+const LABEL_SPOTS = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82, 0.12, 0.88]
 
 /**
  * En qué punto de su flecha va una pastilla para no tapar a nadie: en la mitad si cabe; si no, el punto de la
@@ -184,6 +186,7 @@ export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
         data-planned={data.planned ? '' : undefined}
         data-emphasis={data.emphasis}
         data-live={data.live === undefined ? undefined : ''}
+        data-hue={data.hue}
         style={style}
       >
         <path className="arch-edge__line" d={d} pathLength={1} />
@@ -214,6 +217,7 @@ export function ArchEdge({ data, label }: EdgeProps<ArchFlowEdge>) {
             data-planned={data.planned ? '' : undefined}
             data-emphasis={data.emphasis}
             data-live={data.live === undefined ? undefined : ''}
+            data-hue={data.hue}
             style={{
               ...style,
               transform: `translate(-50%, -50%) translate(${mid.x}px, ${mid.y}px)`,

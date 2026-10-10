@@ -54,7 +54,7 @@ function Step({
           {step.says && <span className="idea__says">{step.says}</span>}
         </span>
         {step.brings && (
-          <span className="idea__brings" title="Lo que recibe">
+          <span className="idea__brings" data-hue={step.hue} title="Lo que recibe">
             {step.brings}
           </span>
         )}
