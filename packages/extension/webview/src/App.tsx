@@ -1141,7 +1141,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       : null
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
   const goTo = (id: string) => {
-    setSelected(id)
+    // Se selecciona lo que se ve: si el paso está dentro de algo plegado, eso que lo guarda.
+    setSelected(shownIds.has(id) ? id : (view.representative(id) ?? id))
     setWanted({ id, key: ++spotSeq.current })
   }
   const wantedId = wanted

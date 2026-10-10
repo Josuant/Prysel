@@ -368,6 +368,7 @@ export function withSections(
       kind: 'space.section',
       label: s.title,
       line: s.line,
+      lineEnd: s.lineEnd,
       meta: s.lineEnd > s.line ? `líneas ${s.line}–${s.lineEnd}` : `línea ${s.line}`,
       contains: [...(inside.get(s.id) ?? [])],
       ...(s.owner === undefined ? {} : { owner: s.owner }),

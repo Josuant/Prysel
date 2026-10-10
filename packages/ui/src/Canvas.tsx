@@ -2182,7 +2182,12 @@ function CanvasInner({
       const whole = Math.min(byWidth, byHeight)
       const zoom = Math.min(
         1,
-        mode === 'width' ? ((settled || !follow) && whole >= 0.5 ? whole : byWidth) : whole,
+        // Mientras se construye basta con ver el conjunto; al acabar, entero solo si se lee.
+        mode === 'width'
+          ? whole >= (follow ? 0.6 : 0.5) && (settled || !follow)
+            ? whole
+            : byWidth
+          : whole,
       )
       const first = lastFit.current === ''
       lastFit.current = shape
