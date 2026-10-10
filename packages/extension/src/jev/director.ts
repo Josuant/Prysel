@@ -48,6 +48,13 @@ import {
   tellPrompt,
   tellSystem,
   judgeRemoval,
+  flavourSystem,
+  flavoursOf,
+  judgeFlavour,
+  judgeOpen,
+  OPEN_THRESHOLD,
+  withFlavour,
+  type Flavour,
 } from './plain.ts'
 import { formatVisual, seriesIn, visualOf } from './visual.ts'
 import { entryOf, launchCode, looksInert } from '../gist/entry.ts'
@@ -127,6 +134,11 @@ export type Shown =
    * uno. El lienzo los coloca según su forma antes de que exista su código.
    */
   | { type: 'architecture'; modules: { title: string; needs: string[] }[] }
+  /**
+   * La petición era abierta y se eligió una versión concreta: cuáles se propusieron y cuál se hace. El lienzo
+   * la dice y deja cambiar a otra.
+   */
+  | { type: 'flavours'; options: Flavour[]; chosen: number }
   /** Algo que decir sin señalar ninguna pieza: el comentario de entrada. */
   /** `aside`: un comentario al margen de lo que se va escribiendo: se lee y se dice sin parar nada. */
   | { type: 'say'; say: string; aside?: boolean }
@@ -272,6 +284,11 @@ export interface BuildRequest {
    * buena, y de cada trozo se comenta una frase al margen, sin esperar a nadie.
    */
   flow?: 'voice' | 'stream'
+  /**
+   * La versión concreta que se quiere, ya elegida (quien lo usa cambió a otra de las propuestas): se hace esa,
+   * sin volver a proponer.
+   */
+  flavour?: Flavour
 }
 
 /** Al acabar, el JEV juzga el conjunto. */
@@ -431,7 +448,8 @@ export async function build(
   players: Players,
   request: BuildRequest,
 ): Promise<Outcome> {
-  const { command, gen } = request
+  const { gen } = request
+  let { command } = request
   const teach = request.teach === true
   const streaming = request.flow === 'stream'
   const tally: Tally = {
@@ -452,6 +470,37 @@ export async function build(
     ...(anchor ? { must: [anchor.line, anchor.lineEnd ?? anchor.line] } : {}),
   })
   tally.jevMs += context.jevMs
+
+  // ── La versión: una petición abierta («un algoritmo genético») se hace concreta antes de planear nada. ──
+  // Se elige una que se vea funcionar y se dice cuál; las otras quedan a mano, para cambiar.
+  if (request.flavour) command = withFlavour(command, request.flavour)
+  else if (request.outline && start.nodes.length === 0 && !host.signal.aborted) {
+    try {
+      const open = await judgeOpen(players.decider, command)
+      tally.jevMs += open.ms
+      if (open.open >= OPEN_THRESHOLD) {
+        await host.show({ type: 'progress', text: 'Eligiendo qué versión hacer…' })
+        const options = flavoursOf(
+          await players.provider.generate({
+            system: flavourSystem(),
+            prompt: `Lo que se pidió: ${command}`,
+            maxTokens: 260,
+          }),
+        )
+        if (options.length >= 2 && !host.signal.aborted) {
+          const picked = await judgeFlavour(players.decider, command, options)
+          tally.jevMs += picked.ms
+          const chosen = options[picked.chosen]
+          if (chosen) {
+            await host.show({ type: 'flavours', options, chosen: picked.chosen })
+            command = withFlavour(command, chosen)
+          }
+        }
+      }
+    } catch {
+      // Sin versiones se hace lo que se dijo, como siempre: elegir es una ayuda, no un requisito.
+    }
+  }
 
   // ── El plan: una lista de partes. Cada una aparece en el diagrama en cuanto llega su línea. ──
   const stages: Stage[] = []

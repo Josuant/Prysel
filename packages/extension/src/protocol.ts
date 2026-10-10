@@ -250,6 +250,17 @@ export interface ArchitectureMessage {
 }
 
 /**
+ * Extensión → webview: la petición era abierta y se eligió una **versión concreta** para construirla. Las que
+ * se propusieron, cuál se hace, y lo que se pidió (para poder pedir otra de ellas).
+ */
+export interface FlavoursMessage {
+  type: 'flavours'
+  command: string
+  options: { title: string; shows: string }[]
+  chosen: number
+}
+
+/**
  * Extensión → webview: lo que dijo el JEV de la arquitectura que se le preguntó (`key` es la de la pregunta).
  * El papel de cada módulo, en su orden (`null`: no lo sabe), y la forma (`null`: no elige).
  */
@@ -264,6 +275,7 @@ export type WebviewMessage =
   | GistsMessage
   | CoveredMessage
   | ArchitectureMessage
+  | FlavoursMessage
   | ArchedMessage
   | DecisionMessage
   | GeneratedMessage
@@ -355,6 +367,11 @@ export interface CommandMessage {
   selected: string | null
   focus: string | null
   force?: Forced
+  /**
+   * Hacer **otra versión** de lo que se pidió: una de las que se propusieron al construirlo (ver
+   * `FlavoursMessage`). El programa se rehace desde el principio con ella; `text` es la petición de entonces.
+   */
+  flavour?: { title: string; shows: string }
 }
 
 /** Guardar la clave de TypeSafe (la pide VS Code en su propia caja: el lienzo nunca la ve). */
@@ -533,6 +550,14 @@ const isId = (value: unknown): value is string =>
   typeof value === 'string' && value !== '' && value.length <= MAX_ID
 
 /** Lo que el usuario aclaró: solo lo que se conoce, y nada más. */
+/** Una versión concreta de una petición abierta, tal como llega: su título y lo que se verá. */
+function parseFlavour(value: unknown): { title: string; shows: string } | null {
+  const { title, shows } = (value ?? {}) as { title?: unknown; shows?: unknown }
+  if (typeof title !== 'string' || title.trim() === '' || title.length > 80) return null
+  if (typeof shows !== 'string' || shows.length > 240) return null
+  return { title: title.trim(), shows: shows.trim() }
+}
+
 function parseForced(value: unknown): Forced | null {
   if (typeof value !== 'object' || value === null) return null
   const { intent, piece, target } = value as { intent?: unknown; piece?: unknown; target?: unknown }
@@ -689,6 +714,15 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (typeof gen !== 'string' || typeof text !== 'string' || text === '') return null
     return { type: 'progress', gen, text }
   }
+  if (type === 'flavours') {
+    const { command, options, chosen } = value as Record<string, unknown>
+    if (typeof command !== 'string' || !Array.isArray(options) || options.length > 6) return null
+    const read = options.flatMap((option: unknown) => parseFlavour(option) ?? [])
+    if (read.length !== options.length || read.length === 0) return null
+    if (!Number.isInteger(chosen) || (chosen as number) < 0 || (chosen as number) >= read.length)
+      return null
+    return { type: 'flavours', command, options: read, chosen: chosen as number }
+  }
   if (type === 'architecture') {
     const { modules } = value as { modules?: unknown }
     if (!Array.isArray(modules) || modules.length > MAX_ARCH_MODULES) return null
@@ -781,13 +815,15 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return Number.isInteger(version) ? { type: 'trace', version: version as number } : null
   }
   if (type === 'command') {
-    const { id, text, version, selected, focus, force } = value as Record<string, unknown>
+    const { id, text, version, selected, focus, force, flavour } = value as Record<string, unknown>
     if (!Number.isInteger(id) || !Number.isInteger(version)) return null
     if (typeof text !== 'string' || text.trim() === '' || text.length > MAX_COMMAND) return null
     if (selected !== null && !isId(selected)) return null
     if (focus !== null && !isId(focus)) return null
     const forced = force === undefined ? undefined : parseForced(force)
     if (forced === null) return null
+    const version2 = flavour === undefined ? undefined : parseFlavour(flavour)
+    if (version2 === null) return null
     return {
       type: 'command',
       id: id as number,
@@ -796,6 +832,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
       selected,
       focus,
       ...(forced === undefined ? {} : { force: forced }),
+      ...(version2 === undefined ? {} : { flavour: version2 }),
     }
   }
   if (type === 'jevKey') return { type: 'jevKey' }

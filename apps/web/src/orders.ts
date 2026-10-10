@@ -40,6 +40,7 @@ import {
   judgeCover,
   judgeHeard,
   judgeInterruption,
+  type Flavour,
   type Interruption,
 } from '../../../packages/extension/src/jev/plain.ts'
 import type { Lesson } from '../../../packages/extension/src/lesson.ts'
@@ -113,6 +114,9 @@ export class Orders {
   private coverSeq = { at: 0 }
   private planSeq = { at: 0 }
 
+  /** Mientras se rehace el programa con otra versión: cuál. */
+  private remaking: Flavour | null = null
+
   constructor(private readonly port: OrderPort) {}
 
   /**
@@ -153,6 +157,8 @@ export class Orders {
    * preparado sigue valiendo, si hay que ajustarlo o si es otra cosa.
    */
   async receive(message: CommandMessage) {
+    // Otra versión de lo que se pidió: se empieza de nuevo, con esa. (Lo de antes se puede deshacer.)
+    if (message.flavour) return this.remake(message, message.flavour)
     const active = this.building
     if (!active) {
       this.held = false
@@ -191,6 +197,33 @@ export class Orders {
       { ...message, version: this.port.version() },
       what === 'ajustar' ? active.command : undefined,
     )
+  }
+
+  /**
+   * Rehace el programa con **otra versión** de las que se propusieron: para lo que se estuviera construyendo,
+   * vacía el programa (queda en el historial: se puede deshacer) y lo construye de nuevo con esa versión.
+   */
+  private async remake(message: CommandMessage, flavour: Flavour) {
+    const { port } = this
+    this.held = false
+    const active = this.building
+    if (active) {
+      this.build?.abort()
+      await active.done
+    }
+    const length = port.text().length
+    if (length > 0 && !port.write([{ start: 0, end: length, text: '' }], true)) {
+      this.reply(message, { kind: 'failed', say: 'No se pudo empezar de nuevo.' })
+      return
+    }
+    await port.refresh()
+    this.turns = []
+    this.remaking = flavour
+    try {
+      await this.handle({ ...message, version: port.version(), selected: null, focus: null })
+    } finally {
+      this.remaking = null
+    }
   }
 
   private reply(message: CommandMessage, directive: Directive) {
@@ -555,6 +588,8 @@ export class Orders {
     said?: string,
   ): Promise<boolean> {
     const { port } = this
+    // La versión pedida (si se está rehaciendo con otra): se toma ahora, antes de esperar a nada.
+    const flavour = this.remaking
     this.build?.abort()
     const control = new AbortController()
     this.build = control
@@ -598,6 +633,15 @@ export class Orders {
         }
         if (event.type === 'architecture') {
           port.post({ type: 'architecture', modules: event.modules })
+          return
+        }
+        if (event.type === 'flavours') {
+          port.post({
+            type: 'flavours',
+            command: said ?? command,
+            options: event.options,
+            chosen: event.chosen,
+          })
           return
         }
         const seq = event.say === '' ? undefined : ++this.speechSeq
@@ -665,6 +709,7 @@ export class Orders {
                 outline: effect.outline,
                 ...(effect.teach ? { teach: true } : {}),
                 flow: port.flow(),
+                ...(flavour ? { flavour } : {}),
               },
             )
           : await modify(

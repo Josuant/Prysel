@@ -303,6 +303,11 @@ export function localDecider(): Decider {
               ? SURE
               : 0.1,
           }
+        } else if (id === 'abierta') {
+          // Sin un modelo que lea, se hace lo que se dijo: no se le buscan versiones.
+          answers[id] = { type: 'noul', noul: 0.1 }
+        } else if (id === 'sabor') {
+          answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'v0', UNSURE)
         } else if (id === 'arranque') {
           // Sin un modelo que lea, no se sabe cuál es la principal: lo decide quien pregunta.
           answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'f0', UNSURE)

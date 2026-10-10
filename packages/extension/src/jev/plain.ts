@@ -860,6 +860,126 @@ export async function judgeEntry(
   return Number.isInteger(at) && at >= 0 && at < names.length ? at : null
 }
 
+// ───────────────────────── los sabores: una petición abierta, hecha concreta ─────────────────────────
+
+/**
+ * Una **versión concreta** de una petición abierta. «Un algoritmo genético» no dice qué evoluciona ni hacia
+ * dónde: hay que elegir («una frase que se acerca a "hola mundo"», «unos y ceros hasta que todos sean unos»).
+ * `shows`: lo que se verá al ejecutarla, que es por lo que se elige.
+ */
+export interface Flavour {
+  title: string
+  shows: string
+}
+
+/** Cuántas versiones se proponen. */
+export const MAX_FLAVOURS = 3
+/** Con cuánta certeza de que la petición es abierta se le buscan versiones. */
+export const OPEN_THRESHOLD = 0.6
+
+export function flavourSystem(): string {
+  return [
+    'Te piden un programa en Python con una petición abierta: dice el tema, pero no qué ejemplo concreto hacer.',
+    `Propón ${MAX_FLAVOURS} versiones concretas y bien distintas entre sí. Cada una, un programa pequeño que al ejecutarse enseñe por pantalla algo que se entienda a simple vista, sin pedir nada por teclado.`,
+    'Una por línea, con este formato exacto y nada más:',
+    'Título corto: lo que se verá al ejecutarla',
+    'Sin numerar, sin comillas, sin frases de introducción ni de cierre. En español.',
+  ].join('\n')
+}
+
+/** Una línea de la respuesta, como versión: `Título: lo que se verá`. `null` si no lo es. */
+export function flavourFromLine(line: string): Flavour | null {
+  const text = line
+    .trim()
+    // Primero las negritas (`**Título**`), luego la viñeta o el número: si no, un `*` de negrita pasa por viñeta.
+    .replace(/\*\*|__|`/g, '')
+    .replace(/^(?:[-*•–]|\d+[.)])\s*/, '')
+  const at = text.indexOf(':')
+  if (at < 3) return null
+  const title = text.slice(0, at).trim()
+  const shows = text
+    .slice(at + 1)
+    .trim()
+    .replace(/\.$/, '')
+  if (title.length > 60 || shows.length < 8 || shows.length > 180) return null
+  return { title, shows }
+}
+
+/** Las versiones de una respuesta entera: sus líneas válidas, sin repetir título. */
+export function flavoursOf(answer: string): Flavour[] {
+  const found: Flavour[] = []
+  for (const line of answer.split('\n')) {
+    const flavour = flavourFromLine(line)
+    if (
+      !flavour ||
+      found.some((other) => other.title.toLowerCase() === flavour.title.toLowerCase())
+    )
+      continue
+    found.push(flavour)
+    if (found.length >= MAX_FLAVOURS) break
+  }
+  return found
+}
+
+/** Lo que se pidió, ya con la versión elegida: es lo que se le da a la IA para planear y escribir. */
+export const withFlavour = (command: string, flavour: Flavour): string =>
+  `${command}\n(En concreto, esta versión: ${flavour.title}: ${flavour.shows}. Haz esa, no otra.)`
+
+/**
+ * ¿Es una petición **abierta**? Dice un tema o una clase de programa, pero no qué caso concreto construir. Lo
+ * decide el JEV: de eso depende que se le busquen versiones (y se elija una) o que se haga lo que se dijo.
+ */
+export async function judgeOpen(
+  decider: Decider,
+  command: string,
+): Promise<{ open: number; ms: number }> {
+  const { answers, ms } = await decider.decide({
+    state: { orden: command },
+    questions: {
+      abierta: {
+        type: 'noul',
+        instructions:
+          'La `orden` pide un programa. ¿Es una petición abierta: nombra un tema o una clase de programa, pero no dice qué caso concreto hay que hacer (con qué datos, para conseguir qué)?',
+        criteria: {
+          true: 'Solo nombra el tema o la técnica («un algoritmo genético», «un juego», «algo con listas»): caben muchos programas distintos.',
+          false:
+            'Dice qué tiene que hacer el programa, con qué o para qué («una función que sume dos números», «adivina un número del 1 al 10», «ordena esta lista»).',
+        },
+      },
+    },
+  })
+  return { open: answers['abierta']?.type === 'noul' ? answers['abierta'].noul : 0, ms }
+}
+
+/**
+ * De las versiones propuestas, cuál se hace: la que mejor se **ve funcionar** (un resultado que se entiende de
+ * un vistazo). Lo elige el JEV; si no se decide, la primera.
+ */
+export async function judgeFlavour(
+  decider: Decider,
+  command: string,
+  options: readonly Flavour[],
+): Promise<{ chosen: number; ms: number }> {
+  if (options.length < 2) return { chosen: 0, ms: 0 }
+  const { answers, ms } = await decider.decide({
+    state: { orden: command },
+    questions: {
+      sabor: {
+        type: 'choice',
+        instructions:
+          'Hay que hacer un programa pequeño para la `orden`, que es abierta. ¿Cuál de estas versiones es mejor para alguien que quiere verlo funcionar: la que enseña en pantalla un resultado que se entiende de un vistazo?',
+        criteria: Object.fromEntries(
+          options.map((option, at) => [`v${at}`, `${option.title}: ${option.shows}`]),
+        ),
+      },
+    },
+  })
+  const answer = answers['sabor']
+  if (answer?.type !== 'choice' || answer.confidence < ARCH_THRESHOLD) return { chosen: 0, ms }
+  const at = Number(answer.choice.slice(1))
+  return { chosen: Number.isInteger(at) && at >= 0 && at < options.length ? at : 0, ms }
+}
+
 // ───────────────────────── la arquitectura: qué papel hace cada módulo y qué forma tiene ─────────────────────────
 
 /** Los papeles que puede hacer un módulo, y cómo se le explican al JEV. */

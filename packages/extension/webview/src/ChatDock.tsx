@@ -39,6 +39,12 @@ export interface ChatDockProps {
    * qué hace, cambiarlo, quitarlo). La orden habla de «esto», y va con la selección.
    */
   about?: { label: string } | undefined
+  /**
+   * La petición era abierta y se hizo una versión concreta: cuál (`chosen`) y las otras que se propusieron.
+   * Se dice, y cada una de las otras es un botón que rehace el programa con ella.
+   */
+  flavours?: { options: readonly { title: string; shows: string }[]; chosen: number } | undefined
+  onFlavour?: (at: number) => void
   onSubmit: (text: string) => void
   onChoose: (option: AskOption) => void
   onStop: () => void
@@ -117,6 +123,8 @@ export function ChatDock({
   ai,
   suggestions,
   about,
+  flavours,
+  onFlavour,
   onSubmit,
   onChoose,
   onStop,
@@ -405,6 +413,31 @@ export function ChatDock({
           <button type="button" className="chat__chip" onClick={() => send('Quita esto')}>
             Quítalo
           </button>
+        </div>
+      )}
+
+      {/* Se eligió una versión de lo que se pidió: se dice cuál, y las otras quedan a un toque. */}
+      {flavours && !about && !building && (
+        <div className="chat__chips chat__chips--flavours">
+          <span
+            className="chat__about"
+            title={`${flavours.options[flavours.chosen]?.title ?? ''}: ${flavours.options[flavours.chosen]?.shows ?? ''}`}
+          >
+            Versión: {flavours.options[flavours.chosen]?.title ?? ''}
+          </span>
+          {flavours.options.map((option, at) =>
+            at === flavours.chosen ? null : (
+              <button
+                key={option.title}
+                type="button"
+                className="chat__chip"
+                title={`Rehacerlo así: ${option.shows}`}
+                onClick={() => onFlavour?.(at)}
+              >
+                ↻ {option.title}
+              </button>
+            ),
+          )}
         </div>
       )}
 

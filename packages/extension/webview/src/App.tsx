@@ -334,6 +334,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
   const [xray, setXray] = useState(false)
   /**
+   * La petición era abierta y se hizo una versión concreta: lo que se pidió, las versiones que se propusieron
+   * y cuál se hizo. Las otras quedan a mano en el chat, para rehacerlo con una de ellas.
+   */
+  const [flavours, setFlavours] = useState<{
+    command: string
+    options: { title: string; shows: string }[]
+    chosen: number
+  } | null>(null)
+  /**
    * Desde dónde se mira el programa: su **idea** (qué hace, en unas líneas), sus **partes** (la arquitectura)
    * o su **detalle** (el diagrama abierto, paso a paso).
    */
@@ -487,6 +496,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setGists(message.gists)
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
+      } else if (message.type === 'flavours') {
+        setFlavours({ command: message.command, options: message.options, chosen: message.chosen })
       } else if (message.type === 'architecture') {
         setPlanned(message.modules)
       } else if (message.type === 'arched') {
@@ -1695,7 +1706,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     const home = fn ? homeOf(fn.id) : null
     if (home !== focusId) openView(home)
   }, [program, wantedId, spotId, spotKey, homeOf, focusId, openView])
-  const sendOrder = (text: string, force?: Forced) => {
+  const sendOrder = (
+    text: string,
+    force?: Forced,
+    /** Rehacerlo con otra de las versiones que se propusieron (`text` es la petición de entonces). */
+    flavour?: { title: string; shows: string },
+  ) => {
     if (version === null) return
     hush()
     const id = ++orderSeq.current
@@ -1703,8 +1719,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     awaitingPaint.current = performance.now()
     paintArmed.current = false
     setOrder({ phase: 'deciding', text })
+    // Algo nuevo sobre un lienzo vacío: las versiones de lo anterior ya no vienen a cuento.
+    if (!flavour && (program?.nodes.length ?? 0) === 0) setFlavours(null)
     // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
-    const drawn = program && program.nodes.length > 0 ? null : sketchOf(text)
+    const drawn = flavour || !(program && program.nodes.length > 0) ? sketchOf(text) : null
     setJudged(null)
     setPlanned(null)
     setForeseen(null)
@@ -1718,7 +1736,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     )
     setChat((previous) => [
       ...previous.slice(-60),
-      { id, role: 'user', text },
+      { id, role: 'user', text: flavour ? `Otra versión: ${flavour.title}` : text },
       { id, role: 'ai', text: '', busy: true, note: 'Pensando…' },
     ])
     post({
@@ -1726,9 +1744,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       id,
       text,
       version,
-      selected,
-      focus: view.focus?.id ?? null,
+      selected: flavour ? null : selected,
+      focus: flavour ? null : (view.focus?.id ?? null),
       ...(force ? { force } : {}),
+      ...(flavour ? { flavour } : {}),
     })
   }
   /**
@@ -2800,6 +2819,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               ? (features.starters ?? features.suggestions ?? [])
               : (features.suggestions ?? [])
           }
+          flavours={flavours ?? undefined}
+          onFlavour={(at) => {
+            const option = flavours?.options[at]
+            if (!flavours || !option) return
+            setFlavours({ ...flavours, chosen: at })
+            sendOrder(flavours.command, undefined, option)
+          }}
           onSubmit={(text) => {
             hear(text)
           }}

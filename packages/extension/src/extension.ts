@@ -1278,6 +1278,8 @@ async function runDirected(
         postToAll({ type: 'architecture', modules: event.modules })
         return
       }
+      // La versión que se eligió para una petición abierta: aquí no hay dónde ofrecer las otras.
+      if (event.type === 'flavours') return
       // Lo que lleva voz lleva un número: el lienzo avisa con él cuando ha terminado de decirlo.
       const seq = event.say === '' ? undefined : ++speechSeq
       heard =
