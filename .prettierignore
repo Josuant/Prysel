@@ -4,3 +4,4 @@ pnpm-lock.yaml
 **/generated/
 # Copia literal del design system (su hash se verifica en un test): no reformatear.
 packages/design-tokens/src/tokens.base.json
+apps/web/public/pyodide

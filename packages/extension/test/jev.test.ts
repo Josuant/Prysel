@@ -225,7 +225,17 @@ describe('lo que se le pregunta a Jev', () => {
     await decideCommand(input('añade un bucle'), jev)
     expect(jev.requests).toHaveLength(1)
     const { state, questions } = jev.requests[0] as JevRequest
-    expect(Object.keys(questions)).toEqual(['es_orden', 'accion', 'pieza', 'donde', 'objetivo'])
+    expect(Object.keys(questions)).toEqual([
+      'es_orden',
+      'accion',
+      'pieza',
+      'donde',
+      'objetivo',
+      'envolver_en',
+      'mover_que',
+      'mover_donde',
+      'mover_como',
+    ])
     expect((state as { orden: string }).orden).toBe('añade un bucle')
     const targets = questions.objetivo
     expect(targets?.type === 'choice' && Object.values(targets.criteria)).toContain(
@@ -380,6 +390,7 @@ describe('la resolución: de las respuestas a la directiva', () => {
       kind: 'ask',
       question: '¿Elimino variable «limite = 10» (línea 2)?',
       options: [{ label: 'Sí, eliminar', force: { intent: 'eliminar', target: limit?.id } }],
+      plain: true,
     })
     const confirmed = await decideCommand(
       input('quita el límite', { forced: { intent: 'eliminar', target: limit?.id ?? '' } }),
@@ -629,6 +640,18 @@ describe('los mensajes de las órdenes se validan', () => {
     expect(parseHostMessage({ ...message, force: { intent: 'formatear el disco' } })).toBeNull()
     expect(parseHostMessage({ ...message, selected: 7 })).toBeNull()
     expect(parseHostMessage({ type: 'jevKey' })).toEqual({ type: 'jevKey' })
+    // Jugar el programa: las respuestas dadas (una vacía es pulsar Intro), o `null` para volver al ejemplo.
+    expect(parseHostMessage({ type: 'play', answers: ['50', ''], fresh: true })).toEqual({
+      type: 'play',
+      answers: ['50', ''],
+      fresh: true,
+    })
+    expect(parseHostMessage({ type: 'play', answers: null })).toEqual({
+      type: 'play',
+      answers: null,
+    })
+    expect(parseHostMessage({ type: 'play', answers: [7] })).toBeNull()
+    expect(parseHostMessage({ type: 'play' })).toBeNull()
   })
 
   it('una decisión del motor, y lo que llega después', () => {

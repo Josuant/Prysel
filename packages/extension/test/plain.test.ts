@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Decider, JevAnswer } from '../src/jev/client.ts'
 import { localDecider } from '../src/jev/local.ts'
+import { codePrompt, judgeArchitecture, judgeCover, judgeDone } from '../src/jev/plain.ts'
 import { bestMatch, locate } from '../webview/src/marking.ts'
 import {
   CodeStream,
@@ -8,6 +9,7 @@ import {
   formulaOf,
   fragmentsOf,
   judgeChunk,
+  judgeHeard,
   judgeInterruption,
   hinted,
   judgeMarks,
@@ -284,6 +286,17 @@ describe('subrayar la parte exacta de la que habla una frase', () => {
   })
 })
 
+describe('mientras se le oye: qué está pidiendo, palabra a palabra', () => {
+  it('con cada palabra, el JEV adelanta qué clase de cosa es', async () => {
+    const heard = async (text: string) => (await judgeHeard(localDecider(), text)).kind
+    expect(await heard('una')).toBe('nada')
+    expect(await heard('una función')).toBe('funcion')
+    expect(await heard('una función que sume dos números')).toBe('funcion')
+    expect(await heard('ahora una clase calculadora')).toBe('clase')
+    expect(await heard('un programa que juegue')).toBe('programa')
+  })
+})
+
 describe('si el usuario interrumpe: ¿vale lo que ya estaba preparado?', () => {
   const ask = async (said: string) =>
     (
@@ -365,5 +378,176 @@ describe('lo que decide el JEV de cada trozo', () => {
       '',
     )
     expect(plain.aid).toBeNull()
+  })
+})
+
+describe('un paso de una orden larga que ya está hecho', () => {
+  it('lo dice el JEV mirando el programa; el motor local, que no lo lee, no da nada por hecho', async () => {
+    const asked: unknown[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { state: unknown }) => {
+        asked.push(request.state)
+        return Promise.resolve({ ms: 1, answers: { hecho: { type: 'noul' as const, noul: 0.93 } } })
+      },
+    }
+    const done = await judgeDone(jev, 'Pon el tablero en el programa principal', 'tablero = []\n', [
+      'Saca el tablero de la función',
+    ])
+    expect(done).toBe(0.93)
+    expect(asked[0]).toMatchObject({
+      paso: 'Pon el tablero en el programa principal',
+      antes: ['Saca el tablero de la función'],
+    })
+    expect(
+      await judgeDone(localDecider(), 'Pon el tablero en el programa', 'x = 1\n', []),
+    ).toBeLessThan(0.6)
+  })
+})
+
+describe('lo pedido y lo construido: qué pieza cubre cada parte', () => {
+  const parts = ['ver el total', 'exportar a un archivo', 'añadir un gasto']
+  const pieces = ['añadir_gasto', 'calcular_suma']
+
+  it('una pregunta cerrada por parte, con las piezas como opciones; la duda no decide', async () => {
+    const offered: unknown[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, unknown> }) => {
+        offered.push(request.questions)
+        return Promise.resolve({
+          ms: 1,
+          answers: {
+            parte0: { type: 'choice' as const, choice: 'p1', confidence: 0.9 },
+            parte1: { type: 'choice' as const, choice: 'ninguna', confidence: 0.8 },
+            parte2: { type: 'choice' as const, choice: 'p0', confidence: 0.3 },
+          },
+        })
+      },
+    }
+    // Segura de la pieza, segura de que ninguna, y sin saberlo.
+    expect(await judgeCover(jev, 'llevar la cuenta de mis gastos', parts, pieces)).toEqual([
+      'calcular_suma',
+      '',
+      null,
+    ])
+    expect(offered[0]).toMatchObject({
+      parte0: { type: 'choice', criteria: { p0: 'añadir_gasto', p1: 'calcular_suma' } },
+    })
+  })
+
+  it('del plan se pregunta qué etapa se ocupará, no cuál lo hace ya', async () => {
+    const asked: string[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, { instructions: string }> }) => {
+        asked.push(request.questions.parte0?.instructions ?? '')
+        return Promise.resolve({
+          ms: 1,
+          answers: { parte0: { type: 'choice' as const, choice: 'p0', confidence: 0.8 } },
+        })
+      },
+    }
+    expect(
+      await judgeCover(jev, 'gastos', ['saber cuánto llevo'], ['Mostrar total'], true),
+    ).toEqual(['Mostrar total'])
+    expect(asked[0]).toContain('etapas del plan')
+  })
+
+  it('el motor local no lo sabe, y sin piezas no se pregunta', async () => {
+    expect(await judgeCover(localDecider(), 'gastos', parts, pieces)).toEqual([null, null, null])
+    expect(await judgeCover(localDecider(), 'gastos', parts, [])).toEqual([null, null, null])
+  })
+})
+
+describe('el plan dice cómo encajan sus partes', () => {
+  it('lo que va detrás de «<-» son las partes de las que esa necesita algo', () => {
+    expect(stageFromLine('Mostrar el total: suma todos los precios <- Lista de gastos')).toEqual({
+      title: 'Mostrar el total',
+      goal: 'suma todos los precios',
+      needs: ['Lista de gastos'],
+    })
+    expect(
+      stageFromLine('3. Menú: deja elegir <- Añadir gasto, Mostrar total y Buscar más caro'),
+    ).toEqual({
+      title: 'Menú',
+      goal: 'deja elegir',
+      needs: ['Añadir gasto', 'Mostrar total', 'Buscar más caro'],
+    })
+    // Sin «<-» (o con «ninguna»), la parte es la de siempre.
+    expect(stageFromLine('Lista de gastos: los gastos de ejemplo')).toEqual({
+      title: 'Lista de gastos',
+      goal: 'los gastos de ejemplo',
+    })
+    expect(stageFromLine('Lista de gastos: los gastos <- ninguna')?.needs).toBeUndefined()
+  })
+
+  it('el código se pide sabiendo de quién usa algo cada parte', () => {
+    const prompt = codePrompt({
+      command: 'gastos',
+      where: 'al final',
+      context: '',
+      stages: [
+        { title: 'Lista', goal: 'los datos' },
+        { title: 'Total', goal: 'suma', needs: ['Lista'] },
+      ],
+    })
+    expect(prompt).toContain('2. Total: suma (usa lo de: Lista)')
+    expect(prompt).toContain('1. Lista: los datos\n')
+  })
+})
+
+describe('la arquitectura: el JEV dice el papel de cada módulo y la forma', () => {
+  const modules = [
+    { title: 'Lista de gastos', does: 'Su código: solo guarda valores.' },
+    { title: 'Menú', does: 'Su código: repite algo; usa a 3 de los otros módulos.' },
+  ]
+
+  it('una sola llamada: una pregunta cerrada por módulo y, si hay varias formas que cuadran, otra', async () => {
+    const asked: Record<string, { criteria?: Record<string, unknown> }>[] = []
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, { criteria?: Record<string, unknown> }> }) => {
+        asked.push(request.questions)
+        return Promise.resolve({
+          ms: 1,
+          answers: {
+            papel0: { type: 'choice' as const, choice: 'datos', confidence: 0.92 },
+            // Del menú no está seguro: se queda en lo que el código deje ver.
+            papel1: { type: 'choice' as const, choice: 'salida', confidence: 0.31 },
+            forma: { type: 'choice' as const, choice: 'centro', confidence: 0.8 },
+          },
+        })
+      },
+    }
+    const verdict = await judgeArchitecture(jev, modules, ['ciclo', 'centro', 'capas'])
+    expect(verdict).toEqual({ roles: ['datos', null], shape: 'centro' })
+    expect(Object.keys(asked[0] ?? {})).toEqual(['papel0', 'papel1', 'forma'])
+    // Solo se ofrecen las formas que el grafo tiene: ni una más.
+    expect(Object.keys(asked[0]?.forma?.criteria ?? {})).toEqual(['ciclo', 'centro', 'capas'])
+  })
+
+  it('con una sola forma no se pregunta cuál; y una que no se ofreció no se acepta', async () => {
+    const jev = {
+      id: 'grabado',
+      decide: (request: { questions: Record<string, unknown> }) =>
+        Promise.resolve({
+          ms: 1,
+          answers: {
+            ...('forma' in request.questions
+              ? { forma: { type: 'choice' as const, choice: 'embudo', confidence: 0.9 } }
+              : {}),
+          },
+        }),
+    }
+    expect((await judgeArchitecture(jev, modules, ['capas'])).shape).toBeNull()
+    expect((await judgeArchitecture(jev, modules, ['tuberia', 'capas'])).shape).toBeNull()
+  })
+
+  it('el motor local no lo sabe: todo se queda en lo que el código deja ver', async () => {
+    expect(await judgeArchitecture(localDecider(), modules, ['ciclo', 'centro', 'capas'])).toEqual({
+      roles: [null, null],
+      shape: null,
+    })
   })
 })

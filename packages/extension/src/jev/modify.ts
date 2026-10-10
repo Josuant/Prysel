@@ -21,6 +21,478 @@ export type ChangeOp =
   | { op: 'add'; line: number; inside: boolean; code: string; say: string }
 
 const text = (value: unknown) => (typeof value === 'string' ? value : '')
+
+/** Quita la sangría que comparten todas las líneas de un trozo de código: la deja pegada al margen. */
+export function dedent(code: string): string {
+  const rows = code.split('\n')
+  const depth = Math.min(
+    ...rows.filter((row) => row.trim() !== '').map((row) => row.length - row.trimStart().length),
+  )
+  return Number.isFinite(depth) && depth > 0
+    ? rows.map((row) => (row.trim() === '' ? '' : row.slice(depth))).join('\n')
+    : code
+}
+
+/**
+ * Si la sangría de un programa tiene sentido: ninguna línea va más metida que la anterior sin que esta
+ * abra un bloque (acabe en dos puntos). El analizador tolera eso sin quejarse, y Python no: es lo que
+ * delata un cambio mal colocado. No mira dentro de textos de varias líneas ni de paréntesis abiertos.
+ */
+export function indentationOk(source: string): boolean {
+  const QUOTES = '"'.repeat(3)
+  const TICKS = "'".repeat(3)
+  let depth = 0
+  let triple: string | null = null
+  let continued = false
+  let previous: { indent: number; opens: boolean } | null = null
+  for (const raw of source.split(/\r?\n/)) {
+    const inside = depth > 0 || triple !== null || continued
+    let code = ''
+    for (let i = 0; i < raw.length; i++) {
+      const three = raw.slice(i, i + 3)
+      if (triple !== null) {
+        if (three === triple) {
+          triple = null
+          i += 2
+        }
+        continue
+      }
+      const char = raw[i] ?? ''
+      if (three === QUOTES || three === TICKS) {
+        triple = three
+        i += 2
+        continue
+      }
+      if (char === '"' || char === "'") {
+        // Un texto de una línea: hasta su cierre (o el final de la línea).
+        let end = i + 1
+        while (end < raw.length && raw[end] !== char) end += raw[end] === '\\' ? 2 : 1
+        i = end
+        code += '""'
+        continue
+      }
+      if (char === '#') break
+      if ('([{'.includes(char)) depth++
+      else if (')]}'.includes(char)) depth = Math.max(0, depth - 1)
+      code += char
+    }
+    const written = code.trim()
+    continued = written.endsWith('\\')
+    const closed = depth === 0 && triple === null && !continued
+    if (inside) {
+      // Una línea de continuación: lo que cuenta es cómo acaba la sentencia entera.
+      if (previous && closed) previous.opens = written.endsWith(':')
+      continue
+    }
+    if (written === '') continue
+    const indent = raw.length - raw.trimStart().length
+    if (previous ? indent > previous.indent && !previous.opens : indent > 0) return false
+    previous = { indent, opens: closed && written.endsWith(':') }
+  }
+  return true
+}
+
+/** Un tramo que cambia entre dos versiones de un programa: dónde queda en la nueva y cuántas líneas trae. */
+export interface Hunk {
+  /** La línea donde queda en la versión nueva (desde 1). */
+  line: number
+  /** Cuántas líneas pone (0: solo quita). */
+  added: number
+  /** Cuántas quita de la versión anterior. */
+  removed: number
+}
+
+/**
+ * Las ediciones que quitan el comentario que repite al rótulo de su etapa. Al construir por etapas, cada una
+ * lleva su rótulo (`# Título: qué hace`) y la IA suele abrir su código con otro comentario que dice lo mismo
+ * (`# Título`): dos líneas seguidas para una sola idea. Se quita la segunda.
+ */
+/** Si un comentario dice lo mismo que el rótulo de encima: comparten alguna palabra de peso (o su raíz). */
+function echoes(heading: string, comment: string): boolean {
+  const stems = (text: string) =>
+    text
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length >= 4)
+      .map((word) => word.slice(0, 5))
+  const said = new Set(stems(heading))
+  return stems(comment).some((stem) => said.has(stem))
+}
+
+export function echoEdits(source: string): { start: number; end: number; text: string }[] {
+  const edits: { start: number; end: number; text: string }[] = []
+  const rows = source.split('\n')
+  let offset = 0
+  let heading: { indent: string; text: string } | null = null
+  for (const row of rows) {
+    const comment = /^(\s*)#\s?(.*)$/.exec(row.replace(/\r$/, ''))
+    if (
+      comment &&
+      heading &&
+      comment[1] === heading.indent &&
+      !/prysel:/.test(row) &&
+      echoes(heading.text, comment[2] ?? '')
+    ) {
+      edits.push({ start: offset, end: offset + row.length + 1, text: '' })
+      heading = null
+    } else {
+      // Un rótulo de etapa: un comentario de línea entera con «Título: qué hace».
+      heading =
+        comment && /^[^:]{2,60}:\s+\S/.test(comment[2] ?? '') && !/prysel:/.test(row)
+          ? { indent: comment[1] ?? '', text: comment[2] ?? '' }
+          : null
+    }
+    offset += row.length + 1
+  }
+  // En orden: quien las aplica las espera de arriba abajo.
+  return [...edits, ...twinEdits(source, new Set(edits.map((edit) => edit.start)))].sort(
+    (a, b) => a.start - b.start,
+  )
+}
+
+/** Un título, sin tildes, mayúsculas ni puntuación: para saber si dos rótulos nombran la misma etapa. */
+const sameTitle = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+
+/**
+ * La misma etapa rotulada dos veces. Además del rótulo del plan (`# Título: qué hace`), la IA a veces pone el
+ * suyo (`# Título`, a secas) unas líneas más abajo, o justo antes: el lienzo ve dos etapas con el mismo
+ * nombre, y cada una se queda con medio trabajo. Son la misma:
+ *
+ * - si el rótulo a secas va **después** (sin otro rótulo en medio), se quita: lo suyo sigue en la etapa;
+ * - si va **antes**, es donde de verdad empieza la etapa: el rótulo completo sube a su sitio.
+ *
+ * `taken`: dónde empiezan las líneas que ya se van a quitar por otra razón.
+ */
+function twinEdits(
+  source: string,
+  taken: ReadonlySet<number>,
+): { start: number; end: number; text: string }[] {
+  interface Label {
+    start: number
+    end: number
+    indent: string
+    title: string
+    full: boolean
+    row: string
+  }
+  const labels: Label[] = []
+  let offset = 0
+  for (const raw of source.split('\n')) {
+    const row = raw.replace(/\r$/, '')
+    const comment = /^(\s*)#\s?(.*)$/.exec(row)
+    if (comment && !/prysel:/.test(row) && !taken.has(offset)) {
+      const text = (comment[2] ?? '').trim()
+      const full = /^[^:]{2,60}:\s+\S/.test(text)
+      const title = sameTitle(full ? (text.split(':')[0] ?? '') : text)
+      if (title !== '') {
+        labels.push({
+          start: offset,
+          end: offset + raw.length + 1,
+          indent: comment[1] ?? '',
+          title,
+          full,
+          row: raw,
+        })
+      }
+    }
+    offset += raw.length + 1
+  }
+  const edits: { start: number; end: number; text: string }[] = []
+  const used = new Set<Label>()
+  labels.forEach((label, at) => {
+    if (!label.full || used.has(label)) return
+    const level = (other: Label) => other.indent === label.indent
+    // Hacia abajo, hasta el siguiente rótulo completo de su altura: sus repeticiones a secas sobran.
+    for (const other of labels.slice(at + 1).filter(level)) {
+      if (other.full) break
+      if (other.title !== label.title || used.has(other)) continue
+      used.add(other)
+      edits.push({ start: other.start, end: other.end, text: '' })
+    }
+    // Hacia arriba, hasta el rótulo completo anterior: si la etapa ya se había anunciado a secas, empieza ahí.
+    const above = labels.slice(0, at).filter(level).reverse()
+    for (const other of above) {
+      if (other.full) break
+      if (other.title !== label.title || used.has(other)) continue
+      used.add(other)
+      edits.push({ start: other.start, end: other.end, text: `${label.row}\n` })
+      edits.push({ start: label.start, end: label.end, text: '' })
+      break
+    }
+  })
+  return edits
+}
+
+/** Un trozo del programa a la altura del archivo: una función, una clase, una asignación, un bucle… */
+export interface TopBlock {
+  /** Lo que lo identifica: `def nombre`, `class Nombre`, `nombre =`, o su primera línea. */
+  key: string
+  /** Su primera línea de código, para nombrarlo. */
+  head: string
+  /** Su texto entero, con los comentarios que lleva encima. */
+  text: string
+}
+
+/**
+ * Los trozos de un programa a la altura del archivo, en orden. Los comentarios y decoradores de justo encima
+ * van con el trozo que encabezan; lo que continúa uno (`else:`, un corchete que se cierra) va con él.
+ */
+export function topBlocks(source: string): TopBlock[] {
+  const rows = source.replace(/\r\n/g, '\n').split('\n')
+  const blocks: { lead: string[]; body: string[] }[] = []
+  let lead: string[] = []
+  let open: { lead: string[]; body: string[] } | null = null
+  for (const row of rows) {
+    const flush = /^\S/.test(row)
+    if (!flush) {
+      // Una línea en blanco o sangrada: del trozo abierto, o de lo que encabeza al siguiente.
+      if (open && lead.length === 0) open.body.push(row)
+      else lead.push(row)
+      continue
+    }
+    if (/^(#|@)/.test(row)) {
+      lead.push(row)
+      continue
+    }
+    if (open && /^(else\b|elif\b|except\b|finally\b|[\])}])/.test(row)) {
+      open.body.push(...lead, row)
+      lead = []
+      continue
+    }
+    open = { lead, body: [row] }
+    blocks.push(open)
+    lead = []
+  }
+  return blocks.map((block) => {
+    const head = block.body[0] ?? ''
+    const named =
+      /^(?:async\s+)?(def|class)\s+(\w+)/.exec(head) ??
+      /^()([A-Za-z_]\w*)\s*(?::[^=]+)?=(?!=)/.exec(head)
+    const key = named ? `${named[1] ?? ''} ${named[2] ?? ''}`.trim() : head.trim()
+    const text = [...block.lead, ...block.body].join('\n').replace(/^\n+|\n+$/g, '')
+    return { key: named?.[1] ? key : named ? `${key} =` : key, head: head.trim(), text }
+  })
+}
+
+const KEYWORDS = new Set(
+  'and as assert async await break class continue def del elif else except finally for from global if import in is lambda None nonlocal not or pass raise return True False try while with yield print len range int float str list dict sum max min'.split(
+    ' ',
+  ),
+)
+
+/** La forma de un trozo sin sus nombres: dos trozos que solo se diferencian en cómo se llaman las cosas dan lo mismo. */
+const skeleton = (text: string) =>
+  text
+    .replace(/#.*$/gm, '')
+    .replace(/"[^"\n]*"|'[^'\n]*'/g, '""')
+    .replace(/[A-Za-z_]\w*/g, (word) => (KEYWORDS.has(word) ? word : '_'))
+    .replace(/\s+/g, ' ')
+    .trim()
+
+/** Cuánto se parecen dos trozos, de 0 a 1: las líneas que comparten, sobre las del más largo. */
+function alike(a: string, b: string): number {
+  const rows = (text: string) =>
+    text
+      .split('\n')
+      .map((row) => row.trim())
+      .filter((row) => row !== '' && !row.startsWith('#'))
+  const [x, y] = [rows(a), rows(b)]
+  if (x.length === 0 || y.length === 0) return 0
+  const pool = [...y]
+  let shared = 0
+  for (const row of x) {
+    const at = pool.indexOf(row)
+    if (at < 0) continue
+    shared++
+    pool.splice(at, 1)
+  }
+  return shared / Math.max(x.length, y.length)
+}
+
+/**
+ * A qué trozo de la versión nueva corresponde cada uno de la anterior (su índice allí, o −1 si no está). Es
+ * el mismo si se llama igual; o si es igual salvo por los nombres (se renombró); o si comparte casi todas sus
+ * líneas (se retocó). Lo que no corresponde a nada, se perdió.
+ */
+function pairBlocks(before: readonly TopBlock[], after: readonly TopBlock[]): number[] {
+  const used = new Set<number>()
+  const pairs = before.map(() => -1)
+  const match = (test: (old: TopBlock, fresh: TopBlock) => boolean) => {
+    for (const [at, old] of before.entries()) {
+      if ((pairs[at] ?? -1) >= 0) continue
+      const found = after.findIndex((fresh, index) => !used.has(index) && test(old, fresh))
+      if (found < 0) continue
+      used.add(found)
+      pairs[at] = found
+    }
+  }
+  match((old, fresh) => old.key === fresh.key)
+  match((old, fresh) => skeleton(old.text) === skeleton(fresh.text))
+  match((old, fresh) => alike(old.text, fresh.text) >= 0.6)
+  return pairs
+}
+
+/**
+ * Si lo que hacía un trozo sigue en la versión nueva aunque ya no sea un trozo suelto: sus líneas están,
+ * metidas en otra cosa (un `print` que pasó a estar dentro de un `if`, unas líneas que se envolvieron en un
+ * bucle). Eso no se ha perdido: se ha cambiado.
+ */
+function absorbed(block: TopBlock, after: string): boolean {
+  const rows = (text: string) =>
+    text
+      .split('\n')
+      .map((row) => row.trim())
+      .filter((row) => row !== '' && !row.startsWith('#'))
+  const mine = rows(block.text)
+  if (mine.length === 0) return true
+  const there = new Set(rows(after))
+  return mine.filter((row) => there.has(row)).length / mine.length >= 0.6
+}
+
+/** Qué trozos de la versión anterior no están en la nueva de ninguna manera (su índice allí es −1). */
+function pairing(before: string, after: string) {
+  const old = topBlocks(before)
+  const fresh = topBlocks(after)
+  const pairs = pairBlocks(old, fresh)
+  const lost = old.map((block, at) => (pairs[at] ?? -1) < 0 && !absorbed(block, after))
+  return { old, fresh, pairs, lost }
+}
+
+/**
+ * Los trozos que estaban en el programa y ya no están en su versión nueva: ni cambiados, ni renombrados, ni
+ * metidos dentro de otra cosa.
+ */
+export function lostBlocks(before: string, after: string): TopBlock[] {
+  const { old, lost } = pairing(before, after)
+  return old.filter((_, at) => lost[at])
+}
+
+/**
+ * La versión nueva, con lo que se había perdido devuelto a su sitio: cada trozo que falta vuelve donde
+ * estaba, entre los que sí siguen (que quedan como en la versión nueva).
+ */
+export function restoreLost(before: string, after: string): string {
+  const { old, fresh, pairs, lost } = pairing(before, after)
+  const used = new Set<number>()
+  const out: string[] = []
+  for (const [index, block] of old.entries()) {
+    const at = pairs[index] ?? -1
+    if (at < 0) {
+      // Solo vuelve lo que de verdad falta; lo que quedó dentro de otra cosa ya está.
+      if (lost[index]) out.push(block.text)
+      continue
+    }
+    // Lo nuevo que la versión nueva puso antes de este trozo entra con él.
+    for (let k = 0; k <= at; k++) {
+      if (used.has(k)) continue
+      used.add(k)
+      out.push(fresh[k]?.text ?? '')
+    }
+  }
+  for (const [index, block] of fresh.entries()) if (!used.has(index)) out.push(block.text)
+  return `${out.filter((text) => text !== '').join('\n\n')}\n`
+}
+
+/**
+ * Qué cambia entre dos versiones de un programa, línea a línea: los tramos distintos (para enseñarlos uno a
+ * uno) y la edición única que lleva de una a otra (para escribirla de una vez, sin estados intermedios).
+ */
+export function changesBetween(
+  before: string,
+  after: string,
+): { edit: { start: number; end: number; text: string } | null; hunks: Hunk[] } {
+  const a = before.split('\n')
+  const b = after.split('\n')
+  // La subsecuencia común más larga, por líneas: los programas que caben aquí son pequeños.
+  const common: number[][] = Array.from({ length: a.length + 1 }, () =>
+    new Array<number>(b.length + 1).fill(0),
+  )
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      const row = common[i]
+      if (!row) continue
+      row[j] =
+        a[i] === b[j]
+          ? (common[i + 1]?.[j + 1] ?? 0) + 1
+          : Math.max(common[i + 1]?.[j] ?? 0, row[j + 1] ?? 0)
+    }
+  }
+  const hunks: Hunk[] = []
+  let i = 0
+  let j = 0
+  let open: Hunk | null = null
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      open = null
+      i++
+      j++
+      continue
+    }
+    if (!open) {
+      open = { line: j + 1, added: 0, removed: 0 }
+      hunks.push(open)
+    }
+    if (j < b.length && (i >= a.length || (common[i]?.[j + 1] ?? 0) >= (common[i + 1]?.[j] ?? 0))) {
+      open.added++
+      j++
+    } else {
+      open.removed++
+      i++
+    }
+  }
+  if (hunks.length === 0) return { edit: null, hunks }
+  // La edición: de la primera línea distinta a la última, con lo que hay igual por delante y por detrás.
+  let head = 0
+  while (head < a.length && head < b.length && a[head] === b[head]) head++
+  let tail = 0
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++
+  }
+  const offset = (rows: string[], count: number) =>
+    rows.slice(0, count).reduce((sum, row) => sum + row.length + 1, 0)
+  const start = offset(a, head)
+  const end = Math.min(before.length, offset(a, a.length - tail) - (tail === 0 ? 1 : 0))
+  const text =
+    b.slice(head, b.length - tail).join('\n') + (tail === 0 || head === b.length - tail ? '' : '\n')
+  return { edit: { start, end: Math.max(start, end), text }, hunks }
+}
+
+/** A la IA: el programa entero, con el cambio hecho. Sin formato: código, y nada más. */
+export function rewriteSystem(): string {
+  return [
+    'Te doy un programa en Python que ya está escrito y un cambio que alguien pide. Devuelve el programa ENTERO con ese cambio hecho.',
+    'Solo el código: Python tal cual iría en el archivo, sin explicaciones ni vallas de código alrededor.',
+    'Cambia lo mínimo necesario para cumplir lo que se pide, pero cúmplelo de verdad: si hace falta un dato nuevo, un método que no existe o tocar otra parte del programa para que funcione, hazlo. Todo lo demás déjalo idéntico, línea por línea, con su misma sangría y sus mismos comentarios.',
+    'Los comentarios cortos que encabezan un grupo de pasos («# Aplicar la física») son los nombres de las cajas del diagrama: consérvalos, y si lo que cambias añade un grupo de pasos nuevo a un cuerpo que ya los tiene, ponle el suyo. Si se pide agrupar u ordenar por intención, eso es justo lo que hay que hacer: una línea en blanco y un comentario así delante de cada grupo, sin cambiar el código.',
+    'No añadas ejemplos de uso, llamadas de prueba ni print que no se pidan. No leas ni escribas archivos, ni uses la red o el sistema, salvo que se pida expresamente.',
+  ].join('\n')
+}
+
+export function rewritePrompt(request: {
+  command: string
+  source: string
+  scope?: string
+}): string {
+  return [
+    `Lo que se pide: ${request.command}`,
+    request.scope ? `Se refiere sobre todo a ${request.scope}.` : '',
+    `El programa:\n${request.source}`,
+  ]
+    .filter((part) => part !== '')
+    .join('\n\n')
+}
 const lineOf = (value: unknown) =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null
 
@@ -30,7 +502,9 @@ export function opOf(value: unknown): ChangeOp | null {
   const raw = value as Record<string, unknown>
   const op = text(raw.op).toLowerCase()
   const say = text(raw.say).trim().slice(0, 300)
-  const code = text(raw.code).replace(/\r\n/g, '\n').replace(/\s+$/, '')
+  // El modelo copia a veces la sangría que la línea tiene en el archivo: aquí va sin ella (se la pone
+  // quien la escribe, según dónde caiga). Con la suya y la nuestra, quedaba doble.
+  const code = dedent(text(raw.code).replace(/\r\n/g, '\n').replace(/\s+$/, ''))
   if (op === 'cambiar' || op === 'change') {
     const line = lineOf(raw.linea ?? raw.line)
     return line === null || line === 0 || code.trim() === ''
@@ -92,7 +566,30 @@ export function applyOp(program: Program, map: LineMap, op: ChangeOp): Applied {
   const at = map.now(op.line)
   const node = statementAt(program, at)
   if (!node) {
-    return { ok: false, error: `En la línea ${op.line} no empieza ninguna sentencia.` }
+    // En esa línea no empieza ninguna sentencia (un `pass`, una línea en blanco, una que ya no está): no
+    // es motivo para dejarlo todo a medias. Lo que se añade va a lo que envuelve esa línea —el cuerpo de
+    // la clase o la función, donde un `pass` se sustituye— o, si no la envuelve nada, al final. Y lo que
+    // se cambia o se quita ahí, si no hay nada que cambiar, se da por hecho.
+    const owner = program.nodes
+      .filter(
+        (other) =>
+          other.range?.head !== undefined && other.line < at && (other.lineEnd ?? other.line) >= at,
+      )
+      .sort((x, y) => y.line - x.line)[0]
+    const rows = program.source.split('\n')
+    const written = (rows[at - 1] ?? '').trim()
+    // Cambiar una línea que no existe, o que no es un hueco (`pass`, `...`), sí es un error: no hay qué.
+    const hole = written === 'pass' || written === '...'
+    if (at > rows.length || (op.op === 'change' && !(hole && owner))) {
+      return { ok: false, error: `En la línea ${op.line} no empieza ninguna sentencia.` }
+    }
+    if (op.op === 'remove') {
+      return { ok: true, change: { edits: [] }, line: owner?.line ?? at, effect: 'leaving' }
+    }
+    const change = addCode(program, owner ? { into: owner.id } : {}, op.code)
+    return change.edits.length > 0 && change.select
+      ? { ok: true, change, line: change.select.line, effect: 'born' }
+      : { ok: false, error: `En la línea ${op.line} no empieza ninguna sentencia.` }
   }
   if (op.op === 'change') {
     const change = replaceCode(program, node.id, op.code)

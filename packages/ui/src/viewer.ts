@@ -14,6 +14,17 @@ export interface ViewerContent {
   stale?: boolean
   /** No enseña un valor: dice que la IA está trabajando ahí. Late mientras dura. */
   busy?: boolean
+  /**
+   * Es el hueco de algo que aún no existe (lo que el usuario está pidiendo): qué clase de cosa va a ser. Se
+   * dibuja con su icono y su color, para que se reconozca antes de que haya código.
+   */
+  ghost?:
+    'function' | 'class' | 'loop' | 'condition' | 'value' | 'list' | 'program' | 'change' | 'talk'
+  /**
+   * Con `ghost`: lo que ya se sabe de la pieza mientras se pide. Su nombre (cuando se ha dicho), lo que
+   * recibe, y lo que se lleva dicho de lo que hace. La caja se va rellenando con ello, palabra a palabra.
+   */
+  draft?: { name?: string; takes?: readonly string[]; does?: string }
   /** Es una ayuda para entender (una curva, una tabla), no algo que el programa haya calculado. */
   aid?: boolean
   table?: {
@@ -78,7 +89,15 @@ export function viewerHeight(content: ViewerContent): number {
   return VIEWER.head + Math.max(body, VIEWER.line) + VIEWER.pad
 }
 
-export const viewerSize = (content: ViewerContent): { w: number; h: number } => ({
-  w: viewerWidth(content),
-  h: viewerHeight(content),
-})
+export const viewerSize = (content: ViewerContent): { w: number; h: number } =>
+  // La caja de algo que se está pidiendo mide lo que una pieza: su cabecera, lo que recibe (si se ha
+  // dicho), lo que se va diciendo de ella y las líneas de su cuerpo.
+  content.ghost && content.draft
+    ? {
+        w: 280,
+        h:
+          118 +
+          ((content.draft.takes?.length ?? 0) > 0 ? 30 : 0) +
+          Math.min(3, Math.ceil((content.draft.does?.length ?? 0) / 34)) * 18,
+      }
+    : { w: viewerWidth(content), h: viewerHeight(content) }

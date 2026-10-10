@@ -1,0 +1,244 @@
+/*
+ * El chat con la IA (interfaz de chat del lienzo: la web, el móvil). Abajo del diagrama: la última respuesta
+ * en una línea, sugerencias, y la caja para escribir o dictar. Desplegado, la conversación entera encima.
+ */
+.chat {
+  position: relative;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px calc(8px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border-card);
+  background: var(--surface);
+}
+
+.chat__thread {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  display: flex;
+  max-height: min(60dvh, 560px);
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 14px 12px;
+  border-top: 1px solid var(--border-card);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  box-shadow: 0 -12px 24px -16px rgb(0 0 0 / 0.25);
+  backdrop-filter: blur(var(--blur-glass, 12px));
+  overscroll-behavior: contain;
+}
+.chat__empty {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.chat__bubble {
+  max-width: 88%;
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.chat__bubble p {
+  margin: 0;
+}
+.chat__bubble[data-role='user'] {
+  align-self: flex-end;
+  border-bottom-right-radius: 6px;
+  background: var(--accent);
+  color: var(--void);
+}
+.chat__bubble[data-role='ai'] {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border-card);
+  border-bottom-left-radius: 6px;
+  background: var(--void);
+  color: var(--ink);
+}
+.chat__bubble[data-tone='error'] {
+  border-color: color-mix(in srgb, var(--state-error) 45%, transparent);
+}
+.chat__lines {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--ink);
+}
+.chat__lines li + li {
+  margin-top: 4px;
+}
+.chat__note {
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+.chat__bubble[data-busy] .chat__note::after,
+.chat__preview[data-busy] .chat__preview-text::after {
+  content: '';
+  display: inline-block;
+  width: 1.2em;
+  animation: chat-dots 1.2s steps(4) infinite;
+  text-align: left;
+}
+@keyframes chat-dots {
+  0% {
+    content: '';
+  }
+  25% {
+    content: '.';
+  }
+  50% {
+    content: '..';
+  }
+  75% {
+    content: '...';
+  }
+}
+
+.chat__preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat__preview-text {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.35;
+}
+.chat__preview-more {
+  flex: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.chat__chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0;
+  scrollbar-width: none;
+}
+.chat__chips::-webkit-scrollbar {
+  display: none;
+}
+.chat__chip,
+.chat__key {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--border-card);
+  border-radius: 999px;
+  background: var(--void);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+  justify-content: center;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--void));
+  white-space: normal;
+}
+
+.chat__composer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat__input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border-card);
+  border-radius: 22px;
+  outline: none;
+  background: var(--void);
+  color: var(--ink);
+  font: inherit;
+  /* 16px como mínimo: con menos, iOS hace zoom al enfocar. */
+  font-size: 16px;
+}
+.chat__input:focus {
+  border-color: var(--accent);
+}
+.chat__icon,
+.chat__send {
+  display: grid;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.chat__icon[aria-pressed='true'] {
+  color: var(--accent);
+}
+.chat__send {
+  width: 44px;
+  height: 44px;
+  background: var(--accent);
+  color: var(--void);
+}
+.chat__send:disabled {
+  opacity: 0.4;
+}
+.chat__send[data-stop] {
+  background: var(--state-error);
+}
+.chat__send[data-listening] {
+  animation: chat-pulse 1.2s ease-in-out infinite;
+}
+/* El micrófono abierto: encendido y latiendo, para que no se olvide que escucha. */
+.chat__mic[data-listening] {
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink, var(--surface));
+  animation: chat-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chat-pulse {
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat__mic[data-listening],
+  .chat__send[data-listening] {
+    animation: none;
+  }
+}

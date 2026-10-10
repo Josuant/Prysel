@@ -19,15 +19,74 @@ export interface ViewerNodeData extends Record<string, unknown> {
 
 export type ViewerFlowNode = Node<ViewerNodeData, 'viewer'>
 
+/** El icono de cada clase de hueco: el mismo que llevará la pieza cuando exista. */
+const GHOST_ICON = {
+  function: 'function',
+  class: 'package',
+  loop: 'loop',
+  condition: 'branch',
+  value: 'hash',
+  list: 'list',
+  program: 'flag',
+  change: 'pencil',
+  talk: 'book',
+} as const
+
 export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
   const { content, size } = data
   const image = viewerImageSize(content, size.w)
+  // La caja de algo que se está pidiendo: con la forma de lo que va a ser, rellenándose al hablar.
+  if (content.ghost && content.draft) {
+    const { name, takes = [], does } = content.draft
+    return (
+      <div
+        className="viewer ghost-box"
+        data-ghost={content.ghost}
+        style={{ width: size.w, minHeight: size.h }}
+      >
+        <Handle
+          type="target"
+          id="in"
+          position={data.aside ? Position.Right : Position.Left}
+          isConnectable={false}
+        />
+        <header className="ghost-box__head">
+          <span className="ghost-box__badge">
+            <Icon name={GHOST_ICON[content.ghost]} size={15} />
+          </span>
+          <span className="ghost-box__kind">{content.title}</span>
+          <span className="ghost-box__name" data-empty={name ? undefined : ''} key={name ?? ''}>
+            {name ?? '…'}
+          </span>
+        </header>
+        {takes.length > 0 && (
+          <div className="ghost-box__takes">
+            {takes.map((item) => (
+              <span className="ghost-box__chip" key={item}>
+                {item}
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="ghost-box__does">
+          {does}
+          <span className="ghost-box__caret" aria-hidden />
+        </p>
+        <div className="ghost-box__lines" aria-hidden>
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    )
+  }
   return (
     <div
       className="viewer"
       data-selected={selected ? '' : undefined}
       data-stale={content.stale ? '' : undefined}
       data-busy={content.busy ? '' : undefined}
+      data-ghost={content.ghost}
       data-aid={content.aid ? '' : undefined}
       style={{ width: size.w, height: size.h }}
     >
@@ -38,7 +97,7 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
         isConnectable={false}
       />
       <header className="viewer__head">
-        <Icon name="chart" size={13} />
+        <Icon name={content.ghost ? GHOST_ICON[content.ghost] : 'chart'} size={13} />
         <span className="viewer__title" title={content.title}>
           {content.title}
         </span>

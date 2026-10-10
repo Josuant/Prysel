@@ -23,6 +23,11 @@ export const INTENTS = [
   'ensenar',
   'etapa',
   'eliminar',
+  'mover',
+  'envolver',
+  'duplicar',
+  'juntar',
+  'extraer',
   'renombrar',
   'enfocar',
   'explicar',
@@ -45,10 +50,21 @@ const INTENT_MEANING: Record<Intent, string> = {
   etapa:
     'Empezar una etapa o sección con nombre en un punto del programa (un rótulo que agrupa pasos).',
   eliminar: 'Eliminar, borrar o quitar un elemento que ya existe.',
+  mover:
+    'Cambiar de sitio algo que YA existe, llevándolo a otra cosa que TAMBIÉN existe ya en el programa: meterlo dentro de ella («pon esta función dentro de la clase Animal», «mete esto en el bucle») o ponerlo antes o después («mueve esto después de aquello»).',
+  envolver:
+    'Meter algo que YA existe dentro de una estructura NUEVA, que se crea ahora para contenerlo: un bucle que lo repita, una decisión que lo condicione, un intento que recoja su error, o una clase nueva de la que pase a ser un método («mete esto en un bucle», «envuélvelo en un si», «que no falle si da error», «mete la función sumar en una clase Calculadora»).',
+  duplicar:
+    'Hacer una copia de algo que YA existe, justo debajo («duplica esto», «copia esa línea»).',
+  juntar:
+    'Unir dos cosas que YA existen en una sola («junta estas dos funciones», «une esto con aquello», «fusiónalas»).',
+  extraer:
+    'Sacar algo que YA existe a una función propia, y dejar en su sitio la llamada («extrae esto a una función», «convierte este trozo en una función»).',
   modificar:
     'Cambiar código que YA está escrito: que haga otra cosa, corregirlo, refactorizarlo, simplificarlo, cambiar un valor o una operación («ahora que reste en lugar de sumar», «refactoriza esto»).',
   renombrar: 'Solo cambiar el nombre de una variable, una función o una etapa que ya existe.',
-  enfocar: 'Ir a un elemento, mostrarlo, buscarlo o llevar la vista hasta él, sin cambiar nada.',
+  enfocar:
+    'Mover la vista, sin cambiar nada: ver, ir a, entrar en o buscar algo que ya existe («ver la clase Animal», «entra en sumar»), o volver al programa principal («ver el programa», «sal de aquí»).',
   ensenar:
     'Querer entender un tema, un concepto o cómo funciona algo que NO es un elemento de este programa («explícame cómo funciona la reproducción humana», «qué es una red neuronal», «cómo se calcula el interés compuesto»).',
   explicar:
@@ -69,6 +85,11 @@ const INTENT_LABEL: Record<Intent, string> = {
   ensenar: 'Explicar el tema',
   etapa: 'Empezar una etapa',
   eliminar: 'Eliminar',
+  mover: 'Moverlo',
+  envolver: 'Envolverlo',
+  duplicar: 'Duplicarlo',
+  juntar: 'Juntarlos',
+  extraer: 'Extraerlo a una función',
   modificar: 'Cambiar lo que hay',
   renombrar: 'Renombrar',
   enfocar: 'Ir a verlo',
@@ -103,6 +124,8 @@ export const THRESHOLDS = {
   /** Por debajo, no está claro qué se pide: se pregunta. */
   intent: 0.45,
   piece: 0.4,
+  /** Por debajo, con un programa ya escrito, no se pone una plantilla: lo resuelve la IA. */
+  pieceSure: 0.75,
   /** Por debajo, el sitio es el de siempre: dentro o detrás de lo seleccionado, o al final. */
   place: 0.4,
   target: 0.45,
@@ -110,6 +133,10 @@ export const THRESHOLDS = {
   destructive: 0.7,
   /** Por encima, la orden son varias órdenes seguidas: se parte y se decide cada una. */
   several: 0.6,
+  /** Por encima, la orden retoca lo que se acaba de hacer: se cambia eso, no se empieza otra cosa. */
+  followUp: 0.7,
+  /** Por debajo, mover o envolver no está claro: si además la orden es un retoque, se trata como tal. */
+  structural: 0.8,
 } as const
 
 /** Lo que el usuario ya aclaró al contestar una pregunta: no se le vuelve a preguntar a Jev. */
@@ -142,6 +169,11 @@ export interface EngineInput {
    * nada se toma como algo que construir, no como ruido.
    */
   typed?: boolean
+  /**
+   * La conversación hasta ahora: las últimas órdenes y lo que se hizo con cada una, de la más antigua a la
+   * más reciente. Sin ella, un «pero usando la clase» no se sabe a qué se refiere.
+   */
+  history?: readonly { order: string; did: string }[]
 }
 
 /** Dónde se escribe algo nuevo (lo mismo que admite la acción de añadir). */
@@ -194,10 +226,24 @@ export type Directive =
       pending?: { id: string; template: TemplateId }
       /** Hay que explicar este elemento (lo redacta la IA generativa, después). */
       explain?: string
+      /**
+       * La orden es una pregunta sobre el programa: la contesta la IA generativa, después, mirándolo entero,
+       * y se señala el sitio que lo decide. No cambia el código.
+       */
+      answer?: boolean
+      /** La vista vuelve al programa principal: se sale de la función o la clase que se estuviera viendo. */
+      home?: boolean
+      /**
+       * Cómo se enseña lo que se va a hacer, antes de que cambie el código: lo que se envuelve se enmarca, lo
+       * que se copia se desdobla, lo que se junta viaja hasta lo otro, lo que se extrae se levanta.
+       */
+      gesture?: { kind: 'wrap' | 'copy' | 'merge' | 'extract'; id: string; to?: string }
     }
   | {
       kind: 'ask'
       question: string
+      /** Es una confirmación de sí o no, ya concreta: no hay que pedirle a la IA que la mejore. */
+      plain?: boolean
       /** Cada salida aclara la orden (`force`) o es otra orden, ya completa (`order`). */
       options: { label: string; force?: Forced; order?: string }[]
     }
@@ -351,12 +397,30 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
   const forced = input.forced ?? {}
   const chosen = targets.find((target) => target.id === input.selected)
   const viewing = targets.find((target) => target.id === input.focus)
+  const history = input.history ?? []
   const state = {
     orden: input.text,
     viendo: viewing ? `la función «${viewing.head}»` : 'el programa entero',
     seleccionado: chosen ? chosen.description : 'nada',
+    // Lo que se ha ido pidiendo antes, y lo que se hizo: la orden puede referirse a ello.
+    ...(history.length > 0
+      ? { antes: history.map((turn) => `«${turn.order}» → ${turn.did}`) }
+      : {}),
   }
   const questions: Record<string, JevQuestion> = {}
+  // ¿Es un retoque de lo que se acaba de hacer? Se pregunta siempre que haya un «antes».
+  if (forced.intent === undefined && history.length > 0 && input.genId !== undefined) {
+    questions.sigue = {
+      type: 'noul',
+      instructions:
+        'El campo `antes` es lo que se ha pedido y hecho justo antes. La `orden` de ahora, ¿corrige, matiza o completa ESO MISMO que se acaba de hacer, en vez de pedir una cosa nueva e independiente?',
+      criteria: {
+        true: 'Retoca lo que se acaba de hacer: «pero usando la clase», «no, que reste», «mejor con un bucle», «que lo haga con el objeto que creaste». Sola no se entendería.',
+        false:
+          'Pide algo nuevo, que se entiende por sí solo: otra función, otra clase, ver algo, borrar algo.',
+      },
+    }
+  }
   if (forced.intent === undefined) {
     // Lo que se escribe en la caja de órdenes va dirigido al editor: no hace falta preguntarlo.
     if (!input.typed) {
@@ -386,15 +450,82 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         },
       }
     }
+    // «Muestra el tablero» se puede entender de dos maneras: llévame a verlo en el diagrama, o que el
+    // programa lo muestre al ejecutarse. Con las claves de verdad el JEV lo leía siempre como lo primero, y
+    // el «muéstralo» de «crea un tablero y muéstralo» se quedaba sin hacer. Cuando la orden usa uno de esos
+    // verbos, se le pregunta aparte cuál de las dos es.
+    if (
+      input.genId !== undefined &&
+      input.program.nodes.length > 0 &&
+      SHOWS.test(plainText(input.text))
+    ) {
+      questions.ver = {
+        type: 'choice',
+        instructions:
+          'La `orden` pide «mostrar», «enseñar» o «imprimir» algo. ¿Qué quiere quien la da: mirar él esa parte del diagrama, o que el programa lo muestre cuando se ejecute?',
+        criteria: {
+          diagrama:
+            'Quiere ir a mirar una parte del diagrama: que la vista vaya allí, sin cambiar el programa. «Enséñame la clase animal», «muéstrame la función sumar», «ver el programa principal».',
+          programa:
+            'Quiere que el PROGRAMA lo muestre al ejecutarse: que lo imprima, o que llame a la función que lo muestra. Es un cambio en el código. «Muestra el tablero», «imprime el total», «muéstralo» justo después de pedir que se cree algo.',
+        },
+      }
+    }
+    if (input.genId !== undefined && input.program.nodes.length > 0) {
+      // «¿Cómo sabe cuándo he ganado?» pregunta por ESTE programa. Con las claves de verdad se entendía como
+      // un tema que enseñar, y se escribía un modelo nuevo (una copia del juego) al final del programa de
+      // quien solo quería entender el suyo.
+      if (ASKS.test(plainText(input.text))) {
+        questions.sobre = {
+          type: 'choice',
+          instructions:
+            'La `orden` pregunta algo o pide una explicación. ¿Pregunta por ESTE programa (el que ya está escrito: cómo hace algo, por qué, qué pasa si…), o quiere aprender un tema nuevo que no es este programa?',
+          criteria: {
+            programa:
+              'Pregunta por lo que este programa ya hace: «¿cómo sabe cuándo he ganado?», «¿por qué empieza en cero?», «¿qué pasa si escribo una letra?», «¿dónde se calcula el total?».',
+            peticion:
+              'No pregunta nada: pide que se haga o se cambie algo, aunque lo diga con forma de pregunta o empiece por «dime»: «¿puedes añadir un contador?», «dime cuánto llevo gastado», «¿y si tuviera tres vidas?».',
+            tema: 'Quiere que se le enseñe un tema general, que no está en este programa: «explícame la recursión», «qué es una red neuronal», «cómo funciona el interés compuesto».',
+          },
+        }
+      }
+      // «Que pregunte si quiero jugar otra vez» no se cumple pegando una pregunta al final: hay que hacer
+      // que el juego se repita. Si lo que se pide cambia cómo funciona lo que ya hay, no es añadir una pieza.
+      questions.encaje = {
+        type: 'choice',
+        instructions:
+          'El programa ya tiene código. Para cumplir la `orden`, ¿basta con añadir una pieza nueva y suelta, o hay que cambiar o envolver lo que ya está escrito?',
+        criteria: {
+          pieza:
+            'Basta con añadir algo nuevo que no toca lo que hay: otra variable, otra función, imprimir un dato al final, una lista nueva.',
+          cambio:
+            'Hay que cambiar cómo funciona lo que ya está: que se repita, que tenga un límite, que pregunte y actúe según la respuesta, que haga otra cosa, que lo de antes pase solo en ciertos casos.',
+        },
+      }
+    }
+    // Se está viendo una función o una clase por dentro: lo que se pide, ¿es parte de ella o es algo aparte?
+    if (input.genId !== undefined && input.focus !== null) {
+      questions.ambito = {
+        type: 'choice',
+        instructions:
+          'Quien da la `orden` está mirando por dentro una función o una clase del programa. Lo nuevo que pide, ¿es parte de eso que está mirando, o es algo aparte?',
+        criteria: {
+          dentro:
+            'Es parte de lo que está mirando: un paso más de esa función, un método de esa clase, algo que dice «aquí» o «dentro».',
+          programa:
+            'Es algo propio, a la altura del programa: otra función, otra clase, otro programa. No va dentro de lo que está mirando.',
+        },
+      }
+    }
     if (input.genId !== undefined) {
       questions.alcance = {
         type: 'choice',
         instructions: 'Si la `orden` pide escribir código nuevo, ¿cuánto es?',
         criteria: {
           directo:
-            'Poco: una función sencilla o unas pocas sentencias (hasta unas seis). Se escribe directamente.',
+            'Una pieza: una función, una clase, un bucle, unas sentencias, o algo que se añade a lo que ya hay (aunque use o contenga lo que ya existe). Se escribe directamente.',
           esquema:
-            'Bastante: un programa o un algoritmo con varias fases. Conviene pensar primero sus etapas y luego detallar cada una.',
+            'Un programa o un algoritmo entero, con varias fases distintas. Conviene pensar primero sus etapas y luego detallar cada una.',
         },
       }
     }
@@ -437,6 +568,50 @@ export function questionsFor(input: EngineInput, targets: readonly Target[]): As
         [NONE]: 'No nombra ningún elemento concreto.',
       },
     }
+    if (forced.intent === undefined || forced.intent === 'envolver') {
+      questions.envolver_en = {
+        type: 'choice',
+        instructions: 'Si la `orden` pide meter algo dentro de una estructura nueva, ¿en cuál?',
+        criteria: {
+          bucle: 'Un bucle: que se repita.',
+          decision: 'Una decisión: que solo pase si se cumple una condición.',
+          intento: 'Un intento (try/except): SOLO si la orden habla de errores o de que no falle.',
+          clase: 'Una clase: que pase a ser parte de ella (un método suyo).',
+        },
+      }
+    }
+    // Mover y juntar tienen dos extremos, y hay que saber cuál es cuál: se preguntan aparte (no cuesta nada).
+    if (forced.intent === undefined || forced.intent === 'mover' || forced.intent === 'juntar') {
+      const elements = {
+        ...Object.fromEntries(targets.map((target) => [target.ref, target.description])),
+        ...(chosen
+          ? { [SELECTED]: 'Lo que está seleccionado: «esto», «este», «aquí», «el seleccionado».' }
+          : {}),
+        [NONE]: 'No lo dice.',
+      }
+      questions.mover_que = {
+        type: 'choice',
+        instructions:
+          'Si la `orden` pide cambiar algo de sitio o juntarlo con otra cosa, ¿QUÉ elemento es el que se mueve (el que viaja)?',
+        criteria: elements,
+      }
+      questions.mover_donde = {
+        type: 'choice',
+        instructions:
+          'Si la `orden` pide cambiar algo de sitio o juntarlo con otra cosa, ¿cuál es el DESTINO: el elemento dentro del cual, junto al cual o con el cual va a quedar?',
+        criteria: elements,
+      }
+      questions.mover_como = {
+        type: 'choice',
+        instructions: 'Si la `orden` pide cambiar algo de sitio, ¿cómo queda respecto al destino?',
+        criteria: {
+          dentro:
+            'Dentro de él: pasa a ser parte de su interior (de la clase, de la función, del bucle).',
+          despues: 'Justo después de él, a su misma altura.',
+          antes: 'Justo antes de él, a su misma altura.',
+        },
+      }
+    }
   }
   return { state, questions }
 }
@@ -459,6 +634,79 @@ export function nameIn(text: string): string | null {
   return name
 }
 
+/** El nombre de la clase que nombra una orden («…en una clase calculadora» → `Calculadora`), o `null`. */
+export function classIn(text: string): string | null {
+  const found =
+    /\bclase\s+(?:nueva\s+)?(?:llamada\s+|que\s+se\s+llame\s+|de\s+nombre\s+)?([\p{L}_][\p{L}\p{N}_]*)/iu.exec(
+      text,
+    )?.[1]
+  if (!found || FILLER.has(found.toLowerCase()) || !isIdentifier(found)) return null
+  return found.charAt(0).toUpperCase() + found.slice(1)
+}
+
+/**
+ * Los elementos que la orden nombra **tal cual** (una función, una clase o una variable por su nombre), en
+ * el orden en que los dice. Es el respaldo de cuando el JEV no se decide entre ellos: si la orden dice
+ * «sumar y restar» y hay una función `sumar` y otra `restar`, son esas.
+ */
+export function namedBy(text: string, targets: readonly Target[]): Target[] {
+  const words = text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word !== '')
+  // Un nombre se dice como se oye: `insertar_tarjeta` es «insertar tarjeta». Vale si sus palabras salen
+  // seguidas en la orden.
+  const found = targets.flatMap((target) => {
+    const name = /^(?:(?:async\s+)?def|class)\s+(\w+)|^(\w+)\s*=(?!=)/.exec(target.head)
+    const tokens = (name?.[1] ?? name?.[2] ?? '')
+      .toLowerCase()
+      .split('_')
+      .filter((token) => token !== '')
+    if (!target.node || tokens.length === 0) return []
+    for (let at = 0; at + tokens.length <= words.length; at++) {
+      if (tokens.every((token, k) => words[at + k] === token)) {
+        return [{ target, at, end: at + tokens.length }]
+      }
+    }
+    return []
+  })
+  // Dos cosas pueden llamarse igual (`class gato` y `gato = gato()`). La orden suele decir cuál: «el objeto
+  // gato», «la clase gato», «la función…». Entre las que comparten sitio en la frase, gana la que es eso.
+  const KIND_WORDS: [RegExp, RegExp][] = [
+    [/^(objeto|instancia|variable|dato|valor)$/, /^\w+\s*=(?!=)/],
+    [/^(clase)$/, /^class\s/],
+    [/^(funcion|metodo)$/, /^(?:async\s+)?def\s/],
+  ]
+  const saidKind = (at: number) =>
+    KIND_WORDS.find(([word]) => word.test(words[at - 1] ?? '') || word.test(words[at - 2] ?? ''))
+  const chosen = found.filter((entry) => {
+    const rivals = found.filter((other) => other.at === entry.at && other.end === entry.end)
+    const kind = saidKind(entry.at)
+    if (rivals.length < 2 || !kind) return true
+    // Si alguno de los que se llaman igual es de la clase que se dijo, solo vale ese.
+    return (
+      !rivals.some((rival) => kind[1].test(rival.target.head)) || kind[1].test(entry.target.head)
+    )
+  })
+  // «insertar tarjeta y validar pin» nombra a `insertar_tarjeta_y_validar_pin`, no a las dos que lleva
+  // dentro: lo que cae dentro de un nombre más largo no cuenta.
+  return chosen
+    .filter(
+      (entry) =>
+        !chosen.some(
+          (other) =>
+            other !== entry &&
+            other.at <= entry.at &&
+            other.end >= entry.end &&
+            other.end - other.at > entry.end - entry.at,
+        ),
+    )
+    .sort((a, b) => a.at - b.at)
+    .map((entry) => entry.target)
+}
+
 /** El título de «empieza una etapa llamada Población inicial»: lo entrecomillado, o lo que va tras «llamada». */
 export function titleIn(text: string): string | null {
   const quoted = /[«"“]([^«»"”]{1,80})[»"”]/u.exec(text)
@@ -473,6 +721,21 @@ export function titleIn(text: string): string | null {
 }
 
 // ───────────────────────── la resolución ─────────────────────────
+
+/** La orden acaba dando un nombre: «…a suma», «…como total», «…por x». */
+const GIVES_NAME = /(?:^|\s)(?:a|como|por)\s+[«"'`]?[\p{L}_][\p{L}\p{N}_]*[.!?»"'`]*$/iu
+
+/** Pedir salir a la vista general: eso sí es solo mover la vista, aunque no nombre nada. */
+const LEAVES =
+  /\b(programa|principal|main|general|inicio|sal|salir|salgamos|fuera|atras|vuelve|volver|todo)\b/
+
+/** Lo que suena a pregunta o a pedir una explicación. */
+const ASKS =
+  /[¿?]|\b(como|por que|para que|que hace|que pasa|que es|cuando|donde|explica\w*|cuenta(?:me)?|dime)\b/
+
+/** Verbos que tanto piden ir a ver algo como que el programa lo enseñe. */
+const SHOWS = /\b(muestra\w*|mostrar\w*|ensena\w*|imprim\w+|pinta(?:lo|la)?|dibuja(?:lo|la)?)\b/
+const plainText = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
 
 const choice = (answer: JevAnswer | undefined) => (answer?.type === 'choice' ? answer : undefined)
 
@@ -554,7 +817,13 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   if (order < THRESHOLDS.order) return done({ kind: 'ignored', say: 'No lo tomé como una orden.' })
 
   const several = answers.varias?.type === 'noul' ? answers.varias.noul : 0
-  if (several >= THRESHOLDS.several) {
+  // Con el programa vacío, lo que se pide es un programa: «haz el juego de la vida y enseña tres
+  // generaciones» es una sola cosa que construir, no cinco órdenes sueltas. (Partida en pasos, se paró en el
+  // cuarto —«repite el cálculo»: ¿envolver qué?— y nunca llegó a enseñar nada.)
+  if (
+    several >= THRESHOLDS.several &&
+    (input.program.nodes.length > 0 || input.genId === undefined)
+  ) {
     return done({ kind: 'several', say: 'Son varias órdenes: las hago una a una.' })
   }
 
@@ -570,19 +839,64 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
    * se entiende como algo que construir.
    */
   const doubtful = heard === undefined || heard === 'otra' || sure < THRESHOLDS.intent
+  // Cuando no está claro qué se pide y ya hay un programa, lo más probable no se ejecuta a ciegas si es
+  // escribir algo: añadir una plantilla «por si acaso» duplica lo que ya hay. Se le pasa a la IA con el
+  // programa entero delante, que es quien puede ver qué hace falta tocar (y si hay que tocar algo).
+  // Sin una IA que escriba, casi cualquier idea dicha con palabras propias se queda sin entender: se dice
+  // qué falta, en vez de un «no entendí» que no ayuda a quien acaba de llegar.
+  const notUnderstood =
+    input.genId === undefined
+      ? 'Para construir eso hace falta conectar una IA que lo escriba: añade tu clave en Ajustes.'
+      : 'No entendí qué quieres que haga.'
+  const WRITES: readonly Intent[] = [
+    'agregar',
+    'componer',
+    'modificar',
+    'etapa',
+    'mover',
+    'envolver',
+    'duplicar',
+    'juntar',
+    'extraer',
+    'renombrar',
+  ]
+  const hasCode = input.program.nodes.length > 0
+  // La lectura más probable, si la hay. Cuando es escribir algo y ya hay un programa, no se ejecuta a
+  // ciegas: decide la IA, con todo delante. Sin ninguna lectura, se entiende como algo nuevo que construir.
+  const reading = likely[0] ?? (heard === 'otra' ? undefined : heard)
   const guess: Intent | undefined =
-    !doubtful || input.genId === undefined
+    !doubtful || input.genId === undefined || reading === 'eliminar'
       ? undefined
-      : likely[0] !== undefined && likely[0] !== 'eliminar' && sure >= 0.25
-        ? likely[0]
-        : likely[0] === 'eliminar'
-          ? undefined
-          : 'componer'
-  const intent = guess ?? heard
-  if (guess === undefined && (intent === undefined || sure < THRESHOLDS.intent)) {
+      : reading === undefined
+        ? 'componer'
+        : hasCode && WRITES.includes(reading)
+          ? 'modificar'
+          : sure >= 0.25
+            ? reading
+            : 'componer'
+  // Leído como «ir a verlo», pero preguntado aparte dice que es el programa quien tiene que mostrarlo:
+  // es un cambio en el código, y lo hace la IA con todo el programa delante.
+  const shows = choice(answers.ver)
+  const display =
+    (guess ?? heard) === 'enfocar' && shows?.choice === 'programa' && shows.confidence >= 0.5
+  // Una pregunta sobre lo que el programa ya hace no es una orden de escribir, aunque el JEV, dudando, la
+  // lea como «añadir» (visto de verdad: «¿cómo sabe cuándo he ganado?» → añadir, al 24 %, y se cambió el
+  // juego). Si dice claro que pregunta por este programa y no hay una intención firme de otra cosa, se
+  // contesta.
+  const about = choice(answers.sobre)
+  const asking =
+    hasCode &&
+    input.genId !== undefined &&
+    forced.intent === undefined &&
+    forced.target === undefined &&
+    about?.choice === 'programa' &&
+    about.confidence >= 0.7 &&
+    (doubtful || heard === 'ensenar' || heard === 'explicar')
+  const intent = asking ? 'explicar' : display ? 'modificar' : (guess ?? heard)
+  if (!asking && guess === undefined && (intent === undefined || sure < THRESHOLDS.intent)) {
     const options = likely.slice(0, 2)
     if (options.length === 0) {
-      return done({ kind: 'unknown', say: 'No entendí qué quieres que haga.' })
+      return done({ kind: 'unknown', say: notUnderstood })
     }
     return done({
       kind: 'ask',
@@ -591,8 +905,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     })
   }
 
-  if (intent === undefined)
-    return done({ kind: 'unknown', say: 'No entendí qué quieres que haga.' })
+  if (intent === undefined) return done({ kind: 'unknown', say: notUnderstood })
 
   // Sobre qué: lo que el usuario ya aclaró, lo que Jev eligió con certeza o, si no, lo seleccionado.
   const byId = (id: string | null | undefined) => targets.find((target) => target.id === id) ?? null
@@ -604,13 +917,43 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         ? chosen
         : (targets.find((target) => target.ref === named.choice) ?? null)
       : null
-  const target = forced.target !== undefined ? byId(forced.target) : (namedTarget ?? chosen)
-  /** Con cuánta certeza se sabe el objetivo: lo que el usuario eligió a mano es seguro. */
+  // Si el JEV no lo tiene claro y la orden nombra un elemento tal cual, es ese (antes que lo que quedara
+  // seleccionado de otra cosa).
+  const literal = namedTarget === null ? (namedBy(input.text, targets)[0] ?? null) : null
+  // Lo que quedó seleccionado solo es «de lo que se habla» si la orden lo señala («esto», «aquí») o si
+  // lo que se pide es añadir algo (va junto a lo seleccionado, como con el botón). Para borrar, mover o
+  // cambiar algo, una selección que se quedó de antes no dice nada: mandaría borrar lo que no se nombró.
+  const pointed = /\b(esto|este|esta|estos|estas|aqui|eso|ese|esa|seleccionad[oa]s?)\b/.test(
+    input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
+  )
+  const implied =
+    pointed || intent === 'agregar' || intent === 'componer' || intent === 'etapa' ? chosen : null
+  const target =
+    forced.target !== undefined ? byId(forced.target) : (namedTarget ?? literal ?? implied)
+  /** Con cuánta certeza se sabe el objetivo: lo que el usuario eligió a mano, o nombró, es seguro. */
   const targetSure =
-    forced.target !== undefined || (namedTarget === null && chosen !== null)
+    forced.target !== undefined || (namedTarget === null && (literal !== null || implied !== null))
       ? 1
       : (named?.confidence ?? 0)
   const viewing = byId(input.focus)
+  // Mirando una función por dentro, «crea otra función» no la mete dentro de la que se mira: lo dice el
+  // JEV. Solo cuenta si la orden no señala ningún elemento (ni lo nombra, ni hay nada seleccionado): un
+  // «después» o un «final» sin nada a lo que referirse no apunta a ningún sitio de lo que se mira.
+  // Lo que quedó seleccionado de antes tampoco cuenta como señalar: si la orden no lo nombra ni dice
+  // «esto» o «aquí», no es junto a ello donde se pide. (Visto con el JEV de verdad: «crea un tablero», con
+  // un bucle del programa aún seleccionado, acabó dentro de la función que se miraba.)
+  const signalled =
+    forced.target !== undefined ||
+    namedTarget !== null ||
+    literal !== null ||
+    (pointed && chosen !== null)
+  const ambit = choice(answers.ambito)
+  const apartSpot = (place: PlaceId | null): Placed | null =>
+    viewing !== null && !signalled && ambit?.choice === 'programa' && ambit.confidence >= 0.5
+      ? place === 'principio'
+        ? { at: 'start', phrase: 'al principio del programa' }
+        : { phrase: 'al final del programa' }
+      : null
 
   /** Una orden compleja: se decide dónde, y el código lo redacta la IA generativa (y lo juzga el JEV). */
   const compose = (teach = false): Decision => {
@@ -631,9 +974,9 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     // Sin un sitio claro, lo que la orden nombra de pasada («la media de las notas») no es dónde ponerlo.
     // La explicacion de un tema no va dentro de lo que este seleccionado ni de la funcion que se mira:
     // es un trozo nuevo, al final.
-    const { phrase, ...spot } = teach
+    const { phrase, ...spot }: Placed = teach
       ? { phrase: 'al final del programa' }
-      : placeOf(place, place === null ? chosen : target, viewing)
+      : (apartSpot(place) ?? placeOf(place, place === null ? chosen : target, viewing))
     return done({
       kind: 'do',
       intent: 'componer',
@@ -642,9 +985,10 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         gen: input.genId,
         place: spot,
         where: phrase,
-        // Por defecto, primero el plan: solo lo claramente pequeño va directo a los pasos. Un tema que
-        // explicar empieza siempre por su plan: es el índice de la explicación.
-        outline: teach || !(size?.choice === 'directo' && size.confidence >= 0.6),
+        // El plan es para lo que de verdad es un programa entero: una pieza (una función, una clase que use
+        // lo que ya hay) se escribe directa, sin trocearla en etapas. Un tema que explicar empieza siempre
+        // por su plan: es el índice de la explicación.
+        outline: teach || (size?.choice === 'esquema' && size.confidence >= 0.6),
         ...(teach ? { teach: true } : {}),
       },
       say: teach
@@ -653,48 +997,151 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     })
   }
 
+  /**
+   * Meter algo en la clase que nombra la orden: si ya existe, se mueve dentro; si no, se crea alrededor de
+   * ello, y pasa a ser su primer método.
+   */
+  const intoClass = (piece: Target): Decision => {
+    const name = classIn(input.text) ?? 'MiClase'
+    const existing = targets.find(
+      (item) =>
+        item.node?.kind === 'abstraction.class' &&
+        new RegExp(`^class\\s+${name}\\b`, 'i').test(item.head) &&
+        item.id !== piece.id,
+    )
+    if (existing) {
+      return done({
+        kind: 'do',
+        intent: 'mover',
+        effect: { type: 'action', action: { type: 'move', id: piece.id, into: existing.id } },
+        say: `Muevo ${naming(piece)} dentro de ${naming(existing)}.`,
+      })
+    }
+    return done({
+      kind: 'do',
+      intent: 'envolver',
+      effect: { type: 'action', action: { type: 'wrap', id: piece.id, with: 'class', name } },
+      gesture: { kind: 'wrap', id: piece.id },
+      say: `Creo la clase ${name} con ${naming(piece)} dentro.`,
+    })
+  }
+
+  /**
+   * Cambiar lo que ya está escrito (lo redacta la IA generativa). `followUp`: la orden retoca lo que se
+   * acaba de hacer, así que es ahí donde se mira, diga lo que diga de pasada.
+   */
+  /** El JEV dice que cumplir la orden pide cambiar lo que ya está escrito. */
+  const changes = (): boolean => {
+    const fits = choice(answers.encaje)
+    return fits?.choice === 'cambio' && fits.confidence >= 0.6
+  }
+  /** La orden pregunta por lo que este programa ya hace (lo dice el JEV), no por un tema nuevo. */
+  const aboutThis = (): boolean => {
+    const about = choice(answers.sobre)
+    return (
+      hasCode &&
+      input.genId !== undefined &&
+      forced.target === undefined &&
+      about?.choice === 'programa' &&
+      about.confidence >= 0.5
+    )
+  }
+  /** Se contesta mirando el programa: la IA responde en una frase y se señala dónde. No se escribe nada. */
+  const answerIt = (): Decision =>
+    done({
+      kind: 'do',
+      intent: 'explicar',
+      effect: { type: 'focus' },
+      say: 'Lo miro en tu programa.',
+      answer: true,
+    })
+
+  const rework = (followUp: boolean): Decision => {
+    if (input.genId === undefined) {
+      return done({
+        kind: 'unknown',
+        say: 'Para cambiar lo escrito hace falta una IA generativa: elige un modelo.',
+      })
+    }
+    // «Eso», «lo que acabas de hacer»: lo último que se hizo, antes que lo seleccionado.
+    const recent =
+      input.last !== undefined &&
+      forced.target === undefined &&
+      (followUp ||
+        (named?.choice === LAST && named.confidence >= THRESHOLDS.target) ||
+        target === null)
+    const lines = recent
+      ? input.last
+      : target && !followUp
+        ? { from: target.line, to: target.lineEnd }
+        : undefined
+    return done({
+      kind: 'do',
+      intent: 'modificar',
+      effect: {
+        type: 'modify',
+        gen: input.genId,
+        ...(lines ? { lines } : {}),
+        ...(recent
+          ? { scope: 'lo último que se hizo' }
+          : target && !followUp
+            ? { scope: naming(target) }
+            : {}),
+      },
+      ...(target && !recent && !followUp ? { focus: target.id } : {}),
+      say: recent
+        ? 'Lo cambio en lo último que se hizo.'
+        : target && !followUp
+          ? `Lo cambio en ${naming(target)}.`
+          : 'Miro qué hay que cambiar.',
+    })
+  }
+
+  // «Mete sumar a una clase Calculadora»: la orden nombra una pieza que existe y dice, con todas las
+  // letras, que la meta en una clase. Eso es mover (o crear la clase a su alrededor), lo vea el JEV como
+  // lo vea: no se reescribe con la IA lo que se puede cambiar de sitio tal cual, viéndolo.
+  const carried = namedBy(input.text, targets).find(
+    (item) => item.node?.kind !== 'abstraction.class',
+  )
+  if (
+    forced.intent === undefined &&
+    carried !== undefined &&
+    classIn(input.text) !== null &&
+    (['componer', 'agregar', 'modificar', 'otra'] as Intent[]).includes(intent) &&
+    /\b(mete|meter|pon|poner|mueve|mover|lleva|llevar|pasa|pasar|coloca|colocar|incluye|incluir)\b.*\b(a|en|dentro de)\s+(una|la|esa|esta)\s+(nueva\s+)?clase\b/.test(
+      input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
+    )
+  ) {
+    return intoClass(carried)
+  }
+
+  // Un retoque de lo que se acaba de hacer («pero usando la clase») no es una orden nueva, aunque suene a
+  // otra cosa: se cambia lo que hay. Lo dice el JEV, mirando la conversación. Solo pisa lo que iba a
+  // escribir algo nuevo: mover, envolver, juntar o extraer tienen su propia manera de hacerse (y de verse),
+  // y ver, ejecutar o deshacer no cambian nada.
+  const follows = answers.sigue?.type === 'noul' ? answers.sigue.noul : 0
+  // …salvo que el JEV no esté seguro de ellas: un «mover» al 48 % en una orden que retoca lo anterior
+  // («no, pero que se valide en la misma función») no es mover una función entera a otro sitio.
+  const structural = (['mover', 'envolver', 'juntar', 'extraer', 'duplicar'] as Intent[]).includes(
+    intent,
+  )
+  if (
+    forced.intent === undefined &&
+    input.genId !== undefined &&
+    follows >= THRESHOLDS.followUp &&
+    ((['componer', 'agregar', 'modificar', 'otra'] as Intent[]).includes(intent) ||
+      (structural && sure < THRESHOLDS.structural))
+  ) {
+    return rework(true)
+  }
+
   switch (intent) {
     case 'componer':
       return compose()
-    case 'modificar': {
-      if (input.genId === undefined) {
-        return done({
-          kind: 'unknown',
-          say: 'Para cambiar lo escrito hace falta una IA generativa: elige un modelo.',
-        })
-      }
-      // «Eso», «lo que acabas de hacer»: lo último que se hizo, antes que lo seleccionado.
-      const recent =
-        input.last !== undefined &&
-        forced.target === undefined &&
-        ((named?.choice === LAST && named.confidence >= THRESHOLDS.target) || target === null)
-      const lines = recent
-        ? input.last
-        : target
-          ? { from: target.line, to: target.lineEnd }
-          : undefined
-      return done({
-        kind: 'do',
-        intent,
-        effect: {
-          type: 'modify',
-          gen: input.genId,
-          ...(lines ? { lines } : {}),
-          ...(recent
-            ? { scope: 'lo último que se hizo' }
-            : target
-              ? { scope: naming(target) }
-              : {}),
-        },
-        ...(target && !recent ? { focus: target.id } : {}),
-        say: recent
-          ? 'Lo cambio en lo último que se hizo.'
-          : target
-            ? `Lo cambio en ${naming(target)}.`
-            : 'Miro qué hay que cambiar.',
-      })
-    }
+    case 'modificar':
+      return rework(false)
     case 'ensenar':
+      if (aboutThis()) return answerIt()
       // Si lo que se quiere entender resulta ser algo de este programa, se explica ese elemento.
       if (namedTarget) {
         return done({
@@ -715,15 +1162,60 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         say: 'Preparo la lección narrada del programa.',
       })
     case 'agregar': {
+      // Lo que se pide cambia cómo funciona lo que ya hay: no se cumple con una pieza suelta.
+      const fits = choice(answers.encaje)
+      if (
+        forced.piece === undefined &&
+        hasCode &&
+        input.genId !== undefined &&
+        fits?.choice === 'cambio' &&
+        fits.confidence >= 0.5
+      ) {
+        return rework(false)
+      }
       const wanted = choice(answers.pieza)
       const piece =
         forced.piece ??
         (wanted && wanted.confidence >= THRESHOLDS.piece
           ? TEMPLATE_IDS.find((id) => id === wanted.choice)
           : undefined)
+      // Con un programa ya escrito y quien lo cambie, una pieza de plantilla solo se pone si está claro cuál
+      // es. Quien pide resultados («añade unos gastos de ejemplo») no nombra piezas: con el JEV dudando entre
+      // ellas (un diccionario, al 47 %) se pegaba una plantilla sin sentido. Lo resuelve la IA, con el
+      // programa delante.
+      if (
+        forced.piece === undefined &&
+        hasCode &&
+        input.genId !== undefined &&
+        (wanted?.confidence ?? 0) < THRESHOLDS.pieceSure
+      ) {
+        return rework(false)
+      }
       // No es una pieza de las de siempre: si hay quien lo escriba, se escribe; si no, se pregunta cuál.
       if (piece === undefined && forced.piece === undefined && input.genId !== undefined) {
         return compose()
+      }
+      // No hay plantilla de clase: si se pide una y el JEV, a falta de otra, dice «función», no se
+      // pone una función con nombre de clase. La escribe la IA (o, si ya hay programa, lo cambia).
+      if (
+        forced.piece === undefined &&
+        input.genId !== undefined &&
+        piece === 'function' &&
+        /\bclase\b/i.test(input.text) &&
+        !/\b(funci[oó]n|m[eé]todo)\b/i.test(input.text)
+      ) {
+        return hasCode ? rework(false) : compose()
+      }
+      // Mirando una clase por dentro, lo que no es un método no va suelto en su cuerpo («pedir el PIN
+      // por teclado» es un paso de alguno de sus métodos): que decida la IA, con la clase delante.
+      if (
+        forced.piece === undefined &&
+        input.genId !== undefined &&
+        viewing?.node?.kind === 'abstraction.class' &&
+        target === null &&
+        piece !== 'function'
+      ) {
+        return rework(false)
       }
       if (piece === undefined) {
         const likely = ranked(answers.pieza, [NO_PIECE]).filter((id): id is TemplateId =>
@@ -746,7 +1238,8 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         where && where.confidence >= THRESHOLDS.place
           ? (PLACES.find((id) => id === where.choice) ?? null)
           : null
-      const { phrase, ...at } = placeOf(place, place === null ? chosen : target, viewing)
+      const { phrase, ...at }: Placed =
+        apartSpot(place) ?? placeOf(place, place === null ? chosen : target, viewing)
       // Un `return` o un `break` no tienen contenido que escribir: son lo que son.
       const writable = !(['break', 'continue'] as TemplateId[]).includes(piece)
       const pending = input.genId !== undefined && writable ? input.genId : undefined
@@ -787,6 +1280,151 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
       })
     }
 
+    case 'mover': {
+      const end = (id: string): Target | null => {
+        const answer = choice(answers[id])
+        if (!answer || answer.confidence < THRESHOLDS.target) return null
+        return answer.choice === SELECTED
+          ? chosen
+          : (targets.find((item) => item.ref === answer.choice) ?? null)
+      }
+      // Lo mismo que al juntar: si el JEV no se decide, valen las que la orden nombra (la primera viaja).
+      const said = namedBy(input.text, targets)
+      const what =
+        end('mover_que') ??
+        (forced.target !== undefined ? byId(forced.target) : chosen) ??
+        said[0] ??
+        null
+      const where = end('mover_donde') ?? said.find((item) => item.id !== what?.id) ?? null
+      // «Mete sumar en una clase Calculadora», y esa clase aún no existe: se crea alrededor de ella.
+      if (
+        what?.node &&
+        what.node.kind !== 'abstraction.class' &&
+        !where &&
+        classIn(input.text) !== null
+      ) {
+        return intoClass(what)
+      }
+      if (!what?.node || !where?.node || what.id === where.id) {
+        // Sin saber qué o adónde, antes que preguntar lo resuelve la IA con el programa delante.
+        if (hasCode && input.genId !== undefined && forced.intent === undefined)
+          return rework(false)
+        return done({ kind: 'unknown', say: 'Dime qué muevo y adónde: nómbralos los dos.' })
+      }
+      const how = choice(answers.mover_como)?.choice ?? 'dentro'
+      const spot =
+        how === 'antes'
+          ? { before: where.id }
+          : how === 'despues'
+            ? { after: where.id }
+            : { into: where.id }
+      const phrase = how === 'antes' ? 'antes de' : how === 'despues' ? 'después de' : 'dentro de'
+      return done({
+        kind: 'do',
+        intent,
+        effect: { type: 'action', action: { type: 'move', id: what.id, ...spot } },
+        say: `Muevo ${naming(what)} ${phrase} ${naming(where)}.`,
+      })
+    }
+
+    case 'envolver': {
+      if (!target?.node) {
+        if (hasCode && input.genId !== undefined && forced.intent === undefined)
+          return rework(false)
+        return done({ kind: 'unknown', say: 'Dime qué envuelvo: selecciónalo o nómbralo.' })
+      }
+      const into = choice(answers.envolver_en)
+      // Si la orden nombra una clase y el JEV no lo tiene claro, es una clase: es lo que dice.
+      const kind =
+        classIn(input.text) !== null && (into === undefined || into.confidence < 0.8)
+          ? 'clase'
+          : (into?.choice ?? 'bucle')
+      // Una clase no se mete en una clase: si lo que se señala ya lo es, la orden pedía otra cosa.
+      if (kind === 'clase') {
+        return target.node.kind === 'abstraction.class' ? rework(true) : intoClass(target)
+      }
+      const wrapper = kind === 'decision' ? 'if' : kind === 'intento' ? 'try' : 'for'
+      const name = wrapper === 'if' ? 'una decisión' : wrapper === 'try' ? 'un intento' : 'un bucle'
+      return done({
+        kind: 'do',
+        intent,
+        effect: { type: 'action', action: { type: 'wrap', id: target.id, with: wrapper } },
+        gesture: { kind: 'wrap', id: target.id },
+        say: `Meto ${naming(target)} dentro de ${name}.`,
+      })
+    }
+
+    case 'duplicar': {
+      if (!target?.node) {
+        return done({ kind: 'unknown', say: 'Dime qué duplico: selecciónalo o nómbralo.' })
+      }
+      return done({
+        kind: 'do',
+        intent,
+        effect: { type: 'action', action: { type: 'duplicate', id: target.id } },
+        gesture: { kind: 'copy', id: target.id },
+        say: `Duplico ${naming(target)}.`,
+      })
+    }
+
+    case 'juntar':
+    case 'extraer': {
+      if (input.genId === undefined) {
+        return done({
+          kind: 'unknown',
+          say: 'Para eso hace falta una IA generativa: elige un modelo.',
+        })
+      }
+      const end = (id: string): Target | null => {
+        const answer = choice(answers[id])
+        if (!answer || answer.confidence < THRESHOLDS.target) return null
+        return answer.choice === SELECTED
+          ? chosen
+          : (targets.find((item) => item.ref === answer.choice) ?? null)
+      }
+      if (intent === 'extraer') {
+        if (!target?.node) {
+          return done({ kind: 'unknown', say: 'Dime qué extraigo: selecciónalo o nómbralo.' })
+        }
+        return done({
+          kind: 'do',
+          intent,
+          effect: {
+            type: 'modify',
+            gen: input.genId,
+            lines: { from: target.line, to: target.lineEnd },
+            scope: naming(target),
+          },
+          gesture: { kind: 'extract', id: target.id },
+          say: `Saco ${naming(target)} a una función propia.`,
+        })
+      }
+      // Qué dos piezas: las que el JEV tenga claras y, si no, las que la orden nombra tal cual.
+      const said = namedBy(input.text, targets)
+      const one = end('mover_que') ?? said[0] ?? target
+      const other =
+        [end('mover_donde'), ...said].find((item) => item && item.id !== one?.id) ?? null
+      if (!one?.node || !other?.node || one.id === other.id) {
+        return done({ kind: 'unknown', say: 'Dime qué dos cosas junto: nómbralas.' })
+      }
+      // Las dos piezas, y lo que haya entre ellas: es lo que la IA tiene que reescribir como una sola.
+      return done({
+        kind: 'do',
+        intent,
+        effect: {
+          type: 'modify',
+          gen: input.genId,
+          lines: {
+            from: Math.min(one.line, other.line),
+            to: Math.max(one.lineEnd, other.lineEnd),
+          },
+          scope: `${naming(one)} y ${naming(other)}`,
+        },
+        gesture: { kind: 'merge', id: one.id, to: other.id },
+        say: `Junto ${naming(one)} con ${naming(other)}.`,
+      })
+    }
+
     case 'eliminar': {
       if (!target) {
         return done({ kind: 'unknown', say: 'Dime qué elimino: selecciónalo o nómbralo.' })
@@ -799,6 +1437,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
           kind: 'ask',
           question: `¿Elimino ${naming(target)} (línea ${target.line})?`,
           options: [{ label: 'Sí, eliminar', force: { intent: 'eliminar', target: target.id } }],
+          plain: true,
         })
       }
       return done({
@@ -817,6 +1456,17 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     }
 
     case 'renombrar': {
+      // «Ponle nombres más claros» no dice qué nombre poner: no es un renombrado, es un cambio que piensa
+      // la IA. (Tomando la última palabra como nombre, una función acabó llamándose «claros».) Solo es un
+      // renombrado tal cual cuando la orden da el nombre nuevo: «…a suma», «…como total», «…por x».
+      if (
+        !GIVES_NAME.test(input.text.trim()) &&
+        hasCode &&
+        input.genId !== undefined &&
+        forced.intent === undefined
+      ) {
+        return rework(false)
+      }
       if (!target) {
         return done({ kind: 'unknown', say: 'Dime qué renombro: selecciónalo o nómbralo.' })
       }
@@ -854,6 +1504,24 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
     case 'enfocar':
     case 'explicar':
     case 'plegar': {
+      if (intent === 'explicar' && aboutThis()) return answerIt()
+      // «Enséñame solo los de más de 20»: el JEV lo leyó como «ir a verlo», pero sin estar seguro (44 %) y
+      // sin que la orden señale nada del diagrama. Antes que devolver una pregunta («¿qué quieres que se
+      // muestre?»), lo resuelve la IA con el programa delante: quien pide resultados espera que pase algo.
+      if (
+        intent === 'enfocar' &&
+        // …o seguro de que es mirar, pero diciendo a la vez que hay que cambiar el código (visto al 92 %).
+        (doubtful || changes()) &&
+        !namedTarget &&
+        literal === null &&
+        forced.intent === undefined &&
+        forced.target === undefined &&
+        hasCode &&
+        input.genId !== undefined &&
+        !LEAVES.test(plainText(input.text))
+      ) {
+        return rework(false)
+      }
       // «Explícame…» algo que la orden no señala en el programa no es una pregunta sobre lo seleccionado:
       // es un tema. Con quien lo redacte, se explica construyendo; no se devuelve un «¿a qué te refieres?».
       if (
@@ -862,10 +1530,32 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
         forced.target === undefined &&
         input.genId !== undefined
       ) {
-        return compose(true)
+        return aboutThis() ? answerIt() : compose(true)
+      }
+      // «Ver el programa principal», «sal de aquí»: no señala un elemento, pide salir a la vista general.
+      if (
+        intent === 'enfocar' &&
+        !namedTarget &&
+        forced.target === undefined &&
+        /\b(programa|principal|main|general|inicio|sal|salir|salgamos|fuera|atras|vuelve|volver|todo)\b/.test(
+          input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
+        )
+      ) {
+        return done({
+          kind: 'do',
+          intent,
+          effect: { type: 'focus' },
+          home: true,
+          say: 'Volvemos al programa principal.',
+        })
       }
       if (!target) {
-        return done({ kind: 'unknown', say: 'Dime a qué te refieres: selecciónalo o nómbralo.' })
+        // Sin programa no hay nada que señalar: quien escribe una idea y no tiene IA conectada necesita
+        // saber qué falta, no que le pidan seleccionar algo de un lienzo vacío.
+        return done({
+          kind: 'unknown',
+          say: hasCode ? 'Dime a qué te refieres: selecciónalo o nómbralo.' : notUnderstood,
+        })
       }
       if (intent === 'plegar') {
         return done({

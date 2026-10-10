@@ -22,6 +22,19 @@ import type { Decider, JevAnswer, JevQuestion } from './client.ts'
 
 /** Lee una etapa de una línea de la lista. `null` si esa línea no es una etapa (vacía, una introducción). */
 export function stageFromLine(line: string): Stage | null {
+  // Lo que va detrás de `<-` son las partes de las que esta necesita algo: no es parte de lo que hace.
+  const [own = '', ...after] = line.split(/\s*(?:<-|←|<=)\s*/)
+  const needs = after
+    .join(',')
+    .split(/\s*[,;]\s*|\s+y\s+/)
+    .map((name) => name.replace(/\*\*|__|`|[.«»"]/g, '').trim())
+    .filter((name) => name !== '' && name.length <= 60 && !/^(nada|ninguna?|nadie)$/i.test(name))
+  const stage = stageOwn(own)
+  return stage && needs.length > 0 ? { ...stage, needs: needs.slice(0, 6) } : stage
+}
+
+/** La parte en sí: su título y lo que hace. */
+function stageOwn(line: string): Stage | null {
   const text = line
     .replace(/^\s*(?:[-*•–]|\d+[.)-]|#+)\s*/, '')
     .replace(/\*\*|__|`/g, '')
@@ -701,6 +714,297 @@ export async function judgeMarks(
   }
 }
 
+// ───────────────────────── mientras se le oye: ¿qué está pidiendo? ─────────────────────────
+
+/** Lo que el usuario puede estar pidiendo, por lo que lleva dicho. `nada`: aún no se sabe. */
+export const HEARD_KINDS = [
+  'funcion',
+  'clase',
+  'bucle',
+  'decision',
+  'variable',
+  'lista',
+  'programa',
+  'cambio',
+  'explicacion',
+  'nada',
+] as const
+export type HeardKind = (typeof HEARD_KINDS)[number]
+
+/**
+ * El usuario está hablando y aún no ha terminado. Con lo que lleva dicho, el JEV dice qué clase de cosa
+ * está pidiendo, para ir dibujando su hueco antes de que acabe la frase. Es barato (una pregunta cerrada) y
+ * se repite con cada palabra nueva.
+ */
+export async function judgeHeard(
+  decider: Decider,
+  heard: string,
+): Promise<{ kind: HeardKind; complete: number; ms: number }> {
+  const { answers, ms } = await decider.decide({
+    state: { oido: heard },
+    questions: {
+      // Quien habla hace pausas a mitad de frase: antes de dar lo dicho por una orden hay que saber si
+      // ya está entera. Si no, se espera a lo que falta, en vez de cumplir media frase.
+      completa: {
+        type: 'noul',
+        instructions:
+          'El campo `oido` es lo que alguien lleva dicho. ¿Es ya una orden entera, que se puede cumplir tal cual, o la frase está a medias?',
+        criteria: {
+          true: 'Está entera: dice qué quiere y sobre qué. «Crea una clase llamada animal», «borra el objeto gato», «sí», «deshazlo».',
+          false:
+            'Está a medias: le falta lo principal, o acaba en una palabra que pide continuación (un artículo, una preposición, «que», «para», «y»). «Crea una», «un objeto», «en el programa principal», «manda llamar la función para», «y llamada gato».',
+        },
+      },
+      oyendo: {
+        type: 'choice',
+        instructions:
+          'El campo `oido` es lo que alguien lleva dicho de una orden para un programa en Python; aún no ha terminado la frase. Por lo que lleva dicho, ¿qué está pidiendo?',
+        criteria: {
+          funcion: 'Una función (o un método).',
+          clase: 'Una clase.',
+          bucle: 'Un bucle: repetir algo, recorrer algo.',
+          decision: 'Una decisión: si pasa esto, hacer aquello.',
+          variable: 'Una variable, un dato o una constante.',
+          lista: 'Una lista, un diccionario u otra colección.',
+          programa: 'Un programa, un algoritmo o un juego entero.',
+          cambio: 'Cambiar, quitar o renombrar algo que ya hay.',
+          explicacion: 'Que se le explique o se le enseñe algo.',
+          nada: 'Todavía no se sabe: no ha dicho bastante.',
+        },
+      },
+    },
+  })
+  const answer = answers.oyendo
+  const kind =
+    answer?.type === 'choice' && answer.confidence >= 0.4
+      ? (HEARD_KINDS.find((id) => id === answer.choice) ?? 'nada')
+      : 'nada'
+  const whole = answers.completa
+  return { kind, complete: whole?.type === 'noul' ? whole.noul : 1, ms }
+}
+
+// ───────────────────────── lo pedido y lo construido: ¿qué pieza cubre cada parte? ─────────────────────────
+
+/** Con cuánta certeza del JEV se da una parte por cubierta (o por no cubierta) por una pieza. */
+export const COVER_THRESHOLD = 0.5
+
+/**
+ * Quien pide un programa nombra sus partes con sus palabras («ver el total»), y la IA las escribe con las
+ * suyas (`calcular_suma`). El JEV dice, parte a parte, cuál de las piezas que ya existen la cubre. Por parte:
+ * el nombre de la pieza; `''` si está seguro de que ninguna; `null` si no lo sabe (decide quien pregunta).
+ */
+export async function judgeCover(
+  decider: Decider,
+  what: string,
+  parts: readonly string[],
+  pieces: readonly string[],
+  /** Las piezas son las etapas de un plan aún sin escribir: se pregunta cuál se ocupará de cada parte. */
+  plan = false,
+): Promise<(string | null)[]> {
+  if (pieces.length === 0) return parts.map(() => null)
+  const offered = Object.fromEntries(pieces.map((piece, at) => [`p${at}`, piece]))
+  const { answers } = await decider.decide({
+    state: { pedido: what, piezas: [...pieces] },
+    questions: Object.fromEntries(
+      parts.map((part, at) => [
+        `parte${at}`,
+        {
+          type: 'choice' as const,
+          instructions: plan
+            ? `Alguien pidió un programa en Python (campo \`pedido\`) que, entre otras cosas, sirva para: «${part}». Se va a escribir por etapas; \`piezas\` son los títulos de las etapas del plan. ¿Cuál de esas etapas es la que se ocupará de eso?`
+            : `Alguien pidió un programa en Python (campo \`pedido\`) que, entre otras cosas, sirva para: «${part}». El programa ya tiene las funciones, clases y etapas de \`piezas\`. ¿Cuál de ellas es la que hace eso?`,
+          criteria: {
+            ...offered,
+            ninguna: plan
+              ? 'Ninguna etapa del plan se ocupa de eso.'
+              : 'Ninguna de esas piezas hace eso: aún no está escrito.',
+          },
+        },
+      ]),
+    ),
+  })
+  return parts.map((_, at) => {
+    const answer = answers[`parte${at}`]
+    if (answer?.type !== 'choice' || answer.confidence < COVER_THRESHOLD) return null
+    if (answer.choice === 'ninguna') return ''
+    return pieces[Number(answer.choice.slice(1))] ?? null
+  })
+}
+
+// ───────────────────────── quién arranca el programa ─────────────────────────
+
+/**
+ * Varias funciones a las que nadie llama: ¿cuál es la que pone el programa en marcha? El JEV elige entre sus
+ * nombres. Si duda, `null`: decide quien pregunta (la última del archivo suele ser la principal).
+ */
+export async function judgeEntry(
+  decider: Decider,
+  names: readonly string[],
+): Promise<number | null> {
+  if (names.length === 0) return null
+  if (names.length === 1) return 0
+  const { answers } = await decider.decide({
+    state: { funciones: [...names] },
+    questions: {
+      arranque: {
+        type: 'choice',
+        instructions:
+          'Un programa en Python define las funciones de `funciones` y a ninguna de ellas la llama nadie. ¿Cuál es la principal: la que hay que llamar para que el programa entero funcione?',
+        criteria: Object.fromEntries(names.map((name, at) => [`f${at}`, name])),
+      },
+    },
+  })
+  const answer = answers.arranque
+  if (answer?.type !== 'choice' || answer.confidence < ARCH_THRESHOLD) return null
+  const at = Number(answer.choice.slice(1))
+  return Number.isInteger(at) && at >= 0 && at < names.length ? at : null
+}
+
+// ───────────────────────── la arquitectura: qué papel hace cada módulo y qué forma tiene ─────────────────────────
+
+/** Los papeles que puede hacer un módulo, y cómo se le explican al JEV. */
+export const MODULE_ROLES = {
+  entrada: 'Recoge datos de quien lo usa: pregunta, lee del teclado.',
+  datos: 'Guarda o define los datos con los que trabaja el programa.',
+  logica: 'Calcula, transforma o comprueba algo con los datos.',
+  control:
+    'Coordina: decide qué se hace y cuándo, y usa a los demás (un menú, el bucle principal, el arranque).',
+  salida: 'Enseña resultados a quien lo usa: imprime, dibuja, muestra.',
+} as const
+export type ModuleRoleId = keyof typeof MODULE_ROLES
+
+/** Las formas que puede tener un programa visto como módulos, y cómo se le explican al JEV. */
+export const ARCH_SHAPES = {
+  tuberia: 'Una cadena: cada parte le pasa su resultado a la siguiente, de principio a fin.',
+  centro:
+    'Un módulo reparte el trabajo: según lo que se elija, usa a uno u otro de los demás (un menú).',
+  ciclo:
+    'Un bucle que en cada vuelta hace todos sus pasos, uno tras otro (un juego, una simulación).',
+  embudo: 'De mucho a poco: se va filtrando o resumiendo hasta quedarse con un resultado.',
+  abanico: 'Una fuente de datos que alimenta a varias partes independientes entre sí.',
+  capas:
+    'Unas partes guardan datos, otras calculan y otras enseñan, sin que ninguna otra forma lo cuente mejor.',
+} as const
+export type ArchShapeId = keyof typeof ARCH_SHAPES
+
+/** Con cuánta certeza del JEV se acepta un papel o una forma. */
+export const ARCH_THRESHOLD = 0.5
+
+/**
+ * Un programa visto como módulos: el JEV dice qué papel hace cada uno (por su título y por lo que su código
+ * deja ver) y, de las formas que el grafo de módulos tiene de verdad (`shapes`), cuál lo cuenta mejor. Una
+ * sola llamada. Donde duda, `null`: decide quien pregunta, con lo que ve en el código.
+ */
+export async function judgeArchitecture(
+  decider: Decider,
+  modules: readonly { title: string; does: string }[],
+  shapes: readonly string[],
+): Promise<{ roles: (ModuleRoleId | null)[]; shape: ArchShapeId | null }> {
+  const offered = shapes.filter((shape): shape is ArchShapeId => shape in ARCH_SHAPES)
+  const { answers } = await decider.decide({
+    state: { modulos: modules.map((module) => module.title) },
+    questions: {
+      ...Object.fromEntries(
+        modules.map((module, at) => [
+          `papel${at}`,
+          {
+            type: 'choice' as const,
+            instructions: `Un programa en Python está hecho de los módulos de \`modulos\`. Uno de ellos se llama «${module.title}». ${module.does} ¿Qué papel hace en el programa?`,
+            criteria: { ...MODULE_ROLES },
+          },
+        ]),
+      ),
+      ...(offered.length > 1
+        ? {
+            forma: {
+              type: 'choice' as const,
+              instructions:
+                'Un programa en Python está hecho de los módulos de `modulos`. Visto en conjunto, ¿cuál de estas formas cuenta mejor cómo funciona?',
+              criteria: Object.fromEntries(offered.map((shape) => [shape, ARCH_SHAPES[shape]])),
+            },
+          }
+        : {}),
+    },
+  })
+  const sure = (id: string) => {
+    const answer = answers[id]
+    return answer?.type === 'choice' && answer.confidence >= ARCH_THRESHOLD ? answer.choice : null
+  }
+  const shape = sure('forma')
+  return {
+    roles: modules.map((_, at) => {
+      const role = sure(`papel${at}`)
+      return role !== null && role in MODULE_ROLES ? (role as ModuleRoleId) : null
+    }),
+    shape: shape !== null && offered.includes(shape as ArchShapeId) ? (shape as ArchShapeId) : null,
+  }
+}
+
+// ───────────────────────── al reescribir, ¿se quería quitar eso? ─────────────────────────
+
+/**
+ * La IA devolvió el programa cambiado, pero le faltan trozos que estaban (visto de verdad: al arreglar una
+ * función se dejó fuera los datos y el programa principal). El JEV dice si la orden pedía quitar algo; si
+ * no, lo que falta se devuelve a su sitio.
+ */
+export async function judgeRemoval(
+  decider: Decider,
+  order: string,
+  lost: readonly string[],
+): Promise<number> {
+  const { answers } = await decider.decide({
+    state: { orden: order, falta: [...lost] },
+    questions: {
+      quitar: {
+        type: 'noul',
+        instructions:
+          'Se le pidió a un programa en Python el cambio que dice `orden`. En el resultado ya no están los trozos de `falta` (su primera línea). ¿La `orden` pedía quitar, borrar o sustituir por completo esos trozos?',
+        criteria: {
+          true: 'Sí: la orden pide eliminar eso, quitarlo, o rehacer el programa entero de otra manera.',
+          false:
+            'No: la orden pide arreglar, cambiar o añadir otra cosa; esos trozos no tenían por qué desaparecer.',
+        },
+      },
+    },
+  })
+  const answer = answers['quitar']
+  return answer?.type === 'noul' ? answer.noul : 0
+}
+
+// ───────────────────────── un paso de una orden larga: ¿ya está hecho? ─────────────────────────
+
+/** Con cuánta certeza del JEV se da un paso por hecho y se sigue con el siguiente. */
+export const DONE_THRESHOLD = 0.6
+
+/**
+ * Una orden larga se parte en pasos, y a veces un paso deja hecho también el siguiente («sácalo de la función»
+ * ya lo deja en el programa; «ponlo en el programa» no tiene nada que mover). Antes de pararse en un paso que
+ * no se sabe cómo cumplir, el JEV mira el programa tal como está y dice si eso ya está cumplido.
+ */
+export async function judgeDone(
+  decider: Decider,
+  step: string,
+  code: string,
+  earlier: readonly string[],
+): Promise<number> {
+  const { answers } = await decider.decide({
+    state: { paso: step, programa: code, antes: [...earlier] },
+    questions: {
+      hecho: {
+        type: 'noul',
+        instructions:
+          'El campo `programa` es un programa de Python tal como está ahora. `antes` son los pasos que se acaban de cumplir sobre él. El campo `paso` es el siguiente paso que se pidió. ¿Está ya cumplido ese `paso` en el programa, de modo que no queda nada por hacer para él?',
+        criteria: {
+          true: 'Sí: el programa ya está como pide el paso (lo dejó así un paso anterior, o ya estaba).',
+          false: 'No: todavía falta hacer algo en el programa para cumplir el paso.',
+        },
+      },
+    },
+  })
+  const answer = answers['hecho']
+  return answer?.type === 'noul' ? answer.noul : 0
+}
+
 // ───────────────────────── si el usuario interrumpe: ¿vale lo que ya estaba preparado? ─────────────────────────
 
 /** Qué hacer con una orden que llega mientras se está construyendo otra cosa. */
@@ -758,6 +1062,8 @@ export function planSystem(teach: boolean): string {
       ? `${TEACH} Piensa las partes de la EXPLICACIÓN (qué pasa primero, qué después), no partes de un programa cualquiera.`
       : 'Alguien te pide un programa en Python y tú lo vas a construir explicándolo. Antes de escribir nada, piensa el plan.',
     'Lista las partes por las que pasa, en orden, una por línea: un título de dos a cuatro palabras y, si quieres, detrás de dos puntos, qué ocurre en esa parte en menos de diez palabras.',
+    'Piensa también cómo encajan: si una parte necesita lo que otra guarda o hace, dilo al final de su línea, detrás de «<-», con el título exacto de esa otra parte (varias, separadas por comas). Ejemplo: «Mostrar el total: suma todos los precios <- Lista de gastos». La que no necesita a ninguna no lleva «<-».',
+    'Si lo que se pide es un programa entero (no una pieza suelta que se añade a otro), la ÚLTIMA parte lo pone en marcha: lo arranca con un ejemplo concreto y enseña el resultado en pantalla. Quien lo pide quiere verlo funcionar.',
     'Entre 2 y 7 partes. Solo la lista: sin introducción, sin código y sin despedida.',
   ].join('\n')
 }
@@ -768,8 +1074,13 @@ export function codeSystem(teach: boolean): string {
       ? `${TEACH} Sé riguroso con el tema: no inventes datos; si usas valores aproximados, que sean razonables.`
       : 'Escribes un programa en Python que un editor va a dibujar como un diagrama, pieza a pieza.',
     'Escribe el código, y solo el código: Python tal cual iría en el archivo, sin explicaciones alrededor.',
-    'Código claro, de principiante: nombres en español, valores de ejemplo concretos, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
-    'Si hay un plan, sigue su orden: primero lo de la primera parte, luego lo de la segunda… No pongas comentarios con los títulos de las partes: ya están puestos.',
+    'Código claro, de principiante: nombres en español, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
+    teach
+      ? 'Usa valores de ejemplo concretos, y enseña el resultado.'
+      : 'Escribe EXACTAMENTE lo que se pide y nada más. Si se pide una clase, solo la clase (con su constructor y lo que la orden nombre): no le inventes métodos. Si se pide una función, solo la función. No añadas ejemplos de uso, llamadas de prueba ni print que la orden no pida: quien lo pidió irá diciendo lo siguiente. La excepción es un programa entero con plan: en su última parte, llama a lo construido con valores de ejemplo pequeños y enseña el resultado con print y unas palabras («Mejor encontrado:», «Total:»). Un programa que solo define funciones y no las llama no hace nada.',
+    'Cuando el cuerpo de una función (o el programa) tenga más de unos cinco pasos, agrúpalos por lo que pretenden: delante de cada grupo, una línea en blanco y un comentario corto que diga su intención con un verbo («# Aplicar la física», «# Comprobar choques», «# Guardar el resultado»). Al menos dos grupos, o ninguno. El editor dibuja cada grupo como una sola caja con ese nombre: es lo que se lee primero. No comentes línea por línea.',
+    'Si la orden pide algo nuevo que use lo que ya hay («una clase que use esa función»), escribe solo lo nuevo, con lo que ya existe dentro o llamándolo: no vuelvas a escribir el programa ni lo expliques por partes.',
+    'Si hay un plan, sigue su orden al pie de la letra: primero TODO lo de la primera parte, luego lo de la segunda… y que cada parte tenga algo de código. Escribe cada función cuando llegue la parte del plan a la que pertenece, no antes. No pongas comentarios con los títulos de las partes: ya están puestos.',
     'No leas ni escribas archivos, no uses la red ni el sistema, ni pidas datos con input(), salvo que la orden lo pida expresamente. Como mucho unas 40 líneas.',
   ].join('\n')
 }
@@ -785,7 +1096,12 @@ export function codePrompt(request: {
     `Orden: ${request.command}`,
     request.stages.length >= 2
       ? `El plan:\n${request.stages
-          .map((stage, i) => `${i + 1}. ${stage.title}${stage.goal ? `: ${stage.goal}` : ''}`)
+          .map(
+            (stage, i) =>
+              `${i + 1}. ${stage.title}${stage.goal ? `: ${stage.goal}` : ''}${
+                stage.needs?.length ? ` (usa lo de: ${stage.needs.join(', ')})` : ''
+              }`,
+          )
           .join('\n')}`
       : '',
     `Dónde va: ${request.where}.`,
@@ -801,7 +1117,7 @@ export function tellSystem(teach: boolean): string {
     teach
       ? 'Estás explicando un tema a alguien mientras construyes, pieza a pieza, un programa que lo modela. De cada pieza, di qué ocurre en la realidad y cómo lo representa; no describas la sintaxis.'
       : 'Estás construyendo un programa pieza a pieza mientras lo explicas a alguien que aprende. De cada pieza, di qué es y por qué se pone ahí, como quien piensa en voz alta.',
-    'Te doy las piezas en el orden en que van a aparecer. Di una frase por cada pieza, en español y sin código: una por línea, en el mismo orden, tantas líneas como piezas. Solo las frases: se leerán en voz alta, cada una al aparecer su pieza.',
+    'Te doy las piezas en el orden en que van a aparecer. Di una frase por cada pieza, en español y sin código: una por línea, en el mismo orden, tantas líneas como piezas. Solo las frases: se leerán en voz alta, cada una al aparecer su pieza. De lo que ya está escrito no digas nada: ya se explicó.',
     'Frases MUY cortas: como mucho doce palabras cada una, directas, sin rodeos ni muletillas («en este paso», «aquí»). Una idea por frase.',
   ].join('\n')
 }
@@ -830,7 +1146,7 @@ export function introSystem(teach: boolean): string {
     teach
       ? 'Alguien quiere entender un tema y se lo vas a explicar construyendo, pieza a pieza, un pequeño programa que lo modela.'
       : 'Alguien te ha pedido un programa y lo vas a construir delante de él, pieza a pieza, explicándolo.',
-    'Antes de empezar, dile en una o dos frases cortas (menos de treinta palabras en total) qué vais a hacer y cómo lo vais a abordar. Cercano y directo, en español, sin código ni listas. Solo esas frases: se leerán en voz alta.',
+    'Antes de empezar, dile en UNA sola frase corta (menos de dieciocho palabras) qué vais a hacer. Cercano y directo, en español, sin código ni listas. Solo esa frase: se leerá en voz alta, y hasta que acabe no se ve nada.',
   ].join('\n')
 }
 

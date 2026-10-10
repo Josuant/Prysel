@@ -74,6 +74,14 @@ export const ICONS: Record<IconId, string> = {
   grid: 'M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z',
   section: 'M4 19.5h5v-5h5v-5h5v-5M4 19.5h15.5',
   open: 'M8 16 16.5 7.5M10 7.5h6.5V14',
+  mic: 'M12 3.5a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3ZM6 11a6 6 0 0 0 12 0M12 17v3.5M9 20.5h6',
+  send: 'M4.5 12 19.5 4.5 15 19.5l-3.5-6-7-1.5ZM11.5 13.5 19.5 4.5',
+  volume: 'M4.5 9.5h3l4.5-4v13l-4.5-4h-3ZM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11',
+  'volume-off': 'M4.5 9.5h3l4.5-4v13l-4.5-4h-3ZM16 9.5l5 5M21 9.5l-5 5',
+  'chevron-up': 'M6 14.5 12 8.5 18 14.5',
+  code: 'M8.5 7.5 4 12l4.5 4.5M15.5 7.5 20 12l-4.5 4.5M13.5 5.5l-3 13',
+  gear: `M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M6 18l1.6-1.6M16.4 7.6 18 6${circle(12, 12, 3.6)}`,
+  menu: 'M4.5 7h15M4.5 12h15M4.5 17h10',
 }
 
 export const ICON_IDS = Object.keys(ICONS) as IconId[]

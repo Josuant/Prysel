@@ -1274,6 +1274,10 @@ async function runDirected(
         postToAll({ type: 'progress', gen: effect.gen, text: event.text })
         return
       }
+      if (event.type === 'architecture') {
+        postToAll({ type: 'architecture', modules: event.modules })
+        return
+      }
       // Lo que lleva voz lleva un número: el lienzo avisa con él cuando ha terminado de decirlo.
       const seq = event.say === '' ? undefined : ++speechSeq
       heard =

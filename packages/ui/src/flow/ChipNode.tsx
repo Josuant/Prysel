@@ -19,6 +19,8 @@ export interface ChipNodeData extends Record<string, unknown> {
   chip?: CanvasNode
   /** O la función. */
   fn?: FunctionChip
+  /** Ir a la definición de una función (doble clic en su chip). */
+  onOpen?: (id: string) => void
   /** O la variable de iteración de un bucle. */
   iter?: { name: string; param?: boolean; icon?: IconId }
   size: { w: number; h: number }
@@ -48,7 +50,17 @@ export function ChipNode({ id, data, selected }: NodeProps<ChipFlowNode>) {
         data-type="function"
         data-selected={selected ? '' : undefined}
         data-hinted={data.hinted ? '' : undefined}
-        title={`${data.fn.name}${data.fn.signature}: arrástrala a una llamada`}
+        data-opens={data.onOpen ? '' : undefined}
+        title={
+          data.onOpen
+            ? `${data.fn.name}${data.fn.signature}: doble clic para ver su definición; arrástrala a una llamada`
+            : `${data.fn.name}${data.fn.signature}: arrástrala a una llamada`
+        }
+        onDoubleClick={(event) => {
+          if (!data.onOpen || !data.fn) return
+          event.stopPropagation()
+          data.onOpen(data.fn.id)
+        }}
       >
         {data.line !== undefined && (
           <span className="flow-step" aria-hidden>

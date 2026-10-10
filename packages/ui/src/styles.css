@@ -1087,14 +1087,84 @@
 
 /* ── Movimiento: el diagrama se mueve, no salta ── */
 .flow-node {
-  transition: opacity 180ms ease-out;
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms ease-out;
 }
 /* Un nodo que entra aparece; uno que sale se desvanece. */
 .flow-node[data-phase='entering'] {
   animation: node-enter 260ms cubic-bezier(0.16, 1, 0.3, 1);
 }
+/* Lo que sale se recoge hacia arriba: hacia la cabecera de lo que se pliega. */
 .flow-node[data-phase='leaving'] {
   opacity: 0;
+  transform: translateY(-10px) scale(0.94);
+}
+/*
+ * De la tarjeta «Qué hace» al diagrama, y vuelta. Al abrir, el marco de la función crece desde lo que medía
+ * la tarjeta (`--from-w`, `--from-h`) y lo de dentro se desenrolla de arriba abajo (`--unroll`: lo que espera
+ * cada nodo, según lo abajo que esté). Al plegar, lo de dentro se recoge y la tarjeta se asienta. Así se ve
+ * que son la misma cosa, contada con más o menos detalle.
+ */
+.flow-node[data-unroll] {
+  animation: node-unroll 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: var(--unroll, 0ms);
+}
+@keyframes node-unroll {
+  from {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.95);
+  }
+}
+.flow-node[data-opened] {
+  animation: node-open 420ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+@keyframes node-open {
+  from {
+    clip-path: inset(
+      0 calc((100% - var(--from-w)) / 2) calc(100% - var(--from-h)) calc((100% - var(--from-w)) / 2)
+        round 16px
+    );
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 16px);
+  }
+}
+/* El fundido: la tarjeta, tal como estaba, se deshace encima del diagrama que nace debajo. */
+.gist-ghost {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  left: 50%;
+  pointer-events: none;
+  animation: gist-dissolve 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+/* Se enseña como quedó, sin volver a contar su entrada. */
+.gist-ghost .gist-card,
+.gist-ghost .gist-card * {
+  animation: none !important;
+}
+@keyframes gist-dissolve {
+  0% {
+    opacity: 1;
+    filter: blur(0);
+    transform: scale(1);
+  }
+  100% {
+    visibility: hidden;
+    opacity: 0;
+    filter: blur(3px);
+    transform: scale(1.12);
+  }
+}
+.gist-card {
+  animation: gist-settle 340ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+@keyframes gist-settle {
+  from {
+    opacity: 0;
+    transform: scale(1.07);
+  }
 }
 @keyframes node-enter {
   from {
@@ -1109,9 +1179,15 @@
 
 @media (prefers-reduced-motion: reduce) {
   .flow-node,
-  .flow-node[data-phase='entering'] {
+  .flow-node[data-phase='entering'],
+  .flow-node[data-unroll],
+  .flow-node[data-opened],
+  .gist-card {
     animation: none;
     transition: none;
+  }
+  .gist-ghost {
+    display: none;
   }
 }
 
@@ -1731,6 +1807,267 @@ button.fn-menu__crumb:hover {
 .viewer[data-aid] {
   border-style: dashed;
 }
+/* El hueco de lo que se está pidiendo: aún no existe, pero ya se ve qué va a ser. Borde discontinuo y el
+   color de su clase de pieza (el de las funciones, el de los bucles…), que cambia suave si cambia de idea. */
+.viewer[data-ghost] {
+  --ghost: var(--accent);
+  border: 2px dashed var(--ghost);
+  background: color-mix(in srgb, var(--ghost) 9%, var(--surface));
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--ghost) 14%, transparent);
+  transition:
+    border-color 350ms ease,
+    background-color 350ms ease,
+    box-shadow 350ms ease;
+}
+.viewer[data-ghost] .viewer__head {
+  color: var(--ghost);
+  font-weight: 700;
+}
+/* La caja de lo que se está pidiendo: no una nota, la pieza misma a medio hacer. Su insignia y su nombre
+   arriba, lo que recibe en pastillas, lo que se va diciendo de ella con un cursor, y debajo las líneas de un
+   cuerpo que aún no existe, latiendo. */
+.ghost-box {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border-radius: 16px;
+  transition:
+    border-color 350ms ease,
+    background-color 350ms ease,
+    box-shadow 350ms ease,
+    min-height 300ms ease;
+}
+.ghost-box__head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.ghost-box__badge {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ghost) 22%, transparent);
+  color: var(--ghost);
+}
+.ghost-box__kind {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.ghost-box__name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: ghost-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.ghost-box__name[data-empty] {
+  color: var(--ink-faint);
+}
+.ghost-box__takes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ghost-box__chip {
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--ghost) 30%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ghost) 12%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  animation: ghost-in 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.ghost-box__does {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.ghost-box__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--ghost);
+  vertical-align: text-bottom;
+  animation: ghost-caret 900ms steps(1, end) infinite;
+}
+.ghost-box__lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ghost-box__lines > span {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--ghost) 10%, transparent),
+    color-mix(in srgb, var(--ghost) 30%, transparent),
+    color-mix(in srgb, var(--ghost) 10%, transparent)
+  );
+  background-size: 200% 100%;
+  animation: ghost-shimmer 1400ms linear infinite;
+}
+.ghost-box__lines > span:nth-child(1) {
+  width: 78%;
+}
+.ghost-box__lines > span:nth-child(2) {
+  width: 54%;
+  animation-delay: 160ms;
+}
+.ghost-box__lines > span:nth-child(3) {
+  width: 66%;
+  animation-delay: 320ms;
+}
+@keyframes ghost-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+    filter: blur(3px);
+  }
+}
+@keyframes ghost-caret {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes ghost-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ghost-box__name,
+  .ghost-box__chip,
+  .ghost-box__caret,
+  .ghost-box__lines > span {
+    animation: none;
+  }
+}
+
+/* ── Efectos del lienzo: lo que acompaña a un gesto ── */
+/* Una partícula y un anillo: van sobre el lienzo, los coloca y los mueve quien los crea. */
+.fx-dot,
+.fx-ring {
+  position: absolute;
+  z-index: 9;
+  top: 0;
+  left: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.fx-dot {
+  box-shadow: 0 0 8px 1px currentColor;
+  mix-blend-mode: screen;
+}
+.fx-ring {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--accent);
+}
+/* El marco de la caja provisional, que viaja hasta el nodo en que se convierte. */
+.fx-morph {
+  position: absolute;
+  z-index: 9;
+  top: 0;
+  left: 0;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+/* El foco: mientras dura un gesto, lo que no participa se desenfoca y se apaga un poco. */
+.react-flow[data-focusing] .react-flow__node,
+.react-flow[data-focusing] .react-flow__edge {
+  transition:
+    filter 260ms ease,
+    opacity 260ms ease;
+}
+.react-flow[data-focusing] .react-flow__node:not([data-fx]) {
+  opacity: 0.45;
+  filter: blur(2.5px) saturate(0.6);
+}
+.react-flow[data-focusing] .react-flow__edge {
+  opacity: 0.25;
+}
+@media (prefers-reduced-motion: reduce) {
+  .react-flow[data-focusing] .react-flow__node:not([data-fx]) {
+    opacity: 1;
+    filter: none;
+  }
+}
+/* La caja que viaja al juntar dos piezas: una tarjeta pequeña con su nombre y las líneas de su cuerpo. */
+.box-ghost {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  left: 0;
+  display: flex;
+  box-sizing: border-box;
+  width: 168px;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 12px 12px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  pointer-events: none;
+}
+.box-ghost__name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.box-ghost__line {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+}
+.box-ghost__line:nth-child(3) {
+  width: 62%;
+}
+.box-ghost--fused {
+  width: 232px;
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-raised));
+  box-shadow:
+    0 0 0 7px color-mix(in srgb, var(--accent) 16%, transparent),
+    var(--shadow-raised);
+}
+
+.viewer[data-ghost='function'],
+.viewer[data-ghost='class'] {
+  --ghost: var(--value-fn-fg);
+}
+.viewer[data-ghost='loop'] {
+  --ghost: var(--value-iter-fg);
+}
+.viewer[data-ghost='condition'] {
+  --ghost: var(--state-warning);
+}
+.viewer[data-ghost='value'] {
+  --ghost: var(--value-number-fg);
+}
+.viewer[data-ghost='list'] {
+  --ghost: var(--value-list-fg);
+}
 .node[data-modifier='generating'] {
   animation: node-breathe 1.6s ease-in-out infinite;
 }
@@ -1853,6 +2190,15 @@ button.fn-menu__crumb:hover {
   stroke-width: 1.2;
   stroke-linejoin: round;
 }
+/* Lo que queda cuando dos piezas se juntan: una sola, con los dos nombres, a la espera de su código. */
+.chip-ghost--fused {
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-raised));
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent),
+    var(--shadow-raised);
+  font-weight: 700;
+}
 [data-picked] {
   outline: 2px dashed var(--accent);
   outline-offset: 3px;
@@ -1860,12 +2206,140 @@ button.fn-menu__crumb:hover {
 [data-dropped] {
   animation: prysel-dropped 500ms ease-out !important;
 }
+/* Mover algo: lo que se va queda en sombra mientras su nombre viaja, y el destino lo espera abierto —un
+   marco discontinuo si va dentro; una raya debajo o encima si va después o antes. */
+[data-moving] {
+  opacity: 0.35;
+  transition: opacity 250ms ease;
+}
+[data-receiving] {
+  outline: 2px dashed var(--accent);
+  outline-offset: 6px;
+  transition: outline-offset 300ms ease;
+}
+[data-receiving='after'] {
+  outline: none;
+  box-shadow: 0 5px 0 -1px var(--accent);
+}
+/* Envolver: un marco se abre alrededor de la pieza, como lo que la va a contener. */
+[data-gesture='wrap'] {
+  outline: 2px dashed var(--accent);
+  animation: prysel-wrap 950ms cubic-bezier(0.2, 0.7, 0.2, 1) both !important;
+}
+@keyframes prysel-wrap {
+  from {
+    outline-offset: 0;
+    outline-color: transparent;
+  }
+  to {
+    outline-offset: 16px;
+    outline-color: var(--accent);
+  }
+}
+/* Extraer: la pieza se levanta de donde está, a punto de irse a su propia función. */
+[data-gesture='extract'] {
+  animation: prysel-extract 950ms cubic-bezier(0.2, 0.7, 0.2, 1) both !important;
+}
+@keyframes prysel-extract {
+  40% {
+    transform: translateY(-10px) scale(1.04);
+    box-shadow: var(--shadow-lift);
+  }
+  to {
+    transform: translateY(-10px) scale(1.04);
+    box-shadow: var(--shadow-lift);
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-gesture] {
+    animation: none !important;
+  }
+}
+[data-receiving='before'] {
+  outline: none;
+  box-shadow: 0 -5px 0 -1px var(--accent);
+}
 @keyframes prysel-dropped {
   from {
     box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 55%, transparent);
   }
   to {
     box-shadow: 0 0 0 0 transparent;
+  }
+}
+/* «Te escucho»: el usuario está hablando. Se nota en todo el lienzo —un marco encendido, y lo que se estaba
+   construyendo, apagado y quieto— y arriba se lee lo que va diciendo. Así se sabe que se ha parado a oírle. */
+[data-hearing]::after {
+  position: absolute;
+  z-index: 11;
+  inset: 0;
+  border: 3px solid var(--accent);
+  border-radius: 14px;
+  box-shadow: inset 0 0 40px color-mix(in srgb, var(--accent) 22%, transparent);
+  content: '';
+  pointer-events: none;
+  animation: prysel-hearing 1.4s ease-in-out infinite;
+}
+@keyframes prysel-hearing {
+  50% {
+    box-shadow: inset 0 0 70px color-mix(in srgb, var(--accent) 34%, transparent);
+  }
+}
+[data-hearing] :is(.flow-node[data-spotlit], .flow-node[data-born], .thinking-card) {
+  opacity: 0.45;
+  filter: saturate(0.3);
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  animation-play-state: paused;
+}
+.canvas-hearing {
+  position: absolute;
+  z-index: 12;
+  top: 14px;
+  left: 50%;
+  display: flex;
+  max-width: min(720px, calc(100% - 48px));
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  transform: translateX(-50%);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  font-size: 15px;
+  pointer-events: none;
+}
+.canvas-hearing__dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: prysel-hearing-dot 0.9s ease-in-out infinite;
+}
+@keyframes prysel-hearing-dot {
+  50% {
+    transform: scale(1.7);
+    opacity: 0.4;
+  }
+}
+.canvas-hearing__label {
+  flex: none;
+  font-weight: 700;
+}
+.canvas-hearing__text {
+  overflow: hidden;
+  color: var(--ink-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-hearing]::after,
+  .canvas-hearing__dot {
+    animation: none;
   }
 }
 /* El subtítulo: lo que se está diciendo de la pieza, escrito a mano sobre el lienzo. */
@@ -3664,9 +4138,32 @@ button.fn-menu__crumb:hover {
   position: absolute;
   z-index: 10;
 }
+/* Volver de la función que se está viendo, junto a las migas. */
+.canvas-float--trail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Varios controles en fila. */
+.canvas-float--row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* En la interfaz de chat no hay pestañas: de las consultas se vuelve con un botón, arriba. */
+.calls-layer__back {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 14px 0;
+}
 .canvas-float[data-at='top-right'] {
   top: 12px;
   right: 14px;
+}
+.canvas-float[data-at='top-left'] {
+  top: 10px;
+  left: 10px;
 }
 .canvas-float[data-at='bottom-left'] {
   bottom: 16px;
@@ -4625,6 +5122,1468 @@ button.fn-menu__crumb:hover {
 }
 
 /*
+ * ── «Qué hace»: una función plegada, comprobada ──
+ * Lo que entró → lo que salió, con los datos de una vez que se ejecutó de verdad. Las piezas (una rejilla, una
+ * fila de celdas, la consola, un objeto antes y después) miden lo que dice `gist.ts`: el lienzo reserva ese
+ * sitio y aquí se dibuja en él.
+ */
+.gist-card {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  border: 1px solid var(--border-card);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  transition:
+    box-shadow 160ms ease,
+    opacity 220ms ease;
+}
+.gist-card[data-stale] {
+  opacity: 0.55;
+}
+.flow-node[data-selected] .gist-card {
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent),
+    var(--shadow-card);
+}
+.gist-card__head {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.gist-card__icon {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+}
+.gist-card__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-card__example {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  border-radius: var(--radius-full);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.gist-card__example[data-unused] {
+  border-color: color-mix(in srgb, var(--state-warning) 60%, transparent);
+  color: var(--state-warning);
+}
+.gist-card__example[data-mine] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.gist-card__toggle {
+  flex: none;
+}
+/* Probar una función con otros datos: un panel pequeño sobre el lienzo, con un campo por dato. */
+.try-panel {
+  top: 56px;
+  left: 50%;
+  display: flex;
+  width: min(400px, calc(100% - 32px));
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  transform: translateX(-50%);
+  animation: gist-settle 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.try-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.try-panel__head code {
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+.try-panel__close {
+  margin-left: auto;
+}
+.try-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.try-panel__name {
+  width: 96px;
+  flex: none;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.try-panel__field {
+  min-width: 0;
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+.try-panel__field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.try-panel__problem {
+  margin: 0;
+  color: var(--state-error);
+  font-size: 11.5px;
+}
+.try-panel__hint {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.try-panel__actions {
+  display: flex;
+  gap: 6px;
+}
+.gist-card__sub {
+  flex: none;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-card__body {
+  display: flex;
+  min-height: 0;
+  align-items: center;
+}
+.gist-lane {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gist-arrow {
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 16px;
+  text-align: center;
+}
+.gist-piece {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.gist-label {
+  height: 15px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  line-height: 13px;
+  white-space: nowrap;
+}
+.gist-grid {
+  display: grid;
+}
+.gist-cells {
+  display: flex;
+}
+.gist-cell {
+  display: inline-grid;
+  box-sizing: border-box;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--field);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gist-cell[data-on] {
+  background: var(--value-any-bg);
+  color: var(--value-any-fg);
+}
+.gist-cell[data-more] {
+  background: none;
+  color: var(--ink-faint);
+}
+/* Las tiras de un mecanismo: filas de celdas alineadas, cada una con su tono. */
+.gist-strips {
+  display: flex;
+  flex-direction: column;
+}
+.gist-strip {
+  display: flex;
+  align-items: center;
+}
+.gist-strip {
+  transition: opacity 220ms ease;
+}
+.gist-strip[data-out] {
+  opacity: 0.5;
+}
+/* Recorrido fila a fila: la que aún no ha llegado, y la que llega ahora. */
+.gist-strip[data-wait] {
+  opacity: 0.08;
+}
+.gist-strip[data-now] .gist-cell:not([data-more]) {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.gist-gauge__fill {
+  transition: width 200ms ease;
+}
+/* Una lista de textos largos, uno debajo de otro. */
+.gist-cells[data-stacked] {
+  flex-direction: column;
+}
+.gist-strip__name {
+  flex: none;
+  box-sizing: border-box;
+  padding-right: 8px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* No lo recibe: lo lee del programa. */
+.gist-label[data-hidden],
+.gist-strip__name[data-hidden] {
+  color: var(--ink-faint);
+  font-style: italic;
+  text-decoration: underline dotted;
+}
+.gist-strip__place {
+  display: inline-grid;
+  flex: none;
+  box-sizing: border-box;
+  height: 18px;
+  margin-right: 2px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 700;
+  place-items: center;
+}
+.gist-strip__place[data-place] {
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--state-warning) 26%, transparent);
+  color: var(--ink);
+}
+.gist-strip__place[data-place='1'] {
+  background: color-mix(in srgb, var(--state-warning) 70%, transparent);
+}
+.gist-strip__cells {
+  display: flex;
+  flex: none;
+}
+.gist-strip__note {
+  flex: none;
+  box-sizing: border-box;
+  padding-left: 8px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-cell[data-tone='a'] {
+  background: color-mix(in srgb, var(--accent) 30%, var(--field));
+  color: var(--ink);
+}
+.gist-cell[data-tone='b'] {
+  background: color-mix(in srgb, var(--state-success) 28%, var(--field));
+  color: var(--ink);
+}
+.gist-cell[data-tone='both'] {
+  background: var(--field);
+  color: var(--ink);
+}
+.gist-cell[data-tone='hit'] {
+  background: color-mix(in srgb, var(--state-success) 30%, var(--field));
+  color: var(--ink);
+}
+.gist-cell[data-tone='miss'] {
+  color: var(--ink-faint);
+}
+.gist-cell[data-tone='new'] {
+  background: color-mix(in srgb, var(--state-warning) 34%, var(--field));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--state-warning) 70%, transparent);
+  color: var(--ink);
+}
+/* Una medida: cuánto de cuánto. */
+.gist-gauge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.gist-gauge__bar {
+  position: relative;
+  width: 64px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--field);
+}
+.gist-gauge__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-full);
+  background: var(--state-success);
+}
+.gist-gauge__text b {
+  color: var(--ink);
+}
+.gist-pairs,
+.gist-state {
+  display: flex;
+  flex-direction: column;
+}
+.gist-pair,
+.gist-field,
+.gist-text,
+.gist-note {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  white-space: nowrap;
+}
+.gist-pair,
+.gist-field,
+.gist-text {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.gist-text {
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--value-any-bg);
+  color: var(--value-any-fg);
+}
+.gist-text[data-error] {
+  background: color-mix(in srgb, var(--state-error) 14%, var(--surface));
+  color: var(--state-error);
+}
+.gist-note {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.gist-field {
+  gap: 6px;
+  color: var(--ink-muted);
+}
+.gist-field__name {
+  color: var(--ink-faint);
+}
+.gist-field__before {
+  color: var(--ink-faint);
+}
+.gist-field[data-changed] .gist-field__after {
+  color: var(--accent);
+  font-weight: 600;
+}
+[data-changed].gist-cells .gist-cell,
+[data-changed].gist-grid .gist-cell[data-on],
+[data-changed].gist-text {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.gist-console {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-self: stretch;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 17px;
+}
+.gist-console span {
+  display: block;
+  white-space: pre;
+}
+
+/*
+ * La tarjeta se cuenta en orden, como pasó: entra el dato, cruza la flecha y sale el resultado, celda a celda
+ * y línea a línea. `--i` es el turno de cada cosa (el carril, y dentro de él cada celda o línea). Un pulso
+ * recorre la flecha mientras tanto. Pulsar la flecha lo vuelve a contar.
+ */
+@keyframes gist-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.92);
+  }
+}
+@keyframes gist-type {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+@keyframes gist-cross {
+  0% {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  60% {
+    opacity: 1;
+    color: var(--accent);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes gist-land {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+.gist-arrow {
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 16px;
+  animation: gist-cross 420ms ease-out both;
+  animation-delay: calc(var(--i, 1) * 520ms - 240ms);
+}
+.gist-arrow:hover {
+  color: var(--accent);
+}
+.gist-lane {
+  --lane: calc(var(--i, 0) * 520ms);
+}
+.gist-lane .gist-label,
+.gist-lane .gist-note,
+.gist-lane .gist-text,
+.gist-lane .gist-pair {
+  animation: gist-in 260ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-lane .gist-cell,
+.gist-lane .gist-field {
+  animation: gist-in 220ms ease-out both;
+  animation-delay: calc(var(--lane) + var(--i, 0) * 34ms);
+}
+.gist-lane .gist-console {
+  animation: gist-in 220ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-lane .gist-console span {
+  animation: gist-type 260ms steps(12, end) both;
+  animation-delay: calc(var(--lane) + 140ms + var(--i, 0) * 130ms);
+}
+/* Lo que cambió aterriza con un pulso: es lo que la función hizo. */
+.gist-lane [data-changed].gist-field .gist-field__after,
+.gist-lane [data-changed] > .gist-cell {
+  animation:
+    gist-in 220ms ease-out both,
+    gist-land 700ms ease-out backwards;
+  animation-delay:
+    calc(var(--lane) + var(--i, 0) * 34ms), calc(var(--lane) + 300ms + var(--i, 0) * 34ms);
+}
+.gist-rule {
+  display: flex;
+  flex-direction: column;
+}
+.gist-case {
+  display: inline-flex;
+  align-items: stretch;
+  animation: gist-in 240ms ease-out both;
+  animation-delay: calc(var(--lane) + var(--i, 0) * 160ms);
+}
+/* Dentro de un caso las dos casillas entran con él, no cada una por su cuenta. */
+.gist-lane .gist-case .gist-cell {
+  min-width: 24px;
+  padding: 0 5px;
+  animation: none;
+}
+.gist-case__to {
+  display: inline-grid;
+  width: 22px;
+  place-items: center;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+.gist-cell[data-gives] {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
+/*
+ * El recorrido: la regla aplicada elemento a elemento, con los datos de verdad. Al elemento que le toca se le
+ * ve (un anillo y un pequeño salto); el caso por el que pasa se enciende; su resultado aparece en su sitio; lo
+ * que se queda fuera se apaga. Todo son estados (`data-now`, `data-wait`, `data-out`) que pone la tarjeta paso
+ * a paso: aquí solo se dice cómo se ve cada uno.
+ */
+.gist-cell,
+.gist-text,
+.gist-case,
+.gist-char {
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+.gist-cell[data-wait],
+.gist-text[data-wait] {
+  opacity: 0.1;
+  transform: scale(0.8);
+}
+.gist-cell[data-now],
+.gist-text[data-now] {
+  z-index: 1;
+  box-shadow: 0 0 0 2px var(--accent);
+  transform: scale(1.18);
+}
+.gist-cell[data-out] {
+  opacity: 0.28;
+}
+.gist-case {
+  border-radius: 7px;
+}
+.gist-case[data-now] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+  transform: translateX(3px);
+}
+.gist-char {
+  font-style: normal;
+}
+.gist-char[data-wait] {
+  opacity: 0;
+}
+.gist-test {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 7px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+  animation: gist-in 260ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-test__mark {
+  color: var(--ink-faint);
+  font-weight: 700;
+}
+.gist-test[data-verdict='yes'] {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 14%, var(--surface));
+}
+.gist-test[data-verdict='yes'] .gist-test__mark {
+  color: var(--state-success);
+}
+.gist-test[data-verdict='no'] {
+  border-color: color-mix(in srgb, var(--ink-faint) 60%, transparent);
+}
+.gist-fold {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  animation: gist-in 260ms ease-out both;
+  animation-delay: var(--lane);
+}
+.gist-fold__symbol {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--accent);
+  color: var(--surface);
+  font-weight: 700;
+}
+.gist-fold__value {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  animation: gist-in 160ms ease-out both;
+}
+/* Las vueltas de un bucle: una tabla que se llena fila a fila mientras se cuenta. */
+.gist-laps {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.gist-laps__row {
+  display: grid;
+  align-items: center;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+.gist-laps__row[data-wait] {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+.gist-laps__head {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-laps__head[data-takes] {
+  color: var(--accent);
+}
+.gist-laps__n {
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding-right: 6px;
+  white-space: nowrap;
+}
+.gist-laps__cell {
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 20px;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 6px;
+  border: 1px solid var(--border-card);
+  border-radius: 6px;
+  background: var(--surface);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.gist-laps__cell[data-takes] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.gist-laps__cell[data-start] {
+  border-style: dashed;
+  color: var(--ink-faint);
+}
+.gist-laps__row[data-done] .gist-laps__cell:not([data-takes]):not([data-changed]) {
+  color: var(--ink-faint);
+}
+.gist-laps__row[data-now] .gist-laps__cell[data-takes] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+}
+.gist-laps__row[data-now] .gist-laps__cell[data-changed] {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 18%, var(--surface));
+  animation: gist-pulse 420ms ease-out;
+}
+.gist-laps__row[data-done] .gist-laps__cell[data-changed] {
+  border-color: color-mix(in srgb, var(--state-success) 45%, transparent);
+}
+.gist-laps__cell:has(.gist-laps__items) {
+  padding: 0 1px;
+  border-color: transparent;
+  background: transparent;
+}
+.gist-laps__items {
+  display: inline-flex;
+  gap: 1px;
+}
+.gist-laps__item {
+  display: inline-grid;
+  box-sizing: border-box;
+  height: 18px;
+  place-items: center;
+  border: 1px solid var(--border-card);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.gist-laps__item[data-changed] {
+  border-color: color-mix(in srgb, var(--state-success) 55%, transparent);
+  background: color-mix(in srgb, var(--state-success) 14%, var(--surface));
+}
+.gist-laps__row[data-now] .gist-laps__item[data-changed] {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 30%, var(--surface));
+  animation: gist-pulse 420ms ease-out;
+}
+.gist-laps__skip,
+.gist-laps__end {
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.gist-laps__end {
+  color: var(--ink);
+  font-weight: 600;
+}
+.gist-net {
+  position: relative;
+  font-size: 11.5px;
+}
+.gist-net__row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-start;
+  padding-top: 2px;
+  transition: opacity 220ms ease;
+}
+.gist-net__row[data-wait] {
+  opacity: 0.32;
+}
+/* Cada parte cuelga de la anterior, como los tramos de una red: una línea a la izquierda las une. */
+.gist-net__part {
+  flex: none;
+  box-sizing: border-box;
+  height: 20px;
+  padding-right: 8px;
+  border-right: 2px solid var(--border-card);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: right;
+  white-space: nowrap;
+}
+.gist-net__row[data-part='except'] .gist-net__part {
+  border-right-color: color-mix(in srgb, var(--state-warning) 60%, transparent);
+}
+.gist-net__body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding-left: 8px;
+}
+.gist-net__line {
+  display: flex;
+  height: 20px;
+  align-items: center;
+  gap: 8px;
+}
+.gist-net__head {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.gist-net__row[data-state='skipped'] .gist-net__head {
+  color: var(--ink-faint);
+}
+.gist-net__badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.gist-net__badge[data-tone='ran'] {
+  background: color-mix(in srgb, var(--state-success) 14%, transparent);
+  color: var(--state-success);
+}
+.gist-net__badge[data-tone='caught'] {
+  background: color-mix(in srgb, var(--state-success) 22%, transparent);
+  color: var(--state-success);
+}
+.gist-net__badge[data-tone='error'] {
+  background: color-mix(in srgb, var(--state-error) 14%, transparent);
+  color: var(--state-error);
+}
+.gist-net__badge[data-tone='skipped'] {
+  color: var(--ink-faint);
+}
+.gist-net__row[data-now] .gist-net__badge {
+  animation: gist-pulse 420ms ease-out;
+}
+.gist-net__detail {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* El error: aparece donde salta y cae hasta la red que lo atrapa (o hasta abajo, si se escapa). */
+.gist-net__error {
+  position: absolute;
+  right: 0;
+  z-index: 1;
+  padding: 1px 8px;
+  border: 1px solid var(--state-error);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-error) 16%, var(--surface));
+  color: var(--state-error);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: gist-in 200ms ease-out both;
+  transition: top 520ms cubic-bezier(0.55, 0, 0.75, 0.2);
+}
+.gist-net__error[data-landed]:not([data-escaped]) {
+  border-color: var(--state-success);
+  background: color-mix(in srgb, var(--state-success) 14%, var(--surface));
+  color: var(--state-success);
+  transition:
+    top 520ms cubic-bezier(0.55, 0, 0.75, 0.2),
+    color 200ms ease 520ms,
+    border-color 200ms ease 520ms,
+    background-color 200ms ease 520ms;
+}
+.gist-net__end {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: opacity 220ms ease;
+}
+.gist-net__end[data-wait] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-net__row,
+  .gist-net__error,
+  .gist-net__end,
+  .gist-net__badge {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+.gist-switch {
+  position: relative;
+  font-size: 11.5px;
+}
+.gist-switch__arm {
+  position: absolute;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-start;
+  border-radius: 8px;
+  transition: background-color 200ms ease;
+}
+.gist-switch__arm[data-taken] {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Las agujas: una vía a la izquierda de la que sale cada brazo. */
+.gist-switch__part {
+  flex: none;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 3px 12px 0 0;
+  border-right: 2px solid var(--border-card);
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+.gist-switch__arm[data-taken] .gist-switch__part {
+  border-right-color: var(--accent);
+  color: var(--accent);
+}
+.gist-switch__body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 0 0 10px;
+}
+.gist-switch__head {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gist-switch__arm[data-straight] .gist-switch__part {
+  border-right-style: dashed;
+}
+.gist-switch__test {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+}
+.gist-switch__test code {
+  font-family: var(--font-mono);
+}
+.gist-switch__verdict {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--state-error) 12%, transparent);
+  color: var(--state-error);
+  font-weight: 600;
+}
+.gist-switch__verdict[data-yes] {
+  background: color-mix(in srgb, var(--state-success) 16%, transparent);
+  color: var(--state-success);
+}
+.gist-switch__count {
+  flex: none;
+  padding-top: 3px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+.gist-switch__arm[data-taken] .gist-switch__count {
+  color: var(--accent);
+}
+.gist-switch__ball {
+  position: absolute;
+  z-index: 1;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 50%, transparent);
+  animation: switch-fall 460ms cubic-bezier(0.55, 0, 0.75, 0.2) both;
+}
+.gist-switch__ball[data-still] {
+  animation: none;
+}
+@keyframes switch-fall {
+  from {
+    top: var(--from);
+  }
+  to {
+    top: var(--to);
+  }
+}
+.gist-switch__end {
+  position: absolute;
+  left: 0;
+  display: flex;
+  align-items: center;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: opacity 220ms ease;
+}
+.gist-switch__end[data-wait] {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-switch__ball,
+  .gist-switch__arm,
+  .gist-switch__end {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+@keyframes gist-pulse {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-arrow,
+  .gist-lane * {
+    animation: none !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gist-laps__row,
+  .gist-laps__cell {
+    transition: none;
+    animation: none !important;
+  }
+}
+
+/*
+ * «Al ejecutarlo»: lo que el programa saca por pantalla, a la vista mientras se construye. Una consola
+ * pequeña en una esquina del lienzo: las líneas entran una a una cuando la salida cambia, y lo que se tecleó
+ * (las respuestas de ejemplo de un programa que pide datos) va resaltado.
+ */
+.canvas-float[data-at='bottom-right'] {
+  right: 14px;
+  bottom: 16px;
+}
+.run-panel {
+  display: flex;
+  /* Estrecha, para tapar lo menos posible del diagrama; se pliega con su botón. */
+  width: min(300px, 44vw);
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  animation: gist-settle 300ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.run-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.run-panel__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--state-success);
+}
+.run-panel[data-ended='error'] .run-panel__dot {
+  background: var(--state-error);
+}
+.run-panel[data-ended='idle'] .run-panel__dot,
+.run-panel[data-ended='waiting'] .run-panel__dot,
+.run-panel[data-ended='cut'] .run-panel__dot,
+.run-panel[data-ended='blocked'] .run-panel__dot {
+  background: var(--state-warning);
+}
+.run-panel__title {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.run-panel__badge {
+  flex: none;
+  padding: 1px 7px;
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  border-radius: var(--radius-full);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+}
+.run-panel__toggle {
+  flex: none;
+}
+.run-panel__out {
+  display: flex;
+  max-height: 220px;
+  flex-direction: column;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 9px;
+  background: var(--void);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 17px;
+}
+.run-panel__line {
+  display: block;
+  min-height: 17px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  animation: gist-in 220ms ease-out both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+.run-panel__typed {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+}
+.run-panel__more,
+.run-panel__empty {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+}
+.run-panel__end {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+/* Jugar el programa: la consola pide el dato y se le contesta aquí. */
+.run-panel__badge[data-mine] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.run-panel__ask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 9px;
+  background: var(--void);
+}
+.run-panel__ask:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.run-panel__prompt {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.run-panel__field {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 22px;
+}
+.run-panel__field::placeholder {
+  color: var(--ink-faint);
+}
+.run-panel__send {
+  flex: none;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+}
+.run-panel__actions {
+  display: flex;
+  gap: 6px;
+}
+.run-panel__play {
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.run-panel__play[data-quiet] {
+  border-color: var(--border-card);
+  background: transparent;
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+.run-panel__play:disabled,
+.run-panel__send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.run-panel[data-ended='error'] .run-panel__end {
+  color: var(--state-error);
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-panel,
+  .run-panel__line {
+    animation: none;
+  }
+}
+
+/* Cuánto lleva lo que se construye: una barra fina arriba del lienzo, con las partes hechas. */
+.build-progress {
+  position: absolute;
+  z-index: 11;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 3px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+}
+.build-progress__bar {
+  display: block;
+  height: 100%;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  transition: width 500ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.build-progress__text {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  padding: 2px 10px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  transform: translateX(-50%);
+}
+/* La salida y el diagrama se hablan: una línea lleva a su paso, y lo seleccionado resalta sus líneas. */
+button.run-panel__line {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+button.run-panel__line:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.run-panel__line[data-lit] {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Qué hacer con lo seleccionado, sin escribir. */
+.chat__chips--about {
+  align-items: center;
+}
+.chat__about {
+  overflow: hidden;
+  padding: 0 4px 0 2px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * El esbozo: lo que se está pidiendo, dibujado mientras se escribe. La cosa, en una caja de trazo discontinuo
+ * (aún no existe); debajo, cada parte que la frase ya nombra, que entra cuando se nombra. No es el programa:
+ * es lo que el lienzo ha entendido hasta ahora.
+ */
+.sketch {
+  display: flex;
+  width: min(440px, 100%);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.sketch__what {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  animation: gist-settle 300ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__kind {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sketch__name {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.sketch__parts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 0 18px;
+  list-style: none;
+}
+.sketch__part {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  border-radius: 12px;
+  color: var(--ink);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+  animation: gist-in 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__n {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+.sketch__hint {
+  margin: 2px 0 0;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+.sketch__text {
+  flex: 1;
+  min-width: 0;
+}
+/* Una parte que el programa ya cubre: deja de ser un hueco (borde entero, marca) y dice con qué pieza. */
+.sketch__part {
+  transition:
+    border-color 320ms ease,
+    background-color 320ms ease;
+}
+.sketch__part[data-filled] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+}
+/* En el plan, pero aún sin escribir: se anuncia con qué etapa, sin darla por hecha. */
+.sketch__part[data-planned] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.sketch__part[data-planned] .sketch__piece {
+  font-family: inherit;
+  font-style: italic;
+}
+.sketch__part[data-filled] .sketch__n {
+  background: var(--accent);
+  color: var(--surface);
+  animation: gist-settle 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__piece {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: gist-in 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__count {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* Ya hay programa: el esbozo se aparta a una esquina, en pequeño, y sigue llenándose mientras se construye. */
+.sketch-pin {
+  bottom: 64px;
+  left: 16px;
+  width: min(264px, calc(100% - 32px));
+  pointer-events: none;
+  animation: gist-in 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch[data-pinned] {
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  box-shadow: var(--shadow-raised);
+}
+.sketch[data-pinned] .sketch__what {
+  padding: 7px 10px;
+  border-radius: 10px;
+  animation: none;
+}
+/* En qué va la IA: una línea, sin empujar el esbozo. */
+.sketch[data-pinned] .sketch__hint {
+  overflow: hidden;
+  margin: 0;
+  padding: 0 4px;
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sketch[data-pinned] .sketch__name {
+  font-size: 13px;
+}
+.sketch[data-pinned] .sketch__parts {
+  gap: 4px;
+  padding-left: 0;
+}
+.sketch[data-pinned] .sketch__part {
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  font-size: 12px;
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sketch__what,
+  .sketch__part,
+  .sketch__piece,
+  .sketch-pin,
+  .sketch__part[data-filled] .sketch__n {
+    animation: none;
+  }
+}
+
+/*
  * ── Etapas: el algoritmo a la vista ──
  * Una fase del algoritmo con nombre. Plegada, una tarjeta de cuaderno: su número en un squircle del acento, su
  * título y su subtítulo, lo que usa → lo que deja (chips) y las pastillas de sus subprocesos. Abierta, un marco
@@ -4678,6 +6637,871 @@ button.fn-menu__crumb:hover {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
+/*
+ * ── La arquitectura: el primer nivel como módulos ──
+ * Cada módulo lleva la insignia de su papel; lo que los une son dos flechas distintas (un dato que pasa, o
+ * uno que usa a otro); y detrás, una figura dice la forma del conjunto.
+ */
+.section__role {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--role-tint, var(--ink-muted)) 16%, var(--surface));
+  color: var(--role-tint, var(--ink-muted));
+}
+/* El estado tras ejecutar: una pestaña sobre el borde de abajo. */
+.section__state {
+  position: absolute;
+  z-index: 1;
+  right: 18px;
+  bottom: -9px;
+  padding: 0 7px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.section__state[data-tone='unused'],
+.section__state[data-tone='idle'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--state-warning) 60%, transparent);
+  color: var(--state-warning);
+}
+.section__state[data-tone='failed'] {
+  border-color: color-mix(in srgb, var(--state-error) 65%, transparent);
+  color: var(--state-error);
+}
+/* Un módulo que nadie usa (o por el que no se pasó) se retira un poco: no es parte de lo que ocurre. */
+.flow-node:has(.section__state[data-tone='unused']) .section-card,
+.flow-node:has(.section__state[data-tone='idle']) .section-card {
+  border-style: dashed;
+}
+/* Va sobre el borde, como una pestaña: no le quita sitio al título. */
+.section__shared {
+  position: absolute;
+  top: -10px;
+  right: 16px;
+  background: var(--surface-raised);
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-full);
+  color: var(--accent);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.flow-node[data-role='entrada'] {
+  --role-tint: var(--state-warning);
+}
+.flow-node[data-role='datos'] {
+  --role-tint: var(--state-success);
+}
+.flow-node[data-role='logica'] {
+  --role-tint: var(--accent);
+}
+.flow-node[data-role='control'] {
+  --role-tint: var(--ink);
+}
+.flow-node[data-role='salida'] {
+  --role-tint: var(--state-error);
+}
+/*
+ * El papel, en la **silueta**: cada clase de módulo tiene su forma, para reconocerla de lejos sin leer nada.
+ * Lo que calcula es la tarjeta de siempre (con su filo arriba); lo que entra se abre por la izquierda y lo
+ * que sale, por la derecha (su lado recto, con el filo); quien manda es una cápsula con todo el borde; y lo
+ * que se guarda es un taco de hojas.
+ */
+.flow-node[data-role] .section-card {
+  border-top: 2px solid color-mix(in srgb, var(--role-tint) 70%, transparent);
+}
+.flow-node[data-role='entrada'] .section-card {
+  border-top: 1px solid var(--border-card);
+  border-left: 4px solid color-mix(in srgb, var(--role-tint) 75%, transparent);
+  border-radius: 4px 20px 20px 4px;
+}
+.flow-node[data-role='salida'] .section-card {
+  border-top: 1px solid var(--border-card);
+  border-right: 4px solid color-mix(in srgb, var(--role-tint) 75%, transparent);
+  border-radius: 20px 4px 4px 20px;
+}
+.flow-node[data-role='control'] .section-card {
+  border: 1.5px solid color-mix(in srgb, var(--role-tint) 46%, transparent);
+  border-radius: 30px;
+}
+.flow-node[data-role='datos'] .section-card {
+  border-top: 1px solid var(--border-card);
+  border-bottom: 2px solid color-mix(in srgb, var(--role-tint) 70%, transparent);
+  border-radius: 10px;
+}
+.flow-node[data-role='datos'] .section-card::before,
+.flow-node[data-role='datos'] .section-card::after {
+  position: absolute;
+  z-index: -1;
+  height: 12px;
+  border: 1px solid color-mix(in srgb, var(--role-tint) 50%, var(--border-card));
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
+  background: var(--surface);
+  content: '';
+  pointer-events: none;
+}
+.flow-node[data-role='datos'] .section-card::before {
+  right: 5px;
+  bottom: -7px;
+  left: 5px;
+}
+.flow-node[data-role='datos'] .section-card::after {
+  right: 11px;
+  bottom: -12px;
+  left: 11px;
+}
+
+/* Un módulo de la arquitectura se dice con palabras: su título y su subtítulo pueden ocupar dos líneas. */
+.section-card[data-plain] .section__title {
+  display: -webkit-box;
+  line-height: 19px;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.section-card[data-plain] .section-card__sub {
+  display: -webkit-box;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.arch-edge__line {
+  fill: none;
+  stroke: var(--ink-muted);
+  stroke-linecap: round;
+  stroke-width: 1.4;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: arch-draw 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: calc(360ms + var(--i, 0) * 70ms);
+}
+.arch-edge__head {
+  fill: var(--ink-muted);
+  opacity: 0;
+  animation: arch-show 200ms ease-out forwards;
+  animation-delay: calc(760ms + var(--i, 0) * 70ms);
+}
+/*
+ * El color de cada dato que viaja: el mismo dato, el mismo color en todas sus flechas (y en la idea). Son
+ * cinco, repartidos por orden de aparición; aquí dicen «es el mismo dato», no de qué clase es.
+ */
+[data-hue='0'] {
+  --flow: var(--accent);
+}
+[data-hue='1'] {
+  --flow: var(--socket-collection);
+}
+[data-hue='2'] {
+  --flow: var(--socket-number);
+}
+[data-hue='3'] {
+  --flow: var(--socket-text);
+}
+[data-hue='4'] {
+  --flow: var(--state-warning);
+}
+/* Un dato que pasa: el trazo principal, continuo y con su color. */
+.arch-edge[data-kind='data'] .arch-edge__line {
+  stroke: var(--flow, var(--accent));
+  stroke-width: 2.2;
+}
+.arch-edge[data-kind='data'] .arch-edge__head {
+  fill: var(--flow, var(--accent));
+}
+/* Uno que usa a otro: fino y a trazos. (Se dibuja entero: el trazo ya es discontinuo.) */
+.arch-edge[data-kind='call'] .arch-edge__line {
+  stroke-dasharray: 0.035 0.03;
+  stroke-dashoffset: 0;
+  opacity: 0;
+  animation-name: arch-show;
+}
+/* Aún no está en el código: lo propuso el plan. */
+.arch-edge[data-planned] .arch-edge__line {
+  stroke-dasharray: 0.012 0.03;
+  stroke-dashoffset: 0;
+  opacity: 0;
+  animation-name: arch-show-faint;
+}
+.arch-edge[data-planned] .arch-edge__head {
+  animation-name: arch-show-faint;
+}
+/* Lo que viaja: un punto de luz que recorre la flecha en el sentido en que pasa el dato. */
+.arch-edge__pulse {
+  fill: none;
+  stroke: var(--surface);
+  stroke-linecap: round;
+  stroke-width: 2.2;
+  stroke-dasharray: 0.06 0.94;
+  stroke-dashoffset: 1.06;
+  opacity: 0.75;
+  animation: arch-travel 2600ms linear infinite;
+  animation-delay: calc(1200ms + var(--i, 0) * 260ms);
+}
+/* Luego: el orden de los pasos, cuando entre ellos no viaja nada. Fina y continua, sin pastilla. */
+.arch-edge[data-kind='next'] .arch-edge__line {
+  stroke: color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
+  stroke-width: 1.4;
+}
+.arch-edge[data-kind='next'] .arch-edge__head {
+  fill: color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
+}
+.arch-edge[data-emphasis='dim'] {
+  opacity: 0.22;
+}
+.arch-edge[data-emphasis='active'] .arch-edge__line {
+  stroke-width: 2.6;
+}
+.arch-edge__label {
+  position: absolute;
+  z-index: 3;
+  max-width: 180px;
+  padding: 1px 8px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--flow, var(--accent)) 60%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--flow, var(--accent)) 12%, var(--surface-raised));
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 19px;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  animation: arch-show 240ms ease-out forwards;
+  animation-delay: calc(700ms + var(--i, 0) * 70ms);
+}
+.arch-edge__label[data-kind='call'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+}
+.arch-edge__label[data-planned] {
+  border-style: dotted;
+  font-style: italic;
+  animation-name: arch-show-faint;
+}
+.arch-edge__label[data-emphasis='dim'] {
+  visibility: hidden;
+}
+@keyframes arch-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes arch-show {
+  to {
+    opacity: 1;
+  }
+}
+@keyframes arch-show-faint {
+  to {
+    opacity: 0.55;
+  }
+}
+@keyframes arch-travel {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Al reproducir: la flecha por la que pasa algo ahora, y la ficha que lo lleva. */
+.arch-edge[data-live] .arch-edge__line {
+  stroke: var(--flow, var(--accent));
+  stroke-width: 3;
+  opacity: 1;
+}
+.arch-edge[data-live] .arch-edge__head {
+  fill: var(--flow, var(--accent));
+}
+.arch-edge__token {
+  fill: var(--flow, var(--accent));
+  stroke: var(--surface-raised);
+  stroke-width: 2.5;
+  offset-rotate: 0deg;
+  animation: arch-token 900ms cubic-bezier(0.45, 0, 0.3, 1) both;
+}
+.arch-edge__label[data-live] {
+  border-color: var(--flow, var(--accent));
+  background: var(--flow, var(--accent));
+  color: var(--surface);
+}
+@keyframes arch-token {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+/* …y el marco de «ahora está aquí», que va de módulo en módulo. */
+.react-flow__node.arch-spot-node {
+  transition: transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.arch-spot {
+  box-sizing: border-box;
+  border: 2.5px solid var(--accent);
+  border-radius: 18px;
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+  transition:
+    width 420ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    height 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: arch-show 240ms ease-out backwards;
+}
+/* Por dónde y cómo se sale de lo que se repite. */
+.arch-gate {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: arch-show 400ms ease-out backwards;
+}
+.arch-gate .react-flow__handle {
+  opacity: 0;
+}
+.arch-gate__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.arch-gate__mark {
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+}
+/* Desde dónde se mira el programa: Idea · Partes · Detalle. Arriba, en el centro. */
+.distance {
+  top: 10px;
+  left: 50%;
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  transform: translateX(-50%);
+}
+.distance__option {
+  padding: 4px 14px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.distance__option:hover {
+  color: var(--ink);
+}
+.distance__option[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--surface);
+}
+@media (max-width: 560px) {
+  /* En una pantalla estrecha no cabe entre las migas y «Paso a paso»: baja una fila. */
+  .distance {
+    top: 54px;
+  }
+  .idea .idea__scroll {
+    top: 96px;
+  }
+}
+/* La idea: el programa en unas líneas, a tamaño de lectura. Tapa el diagrama (que sigue debajo). */
+.idea {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  overflow: hidden;
+  background: var(--void);
+}
+/* El texto corre entre las barras de arriba y las de abajo: nunca por debajo de ellas. */
+.idea__scroll {
+  position: absolute;
+  inset: 52px 0 0;
+  overflow: auto;
+  padding: 12px 16px 24px;
+}
+.idea__flow {
+  display: flex;
+  max-width: 620px;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0 auto;
+}
+.idea__play {
+  color: var(--state-success);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+.idea__block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.idea__label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.idea__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.idea__step {
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease;
+}
+.idea__step:hover {
+  background: var(--surface-raised);
+}
+.idea__step[data-live] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.idea__ordinal {
+  display: inline-grid;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 700;
+  place-items: center;
+}
+.idea__text {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+.idea__title {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 22px;
+}
+.idea__says {
+  color: var(--ink-muted);
+  font-size: 13.5px;
+  line-height: 19px;
+}
+.idea__brings {
+  flex: none;
+  max-width: 40%;
+  padding: 1px 9px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--flow, var(--accent)) 60%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--flow, var(--accent)) 12%, transparent);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Lo que se repite: sus pasos, dentro de un marco que dice que dan vueltas. */
+.idea__block[data-kind='loop'] {
+  padding: 12px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  transition: box-shadow 200ms ease;
+}
+.idea__block[data-kind='loop'][data-live] {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.idea__block[data-kind='loop'] .idea__label {
+  color: var(--accent);
+}
+.idea__turn {
+  font-size: 15px;
+  letter-spacing: 0;
+}
+.idea__laps {
+  color: var(--ink-muted);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.idea__exit {
+  margin: 2px 0 0 4px;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+.idea__exit > span {
+  color: var(--accent);
+}
+.idea__result {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 23px;
+  overflow-wrap: anywhere;
+  transition: box-shadow 200ms ease;
+}
+.idea__block[data-kind='result'][data-live] .idea__result {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.idea__block[data-planned] .idea__result {
+  border-style: dashed;
+  color: var(--ink-muted);
+}
+.idea__said {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+/* La barra de transporte: ver pasar una vuelta. Encima de la leyenda. */
+.arch-transport {
+  bottom: calc(48px + var(--lift, 0px));
+  left: calc((100% - var(--avoid, 0px)) / 2);
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  max-width: min(calc(100% - var(--avoid, 0px) - 20px), 760px);
+  padding: 4px 12px 4px 4px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.arch-transport__play {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.arch-transport__steps {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.arch-transport__step {
+  display: block;
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.arch-transport__step[data-done] {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.arch-transport__step[aria-current='step'] {
+  border-color: var(--accent);
+  background: var(--accent);
+  transform: scale(1.3);
+}
+.arch-transport__step[data-phase='before'],
+.arch-transport__step[data-phase='result'] {
+  border-radius: 2px;
+}
+.arch-transport__now {
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+/* La tira de vueltas: cuántas dio y por cuál va. */
+.arch-laps {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.arch-laps__bar {
+  position: relative;
+  width: 72px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.arch-laps__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transition: width 700ms ease-in-out;
+}
+.arch-laps__spark {
+  overflow: visible;
+}
+.arch-laps__spark polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+.arch-laps__spark circle {
+  fill: var(--accent);
+  transition:
+    cx 700ms ease-in-out,
+    cy 700ms ease-in-out;
+}
+/* Dónde empieza el trabajo: una marca apoyada en el borde de su módulo. */
+.arch-start {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--state-success) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: arch-show 400ms ease-out backwards;
+}
+.arch-start__play {
+  color: var(--state-success);
+  font-size: 9px;
+}
+/* Cómo se lee: la forma elegida y lo que dice cada trazo. Abajo, en el centro, sin estorbar al puntero. */
+.arch-legend {
+  bottom: calc(14px + var(--lift, 0px));
+  /* En el centro de lo que la consola (abajo, a la derecha) deja libre: `--avoid` es lo que ocupa a lo
+     ancho. Si a su lado no caben, van encima de ella: `--lift` es lo que ocupa a lo alto. */
+  left: calc((100% - var(--avoid, 0px)) / 2);
+  display: flex;
+  box-sizing: border-box;
+  max-width: calc(100% - var(--avoid, 0px) - 20px);
+  align-items: center;
+  gap: 12px;
+  overflow: hidden;
+  padding: 4px 12px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  color: var(--ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.arch-legend__shape {
+  color: var(--ink);
+  font-weight: 650;
+}
+.arch-legend__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.arch-legend__key::before {
+  width: 22px;
+  border-top: 2px solid var(--accent);
+  content: '';
+}
+.arch-legend__key[data-kind='call']::before {
+  border-top: 1.5px dashed var(--ink-muted);
+}
+.arch-legend__key[data-kind='next']::before {
+  border-top: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
+}
+.arch-legend__toggle {
+  padding: 1px 8px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 11px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.arch-legend__toggle[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.arch-legend__key[data-kind='planned']::before {
+  border-top: 1.5px dotted var(--ink-faint);
+}
+.arch-figure {
+  display: block;
+  box-sizing: border-box;
+  pointer-events: none;
+  animation: arch-show 600ms ease-out backwards;
+}
+.arch-figure[data-kind='band'] {
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 22%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ink-muted) 4%, transparent);
+}
+.arch-figure__label {
+  position: absolute;
+  top: 6px;
+  left: 14px;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.arch-figure[data-kind='track'] {
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.arch-figure__flow {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 22px,
+    color-mix(in srgb, var(--accent) 28%, transparent) 22px 30px
+  );
+  animation: arch-slide 1400ms linear infinite;
+}
+@keyframes arch-slide {
+  to {
+    transform: translateX(30px);
+  }
+}
+.arch-figure__shape {
+  fill: color-mix(in srgb, var(--accent) 6%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 24%, transparent);
+  stroke-dasharray: 4 6;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+.arch-figure__ring {
+  fill: color-mix(in srgb, var(--accent) 3%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 26%, transparent);
+  stroke-width: 1.5;
+}
+.arch-figure__caption {
+  fill: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 600;
+  dominant-baseline: central;
+}
+.arch-figure[data-kind='spokes'] .arch-figure__ring {
+  stroke-dasharray: 3 7;
+}
+.arch-figure[data-kind='ring'] .arch-figure__ring {
+  stroke-width: 10;
+  stroke: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+/* Lo que se repite: una marca que da la vuelta al anillo, en el sentido en que se ejecuta. */
+.arch-figure__turn {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 60%, transparent);
+  stroke-linecap: round;
+  stroke-width: 3;
+  stroke-dasharray: 0.08 0.92;
+  animation: arch-orbit 5200ms linear infinite;
+}
+@keyframes arch-orbit {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .arch-edge__line,
+  .arch-edge__head,
+  .arch-edge__label,
+  .arch-figure {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+  .arch-edge__pulse,
+  .arch-edge__token,
+  .arch-figure__flow,
+  .arch-figure__turn {
+    display: none;
+  }
+  .react-flow__node.arch-spot-node,
+  .arch-spot,
+  .arch-laps__fill,
+  .arch-laps__spark circle {
+    transition: none;
+  }
+}
+
 /* En la cabecera de un bucle que encabeza una etapa, el número va entre su icono y su título. */
 .node__head .section__ordinal {
   min-width: 22px;

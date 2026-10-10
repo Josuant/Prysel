@@ -1,4 +1,5 @@
 export { MorphNode, type MeasuredSlot, type MorphNodeProps } from './MorphNode.tsx'
+export type { ModuleState } from './flow/SectionCard.tsx'
 export { Canvas, type CanvasNode, type CanvasProps } from './Canvas.tsx'
 export { Edge, EdgeDefs, type EdgeProps } from './Edge.tsx'
 export { StatusChip, TypeBadge, STATE_META } from './Badge.tsx'
@@ -32,6 +33,7 @@ export {
   resolveSectionAction,
   toCanvasNodes,
   useProgramView,
+  MAP_FROM,
   viewOf,
   withSections,
   type FoldedView,
@@ -43,6 +45,27 @@ export {
   type SourceSection,
   type Subprocess,
 } from './program.ts'
+export {
+  architectureOf,
+  described,
+  factsText,
+  moduleGraph,
+  roleOf,
+  withPlan,
+  withStory,
+  withVerdict,
+  beatsOf,
+  flowHues,
+  flowName,
+  ideaOf,
+  RESULT_BEAT,
+  type Beat,
+  type Idea,
+  type IdeaStep,
+  type ModuleFacts,
+  type ModuleStory,
+  type PlannedModule,
+} from './architecture.ts'
 export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'
 export { AddNodeMenu, findTemplates, type AddNodeMenuProps } from './AddNodeMenu.tsx'
 export {
@@ -57,6 +80,20 @@ export { addPlace, checkConnection, type Link, type Verdict } from './connect.ts
 export { CodePanel, type CodePanelProps } from './CodePanel.tsx'
 export type { NodeMenuItem } from './NodeMenu.tsx'
 export { viewerSize, type ViewerContent } from './viewer.ts'
+export {
+  gistSize,
+  gistPeek,
+  gistText,
+  titledScene,
+  type GistPiece,
+  type GistScene,
+  type GistStrip,
+  type StripTone,
+  type GistValue,
+  type LapCell,
+  type NetRow,
+} from './gist.ts'
+export { GistCard, type GistCardProps } from './flow/GistCard.tsx'
 export { FUNCTION_CHIP } from './flow/useChipDrag.ts'
 export {
   NOTE_STYLES,

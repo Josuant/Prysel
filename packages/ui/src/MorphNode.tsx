@@ -593,6 +593,17 @@ export function MorphNode({
               </span>
               {opens && <Subprocesses opens={opens} onOpen={onOpen} />}
               {showStatus && state !== 'dormant' && <StatusChip state={state} showLabel={false} />}
+              {/* Una decisión de la que se sabe cómo funciona: vuelve a plegarse en su tarjeta. */}
+              {onToggleDensity && (
+                <button
+                  type="button"
+                  className="node__action nodrag"
+                  aria-label={toggleLabel ?? `Plegar ${label}`}
+                  onClick={onToggleDensity}
+                >
+                  <Icon name="chevron" size={13} />
+                </button>
+              )}
             </div>
           ) : lined && control ? (
             <>

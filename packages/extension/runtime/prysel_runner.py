@@ -550,6 +550,26 @@ class _TraceLimit(BaseException):
     """Se llegó al tope de pasos de una traza: se corta la ejecución."""
 
 
+class _NoMoreInput(BaseException):
+    """El programa pidió otro dato por teclado y ya no quedaban respuestas de ejemplo: se queda ahí."""
+
+
+def _scripted_input(answers, out):
+    """Un `input` que no espera a nadie: contesta lo que se le dio, en orden, y lo deja escrito en la salida
+    como se vería en la pantalla (la pregunta y, detrás, lo tecleado)."""
+    pending = [str(answer) for answer in answers]
+
+    def ask(prompt=""):
+        out.write(str(prompt))
+        if not pending:
+            raise _NoMoreInput()
+        answer = pending.pop(0)
+        out.write(answer + "\n")
+        return answer
+
+    return ask
+
+
 _COMPREHENSIONS = {"<listcomp>", "<setcomp>", "<dictcomp>", "<genexpr>"}
 
 # `reprlib` recorta sin construir la representación entera: una lista enorme no cuesta un paso de traza.
@@ -580,11 +600,39 @@ def _items(value):
     return items
 
 
+# En modo ancho (lo pide quien va a dibujar el valor con su forma, no a enseñarlo en una celda), una rejilla
+# pequeña se graba entera: hasta estas filas y columnas.
+_WIDE = False
+_GRID_ROWS = 12
+_GRID_COLS = 16
+
+
+def _grid(value):
+    """El texto entero de una rejilla pequeña (una lista de listas de escalares); `None` si no lo es."""
+    if not isinstance(value, (list, tuple)) or not 0 < len(value) <= _GRID_ROWS:
+        return None
+    rows = []
+    for row in value:
+        if not isinstance(row, (list, tuple)) or not 0 < len(row) <= _GRID_COLS:
+            return None
+        items = _items(row)
+        if items is None:
+            return None
+        cells = ", ".join(item if isinstance(item, str) else repr(item) for item in items)
+        rows.append(f"[{cells}]" if isinstance(row, list) else f"({cells}{',' if len(row) == 1 else ''})")
+    text = ", ".join(rows)
+    return f"[{text}]" if isinstance(value, list) else f"({text}{',' if len(rows) == 1 else ''})"
+
+
 def _show(value):
     """Lo que enseña una traza de un valor: un número tal cual, una lista corta de escalares entera
     (`{"l": [...], "n": largo, "t": "list"|"tuple"}`), y lo demás como texto corto."""
     if isinstance(value, bool) or value is None:
         return value
+    if _WIDE:
+        grid = _grid(value)
+        if grid is not None:
+            return grid
     if isinstance(value, (list, tuple)) and len(value) <= _LIST_LIMIT:
         items = _items(value)
         if items is not None:
@@ -700,6 +748,28 @@ def _is_data(name, value):
     )
 
 
+def _loops(tree):
+    """Los bucles del programa: la línea de su cabecera, la última suya y de qué función son.
+
+    La función se dice por su primera línea (la de su primer decorador, si los lleva: es la que da su código);
+    `0` es el programa. Sirve para seguir contando las vueltas de un bucle cuando ya no se graba su paso a paso.
+    """
+    found = []
+
+    def walk(node, scope):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                first = min([child.lineno] + [mark.lineno for mark in child.decorator_list])
+                walk(child, first)
+                continue
+            if isinstance(child, (ast.For, ast.AsyncFor, ast.While)):
+                found.append((child.lineno, getattr(child, "end_lineno", None) or child.lineno, scope))
+            walk(child, scope)
+
+    walk(tree, 0)
+    return found
+
+
 def _comprehension_only(tree):
     """Los nombres que solo existen como variable de una comprensión: no son variables del programa.
 
@@ -808,11 +878,28 @@ class _Tracer:
     en las variables del marco (`ch`), y lo que se imprimió desde el evento anterior (`o`).
     """
 
-    def __init__(self, filename, limit, out, hidden=frozenset()):
+    def __init__(self, filename, limit, out, hidden=frozenset(), finish=0.0, loops=()):
         self.filename = filename
         self.hidden = hidden
+        # Los bucles del programa (ver `_loops`), y los que estaban dando vueltas al dejar de grabar: a esos
+        # se les siguen contando las vueltas, y se apunta cómo salen. Es barato (un marco, una línea) y es lo
+        # que permite decir «dio 40 vueltas» de un programa del que solo se grabaron las 23 primeras.
+        self.loops = loops
+        self.watch = {}
+        self.coasted = []
+        # Y lo que se usa mientras tanto: cuántas veces se entra en cada función (por la línea de su `def`) y
+        # qué líneas del programa se pisan. Con ello se sabe, de un programa largo, qué partes trabajan y
+        # cuáles nadie toca, aunque ya no se grabe su paso a paso.
+        self.later_calls = {}
+        self.later_lines = set()
         self.limit = limit
         self.out = out
+        # Al llegar al tope de pasos, en vez de cortar: dejar de grabar y dejar que el programa acabe (con
+        # este tope de segundos). Lo que imprima hasta el final sí se recoge: es su resultado.
+        self.finish = finish
+        self.coasting = False
+        self.deadline = 0.0
+        self.ticks = 0
         self.events = []
         self.stack = []
         self.by_frame = {}
@@ -844,7 +931,75 @@ class _Tracer:
             self.printed = len(text)
         self.events.append(event)
         if len(self.events) >= self.limit:
+            if self.finish <= 0:
+                raise _TraceLimit()
+            self.coasting = True
+            self.deadline = time.perf_counter() + self.finish
+            self.watch_open()
+
+    def watch_open(self):
+        """Al dejar de grabar: en cada función abierta, los bucles en los que se está, para seguirlos."""
+        for key, record in self.by_frame.items():
+            line = record.get("line")
+            if line is None:
+                continue
+            scope = record.get("scope", 0)
+            inside = [
+                {"l": head, "end": end, "f": record["id"], "n": 0, "last": line, "e": None, "x": False}
+                for head, end, owner in self.loops
+                if owner == scope and head <= line <= end
+            ]
+            if inside:
+                self.watch[key] = inside
+                self.coasted.extend(inside)
+
+    def coast(self, frame, event, arg):
+        """Ya no se graba: se vigila, de vez en cuando, que el programa no se quede dando vueltas; y a los
+        bucles que estaban abiertos se les cuentan las vueltas que les quedan y se apunta cómo salen."""
+        self.ticks += 1
+        if self.ticks & 255 == 0 and time.perf_counter() > self.deadline:
             raise _TraceLimit()
+        code = frame.f_code
+        if event == "call":
+            if code.co_filename == self.filename and code.co_name not in _COMPREHENSIONS:
+                first = code.co_firstlineno
+                self.later_calls[first] = self.later_calls.get(first, 0) + 1
+        elif event == "line" and code.co_name == "<module>" and code.co_filename == self.filename:
+            self.later_lines.add(frame.f_lineno)
+        loops = self.watch.get(id(frame))
+        if loops is not None:
+            if event == "line":
+                line = frame.f_lineno
+                for loop in loops:
+                    if loop["e"] is not None:
+                        continue
+                    # Siguió adelante tras un error: lo atrapó un `try`. No es un fallo del bucle.
+                    loop["x"] = False
+                    if line == loop["l"]:
+                        loop["n"] += 1
+                        loop["last"] = line
+                    elif loop["l"] < line <= loop["end"]:
+                        loop["last"] = line
+                    else:
+                        # Ya está fuera: salió desde la cabecera (se acabó) o desde dentro (un `break`).
+                        loop["e"] = "done" if loop["last"] == loop["l"] else "break"
+            elif event == "exception":
+                for loop in loops:
+                    if loop["e"] is None:
+                        loop["x"] = True
+            elif event == "return":
+                for loop in loops:
+                    if loop["e"] is not None:
+                        continue
+                    if loop["x"]:
+                        loop["e"] = "error"
+                    elif loop["last"] == loop["l"]:
+                        loop["e"] = "done"
+                    else:
+                        # Una función se va con `return`; el programa, simplemente acaba.
+                        loop["e"] = "return" if loop["f"] != 0 else "break"
+                del self.watch[id(frame)]
+        return self.coast
 
     def changes(self, record, frame):
         """Las variables de datos que cambiaron (o son nuevas) desde el último evento de este marco."""
@@ -867,13 +1022,20 @@ class _Tracer:
         return changed, ids
 
     def global_trace(self, frame, event, arg):
+        if self.coasting:
+            return self.coast(frame, event, arg)
         code = frame.f_code
         if code.co_filename != self.filename or code.co_name in _COMPREHENSIONS:
             return None
         if event != "call":
             return None
         module = code.co_name == "<module>"
-        record = {"id": 0 if module else self.next_id, "last": {}, "depth": len(self.stack)}
+        record = {
+            "id": 0 if module else self.next_id,
+            "last": {},
+            "depth": len(self.stack),
+            "scope": 0 if module else code.co_firstlineno,
+        }
         if not module:
             self.next_id += 1
         self.by_frame[id(frame)] = record
@@ -892,6 +1054,8 @@ class _Tracer:
         return self.local_trace
 
     def local_trace(self, frame, event, arg):
+        if self.coasting:
+            return self.coast(frame, event, arg)
         record = self.by_frame.get(id(frame))
         if record is None:
             return None
@@ -1018,16 +1182,24 @@ class Runner:
         corta, ni se compila: se devuelve el mismo evento de error que un fallo normal, con el motivo exacto
         para poder pedirle a la IA que lo corrija.
         """
+        global _WIDE
         run = request.get("id", "trace")
         limit = int(request.get("limit", 5000))
         safe = bool(request.get("safe", False))
+        wide = bool(request.get("wide", False))
+        # Respuestas de teclado dadas de antemano (para ver funcionar un programa que pide datos), y una
+        # semilla para que su azar salga igual cada vez que se vuelve a mirar.
+        inputs = request.get("inputs")
+        seed = request.get("seed")
         filename = f"<prysel-trace:{run}>"
         out = io.StringIO()
         source = request.get("code", "")
         error = None
+        loops = ()
         try:
             tree = ast.parse(source)
             hidden = _comprehension_only(tree)
+            loops = _loops(tree)
             if safe:
                 _check_safe(tree)
         except SyntaxError:
@@ -1035,8 +1207,15 @@ class Runner:
         except _UnsafeCode as unsafe:
             hidden = frozenset()
             error = {"name": "UnsafeCode", "message": str(unsafe), "line": unsafe.line}
-        tracer = _Tracer(filename, limit, out, hidden)
+        # `finish`: al llegar al tope de pasos, el programa sigue sin grabarse hasta acabar (con un tope de
+        # segundos), para no quedarse sin saber qué da.
+        finish = request.get("finish")
+        budget = 0.0 if not finish else (2.5 if finish is True else float(finish))
+        tracer = _Tracer(filename, limit, out, hidden, budget, loops)
+        finished = False
         namespace = {"__name__": "__main__"}
+        if isinstance(inputs, list):
+            namespace["input"] = _scripted_input(inputs, out)
         truncated = False
         if error is None:
             saved = sys.stdout, sys.stderr
@@ -1044,13 +1223,26 @@ class Runner:
             self.running.set()
             try:
                 code = compile(source, filename, "exec")
+                _WIDE = wide
+                if seed is not None:
+                    import random as _random
+
+                    _random.seed(seed)
                 sys.settrace(tracer.global_trace)
                 try:
                     exec(code, namespace)
                 finally:
                     sys.settrace(None)
+                    _WIDE = False
+                # Acabó, aunque de lo último no haya quedado grabado el paso a paso.
+                truncated = tracer.coasting
+                finished = tracer.coasting
             except _TraceLimit:
                 truncated = True
+            except _NoMoreInput:
+                # No es un fallo del programa: se acabó el ejemplo. Queda dicho, para contarlo así.
+                truncated = True
+                error = {"name": "NoMoreInput", "message": "Se quedó esperando otra respuesta.", "line": None}
             except BaseException as caught:  # incluye KeyboardInterrupt y SystemExit
                 line = None
                 for frame in traceback.extract_tb(caught.__traceback__):
@@ -1068,6 +1260,17 @@ class Runner:
                 "id": run,
                 "events": tracer.events,
                 "truncated": truncated,
+                "finished": finished,
+                # De los bucles que seguían dando vueltas al dejar de grabar: cuántas más dieron y cómo salieron.
+                "coast": [
+                    {"l": loop["l"], "f": loop["f"], "n": loop["n"], "e": loop["e"]}
+                    for loop in tracer.coasted
+                ],
+                # Y de lo que se usó después: las veces que se entró en cada función, y las líneas del programa.
+                "later": {
+                    "calls": {str(line): count for line, count in tracer.later_calls.items()},
+                    "lines": sorted(tracer.later_lines),
+                },
                 "error": error,
                 "output": out.getvalue()[-MAX_TEXT:],
             }

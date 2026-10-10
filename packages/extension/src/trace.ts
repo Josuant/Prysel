@@ -71,13 +71,88 @@ export interface TraceEvent {
   h?: Record<string, HeapObject>
 }
 
+export interface CoastedLoop {
+  l: number
+  f: number
+  n: number
+  e: 'done' | 'break' | 'return' | 'error' | null
+}
+
+/** Lo que el motor dice de los bucles que siguieron tras dejar de grabar, tal como llega (o nada, si no vale). */
+export function coastOf(raw: unknown): { coast: CoastedLoop[] } | Record<string, never> {
+  if (!Array.isArray(raw)) return {}
+  const ends = ['done', 'break', 'return', 'error']
+  const coast = raw.flatMap((item): CoastedLoop[] => {
+    const loop = item as Partial<Record<keyof CoastedLoop, unknown>> | null
+    if (!loop || typeof loop.l !== 'number' || typeof loop.f !== 'number') return []
+    return [
+      {
+        l: loop.l,
+        f: loop.f,
+        n: typeof loop.n === 'number' ? loop.n : 0,
+        e: ends.includes(loop.e as string) ? (loop.e as CoastedLoop['e']) : null,
+      },
+    ]
+  })
+  return coast.length > 0 ? { coast } : {}
+}
+
+/** Lo que el motor dice que se usó tras dejar de grabar, tal como llega (o nada, si no vale). */
+export function laterOf(
+  raw: unknown,
+): { later: NonNullable<Trace['later']> } | Record<string, never> {
+  const found = raw as { calls?: unknown; lines?: unknown } | null
+  if (!found || typeof found !== 'object') return {}
+  const calls: Record<number, number> = {}
+  for (const [line, count] of Object.entries((found.calls ?? {}) as Record<string, unknown>)) {
+    if (Number.isFinite(Number(line)) && typeof count === 'number') calls[Number(line)] = count
+  }
+  const lines = Array.isArray(found.lines)
+    ? found.lines.filter((line): line is number => typeof line === 'number')
+    : []
+  return Object.keys(calls).length + lines.length > 0 ? { later: { calls, lines } } : {}
+}
+
 export interface Trace {
   events: TraceEvent[]
-  /** Se llegó al tope de pasos: la traza está cortada y el programa no acabó. */
+  /** Se llegó al tope de pasos: la traza está cortada (y, salvo `finished`, el programa no acabó). */
   truncated: boolean
+  /**
+   * Con `truncated`: se dejó de grabar el paso a paso, pero el programa siguió hasta acabar. Lo que imprimió
+   * (`output`) está entero; lo que falta es el detalle de sus últimos pasos.
+   */
+  finished?: boolean
+  /**
+   * De los bucles que seguían dando vueltas cuando se dejó de grabar: cuántas veces más se pasó por su
+   * cabecera y cómo se salió de ellos (`null`: no se les vio salir; se acabó el tiempo). `l` es la línea de
+   * la cabecera y `f`, el marco. Con esto se sabe cuántas vueltas dio de verdad un bucle del que solo se
+   * grabaron las primeras.
+   */
+  coast?: CoastedLoop[]
+  /**
+   * Lo que se usó **después** de dejar de grabar: cuántas veces se entró en cada función (por la línea de su
+   * `def`) y qué líneas del programa (fuera de toda función) se pisaron. Con `finished`, sumado a lo grabado,
+   * es todo lo que se usó.
+   */
+  later?: { calls: Record<number, number>; lines: number[] }
   error: { name: string; message: string; line: number | null } | null
   /** Todo lo que imprimió el programa (el final, si es muy largo). */
   output: string
+}
+
+/**
+ * Lo que se le da de más a una traza para ver funcionar un programa sin nadie delante: las respuestas de
+ * teclado, en orden (cada `input()` toma la siguiente; si se acaban, el programa se queda ahí y la traza
+ * lo dice con el error `NoMoreInput`), y una semilla para que su azar salga igual cada vez.
+ */
+export interface TraceExtra {
+  inputs?: readonly string[]
+  seed?: number
+  /**
+   * Al llegar al tope de pasos, no cortar: dejar de grabar y dejar que el programa acabe (como mucho, unos
+   * segundos), para saber qué da. `true`, o los segundos que se le dan.
+   */
+  finish?: boolean | number
 }
 
 export interface FrameState {

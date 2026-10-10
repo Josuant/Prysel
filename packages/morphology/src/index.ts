@@ -34,6 +34,7 @@ export {
   isLineCard,
   isNameList,
   isPlainName,
+  labelsArg,
   labelsArgs,
   lineArgs,
   lineHeight,

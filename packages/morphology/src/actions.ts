@@ -137,6 +137,11 @@ export type NodeAction =
   | { type: 'code'; id: string; text: string }
   | { type: 'delete'; id: string }
   | { type: 'duplicate'; id: string }
+  /**
+   * Envolver una sentencia en otra que la contiene: un bucle que la repite, una decisión que la condiciona
+   * o un intento que recoge su error. Lo de dentro no cambia; solo gana un nivel.
+   */
+  | { type: 'wrap'; id: string; with: 'for' | 'if' | 'try' | 'class'; name?: string }
   /** Cambiar el nombre de lo que el nodo define, en todos los sitios donde se usa. */
   | { type: 'rename'; id: string; to: string; from?: string }
   /**

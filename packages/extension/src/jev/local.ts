@@ -24,6 +24,15 @@ const INTENT_WORDS: [Intent, RegExp][] = [
   ],
   ['paso_a_paso', /paso a paso|\btraza\b|\breproduce\b|\breproducir\b/],
   ['deshacer', /\bdesha[zc]/],
+  ['extraer', /\bextrae|\bextraer\b|\bsaca\b.*\bfuncion|\bconvierte\b.*\ben una funcion/],
+  ['juntar', /\bjunta|\bune\b|\bunir\b|\bfusiona|\bcombina/],
+  ['duplicar', /\bduplica|\bcopia\b/],
+  [
+    'envolver',
+    /\benvuelve|\benvolver\b|\brodea\b|\bmete\b.*\ben un[a]? (bucle|si\b|decision|if|intento|try|clase)/,
+  ],
+  // Antes que «añadir» («pon… dentro de…» no crea nada: cambia de sitio lo que hay).
+  ['mover', /\bmueve|\bmover\b|\btraslada|\b(pon|mete|lleva) (el|la|este|esta|esto|ese|esa|eso)\b/],
   ['rehacer', /\breha[zc]/],
   ['etapa', /\betapa|\bseccion|\bfase\b/],
   ['narrar', /\bleccion|\bnarra|\banimacion|explicame el programa|explica el programa/],
@@ -39,7 +48,10 @@ const INTENT_WORDS: [Intent, RegExp][] = [
     /\bplieg|\bplega|\bdesplieg|\bdesplega|\babre\b|\babrir\b|\bcierra|\bcolapsa|\bexpande/,
   ],
   ['ejecutar', /\bejecut|\bcorre\b|\blanza el/],
-  ['enfocar', /\benfoc|\bve a\b|\bir a\b|\bmuestra|\bensena|\bllevame|\bbusca|\bdonde esta/],
+  [
+    'enfocar',
+    /\benfoc|\bve a\b|\bir a\b|\bver (el|la|los|las)\b|\bentra\b|\bsal\b|\bsalir\b|\bmuestra|\bensena|\bllevame|\bbusca|\bdonde esta/,
+  ],
   [
     'componer',
     /\balgoritmo|\bprograma que|\bfuncion que|\bbucle que|\bque (sume|calcule|cuente|busque|ordene|imprima|devuelva)/,
@@ -103,6 +115,25 @@ const COMMON = new Set(
   ).split(' '),
 )
 
+/** Los elementos que la orden nombra, en el orden en que los nombra (sin repetir). */
+function namedIn(text: string, options: Record<string, string | null>): string[] {
+  const refs = Object.entries(options).filter(([ref]) => /^[pe]\d+$/.test(ref))
+  const heads = refs.map(([ref, description]) => ({
+    ref,
+    names: plain(/«(.*)»/.exec(description ?? '')?.[1] ?? '').split(/[^a-z0-9_]+/),
+    what: plain(description ?? '').split(' ')[0],
+  }))
+  const found: string[] = []
+  for (const word of text.split(/[^a-z0-9_]+/)) {
+    if (word.length < 3 || COMMON.has(word)) continue
+    const hits = heads.filter((entry) => entry.names.includes(word) && !found.includes(entry.ref))
+    const hit =
+      hits.find((entry) => entry.what !== undefined && text.includes(entry.what)) ?? hits[0]
+    if (hit) found.push(hit.ref)
+  }
+  return found
+}
+
 /** A qué opción de `objetivo` se refiere la orden: por su línea, o por una palabra de su texto. */
 function targetIn(text: string, options: Record<string, string | null>): JevAnswer {
   const refs = Object.entries(options).filter(([ref]) => /^[pe]\d+$/.test(ref))
@@ -153,9 +184,55 @@ export function localDecider(): Decider {
         } else if (id === 'alcance') {
           // Lo claramente pequeno va directo; lo demas, con su plan.
           const small =
-            /\bfuncion\b|\bbucle\b|\bvariable\b|\blinea\b/.test(text) &&
+            /\bfuncion\b|\bclase\b|\bmetodo\b|\bbucle\b|\bvariable\b|\blinea\b/.test(text) &&
             !/\bprograma\b|\balgoritmo/.test(text)
           answers[id] = pick(small ? 'directo' : 'esquema', SURE)
+        } else if (id === 'sigue') {
+          // Lo que empieza llevando la contraria o matizando no se entiende sin lo de antes.
+          answers[id] = {
+            type: 'noul',
+            noul: /^(pero|no[, ]|mejor|en vez|en lugar|usando|que lo |y que |hazlo)/.test(
+              text.trim(),
+            )
+              ? SURE
+              : 0.1,
+          }
+        } else if (id === 'ambito') {
+          // Otra función u otra clase es algo aparte, salvo que diga «aquí» o «dentro».
+          const own =
+            /\bfuncion\b|\bclase\b|\bprograma\b|\balgoritmo/.test(text) &&
+            !/\baqui\b|\bdentro\b|\bmetodo\b/.test(text)
+          answers[id] = pick(own ? 'programa' : 'dentro', SURE)
+        } else if (id === 'completa') {
+          // A medias si es muy corta o acaba en una palabra que pide continuación.
+          const heard = plain(textOf((request.state as { oido?: unknown }).oido))
+            .replace(/[^a-z0-9_ ]+/g, ' ')
+            .trim()
+          const words = heard.split(/\s+/).filter((word) => word !== '')
+          const open =
+            /^(de|del|la|el|los|las|un|una|unos|unas|para|que|y|o|con|en|a|al|por|se|su|sus|llamada|llamado|es|sea|tipo)$/
+          const short = words.length < 3 && !/^(si|no|vale|deshazlo|deshaz|para|sigue)$/.test(heard)
+          answers[id] = {
+            type: 'noul',
+            noul: short || open.test(words[words.length - 1] ?? '') ? 0.1 : SURE,
+          }
+        } else if (id === 'oyendo') {
+          // Lo que se le va oyendo decir: la primera cosa que nombra.
+          const heard = plain(textOf((request.state as { oido?: unknown }).oido))
+          const kind = (
+            [
+              ['programa', /\bprograma|\balgoritmo|\bjuego|\bsimula/],
+              ['clase', /\bclase\b/],
+              ['funcion', /\bfuncion|\bmetodo/],
+              ['bucle', /\bbucle|\brepit|\bpara cada|\bmientras/],
+              ['decision', /\bsi\b.*\b(entonces|es|son)\b|\bcondicion|\bcomprueb/],
+              ['lista', /\blista|\bdiccionario|\bcoleccion/],
+              ['variable', /\bvariable|\bguarda|\bconstante/],
+              ['explicacion', /\bexplic|\bensen|\bcomo funciona|\bque es\b/],
+              ['cambio', /\bcambia|\bahora\b|\ben vez|\ben lugar|\bquita|\bborra|\brenombra/],
+            ] as const
+          ).find(([, words]) => words.test(heard))
+          answers[id] = kind ? pick(kind[0], SURE) : pick('nada', SURE)
         } else if (/^r\d+$/.test(id) && question.type === 'noul') {
           // ¿Hace falta leer este trozo? Si la orden nombra algo de su título, sí.
           const title = plain(question.instructions.split('Líneas').pop() ?? '')
@@ -217,6 +294,27 @@ export function localDecider(): Decider {
               : pick('otra', SURE)
         } else if (id === 'encaja' || id === 'pertinente') {
           answers[id] = { type: 'noul', noul: SURE }
+        } else if (id === 'quitar') {
+          answers[id] = {
+            type: 'noul',
+            noul: /\b(quita|borra|elimina|suprime|sustituye|rehaz|reescribe)\w*/.test(
+              plain(textOf(state.orden)),
+            )
+              ? SURE
+              : 0.1,
+          }
+        } else if (id === 'arranque') {
+          // Sin un modelo que lea, no se sabe cuál es la principal: lo decide quien pregunta.
+          answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'f0', UNSURE)
+        } else if (/^papel\d+$/.test(id) || id === 'forma') {
+          // Sin un modelo que lea, el papel y la forma se quedan en lo que el código deja ver.
+          answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'logica', UNSURE)
+        } else if (/^parte\d+$/.test(id)) {
+          // Sin un modelo que lea no se sabe qué pieza cubre qué: lo decide quien pregunta, por las palabras.
+          answers[id] = pick('ninguna', UNSURE)
+        } else if (id === 'hecho') {
+          // Sin un modelo que lea el programa no se sabe: no se da nada por hecho.
+          answers[id] = { type: 'noul', noul: 0.1 }
         } else if (id === 'cumple') {
           answers[id] = { type: 'noul', noul: SURE }
         } else if (id === 'seguro') {
@@ -232,6 +330,35 @@ export function localDecider(): Decider {
           answers[id] = place === undefined ? pick('final', UNSURE) : pick(place, SURE)
         } else if (id === 'objetivo' && question.type === 'choice') {
           answers[id] = targetIn(text, question.criteria)
+        } else if ((id === 'mover_que' || id === 'mover_donde') && question.type === 'choice') {
+          // Lo primero que nombra es lo que se mueve; lo segundo, adónde. «Esto» es lo seleccionado.
+          const named = namedIn(text, question.criteria)
+          const pointed =
+            'seleccionado' in question.criteria && /\b(esto|este|esta|aqui)\b/.test(text)
+          const ends = pointed && named.length < 2 ? ['seleccionado', ...named] : named
+          const ref = ends[id === 'mover_que' ? 0 : 1]
+          answers[id] = ref === undefined ? pick('ninguno', SURE) : pick(ref, SURE)
+        } else if (id === 'envolver_en') {
+          // «Por si da error» es un intento, aunque lleve un «si».
+          answers[id] = pick(
+            /\bclase\b/.test(text)
+              ? 'clase'
+              : /\b(intento|try|error|falle)\b/.test(text)
+                ? 'intento'
+                : /\b(si|if|decision|condicion)\b/.test(text)
+                  ? 'decision'
+                  : 'bucle',
+            SURE,
+          )
+        } else if (id === 'mover_como') {
+          answers[id] = pick(
+            /\bantes\b/.test(text)
+              ? 'antes'
+              : /\bdespues\b|\bdetras\b|\btras\b/.test(text)
+                ? 'despues'
+                : 'dentro',
+            SURE,
+          )
         }
       }
       return Promise.resolve({ answers, ms: 0 })
