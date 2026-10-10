@@ -6993,6 +6993,121 @@ button.run-panel__line:hover {
   font-size: 14px;
   line-height: 1;
 }
+/* Las perillas del programa y el dado: arriba a la izquierda, bajo las migas. */
+.knobs {
+  top: 50px;
+  left: 12px;
+  display: flex;
+  max-width: min(320px, calc(100% - 24px));
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: var(--surface-raised);
+}
+.knobs__bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.knobs__toggle,
+.knobs__roll {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.knobs__toggle:hover,
+.knobs__roll:hover {
+  background: var(--field);
+  color: var(--ink);
+}
+.knobs__toggle[aria-expanded='true'] {
+  color: var(--accent);
+}
+.knobs__count {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.knobs__roll > span {
+  font-size: 15px;
+  line-height: 1;
+}
+.knobs__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 4px 4px;
+  list-style: none;
+}
+.knobs__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.knobs__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding-right: 8px;
+  color: var(--ink);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.knobs__step {
+  display: inline-grid;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  place-items: center;
+}
+.knobs__step:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
+.knobs__value {
+  width: 58px;
+  height: 26px;
+  box-sizing: border-box;
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border-card);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.knobs__value:focus {
+  border-color: var(--accent);
+  outline: none;
+}
 /* Desde dónde se mira el programa: Idea · Partes · Detalle. Arriba, en el centro. */
 .distance {
   top: 10px;

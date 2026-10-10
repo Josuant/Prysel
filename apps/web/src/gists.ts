@@ -89,6 +89,8 @@ export class Gists {
   private entry: Facts | null = null
   /** Las pruebas de quien lo usa: con qué llamada quiere ver cada función (por su nombre). */
   private readonly trials = new Map<string, string>()
+  /** La suerte con la que se ejecuta, si se pidió otra tirada (si no, la de siempre: se ve lo mismo cada vez). */
+  private rolled: number | null = null
   /** Las mezclas vueltas a ver con datos trazadores, por el texto de su función (`null`: no hizo falta o no se pudo). */
   private readonly tracers = new Map<string, MixRule | null>()
 
@@ -107,6 +109,16 @@ export class Gists {
   /** Queda algo por mirar: está esperando a que haya calma, o ejecutando. */
   get pending(): boolean {
     return this.timer !== null || this.running
+  }
+
+  /**
+   * Otra tirada: el programa se vuelve a ejecutar con otra suerte (otra semilla para su azar), y todo lo que
+   * se enseña de él se rehace con esa ejecución. El código no cambia.
+   */
+  reroll() {
+    this.rolled = 1 + Math.floor(Math.random() * 100_000)
+    this.done = null
+    this.touch()
   }
 
   /** El código cambió (o algo acabó): se vuelve a mirar cuando haya calma. */
@@ -285,7 +297,7 @@ export class Gists {
     let inputs: string[] | undefined
     // Si quien lo usa lo está jugando, valen sus respuestas (y su suerte), no las de ejemplo.
     const mine = asksInput(text) && this.mine?.key === inputSignature(text) ? this.mine : null
-    const seed = mine?.seed ?? EXAMPLE_SEED
+    const seed = mine?.seed ?? this.rolled ?? EXAMPLE_SEED
     if (mine) inputs = mine.answers
     else if (asksInput(text)) {
       const key = inputSignature(text)

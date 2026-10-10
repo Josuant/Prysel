@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ModuleFacts } from '@prysel/ui'
 import type { RunSummary } from '../src/gist/gist.ts'
-import { moduleStates, outcomeOf } from '../webview/src/outcome.ts'
+import { healthOf, moduleStates, outcomeOf } from '../webview/src/outcome.ts'
 
 /**
  * Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final. Salen de cómo le fue al
@@ -164,5 +164,54 @@ describe('el estado de cada módulo, tras ejecutar el programa', () => {
   it('sin ejecución (o sin saber qué se usó) no se dice nada', () => {
     expect(moduleStates(null, nodes, modules)).toEqual({})
     expect(moduleStates({ output: '', ended: 'done' }, nodes, modules)).toEqual({})
+  })
+})
+
+const NL = String.fromCharCode(10)
+
+describe('la salud del programa tras un cambio', () => {
+  const ok = (output: string): RunSummary => ({ output, ended: 'done' })
+  const broken: RunSummary = {
+    output: '',
+    ended: 'error',
+    problem: "NameError: name 'x' is not defined",
+    line: 4,
+  }
+
+  it('recién construido: funciona y da esto, o falla', () => {
+    expect(healthOf(null, ok('Generación 1' + NL + 'Mejor: hola' + NL))).toEqual({
+      tone: 'ok',
+      text: 'Funciona: se ejecuta y da «Mejor: hola».',
+    })
+    expect(healthOf(null, broken)).toMatchObject({ tone: 'error' })
+    expect(healthOf(null, broken)?.undo).toBeUndefined()
+  })
+
+  it('tras una orden: da lo mismo, cambió, o se rompió (y entonces se ofrece deshacer)', () => {
+    const before = ok('Total: 10' + NL)
+    expect(healthOf(before, ok('Total: 10' + NL))?.text).toBe(
+      'Sigue funcionando, y da lo mismo que antes.',
+    )
+    expect(healthOf(before, ok('Total: 12' + NL))?.text).toBe(
+      'Sigue funcionando. Antes daba «Total: 10»; ahora, «Total: 12».',
+    )
+    const hurt = healthOf(before, broken)
+    expect(hurt).toMatchObject({ tone: 'error', undo: true })
+    expect(hurt?.text).toContain('Antes funcionaba y ahora falla')
+    expect(hurt?.text).toContain('NameError')
+    // Y al arreglarlo, se dice.
+    expect(healthOf(broken, ok('Total: 10' + NL))?.text).toBe('Ya no falla: da «Total: 10».')
+  })
+
+  it('si deja de enseñar nada, se avisa; si pide datos y no se ejecutó, no se dice nada', () => {
+    const mute: RunSummary = { output: '', ended: 'idle', idle: 'mute' }
+    expect(healthOf(ok('hola' + NL), mute)).toMatchObject({ tone: 'muted', undo: true })
+    expect(healthOf(ok('hola' + NL), { output: '', ended: 'blocked' })).toBeNull()
+  })
+
+  it('otra tirada no es un cambio: solo se dice lo que salió esta vez', () => {
+    expect(healthOf(ok('Mejor: 7' + NL), ok('Mejor: 9' + NL), 'roll')?.text).toBe(
+      'Con otra tirada da «Mejor: 9».',
+    )
   })
 })

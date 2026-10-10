@@ -392,6 +392,11 @@ export interface SpokenMessage {
 }
 
 /** Detener lo que una orden esté construyendo paso a paso. */
+/** Volver a ejecutar el programa con otra suerte: el azar saldrá distinto. No cambia el código. */
+export interface RerollMessage {
+  type: 'reroll'
+}
+
 export interface StopOrderMessage {
   type: 'stopOrder'
 }
@@ -484,6 +489,7 @@ export type HostMessage =
   | CommandMessage
   | JevKeyMessage
   | StopOrderMessage
+  | RerollMessage
   | UndoOrderMessage
   | ListeningMessage
   | CoverMessage
@@ -842,6 +848,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   }
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
+  if (type === 'reroll') return { type: 'reroll' }
   if (type === 'undoOrder') return { type: 'undoOrder' }
   if (type === 'listening') {
     const { on, text } = value as { on?: unknown; text?: unknown }

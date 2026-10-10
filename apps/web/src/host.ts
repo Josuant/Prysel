@@ -325,6 +325,9 @@ export class WebHost {
       case 'play':
         void this.gists.play(message.answers, message.fresh === true)
         return
+      case 'reroll':
+        this.gists.reroll()
+        return
       case 'cover':
         this.orders.cover(message.what, message.parts, message.pieces, message.plan === true)
         return

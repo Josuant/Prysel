@@ -107,6 +107,82 @@ export function outcomeOf(
   }
 }
 
+/** Cómo quedó el programa tras un cambio, dicho en una frase. `undo`: merece ofrecer deshacerlo. */
+export interface Health {
+  tone: 'ok' | 'muted' | 'error'
+  text: string
+  undo?: boolean
+}
+
+/** Lo último que salió por pantalla, corto: es por lo que se reconoce «da lo mismo» o «ahora da otra cosa». */
+const lastSaid = (run: RunSummary): string => {
+  const rows = run.output.split('\n').filter((row) => row.trim() !== '')
+  return clip(rows[rows.length - 1]?.trim() ?? '', 56)
+}
+
+/**
+ * La **salud** del programa tras una orden (o tras mover una perilla): se volvió a ejecutar, y esto es lo que
+ * pasó comparado con antes. ¿Sigue funcionando? ¿Da lo mismo o cambió? ¿Se rompió? Es un hecho de la
+ * ejecución, no una opinión sobre el código.
+ *
+ * `before`: cómo le fue antes del cambio (`null`: no había programa). `how`: si lo que cambió fue una orden,
+ * una perilla, o solo la suerte (otra tirada). `null`: no hay nada que decir (pide datos por teclado y no se
+ * ha ejecutado).
+ */
+export function healthOf(
+  before: RunSummary | null,
+  after: RunSummary,
+  how: 'order' | 'knob' | 'roll' = 'order',
+): Health | null {
+  if (after.ended === 'blocked' || after.ended === 'waiting') return null
+  const worked = (run: RunSummary | null) =>
+    run !== null && (run.ended === 'done' || run.ended === 'cut' || run.ended === 'idle')
+  if (after.ended === 'error') {
+    const what = after.problem ? `: ${clip(after.problem, 90)}` : '.'
+    return worked(before)
+      ? { tone: 'error', text: `Antes funcionaba y ahora falla al ejecutarlo${what}`, undo: true }
+      : { tone: 'error', text: `Falla al ejecutarlo${what}` }
+  }
+  if (after.ended === 'idle') {
+    return {
+      tone: 'muted',
+      text:
+        after.idle === 'mute'
+          ? 'Se ejecuta sin fallos, pero no enseña nada en pantalla.'
+          : 'Todavía no hace nada al ejecutarlo: nadie lo arranca.',
+      ...(worked(before) && before?.ended !== 'idle' ? { undo: true } : {}),
+    }
+  }
+  if (after.ended === 'cut')
+    return { tone: 'muted', text: 'Se ejecuta, pero no llegó a acabar: se cortó por largo.' }
+  const now = lastSaid(after)
+  if (how === 'roll')
+    return {
+      tone: 'ok',
+      text: now ? `Con otra tirada da «${now}».` : 'Con otra tirada, sin fallos.',
+    }
+  if (before === null || before.ended === 'blocked' || before.output.trim() === '') {
+    return before?.ended === 'error'
+      ? { tone: 'ok', text: now ? `Ya no falla: da «${now}».` : 'Ya no falla.' }
+      : {
+          tone: 'ok',
+          text: now ? `Funciona: se ejecuta y da «${now}».` : 'Funciona: se ejecuta sin fallos.',
+        }
+  }
+  if (before.ended === 'error')
+    return { tone: 'ok', text: now ? `Ya no falla: da «${now}».` : 'Ya no falla.' }
+  if (before.output === after.output)
+    return { tone: 'ok', text: 'Sigue funcionando, y da lo mismo que antes.' }
+  const was = lastSaid(before)
+  return {
+    tone: 'ok',
+    text:
+      was === now
+        ? 'Sigue funcionando; lo que enseña cambió por el camino, pero acaba igual.'
+        : `Sigue funcionando. Antes daba «${was}»; ahora, «${now}».`,
+  }
+}
+
 /**
  * El **estado de cada módulo** tras ejecutar el programa: cuántas veces se usó, si nadie lo usa, si no llegó a
  * ejecutarse, o si es donde falló. Sale de lo que se usó de verdad (`RunSummary.usage`): un módulo de

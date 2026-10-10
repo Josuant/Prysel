@@ -90,7 +90,9 @@ import { holdShape, sameHeld, type Held } from './holding.ts'
 import { IdeaView } from './IdeaView.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
-import { moduleStates, moduleStory, outcomeOf } from './outcome.ts'
+import { healthOf, moduleStates, moduleStory, outcomeOf } from './outcome.ts'
+import { Knobs } from './Knobs.tsx'
+import { knobsOf } from './knobs.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -334,6 +336,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [typed, setTyped] = useState<string | null>(null)
   /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
   const [xray, setXray] = useState(false)
+  /**
+   * Se espera la **salud** de un cambio: el programa cambió (una orden, una perilla) o se tiró otra vez, y
+   * cuando se vuelva a ejecutar se dirá cómo quedó. `before`: cómo le iba antes.
+   */
+  const healthWait = useRef<{
+    before: RunSummary | null
+    how: 'order' | 'knob' | 'roll'
+  } | null>(null)
+  /** Cómo le iba al programa cuando se dio la última orden (`null`: no había programa). */
+  const baseline = useRef<RunSummary | null>(null)
   /** Una frase que se deja empezada en el chat al tocar una línea del guion («Cambia «X» para que »). */
   const [prefill, setPrefill] = useState<{ text: string; seq: number } | null>(null)
   const prefillSeq = useRef(0)
@@ -503,6 +515,24 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setGists(message.gists)
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
+        // La salud tras un cambio: el programa se volvió a ejecutar, y se dice cómo quedó respecto a antes.
+        const waiting = healthWait.current
+        if (waiting && message.run) {
+          healthWait.current = null
+          const health = healthOf(waiting.before, message.run, waiting.how)
+          if (health) {
+            setChat((previous) => [
+              ...previous.slice(-60),
+              {
+                id: -Date.now(),
+                role: 'ai',
+                text: health.text,
+                tone: health.tone,
+                ...(health.undo ? { options: [{ label: 'Deshacer el cambio', undo: true }] } : {}),
+              },
+            ])
+          }
+        }
       } else if (message.type === 'flavours') {
         setFlavours({ command: message.command, options: message.options, chosen: message.chosen })
       } else if (message.type === 'architecture') {
@@ -1443,6 +1473,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       }) as React.CSSProperties,
     [consoleBox, cramped],
   )
+  // Las perillas: los números del programa con los que se puede jugar (ver `knobs.ts`).
+  const knobs = useMemo(
+    () =>
+      program
+        ? knobsOf(
+            program.source,
+            program.nodes
+              .filter((node) => node.kind === 'abstraction.collapsed')
+              .map((node) => ({ name: node.label, params: node.params ?? [] })),
+          )
+        : [],
+    [program],
+  )
   // Cómo le fue a cada módulo al ejecutarlo (cuántas veces se usó, si nadie lo usa, si ahí falló). Mientras se
   // construye no: lo que se ejecutó era otro programa.
   const states = useMemo(
@@ -1752,6 +1795,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     awaitingPaint.current = performance.now()
     paintArmed.current = false
     setOrder({ phase: 'deciding', text })
+    baseline.current = (program?.nodes.length ?? 0) === 0 ? null : ran
     // Algo nuevo sobre un lienzo vacío: las versiones de lo anterior ya no vienen a cuento.
     if (!flavour && (program?.nodes.length ?? 0) === 0) setFlavours(null)
     // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
@@ -2068,6 +2112,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setPreview(null)
         // Lo construido es una función o una clase: la vista entra en ella, que es donde se va a seguir.
         if (message.enter !== undefined) setEnterLine(message.enter)
+        // Algo se escribió: cuando el programa se vuelva a ejecutar, se dirá cómo quedó.
+        if (message.ok) healthWait.current = { before: baseline.current, how: 'order' }
       }
       const note = message.done
         ? (message.say ?? message.error ?? '')
@@ -2547,6 +2593,26 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   </span>
                 </div>
               )}
+              {/* Las perillas: los números con los que se puede jugar, y el dado para tirar otra vez. */}
+              {features.chat && lesson === null && view.focus === null && !constructing && (
+                <Knobs
+                  knobs={knobs}
+                  chance={/\brandom\b/.test(program.source)}
+                  onTurn={(knob, text) => {
+                    if (version === null) return
+                    healthWait.current = { before: ran, how: 'knob' }
+                    post({
+                      type: 'edit',
+                      version,
+                      edits: [{ start: knob.start, end: knob.end, text }],
+                    })
+                  }}
+                  onRoll={() => {
+                    healthWait.current = { before: ran, how: 'roll' }
+                    post({ type: 'reroll' })
+                  }}
+                />
+              )}
               {/* Desde dónde se mira: la idea, las partes o el detalle. Solo en el programa entero (no dentro
                   de una función) y cuando tiene partes que contar. */}
               {features.chat &&
@@ -2895,7 +2961,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             hear(text)
           }}
           onChoose={(option) => {
-            if (option.order) sendOrder(option.order)
+            if (option.undo) {
+              // «Deshacer el cambio»: lo último que se escribió, fuera.
+              setChat((previous) => [
+                ...previous.slice(-60),
+                { id: -Date.now(), role: 'ai', text: 'Deshecho.', tone: 'muted' },
+              ])
+              post({ type: 'undoOrder' })
+            } else if (option.order) sendOrder(option.order)
             else sendOrder(lastOrder.current, option.force)
           }}
           onStop={() => {
