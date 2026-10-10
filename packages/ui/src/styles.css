@@ -6744,7 +6744,7 @@ button.run-panel__line:hover {
   position: absolute;
   z-index: -1;
   height: 12px;
-  border: 1px solid var(--border-card);
+  border: 1px solid color-mix(in srgb, var(--role-tint) 50%, var(--border-card));
   border-top: 0;
   border-radius: 0 0 10px 10px;
   background: var(--surface);
