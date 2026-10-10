@@ -6727,7 +6727,7 @@ button.run-panel__line:hover {
 /* Por dónde y cómo se sale de lo que se repite. */
 .arch-gate {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   pointer-events: none;
 }
 .arch-gate__pill {

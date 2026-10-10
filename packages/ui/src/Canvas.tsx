@@ -839,8 +839,7 @@ function CanvasInner({
                       callees: node.section.opens.map((open) => open.name),
                       glyphs: node.section.glyphs.length,
                       // Como módulo de la arquitectura se dice con palabras: se lee de lejos.
-                      plain:
-                        flow && architecture?.modules.some((module) => module.id === node.id),
+                      plain: flow && architecture?.modules.some((module) => module.id === node.id),
                     })
                   : flow && isDecision(node)
                     ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
@@ -2107,16 +2106,17 @@ function CanvasInner({
         },
       ]
     : []
-  // Por dónde se sale del ciclo: bajo quien lo lleva, hacia dentro del anillo (ahí no hay nadie).
+  // Por dónde se sale del ciclo: sobre quien lo lleva, por fuera del anillo (por dentro pasan las flechas y
+  // sus pastillas). Desde su mitad hacia la derecha: a la izquierda puede estar la marca de arranque.
   const exitBox = exit && archModules.has(exit.at) ? boxOf.get(exit.at) : undefined
   const exitFigures: Figure[] = exitBox
     ? [
         {
           id: 'gate',
           kind: 'gate',
-          x: exitBox.x - shiftX - 40,
-          y: exitBox.y - shiftY + exitBox.h + 6,
-          w: exitBox.w + 80,
+          x: exitBox.x - shiftX + exitBox.w / 2,
+          y: exitBox.y - shiftY - 26,
+          w: 320,
           h: 22,
           label: exit?.label ?? '',
         },

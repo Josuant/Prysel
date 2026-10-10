@@ -137,7 +137,9 @@ function LapStrip({ loop, full, idle }: { loop: Story['loop']; full: boolean; id
       <span className="arch-laps__text">
         {idle
           ? `${lapsSaid(loop)} ${laps === 1 ? 'vuelta' : 'vueltas'}`
-          : `vuelta ${lap} de ${lapsSaid(loop)}`}
+          : full && loop.ended === 'cut'
+            ? `${lapsSaid(loop)} vueltas`
+            : `vuelta ${lap} de ${lapsSaid(loop)}`}
       </span>
       {series && here && (
         <>
