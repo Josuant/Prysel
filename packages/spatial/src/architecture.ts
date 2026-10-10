@@ -191,6 +191,17 @@ function hits(from: Box, to: Box, box: Box): boolean {
   return false
 }
 
+/** Cuántas de esas flechas, tiradas rectas de centro a centro, pasan por encima de un módulo que no es suyo. */
+function crossings(boxes: readonly Box[], links: readonly ArchLink[]): number {
+  const at = new Map(boxes.map((box) => [box.id, box]))
+  return links.filter((link) => {
+    const from = at.get(link.from)
+    const to = at.get(link.to)
+    if (!from || !to || from === to) return false
+    return boxes.some((box) => box !== from && box !== to && hits(from, to, box))
+  }).length
+}
+
 /** Todas las maneras de ordenar unos pocos elementos. */
 function permutations<T>(items: readonly T[]): T[][] {
   if (items.length <= 1) return [[...items]]
@@ -422,28 +433,59 @@ export function layoutArchitecture(
         .filter((link) => link.kind === 'call' && link.from === anchor)
         .map((link) => link.to),
     )
-    const members = [anchor, ...ids.filter((id) => used.has(id))]
-    const outside = ids.filter((id) => !members.includes(id))
-    const circle = ring(members, sizeOf)
-    spread(circle, { x: 0, y: 0 }, 28)
-    const round = frame(circle, 'centre')
-    figures.push({ id: 'ring', kind: 'ring', ...round })
-    const edge = frame(circle, 'edge')
-    const column: Box[] = []
-    let top = 0
-    for (const id of outside) {
-      const size = sizeOf(id)
-      column.push({ id, x: 0, y: top + size.h / 2, w: size.w, h: size.h })
-      top += size.h + GAP.y * 0.7
+    const turning = ids.filter((id) => used.has(id) && id !== anchor)
+    const waiting = ids.filter((id) => id !== anchor && !used.has(id))
+    /** El anillo con ese orden y, a su izquierda, la columna de los que esperan en ese otro. */
+    const place = (ringOrder: readonly string[], columnOrder: readonly string[]) => {
+      const circle = ring([anchor, ...ringOrder], sizeOf)
+      spread(circle, { x: 0, y: 0 }, 28)
+      const edge = frame(circle, 'edge')
+      const column: Box[] = []
+      let top = 0
+      for (const id of columnOrder) {
+        const size = sizeOf(id)
+        column.push({ id, x: 0, y: top + size.h / 2, w: size.w, h: size.h })
+        top += size.h + GAP.y * 0.7
+      }
+      // Arriba, a la altura de la cabeza del ciclo: es a ella a quien le dan lo suyo, y así su flecha no
+      // cruza el anillo.
+      const wide = Math.max(0, ...column.map((box) => box.w))
+      for (const box of column) {
+        box.x = edge.x - GAP.x - wide / 2
+        box.y += edge.y
+      }
+      return { circle, column }
     }
-    // Arriba, a la altura de la cabeza del ciclo: es a ella a quien le dan lo suyo, y así su flecha no cruza
-    // el anillo.
-    const wide = Math.max(0, ...column.map((box) => box.w))
-    for (const box of column) {
-      box.x = edge.x - GAP.x - wide / 2
-      box.y += edge.y
+    // El orden del programa manda, salvo que con otro haya menos flechas pasando por encima de un módulo:
+    // se prueban los órdenes del anillo y de la columna y se queda el que menos cruza (y, entre esos, el
+    // que menos se aparta del orden del programa).
+    let best = place(turning, waiting)
+    const searchable =
+      turning.length <= SEARCH_MAX - 1 && waiting.length <= 4 && architecture.links.length > 0
+    if (searchable) {
+      const moved = (order: readonly string[], from: readonly string[]) =>
+        order.reduce((sum, id, at) => sum + Math.abs(at - from.indexOf(id)), 0)
+      let least = {
+        cost: crossings([...best.circle, ...best.column], architecture.links),
+        moved: 0,
+      }
+      for (const ringOrder of permutations(turning)) {
+        for (const columnOrder of permutations(waiting)) {
+          if (least.cost === 0) break
+          const tried = place(ringOrder, columnOrder)
+          const found = {
+            cost: crossings([...tried.circle, ...tried.column], architecture.links),
+            moved: moved(ringOrder, turning) + moved(columnOrder, waiting),
+          }
+          if (found.cost < least.cost || (found.cost === least.cost && found.moved < least.moved)) {
+            least = found
+            best = tried
+          }
+        }
+      }
     }
-    boxes = [...circle, ...column]
+    figures.push({ id: 'ring', kind: 'ring', ...frame(best.circle, 'centre') })
+    boxes = [...best.circle, ...best.column]
   } else if (architecture.shape === 'embudo' && anchor !== undefined) {
     // Arriba, a lo ancho, lo que entra; debajo, donde se junta; y más abajo, lo que sale de ahí.
     const feeds = new Set(

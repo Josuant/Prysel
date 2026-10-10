@@ -69,7 +69,7 @@ import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
 import { gistSize, titledScene, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
-import { archRunFor, runFor } from './fit.ts'
+import { archRunFor, roomFor, runFor } from './fit.ts'
 import type { StepInfo } from './steps.ts'
 import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
@@ -218,6 +218,11 @@ export interface CanvasProps {
    * el diagrama de flujo.
    */
   architecture?: Architecture | null
+  /**
+   * Algo ocupa el rincón de abajo a la derecha del lienzo (la consola): lo que mide. El encuadre deja ese
+   * rincón libre, a un lado o por encima, según cómo se vea más grande el diagrama.
+   */
+  avoid?: { w: number; h: number } | null
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -429,6 +434,7 @@ function CanvasInner({
   onOpen,
   onGistEdit,
   architecture = null,
+  avoid = null,
   addTarget,
   palette,
   addToModule = true,
@@ -2299,7 +2305,9 @@ function CanvasInner({
   )
 
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
-  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}`
+  const avoidW = avoid?.w ?? 0
+  const avoidH = avoid?.h ?? 0
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}`
   const lastSettle = useRef(settle)
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
@@ -2318,8 +2326,15 @@ function CanvasInner({
       // La cámara está donde la dejó una orden: no se la lleva un reencuadre.
       if (spotHeld.current === fitKey) return
       const pad = 24
-      const byWidth = Math.max(0.15, (frame.clientWidth - pad * 2) / bounds.w)
-      const byHeight = Math.max(0.15, (frame.clientHeight - pad * 2) / bounds.h)
+      // Lo que hay para el diagrama: el lienzo, menos el rincón que ocupe la consola.
+      const room = roomFor(
+        { w: frame.clientWidth, h: frame.clientHeight },
+        bounds,
+        avoidW > 0 && avoidH > 0 ? { w: avoidW, h: avoidH } : null,
+        pad,
+      )
+      const byWidth = Math.max(0.15, (room.w - pad * 2) / bounds.w)
+      const byHeight = Math.max(0.15, (room.h - pad * 2) / bounds.h)
       // Un lienzo de trabajo se ajusta al ancho y se recorre; una ilustración se enseña entera.
       const mode = fitMode ?? (interactive ? 'width' : 'contain')
       // Al asentarse, entero si se lee (no por debajo de un tamaño legible); si no, a lo ancho y desde arriba.
@@ -2337,8 +2352,8 @@ function CanvasInner({
       lastFit.current = shape
       void setViewport(
         {
-          x: (frame.clientWidth - bounds.w * zoom) / 2,
-          y: Math.max(pad, (frame.clientHeight - bounds.h * zoom) / 2),
+          x: (room.w - bounds.w * zoom) / 2,
+          y: Math.max(pad, (room.h - bounds.h * zoom) / 2),
           zoom,
         },
         { duration: first || !animate ? 0 : 300 },
@@ -2363,6 +2378,8 @@ function CanvasInner({
     fitKey,
     settle,
     follow,
+    avoidW,
+    avoidH,
   ])
 
   // El foco de una orden: la cámara va a donde el nodo **va a quedar** (no a donde está a medio camino de

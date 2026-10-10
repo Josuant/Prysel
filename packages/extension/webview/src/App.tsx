@@ -330,6 +330,30 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
   const [archVerdicts, setArchVerdicts] = useState<Readonly<Record<string, ArchVerdict>>>({})
   const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
+  /**
+   * Lo que ocupa la consola («Al ejecutarlo») en el rincón del lienzo, con su margen: el encuadre le deja
+   * ese sitio. `null` si no está.
+   */
+  const [consoleBox, setConsoleBox] = useState<{ w: number; h: number } | null>(null)
+  const consoleWatch = useRef<ResizeObserver | null>(null)
+  const watchConsole = useCallback((element: HTMLDivElement | null) => {
+    consoleWatch.current?.disconnect()
+    consoleWatch.current = null
+    if (!element) {
+      setConsoleBox(null)
+      return
+    }
+    const measure = () => {
+      // Redondeado a saltos: que la consola crezca una línea no reencuadra el diagrama.
+      const w = Math.ceil((element.offsetWidth + CONSOLE_MARGIN) / 20) * 20
+      const h = Math.ceil((element.offsetHeight + CONSOLE_MARGIN) / 20) * 20
+      setConsoleBox((known) => (known?.w === w && known.h === h ? known : { w, h }))
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    consoleWatch.current = observer
+    measure()
+  }, [])
   /** La función que se está probando con otros datos (el id de su nodo): su panel está abierto. */
   const [trying, setTrying] = useState<string | null>(null)
   /** Lo último que dijo el JEV de qué pieza cubre cada parte de lo pedido. */
@@ -2102,6 +2126,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 onOpen={view.descend}
                 onGistEdit={setTrying}
                 architecture={architecture}
+                avoid={consoleBox}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
@@ -2340,7 +2365,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               )}
               {/* Lo que el programa saca por pantalla: a la vista mientras se construye. */}
               {ran && program && program.nodes.length > 0 && (
-                <div className="canvas-float" data-at="bottom-right">
+                <div className="canvas-float" data-at="bottom-right" ref={watchConsole}>
                   <RunPanel
                     run={ran}
                     lit={litLines}
@@ -2693,6 +2718,9 @@ const HEARD_LABELS: Record<string, string> = {
   cambio: 'Un cambio',
   explicacion: 'Una explicación',
 }
+
+/** El aire entre la consola y el diagrama (su separación del borde, y un poco más). */
+const CONSOLE_MARGIN = 28
 
 /** Cómo se dice cada forma de la arquitectura, y por qué se eligió. */
 const SHAPE_NAMES: Record<ArchShape, string> = {

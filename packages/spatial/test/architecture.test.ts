@@ -272,6 +272,49 @@ describe('dónde va cada módulo', () => {
     }
   })
 
+  it('en un ciclo, el orden del anillo y de la columna se elige para que ninguna flecha pase sobre un módulo', () => {
+    // Como la carrera que se construyó de verdad: dos módulos de datos y uno que anuncia esperan fuera, y el
+    // bucle usa a tres. El que anuncia usa al bucle, y los datos van a sitios distintos del anillo.
+    const graph: ArchGraph = {
+      modules: [
+        mod('pista', 'datos'),
+        mod('caracoles', 'datos'),
+        mod('dibujar', 'salida'),
+        mod('avanzar', 'logica'),
+        mod('meta', 'logica'),
+        mod('bucle', 'control', { loop: true }),
+        mod('anunciar', 'salida'),
+      ],
+      links: [
+        call('bucle', 'dibujar'),
+        call('bucle', 'avanzar'),
+        call('bucle', 'meta'),
+        call('anunciar', 'bucle'),
+        data('caracoles', 'meta', 'posiciones'),
+        data('pista', 'dibujar', 'longitud'),
+      ],
+    }
+    const sizes = sizesOf(graph)
+    const { positions } = layoutArchitecture(shaped(graph, 'ciclo', 'bucle'), sizes)
+    expect(collisions(positions, sizes)).toEqual([])
+    const box = (id: string) => ({ ...(positions.get(id) ?? { x: 0, y: 0 }), ...SIZE })
+    const middle = (id: string) => ({ x: box(id).x + SIZE.w / 2, y: box(id).y + SIZE.h / 2 })
+    const over = graph.links.filter((link) => {
+      const a = middle(link.from)
+      const b = middle(link.to)
+      return graph.modules.some((module) => {
+        if (module.id === link.from || module.id === link.to) return false
+        const hit = box(module.id)
+        return Array.from({ length: 19 }, (_, k) => (k + 1) / 20).some((t) => {
+          const x = a.x + (b.x - a.x) * t
+          const y = a.y + (b.y - a.y) * t
+          return x > hit.x && x < hit.x + hit.w && y > hit.y && y < hit.y + hit.h
+        })
+      })
+    })
+    expect(over.map((link) => `${link.from}→${link.to}`)).toEqual([])
+  })
+
   it('el ciclo pone en el anillo la cabeza y lo que usa; lo que se prepara antes espera a su izquierda', () => {
     const { positions, figures } = layoutArchitecture(
       shaped(JUEGO, 'ciclo', 'bucle'),
