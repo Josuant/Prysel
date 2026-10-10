@@ -1984,12 +1984,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               <SketchCard
                 sketch={asked.sketch}
                 kind={asked.kind}
+                // Mientras se construye, una etapa es solo el plan: lo escrito son las funciones y clases que
+                // ya existen. Al acabar, también vale la etapa (hay programas sin funciones).
                 filled={filledBy(
                   asked.sketch,
-                  piecesOf(
-                    program.source,
-                    stages.map((stage) => stage.title),
-                  ),
+                  piecesOf(program.source, building ? [] : stages.map((stage) => stage.title)),
+                )}
+                planned={filledBy(
+                  asked.sketch,
+                  stages.map((stage) => stage.title),
                 )}
                 pinned
               />
@@ -2458,12 +2461,15 @@ function SketchCard({
   kind,
   hint = null,
   filled,
+  planned,
   pinned = false,
 }: {
   sketch: Sketch
   kind: string | null
   hint?: string | null
   filled?: (string | null)[]
+  /** La etapa del plan que cubrirá cada parte, aún sin escribir: se anuncia, pero no se da por hecha. */
+  planned?: (string | null)[]
   pinned?: boolean
 }) {
   const done = filled?.filter((piece) => piece !== null).length ?? 0
@@ -2482,14 +2488,20 @@ function SketchCard({
         <ol className="sketch__parts">
           {sketch.parts.map((part, index) => {
             const piece = filled?.[index] ?? null
+            const plan = piece === null ? (planned?.[index] ?? null) : null
             return (
               // La clave es su sitio: una parte que se sigue escribiendo crece sin volver a entrar.
-              <li key={index} className="sketch__part" data-filled={piece ? '' : undefined}>
+              <li
+                key={index}
+                className="sketch__part"
+                data-filled={piece ? '' : undefined}
+                data-planned={plan ? '' : undefined}
+              >
                 <span className="sketch__n" aria-hidden>
                   {piece ? '✓' : index + 1}
                 </span>
                 <span className="sketch__text">{part}</span>
-                {piece && <span className="sketch__piece">{piece}</span>}
+                {(piece ?? plan) && <span className="sketch__piece">{piece ?? plan}</span>}
               </li>
             )
           })}

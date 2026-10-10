@@ -6207,6 +6207,14 @@ button.run-panel__line:hover {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   background: color-mix(in srgb, var(--accent) 9%, var(--surface));
 }
+/* En el plan, pero aún sin escribir: se anuncia con qué etapa, sin darla por hecha. */
+.sketch__part[data-planned] {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.sketch__part[data-planned] .sketch__piece {
+  font-family: inherit;
+  font-style: italic;
+}
 .sketch__part[data-filled] .sketch__n {
   background: var(--accent);
   color: var(--surface);
