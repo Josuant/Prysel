@@ -7081,9 +7081,49 @@ button.run-panel__line:hover {
   padding: 0;
   list-style: none;
 }
+/* Una línea del guion: lo que dice (y lleva a su parte) y, a su derecha, lo que se le puede hacer. */
+.idea__row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.idea__touch {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.45;
+  transition: opacity 160ms ease;
+}
+.idea__row:hover .idea__touch,
+.idea__row:focus-within .idea__touch {
+  opacity: 1;
+}
+.idea__act {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  place-items: center;
+}
+.idea__act:hover {
+  border-color: var(--border-card);
+  background: var(--surface-raised);
+  color: var(--ink);
+}
+.idea__act[data-tone='remove']:hover {
+  border-color: color-mix(in srgb, var(--state-error) 55%, transparent);
+  color: var(--state-error);
+}
 .idea__step {
   display: flex;
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   box-sizing: border-box;
   align-items: center;
   gap: 12px;

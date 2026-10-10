@@ -334,6 +334,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [typed, setTyped] = useState<string | null>(null)
   /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
   const [xray, setXray] = useState(false)
+  /** Una frase que se deja empezada en el chat al tocar una línea del guion («Cambia «X» para que »). */
+  const [prefill, setPrefill] = useState<{ text: string; seq: number } | null>(null)
+  const prefillSeq = useRef(0)
   /**
    * La petición era abierta y se hizo una versión concreta: lo que se pidió, las versiones que se propusieron
    * y cuál se hizo. Las otras quedan a mano en el chat, para rehacerlo con una de ellas.
@@ -1739,6 +1742,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     force?: Forced,
     /** Rehacerlo con otra de las versiones que se propusieron (`text` es la petición de entonces). */
     flavour?: { title: string; shows: string },
+    /** De qué pieza se habla, si no es la seleccionada (se tocó una línea del guion). */
+    about?: string,
   ) => {
     if (version === null) return
     hush()
@@ -1774,7 +1779,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       id,
       text,
       version,
-      selected: flavour ? null : selected,
+      selected: flavour ? null : (about ?? selected),
       focus: flavour ? null : (view.focus?.id ?? null),
       ...(force ? { force } : {}),
       ...(flavour ? { flavour } : {}),
@@ -2582,6 +2587,35 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     lookFrom('partes')
                     setSelected(id)
                   }}
+                  // El guion se puede tocar cuando hay a quién pedírselo y no se está construyendo.
+                  actions={
+                    features.orders && !constructing
+                      ? {
+                          onChange: (step) => {
+                            setSelected(step.id)
+                            setPrefill({
+                              text: `Cambia «${step.title}» para que `,
+                              seq: ++prefillSeq.current,
+                            })
+                          },
+                          onAdd: (step) => {
+                            setSelected(step.id)
+                            setPrefill({
+                              text: `Añade después de «${step.title}» un paso que `,
+                              seq: ++prefillSeq.current,
+                            })
+                          },
+                          onRemove: (step) => {
+                            sendOrder(
+                              `Quita la parte «${step.title}»`,
+                              undefined,
+                              undefined,
+                              step.id,
+                            )
+                          },
+                        }
+                      : null
+                  }
                 />
               )}
               {/* Ver pasar una vuelta: lo que ya se ejecutó, paso a paso sobre el diagrama. */}
@@ -2850,6 +2884,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               : (features.suggestions ?? [])
           }
           flavours={flavours ?? undefined}
+          prefill={prefill ?? undefined}
           onFlavour={(at) => {
             const option = flavours?.options[at]
             if (!flavours || !option) return

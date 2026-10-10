@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react'
-import type { Idea, IdeaStep } from '@prysel/ui'
+import { createContext, useContext, useEffect, useRef } from 'react'
+import { Icon, type Idea, type IdeaStep } from '@prysel/ui'
 
 /**
  * La **idea** del programa: lo que hace, dicho en unas pocas líneas y a un tamaño que se lee en cualquier
@@ -8,6 +8,9 @@ import type { Idea, IdeaStep } from '@prysel/ui'
  *
  * No interpreta nada: son los títulos de las etapas (los que llevan en el código), el orden en que se
  * ejecutaron, lo que se pasan, y lo último que salió por pantalla. Cada línea lleva a su parte.
+ *
+ * Y es un **guion que se puede tocar**: cada línea se puede cambiar o quitar, y detrás de cada una se puede
+ * añadir otra. Lo que se toca es el programa, dicho con palabras: el cambio se pide como cualquier otra orden.
  */
 
 export type { Idea } from '@prysel/ui'
@@ -22,6 +25,18 @@ export interface IdeaExtras {
   result: { said: string; lines: readonly string[]; planned: boolean } | null
 }
 
+/** Lo que se le puede hacer a una línea del guion. Sin ello (mientras se construye, o sin IA), solo se lee. */
+export interface IdeaActions {
+  /** Cambiarla: se deja empezada la frase en el chat, para decir cómo. */
+  onChange: (step: IdeaStep) => void
+  /** Quitarla del programa. */
+  onRemove: (step: IdeaStep) => void
+  /** Añadir un paso detrás de ella: se deja empezada la frase en el chat. */
+  onAdd: (step: IdeaStep) => void
+}
+
+const Touch = createContext<IdeaActions | null>(null)
+
 function Step({
   step,
   ordinal,
@@ -33,8 +48,9 @@ function Step({
   live: boolean
   onPick: (id: string) => void
 }) {
+  const touch = useContext(Touch)
   return (
-    <li>
+    <li className="idea__row" data-live={live ? '' : undefined}>
       <button
         type="button"
         className="idea__step"
@@ -59,6 +75,44 @@ function Step({
           </span>
         )}
       </button>
+      {touch && (
+        <span className="idea__touch">
+          <button
+            type="button"
+            className="idea__act"
+            title={`Cambiar «${step.title}»`}
+            aria-label={`Cambiar «${step.title}»`}
+            onClick={() => {
+              touch.onChange(step)
+            }}
+          >
+            <Icon name="pencil" size={13} />
+          </button>
+          <button
+            type="button"
+            className="idea__act"
+            title={`Añadir un paso después de «${step.title}»`}
+            aria-label={`Añadir un paso después de «${step.title}»`}
+            onClick={() => {
+              touch.onAdd(step)
+            }}
+          >
+            <Icon name="plus" size={13} />
+          </button>
+          <button
+            type="button"
+            className="idea__act"
+            data-tone="remove"
+            title={`Quitar «${step.title}»`}
+            aria-label={`Quitar «${step.title}»`}
+            onClick={() => {
+              touch.onRemove(step)
+            }}
+          >
+            <Icon name="x" size={13} />
+          </button>
+        </span>
+      )}
     </li>
   )
 }
@@ -68,6 +122,7 @@ export function IdeaView({
   extras,
   live,
   onPick,
+  actions,
   footer = 0,
 }: {
   idea: Idea
@@ -75,6 +130,8 @@ export function IdeaView({
   /** Al reproducir una vuelta: la parte en la que se está. */
   live: string | null
   onPick: (id: string) => void
+  /** Lo que se puede tocar del guion; sin ello, solo se lee. */
+  actions?: IdeaActions | null
   /** Lo que ocupan abajo las barras que flotan (la de ver una vuelta, la consola): el texto acaba antes. */
   footer?: number
 }) {
@@ -102,76 +159,78 @@ export function IdeaView({
       </section>
     )
   return (
-    <div className="idea" role="region" aria-label="La idea del programa">
-      <div className="idea__scroll" style={{ bottom: footer }} ref={scroller}>
-        <div className="idea__flow">
-          {start && (
-            <section className="idea__block" data-kind="start">
-              <h3 className="idea__label">
-                <span className="idea__play" aria-hidden>
-                  ▶
-                </span>
-                {start.label}
-              </h3>
-              {opener && (
+    <Touch.Provider value={actions ?? null}>
+      <div className="idea" role="region" aria-label="La idea del programa">
+        <div className="idea__scroll" style={{ bottom: footer }} ref={scroller}>
+          <div className="idea__flow">
+            {start && (
+              <section className="idea__block" data-kind="start">
+                <h3 className="idea__label">
+                  <span className="idea__play" aria-hidden>
+                    ▶
+                  </span>
+                  {start.label}
+                </h3>
+                {opener && (
+                  <ol className="idea__steps">
+                    <Step step={opener} live={isLive(opener)} onPick={onPick} />
+                  </ol>
+                )}
+              </section>
+            )}
+            {block('Con', idea.uses, 'uses')}
+            {block(idea.loop ? 'Una vez, antes' : 'Primero', idea.before, 'before')}
+            {idea.loop && (
+              <section
+                className="idea__block"
+                data-kind="loop"
+                data-live={live === idea.loop.id ? '' : undefined}
+              >
+                <h3 className="idea__label">
+                  <span className="idea__turn" aria-hidden>
+                    ↻
+                  </span>
+                  Se repite
+                  {extras.laps && <span className="idea__laps">{extras.laps}</span>}
+                </h3>
                 <ol className="idea__steps">
-                  <Step step={opener} live={isLive(opener)} onPick={onPick} />
+                  {idea.loop.steps.map((step, at) => (
+                    <Step
+                      key={step.id}
+                      step={step}
+                      ordinal={at + 1}
+                      live={isLive(step)}
+                      onPick={onPick}
+                    />
+                  ))}
                 </ol>
-              )}
-            </section>
-          )}
-          {block('Con', idea.uses, 'uses')}
-          {block(idea.loop ? 'Una vez, antes' : 'Primero', idea.before, 'before')}
-          {idea.loop && (
-            <section
-              className="idea__block"
-              data-kind="loop"
-              data-live={live === idea.loop.id ? '' : undefined}
-            >
-              <h3 className="idea__label">
-                <span className="idea__turn" aria-hidden>
-                  ↻
-                </span>
-                Se repite
-                {extras.laps && <span className="idea__laps">{extras.laps}</span>}
-              </h3>
-              <ol className="idea__steps">
-                {idea.loop.steps.map((step, at) => (
-                  <Step
-                    key={step.id}
-                    step={step}
-                    ordinal={at + 1}
-                    live={isLive(step)}
-                    onPick={onPick}
-                  />
-                ))}
-              </ol>
-              {extras.exit && (
-                <p className="idea__exit">
-                  <span aria-hidden>⤷</span> {extras.exit}
-                </p>
-              )}
-            </section>
-          )}
-          {block(idea.loop ? 'Además' : 'Sus partes', parts, 'parts')}
-          {result && (
-            <section
-              className="idea__block"
-              data-kind="result"
-              data-planned={result.planned ? '' : undefined}
-              data-live={live === 'prysel:result' ? '' : undefined}
-            >
-              <h3 className="idea__label">{result.planned ? 'Daría' : 'Y al final'}</h3>
-              <div className="idea__result">
-                {result.lines.map((line, at) => (
-                  <span key={at}>{line}</span>
-                ))}
-              </div>
-              <p className="idea__said">{result.said}</p>
-            </section>
-          )}
+                {extras.exit && (
+                  <p className="idea__exit">
+                    <span aria-hidden>⤷</span> {extras.exit}
+                  </p>
+                )}
+              </section>
+            )}
+            {block(idea.loop ? 'Además' : 'Sus partes', parts, 'parts')}
+            {result && (
+              <section
+                className="idea__block"
+                data-kind="result"
+                data-planned={result.planned ? '' : undefined}
+                data-live={live === 'prysel:result' ? '' : undefined}
+              >
+                <h3 className="idea__label">{result.planned ? 'Daría' : 'Y al final'}</h3>
+                <div className="idea__result">
+                  {result.lines.map((line, at) => (
+                    <span key={at}>{line}</span>
+                  ))}
+                </div>
+                <p className="idea__said">{result.said}</p>
+              </section>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </Touch.Provider>
   )
 }

@@ -45,6 +45,11 @@ export interface ChatDockProps {
    */
   flavours?: { options: readonly { title: string; shows: string }[]; chosen: number } | undefined
   onFlavour?: (at: number) => void
+  /**
+   * Una frase que se deja empezada en la caja (para decir cómo se quiere un cambio): `seq` cambia cada vez que
+   * se pide, aunque el texto sea el mismo.
+   */
+  prefill?: { text: string; seq: number } | undefined
   onSubmit: (text: string) => void
   onChoose: (option: AskOption) => void
   onStop: () => void
@@ -125,6 +130,7 @@ export function ChatDock({
   about,
   flavours,
   onFlavour,
+  prefill,
   onSubmit,
   onChoose,
   onStop,
@@ -138,6 +144,22 @@ export function ChatDock({
 }: ChatDockProps) {
   const [text, setText] = useState('')
   const composer = useRef<HTMLInputElement>(null)
+  // Una frase empezada desde fuera (tocar una línea del guion): se pone en la caja y se le da el foco.
+  const [filled, setFilled] = useState(prefill?.seq ?? 0)
+  if (prefill && prefill.seq !== filled) {
+    setFilled(prefill.seq)
+    setText(prefill.text)
+  }
+  const prefilled = prefill?.seq
+  useEffect(() => {
+    if (prefilled === undefined) return
+    const input = composer.current
+    if (!input) return
+    input.focus()
+    // El cursor, al final: se sigue escribiendo donde acaba la frase.
+    const end = input.value.length
+    input.setSelectionRange(end, end)
+  }, [prefilled])
   const [open, setOpen] = useState(false)
   const [listening, setListening] = useState(false)
   const recognition = useRef<Recognition | null>(null)
