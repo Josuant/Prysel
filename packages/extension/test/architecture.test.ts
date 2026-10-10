@@ -132,6 +132,22 @@ describe('un bucle de juego', () => {
   })
 })
 
+describe('lo que converge y lo que se reparte', () => {
+  it('dos fuentes que se juntan en una: un embudo', () => {
+    const { links, architecture, named } = seen('embudo')
+    expect(links).toEqual(['Compras → Mezclar', 'Mezclar → Mostrar', 'Ventas → Mezclar'])
+    expect(architecture?.shape).toBe('embudo')
+    expect(named(architecture?.anchor ?? '')).toBe('Mezclar')
+  })
+
+  it('unos datos que usan tres partes independientes: un abanico', () => {
+    const { links, architecture, named } = seen('abanico')
+    expect(links).toEqual(['Notas → Aprobados', 'Notas → Media', 'Notas → Mejor'])
+    expect(architecture?.shape).toBe('abanico')
+    expect(named(architecture?.anchor ?? '')).toBe('Notas')
+  })
+})
+
 describe('lo que no es arquitectura se queda como estaba', () => {
   it('un programa sin etapas, o con una sola, no tiene arquitectura', () => {
     const program = parse('a = 1\nb = a + 1\nprint(b)\n')
@@ -163,7 +179,7 @@ describe('medidas: la arquitectura cabe a un tamaño que se lee', () => {
   const asNodes = (ids: readonly string[]): SemanticNode[] =>
     ids.map((id) => ({ id, role: 'container', size: SIZE }))
 
-  it.each(['gastos', 'informe', 'juego'])(
+  it.each(['gastos', 'informe', 'juego', 'embudo', 'abanico'])(
     '%s: cabe entero en un lienzo de 836 px a un tamaño que se lee',
     (name) => {
       const { architecture, graph } = seen(name)

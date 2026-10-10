@@ -36,7 +36,7 @@ import {
   type Theme,
 } from '../../src/protocol.ts'
 import type { Forced } from '../../src/jev/engine.ts'
-import { MODULE_ROLES, shapeCandidates, type ModuleRole } from '@prysel/spatial'
+import { MODULE_ROLES, shapeCandidates, type ArchShape, type ModuleRole } from '@prysel/spatial'
 import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
 import { ChatDock, type ChatEntry } from './ChatDock.tsx'
@@ -1259,7 +1259,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       window.clearTimeout(timer)
     }
   }, [archQuestion, archVerdicts])
-  const architecture = useMemo(() => {
+  const judgedArchitecture = useMemo(() => {
     if (!plannedArchitecture || archQuestion === null) return plannedArchitecture
     // Lo último que dijo el JEV de estos mismos módulos vale aunque el programa haya seguido cambiando: los
     // papeles van por título; la forma, solo si sigue siendo una de las que cuadran.
@@ -1270,6 +1270,37 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     )
     return withVerdict(plannedArchitecture, { roles, shape: verdict.shape })
   }, [plannedArchitecture, archQuestion, archVerdicts, archLast, view.moduleFacts])
+  // Mientras se construye, la forma no baila: al pasar cada módulo de lo planeado a lo escrito hay ratos en
+  // que el grafo se queda sin lo que la sostenía (ya no están las flechas del plan y aún no las del código).
+  // Si la forma se cae a «capas» en uno de esos ratos, se mantiene la que había, con su ancla (por su título:
+  // los módulos cambian de línea mientras se escribe). Al acabar, manda lo que haya.
+  const constructing = order.phase === 'deciding' || building || thinking !== null || intro !== null
+  const [held, setHeld] = useState<{ shape: ArchShape; anchor: string | null } | null>(null)
+  const titleOf = (id: string | undefined) =>
+    view.moduleFacts.find((fact) => fact.id === id)?.title ?? null
+  const holding =
+    !constructing || !judgedArchitecture
+      ? null
+      : judgedArchitecture.shape !== 'capas'
+        ? { shape: judgedArchitecture.shape, anchor: titleOf(judgedArchitecture.anchor) }
+        : held
+  if (holding?.shape !== held?.shape || holding?.anchor !== held?.anchor) setHeld(holding)
+  const architecture = useMemo(() => {
+    if (!judgedArchitecture || judgedArchitecture.shape !== 'capas' || !held)
+      return judgedArchitecture
+    const anchor =
+      held.anchor === null
+        ? undefined
+        : view.moduleFacts.find((fact) => fact.title === held.anchor)?.id
+    // Una forma con ancla necesita que su ancla siga ahí.
+    if (held.anchor !== null && anchor === undefined) return judgedArchitecture
+    return {
+      modules: judgedArchitecture.modules,
+      links: judgedArchitecture.links,
+      shape: held.shape,
+      ...(anchor === undefined ? {} : { anchor }),
+    }
+  }, [judgedArchitecture, held, view.moduleFacts])
   const tryingGist =
     trying === null ? null : (gists.find((gist) => gist.id === trying && gist.sample) ?? null)
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
@@ -2264,6 +2295,29 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   </span>
                 </div>
               )}
+              {/* Cómo leer la arquitectura: qué forma tiene y qué dice cada flecha. */}
+              {architecture && program.nodes.length > 0 && (
+                <div className="canvas-float arch-legend" role="note">
+                  <span className="arch-legend__shape" title={SHAPE_WHY[architecture.shape]}>
+                    {SHAPE_NAMES[architecture.shape]}
+                  </span>
+                  {architecture.links.some((link) => link.kind === 'data') && (
+                    <span className="arch-legend__key" data-kind="data">
+                      le pasa un dato
+                    </span>
+                  )}
+                  {architecture.links.some((link) => link.kind === 'call') && (
+                    <span className="arch-legend__key" data-kind="call">
+                      usa a
+                    </span>
+                  )}
+                  {architecture.links.some((link) => link.planned) && (
+                    <span className="arch-legend__key" data-kind="planned">
+                      planeado
+                    </span>
+                  )}
+                </div>
+              )}
               {/* Probar una función con otros datos: su tarjeta cambia con lo que de verdad pasa. */}
               {tryingGist && (
                 <div className="canvas-float try-panel">
@@ -2634,6 +2688,24 @@ const HEARD_LABELS: Record<string, string> = {
   programa: 'Un programa',
   cambio: 'Un cambio',
   explicacion: 'Una explicación',
+}
+
+/** Cómo se dice cada forma de la arquitectura, y por qué se eligió. */
+const SHAPE_NAMES: Record<ArchShape, string> = {
+  capas: 'Por capas',
+  tuberia: 'Una tubería',
+  centro: 'Un centro que reparte',
+  ciclo: 'Un ciclo',
+  embudo: 'Un embudo',
+  abanico: 'Un abanico',
+}
+const SHAPE_WHY: Record<ArchShape, string> = {
+  capas: 'Arriba, quien manda; en medio, lo que entra, se hace y sale; abajo, lo que se guarda.',
+  tuberia: 'Cada parte le pasa su resultado a la siguiente.',
+  centro: 'Un módulo reparte el trabajo: usa a uno u otro de los demás.',
+  ciclo: 'Un bucle que en cada vuelta usa a los demás, uno tras otro.',
+  embudo: 'Varias partes le pasan lo suyo a una, que lo junta.',
+  abanico: 'Lo que guarda un módulo lo usan varias partes independientes.',
 }
 
 /** Lo que dijo el JEV de una arquitectura: el papel de cada módulo (por su título) y la forma. */

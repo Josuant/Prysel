@@ -69,12 +69,14 @@ export interface Architecture extends ArchGraph, ShapeCandidate {}
 /** Un dibujo de fondo que dice la forma: no es un módulo ni una flecha. */
 export interface Figure {
   id: string
-  kind: 'ring' | 'band' | 'spokes' | 'track'
+  kind: 'ring' | 'band' | 'spokes' | 'track' | 'funnel' | 'fan'
   x: number
   y: number
   w: number
   h: number
   label?: string
+  /** En un embudo: lo que mide su boca estrecha (la ancha es `w`). */
+  narrow?: number
 }
 
 export interface ArchLayout {
@@ -98,9 +100,10 @@ function neighbours(graph: ArchGraph, id: string, kind: ArchLink['kind'], way: '
  * Las formas que el grafo tiene de verdad, de la que más dice a la que menos. `capas` va siempre la última.
  *
  * - **ciclo**: un módulo que repite y, en cada vuelta, usa a otros dos o más.
- * - **centro**: un módulo que usa a tres o más de los demás (un menú, un despachador), o un dato que usan tres
- *   o más.
+ * - **centro**: un módulo que usa a tres o más de los demás (un menú, un despachador).
  * - **tubería**: cada módulo le pasa un dato al siguiente, de principio a fin, sin que nadie mande.
+ * - **embudo**: dos o más módulos le pasan lo suyo a uno, que lo junta o lo resume.
+ * - **abanico**: un módulo cuyos datos usan tres o más de los demás, sin que nadie mande.
  */
 export function shapeCandidates(graph: ArchGraph): ShapeCandidate[] {
   const { modules } = graph
@@ -121,11 +124,7 @@ export function shapeCandidates(graph: ArchGraph): ShapeCandidate[] {
       )
       .find((module) => neighbours(graph, module.id, 'data', 'out').size >= 3)
     const cycle: ShapeCandidate[] = loop ? [{ shape: 'ciclo', anchor: loop.id }] : []
-    const centre: ShapeCandidate[] = hub
-      ? [{ shape: 'centro', anchor: hub.id }]
-      : store
-        ? [{ shape: 'centro', anchor: store.id }]
-        : []
+    const centre: ShapeCandidate[] = hub ? [{ shape: 'centro', anchor: hub.id }] : []
     // Un bucle que elige entre varios caminos (un menú) se cuenta mejor como un centro; uno que hace todos
     // sus pasos en cada vuelta (un juego), como un ciclo.
     found.push(...(loop?.branches ? [...centre, ...cycle] : [...cycle, ...centre]))
@@ -134,6 +133,15 @@ export function shapeCandidates(graph: ArchGraph): ShapeCandidate[] {
       return next === undefined || neighbours(graph, module.id, 'data', 'out').has(next.id)
     })
     if (chained && !hub) found.push({ shape: 'tuberia' })
+    // Sin nadie que mande: lo que converge en uno es un embudo; lo que sale de uno hacia muchos, un abanico.
+    const sink = [...modules]
+      .sort(
+        (a, b) =>
+          neighbours(graph, b.id, 'data', 'in').size - neighbours(graph, a.id, 'data', 'in').size,
+      )
+      .find((module) => neighbours(graph, module.id, 'data', 'in').size >= 2)
+    if (sink && !hub && !loop && !chained) found.push({ shape: 'embudo', anchor: sink.id })
+    if (store && !hub && !loop) found.push({ shape: 'abanico', anchor: store.id })
   }
   return [...found, { shape: 'capas' }]
 }
@@ -436,6 +444,85 @@ export function layoutArchitecture(
       box.y += edge.y
     }
     boxes = [...circle, ...column]
+  } else if (architecture.shape === 'embudo' && anchor !== undefined) {
+    // Arriba, a lo ancho, lo que entra; debajo, donde se junta; y más abajo, lo que sale de ahí.
+    const feeds = new Set(
+      architecture.links
+        .filter((link) => link.kind === 'data' && link.to === anchor)
+        .map((link) => link.from),
+    )
+    const sources = ids.filter((id) => feeds.has(id))
+    const after = ids.filter((id) => id !== anchor && !feeds.has(id))
+    let top = 0
+    const mouth: Box[] = []
+    for (const line of packed(sources)) {
+      const made = row(line, sizeOf, 0, top)
+      mouth.push(...made)
+      top += heightOf(made) + GAP.y * 0.6
+    }
+    top += GAP.y * 0.6
+    const neck = row([anchor], sizeOf, 0, top)
+    top += heightOf(neck) + GAP.y
+    const tail: Box[] = []
+    for (const line of packed(after)) {
+      const made = row(line, sizeOf, 0, top)
+      tail.push(...made)
+      top += heightOf(made) + GAP.y * 0.6
+    }
+    boxes = [...mouth, ...neck, ...tail]
+    const wide = frame(mouth, 'edge')
+    const narrow = frame(neck, 'edge')
+    figures.push({
+      id: 'funnel',
+      kind: 'funnel',
+      x: wide.x - 22,
+      y: wide.y - 18,
+      w: wide.w + 44,
+      h: narrow.y + narrow.h + 14 - (wide.y - 18),
+      narrow: narrow.w + 36,
+    })
+  } else if (architecture.shape === 'abanico' && anchor !== undefined) {
+    // A la izquierda, de dónde sale; a la derecha, en arco, quienes lo usan; lo demás, debajo.
+    const takes = new Set(
+      architecture.links
+        .filter((link) => link.kind === 'data' && link.from === anchor)
+        .map((link) => link.to),
+    )
+    const users = ids.filter((id) => takes.has(id))
+    const rest = ids.filter((id) => id !== anchor && !takes.has(id))
+    const source = sizeOf(anchor)
+    const arc: Box[] = []
+    let top = 0
+    for (const id of users) {
+      const size = sizeOf(id)
+      arc.push({ id, x: 0, y: top + size.h / 2, w: size.w, h: size.h })
+      top += size.h + GAP.y * 0.45
+    }
+    const tall = Math.max(0, top - GAP.y * 0.45)
+    const widest = Math.max(0, ...arc.map((box) => box.w))
+    for (const box of arc) {
+      // Los del medio, un poco más lejos: el conjunto dibuja un arco.
+      const off = tall === 0 ? 0 : Math.abs(box.y - tall / 2) / (tall / 2)
+      box.x = source.w / 2 + GAP.x * 1.4 + widest / 2 + (1 - off) * 46
+      box.y -= tall / 2
+    }
+    const below: Box[] = []
+    let under = tall / 2 + GAP.y
+    for (const line of packed(rest)) {
+      const made = row(line, sizeOf, 0, under)
+      below.push(...made)
+      under += heightOf(made) + GAP.y * 0.6
+    }
+    boxes = [{ id: anchor, x: 0, y: 0, w: source.w, h: source.h }, ...arc, ...below]
+    const span = frame(arc, 'edge')
+    figures.push({
+      id: 'fan',
+      kind: 'fan',
+      x: source.w / 2,
+      y: span.y - 10,
+      w: span.x - source.w / 2 + 12,
+      h: span.h + 20,
+    })
   } else {
     layers()
   }

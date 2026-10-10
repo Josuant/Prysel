@@ -30,6 +30,26 @@ export function FigureNode({ data }: NodeProps<FigureFlowNode>) {
         <span className="arch-figure__flow" />
       </div>
     )
+  // Un embudo (de ancho a estrecho, hacia abajo) o un abanico (de un punto a lo ancho, hacia la derecha).
+  if (figure.kind === 'funnel' || figure.kind === 'fan') {
+    const narrow = Math.min(w, figure.narrow ?? w * 0.4)
+    const points =
+      figure.kind === 'funnel'
+        ? `0,0 ${w},0 ${(w + narrow) / 2},${h} ${(w - narrow) / 2},${h}`
+        : `0,${h / 2 - 10} ${w},0 ${w},${h} 0,${h / 2 + 10}`
+    return (
+      <svg
+        className="arch-figure"
+        data-kind={figure.kind}
+        width={w}
+        height={h}
+        viewBox={`0 0 ${w} ${h}`}
+        aria-hidden
+      >
+        <polygon className="arch-figure__shape" points={points} />
+      </svg>
+    )
+  }
   // Un anillo (lo que se repite, con una marca que da vueltas) o un halo (alrededor de quien reparte).
   const pad = 6
   return (

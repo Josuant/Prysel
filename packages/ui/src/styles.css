@@ -6663,6 +6663,42 @@ button.run-panel__line:hover {
   }
 }
 
+/* Cómo se lee: la forma elegida y lo que dice cada trazo. Abajo, en el centro, sin estorbar al puntero. */
+.arch-legend {
+  bottom: 14px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  color: var(--ink-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.arch-legend__shape {
+  color: var(--ink);
+  font-weight: 650;
+}
+.arch-legend__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.arch-legend__key::before {
+  width: 22px;
+  border-top: 2px solid var(--accent);
+  content: '';
+}
+.arch-legend__key[data-kind='call']::before {
+  border-top: 1.5px dashed var(--ink-muted);
+}
+.arch-legend__key[data-kind='planned']::before {
+  border-top: 1.5px dotted var(--ink-faint);
+}
 .arch-figure {
   display: block;
   box-sizing: border-box;
@@ -6703,6 +6739,13 @@ button.run-panel__line:hover {
   to {
     transform: translateX(30px);
   }
+}
+.arch-figure__shape {
+  fill: color-mix(in srgb, var(--accent) 6%, transparent);
+  stroke: color-mix(in srgb, var(--accent) 24%, transparent);
+  stroke-dasharray: 4 6;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 .arch-figure__ring {
   fill: color-mix(in srgb, var(--accent) 3%, transparent);

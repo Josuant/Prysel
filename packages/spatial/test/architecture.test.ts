@@ -80,6 +80,27 @@ const INFORME: ArchGraph = {
   ],
 }
 
+/** Unos datos que usan tres partes independientes. */
+const ABANICO: ArchGraph = {
+  modules: [mod('datos', 'datos'), mod('a', 'logica'), mod('b', 'logica'), mod('c', 'salida')],
+  links: [data('datos', 'a'), data('datos', 'b'), data('datos', 'c')],
+}
+
+/** Dos fuentes que se juntan en una, y de ahí sale el resultado. */
+const EMBUDO: ArchGraph = {
+  modules: [
+    mod('ventas', 'datos'),
+    mod('compras', 'datos'),
+    mod('mezclar', 'logica'),
+    mod('mostrar', 'salida'),
+  ],
+  links: [
+    data('ventas', 'mezclar', 'ventas'),
+    data('compras', 'mezclar', 'compras'),
+    data('mezclar', 'mostrar', 'balance'),
+  ],
+}
+
 const SIZE: Size = { w: 220, h: 96 }
 const sizesOf = (graph: ArchGraph, size = SIZE) =>
   new Map(graph.modules.map((module) => [module.id, size]))
@@ -118,12 +139,23 @@ describe('qué forma tiene un programa', () => {
     expect(shapeCandidates(broken)).toEqual([{ shape: 'capas' }])
   })
 
-  it('un dato que usan casi todos hace de centro, si nadie manda', () => {
-    const graph: ArchGraph = {
-      modules: [mod('datos', 'datos'), mod('a', 'logica'), mod('b', 'logica'), mod('c', 'salida')],
-      links: [data('datos', 'a'), data('datos', 'b'), data('datos', 'c')],
+  it('un dato que usan casi todos, si nadie manda, es un abanico', () => {
+    expect(defaultShape(ABANICO)).toEqual({ shape: 'abanico', anchor: 'datos' })
+  })
+
+  it('varias fuentes que se juntan en uno son un embudo', () => {
+    expect(defaultShape(EMBUDO)).toEqual({ shape: 'embudo', anchor: 'mezclar' })
+    // Con alguien que manda, ya no: la forma es la de quien manda.
+    const bossed: ArchGraph = {
+      modules: [...EMBUDO.modules, mod('menu', 'control')],
+      links: [
+        ...EMBUDO.links,
+        call('menu', 'ventas'),
+        call('menu', 'compras'),
+        call('menu', 'mezclar'),
+      ],
     }
-    expect(defaultShape(graph)).toEqual({ shape: 'centro', anchor: 'datos' })
+    expect(defaultShape(bossed)).toEqual({ shape: 'centro', anchor: 'menu' })
   })
 
   it('con dos módulos, o sin nada que los una, son capas: es la forma que cuadra siempre', () => {
@@ -149,6 +181,8 @@ describe('dónde va cada módulo', () => {
     ['centro', shaped(GASTOS, 'centro', 'menu')],
     ['ciclo', shaped(JUEGO, 'ciclo', 'bucle')],
     ['tubería', shaped(INFORME, 'tuberia')],
+    ['embudo', shaped(EMBUDO, 'embudo', 'mezclar')],
+    ['abanico', shaped(ABANICO, 'abanico', 'datos')],
   ]
 
   it.each(cases)('%s: todos colocados, sin pisarse, dentro de sus límites', (_, architecture) => {
@@ -250,6 +284,32 @@ describe('dónde va cada módulo', () => {
     // La cabeza, arriba del todo.
     const y = (id: string) => positions.get(id)?.y ?? 0
     for (const id of ['leer', 'mover', 'dibujar']) expect(y('bucle')).toBeLessThan(y(id))
+  })
+
+  it('el embudo va de ancho a estrecho: las fuentes arriba, donde se juntan debajo y lo que sale, más abajo', () => {
+    const { positions, figures } = layoutArchitecture(
+      shaped(EMBUDO, 'embudo', 'mezclar'),
+      sizesOf(EMBUDO),
+    )
+    const y = (id: string) => positions.get(id)?.y ?? 0
+    expect(y('ventas')).toBe(y('compras'))
+    expect(y('ventas')).toBeLessThan(y('mezclar'))
+    expect(y('mezclar')).toBeLessThan(y('mostrar'))
+    const funnel = figures.find((figure) => figure.kind === 'funnel')
+    expect(funnel?.narrow).toBeLessThan(funnel?.w ?? 0)
+  })
+
+  it('el abanico pone la fuente a un lado y a quienes la usan en arco al otro', () => {
+    const { positions, figures } = layoutArchitecture(
+      shaped(ABANICO, 'abanico', 'datos'),
+      sizesOf(ABANICO),
+    )
+    const x = (id: string) => positions.get(id)?.x ?? 0
+    for (const id of ['a', 'b', 'c']) expect(x('datos')).toBeLessThan(x(id))
+    // El del medio, más lejos que los de los extremos.
+    expect(x('b')).toBeGreaterThan(x('a'))
+    expect(x('b')).toBeGreaterThan(x('c'))
+    expect(figures.map((figure) => figure.kind)).toEqual(['fan'])
   })
 
   it('un módulo abierto (más grande) empuja a los demás en vez de taparlos', () => {
