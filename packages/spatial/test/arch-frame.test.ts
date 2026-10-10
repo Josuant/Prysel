@@ -101,6 +101,44 @@ describe('la arquitectura, colocada para su lienzo', () => {
     for (const id of RING) expect(x('generar')).toBeLessThan(x(id))
   })
 
+  it.each([
+    ['sin lienzo que mirar', undefined],
+    ['en un lienzo apaisado', { w: 1000, h: 480 }],
+    ['en uno estrecho', { w: 560, h: 480 }],
+  ])('la compuerta de salida tiene su sitio junto a la cabeza del ciclo (%s)', (_name, frame) => {
+    const gate = { w: 220, h: 30 }
+    const { positions, figures } = layoutArchitecture(GENETICO, SIZES, {
+      ...(frame ? { frame, tail: TAIL } : {}),
+      gate,
+    })
+    const door = figures.find((figure) => figure.kind === 'gate')
+    expect(door).toMatchObject(gate)
+    if (!door) return
+    // A la derecha de la cabeza, con el tramo de su flecha entre las dos…
+    const head = {
+      ...(positions.get('iterar') ?? { x: 0, y: 0 }),
+      ...(SIZES.get('iterar') ?? gate),
+    }
+    expect(door.x - (head.x + head.w)).toBeGreaterThanOrEqual(40)
+    expect(door.y + door.h).toBeLessThanOrEqual(head.y + head.h)
+    // …y sin pisar a ningún módulo.
+    const hit = [...positions].filter(([id, at]) => {
+      const size = SIZES.get(id) ?? { w: 0, h: 0 }
+      return (
+        door.x < at.x + size.w &&
+        at.x < door.x + door.w &&
+        door.y < at.y + size.h &&
+        at.y < door.y + door.h
+      )
+    })
+    expect(hit.map(([id]) => id)).toEqual([])
+    expect(collisions(positions)).toEqual([])
+    // Sin compuerta que colocar, no hay figura.
+    expect(
+      layoutArchitecture(GENETICO, SIZES).figures.some((figure) => figure.kind === 'gate'),
+    ).toBe(false)
+  })
+
   it('el resultado va a la derecha salvo que debajo se vea claramente más grande', () => {
     const wide = { w: 1200, h: 300 }
     expect(tailSide(wide, TAIL, { w: 1600, h: 700 })).toBe('right')

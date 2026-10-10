@@ -1,4 +1,4 @@
-import type { Node, NodeProps } from '@xyflow/react'
+import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { Figure } from '@prysel/spatial'
 
 /**
@@ -32,14 +32,17 @@ export function FigureNode({ data }: NodeProps<FigureFlowNode>) {
         {figure.label}
       </div>
     )
-  // Por dónde y cómo se sale de lo que se repite: una marca bajo quien lleva el ciclo.
+  // La compuerta de salida de lo que se repite: un nodo pequeño junto a quien lleva el ciclo. Le llega la
+  // flecha de la cabeza y de él sale la que va a lo que viene después.
   if (figure.kind === 'gate')
     return (
-      <div className="arch-gate" style={{ width: w, height: h }} aria-hidden>
-        <span className="arch-gate__pill">
-          <span className="arch-gate__mark">⤷</span>
-          {figure.label}
+      <div className="arch-gate" style={{ width: w, height: h }} role="note">
+        <Handle type="target" id="in" position={Position.Left} isConnectable={false} />
+        <span className="arch-gate__mark" aria-hidden>
+          ⤷
         </span>
+        <span className="arch-gate__text">{figure.label}</span>
+        <Handle type="source" id="out" position={Position.Right} isConnectable={false} />
       </div>
     )
   // Al reproducir: dónde está ahora. Un marco que va de módulo en módulo.

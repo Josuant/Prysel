@@ -242,7 +242,10 @@ export interface CanvasProps {
   result?: { content: ViewerContent; from: readonly string[]; planned?: boolean } | null
   /** Dónde **empieza** el trabajo: el módulo que lo arranca y lo que se dice de ello. */
   start?: { at: string; label: string } | null
-  /** Por dónde **se sale** de lo que se repite (el módulo que lleva el ciclo) y cómo acabó. */
+  /**
+   * Por dónde **se sale** de lo que se repite (el módulo que lleva el ciclo) y cómo acabó: su compuerta de
+   * salida, un nodo junto a ese módulo. De ella va una flecha al resultado, si no lo escribe la propia vuelta.
+   */
   exit?: { at: string; label: string } | null
   /**
    * Al **reproducir** la historia: el módulo en el que se está (o `RESULT_BEAT`, el resultado), las flechas
@@ -648,6 +651,12 @@ function CanvasInner({
    * únicamente como chips. No hay cables de datos, ni puertos para ellos.
    */
   const flow = aside
+  // La compuerta de salida de un ciclo mide lo que su texto: se le hace sitio al colocar.
+  const exitLabel = flow && architecture && exit ? exit.label : null
+  const gateSize = useMemo(
+    () => (exitLabel === null ? undefined : { w: Math.round(exitLabel.length * 6.6 + 48), h: 30 }),
+    [exitLabel],
+  )
   // El resultado, si lo hay, va a la cola de la arquitectura: cuenta para saber cuánto cabe.
   const tailSize = useMemo(
     () => (result && flow && architecture ? viewerSize(result.content) : undefined),
@@ -940,6 +949,7 @@ function CanvasInner({
             ...(archRun === undefined ? {} : { architectureWidth: archRun }),
             ...(archFrame === undefined ? {} : { architectureFrame: archFrame }),
             ...(tailSize === undefined ? {} : { architectureTail: tailSize }),
+            ...(gateSize === undefined ? {} : { architectureGate: gateSize }),
           }
         : {}),
     })
@@ -957,6 +967,7 @@ function CanvasInner({
     archRun,
     archFrame,
     tailSize,
+    gateSize,
   ])
 
   /**
@@ -2165,27 +2176,66 @@ function CanvasInner({
         },
       ]
     : []
-  // Por dónde se sale del ciclo: sobre quien lo lleva, por fuera del anillo (por dentro pasan las flechas y
-  // sus pastillas). Desde su mitad hacia la derecha: a la izquierda puede estar la marca de arranque.
-  const exitBox = exit && archModules.has(exit.at) ? boxOf.get(exit.at) : undefined
-  const exitFigures: Figure[] = exitBox
-    ? [
-        {
-          id: 'gate',
-          kind: 'gate',
-          x: exitBox.x - shiftX + exitBox.w / 2,
-          y: exitBox.y - shiftY - 26,
-          w: 320,
-          h: 22,
-          label: exit?.label ?? '',
-        },
-      ]
-    : []
+  // La compuerta de salida del ciclo: el plano le hizo sitio junto a quien lo lleva. Es un nodo más: le
+  // llega la flecha de la cabeza («no hay otra vuelta») y de ella sale la que va al resultado, salvo que el
+  // resultado lo escriba la propia vuelta (entonces no es «al salir» cuando aparece).
+  const gateFigure =
+    exit && archModules.has(exit.at) ? figures?.find((figure) => figure.kind === 'gate') : undefined
+  const gateBox = gateFigure
+    ? { x: gateFigure.x + shiftX, y: gateFigure.y + shiftY, w: gateFigure.w, h: gateFigure.h }
+    : undefined
+  const exitFrom = exit && gateBox ? boxOf.get(exit.at) : undefined
+  const turning = new Set(architecture?.order ?? [])
+  const exitLeads =
+    result !== null && resultAt !== null && !result.from.some((id) => turning.has(id))
+  const moduleBoxes = [...archModules.keys()].flatMap((id) => boxOf.get(id) ?? [])
+  const exitLive = beat?.at === RESULT_ID ? { live: beat.serial, ms: beat.ms } : {}
+  const exitEdges: ArchFlowEdge[] =
+    exit && gateBox && exitFrom
+      ? [
+          {
+            id: 'arch:exit:in',
+            source: exit.at,
+            target: 'figure:gate',
+            sourceHandle: 'note-out',
+            targetHandle: 'in',
+            type: 'arch' as const,
+            selectable: false,
+            focusable: false,
+            zIndex: 2,
+            data: { kind: 'next' as const, from: exitFrom, to: gateBox, bend: 0, ...exitLive },
+          },
+          ...(exitLeads && resultAt
+            ? [
+                {
+                  id: 'arch:exit:out',
+                  source: 'figure:gate',
+                  target: RESULT_ID,
+                  sourceHandle: 'out',
+                  targetHandle: 'in',
+                  type: 'arch' as const,
+                  selectable: false,
+                  focusable: false,
+                  zIndex: 2,
+                  data: {
+                    kind: 'next' as const,
+                    from: gateBox,
+                    to: resultAt,
+                    bend: clearBend(gateBox, resultAt, moduleBoxes, 0),
+                    ...(result?.planned ? { planned: true } : {}),
+                    ...exitLive,
+                  },
+                },
+              ]
+            : []),
+        ]
+      : []
   // Las pastillas de las flechas, cada una donde no tape a nadie: ni a un módulo, ni a una marca (la de
   // arranque, la de salida), ni a otra pastilla ya puesta.
   const labelObstacles: { x: number; y: number; w: number; h: number }[] = [
-    ...[...archModules.keys()].flatMap((id) => boxOf.get(id) ?? []),
-    ...[...startFigures, ...exitFigures].map((figure) => ({
+    ...moduleBoxes,
+    ...(gateBox ? [gateBox] : []),
+    ...startFigures.map((figure) => ({
       x: figure.x + shiftX,
       y: figure.y + shiftY,
       // La marca mide lo que su texto, no lo que su hueco.
@@ -2227,7 +2277,18 @@ function CanvasInner({
   /** Las figuras de fondo que dicen la forma: van detrás de todo y no se tocan. */
   const figureNodes: FigureFlowNode[] = (
     archModules.size > 0
-      ? [...(figures ?? []), ...startFigures, ...exitFigures, ...spotFigures]
+      ? [
+          // La compuerta solo se dibuja si hay salida que contar; y lleva su texto.
+          ...(figures ?? []).flatMap((figure) =>
+            figure.kind !== 'gate'
+              ? [figure]
+              : gateFigure
+                ? [{ ...figure, label: exit?.label ?? '' }]
+                : [],
+          ),
+          ...startFigures,
+          ...spotFigures,
+        ]
       : []
   ).map((figure) => ({
     id: `figure:${figure.id}`,
@@ -2739,6 +2800,7 @@ function CanvasInner({
         edges={[
           ...(labelledEdges as unknown as PryselFlowEdge[]),
           ...(resultEdges as unknown as PryselFlowEdge[]),
+          ...(exitEdges as unknown as PryselFlowEdge[]),
           ...flowEdges,
           ...sideFlow.edges,
           ...noteFlow.edges,

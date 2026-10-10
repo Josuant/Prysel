@@ -50,6 +50,8 @@ export interface LayoutOptions {
   /** El lienzo en el que se verá la arquitectura, y lo que irá a su cola (el resultado): ver `layoutArchitecture`. */
   architectureFrame?: { w: number; h: number }
   architectureTail?: { w: number; h: number }
+  /** En un ciclo: lo que mide su compuerta de salida (ver `layoutArchitecture`). */
+  architectureGate?: { w: number; h: number }
 }
 
 /** Lo que mide de largo una fila antes de plegar a la siguiente, si no se dice otra cosa. */
@@ -431,6 +433,7 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
         ...(o.architectureWidth === undefined ? {} : { maxWidth: o.architectureWidth }),
         ...(o.architectureFrame === undefined ? {} : { frame: o.architectureFrame }),
         ...(o.architectureTail === undefined ? {} : { tail: o.architectureTail }),
+        ...(o.architectureGate === undefined ? {} : { gate: o.architectureGate }),
       },
     )
     const loose = g.nodes.filter((node) => !wanted.has(node.id))

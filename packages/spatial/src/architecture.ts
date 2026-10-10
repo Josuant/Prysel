@@ -298,6 +298,31 @@ function ring(ids: readonly string[], sizeOf: (id: string) => Size): Box[] {
   })
 }
 
+/** Lo que separa la cabeza del ciclo de su compuerta de salida: el tramo de la flecha que las une. */
+const GATE_GAP = 52
+
+/**
+ * La **compuerta de salida** de un ciclo: por donde se deja de dar vueltas. Va a la derecha de la cabeza (que
+ * es quien decide si hay otra vuelta), a su altura, en la esquina que el anillo deja libre; si ahí pisa a
+ * algún paso, sube lo justo.
+ */
+function doorOf(circle: readonly Box[], size: Size): Box | null {
+  const head = circle[0]
+  if (!head) return null
+  const door: Box = {
+    id: 'figure:gate',
+    x: head.x + head.w / 2 + GATE_GAP + size.w / 2,
+    y: head.y,
+    w: size.w,
+    h: size.h,
+  }
+  for (let tries = 0; tries < 60; tries++) {
+    if (!circle.some((box) => box !== head && overlap(door, box, 14))) break
+    door.y -= 6
+  }
+  return door
+}
+
 /** Entre dos pasos seguidos del anillo que van uno al lado del otro: cabe la pastilla de lo que se pasan. */
 const RING_GAP_X = 124
 /** Lo alto que se prueba el anillo, sobre lo mínimo: de apaisado a bien alto. */
@@ -363,6 +388,11 @@ export function layoutArchitecture(
     frame?: Size
     /** Lo que irá a la cola (el resultado): cuenta para saber cuánto cabe. */
     tail?: Size
+    /**
+     * En un ciclo: lo que mide su compuerta de salida. Con ella, se le hace sitio junto a la cabeza y se
+     * devuelve como figura (`gate`), para dibujarla como un nodo más.
+     */
+    gate?: Size
   } = {},
 ): ArchLayout {
   const maxWidth = options.maxWidth ?? DEFAULT_WIDTH
@@ -544,20 +574,22 @@ export function layoutArchitecture(
         circle = ring(members, sizeOf)
         spread(circle, { x: 0, y: 0 }, 28)
       }
-      const edge = frame(circle, 'edge')
+      const door = options.gate ? doorOf(circle, options.gate) : null
+      const round = frame(circle, 'edge')
+      const edge = door ? frame([...circle, door], 'edge') : round
       const column: Box[] = []
       if (side === 'top') {
         // Encima, en filas no más anchas que el anillo: así no lo ensanchan.
-        const lines = packed(columnOrder, Math.max(edge.w, 520))
+        const lines = packed(columnOrder, Math.max(round.w, 520))
         let bottom = edge.y - GAP.y * 0.8
         for (const line of [...lines].reverse()) {
-          const made = row(line, sizeOf, edge.x + edge.w / 2, 0)
+          const made = row(line, sizeOf, round.x + round.w / 2, 0)
           const high = heightOf(made)
           for (const box of made) box.y += bottom - high
           column.push(...made)
           bottom -= high + GAP.y * 0.6
         }
-        return { circle, column }
+        return { circle, column, door }
       }
       let top = 0
       for (const id of columnOrder) {
@@ -572,8 +604,14 @@ export function layoutArchitecture(
         box.x = edge.x - GAP.x - wide / 2
         box.y += edge.y
       }
-      return { circle, column }
+      return { circle, column, door }
     }
+    /** Todo lo que ocupa sitio en una colocación: los módulos y, si la hay, la compuerta. */
+    const solid = (tried: { circle: Box[]; column: Box[]; door: Box | null }) => [
+      ...tried.circle,
+      ...tried.column,
+      ...(tried.door ? [tried.door] : []),
+    ]
     const searchable =
       (fixed || turning.length <= SEARCH_MAX - 1) &&
       waiting.length <= 4 &&
@@ -588,7 +626,7 @@ export function layoutArchitecture(
     const arranged = (tall: number | null, side: 'left' | 'top') => {
       let found = place(turning, waiting, tall, side)
       let least = {
-        cost: crossings([...found.circle, ...found.column], architecture.links),
+        cost: crossings(solid(found), architecture.links),
         moved: 0,
       }
       if (searchable) {
@@ -597,7 +635,7 @@ export function layoutArchitecture(
             if (least.cost === 0) break
             const tried = place(ringOrder, columnOrder, tall, side)
             const got = {
-              cost: crossings([...tried.circle, ...tried.column], architecture.links),
+              cost: crossings(solid(tried), architecture.links),
               moved: moved(ringOrder, turning) + moved(columnOrder, waiting),
             }
             if (got.cost < least.cost || (got.cost === least.cost && got.moved < least.moved)) {
@@ -609,15 +647,14 @@ export function layoutArchitecture(
       }
       return { ...found, cost: least.cost }
     }
-    let best: { circle: Box[]; column: Box[] } = arranged(null, 'left')
+    let best = arranged(null, 'left')
     const room = options.frame
     if (room) {
       // Con el lienzo a la vista: de las colocaciones posibles, la que se ve más grande en él (contando el
       // resultado, a su lado o debajo). Una flecha que cruza a un módulo resta; y a igualdad, la de siempre.
-      const scoreOf = (tried: { circle: Box[]; column: Box[]; cost: number }) => {
-        const all = frame([...tried.circle, ...tried.column], 'edge')
-        // Con sus márgenes, y el sitio de la marca de salida sobre la cabeza del ciclo.
-        const bounds = { w: all.w + PAD * 2, h: all.h + PAD * 2 + 26 }
+      const scoreOf = (tried: ReturnType<typeof arranged>) => {
+        const all = frame(solid(tried), 'edge')
+        const bounds = { w: all.w + PAD * 2, h: all.h + PAD * 2 }
         const zoom = options.tail
           ? Math.max(
               fitZoom(withTail(bounds, options.tail, 'right'), room),
@@ -626,7 +663,7 @@ export function layoutArchitecture(
           : fitZoom(bounds, room)
         return Math.min(1, zoom) * 0.88 ** tried.cost
       }
-      let top = scoreOf(best as { circle: Box[]; column: Box[]; cost: number })
+      let top = scoreOf(best)
       for (const side of waiting.length > 0 ? (['left', 'top'] as const) : (['left'] as const)) {
         for (const tall of [null, ...RING_TALL]) {
           if (tall === null && side === 'left') continue
@@ -645,6 +682,17 @@ export function layoutArchitecture(
       ...frame(best.circle, 'centre'),
       ...(architecture.caption ? { label: architecture.caption } : {}),
     })
+    if (best.door) {
+      const { door } = best
+      figures.push({
+        id: 'gate',
+        kind: 'gate',
+        x: door.x - door.w / 2,
+        y: door.y - door.h / 2,
+        w: door.w,
+        h: door.h,
+      })
+    }
     boxes = [...best.circle, ...best.column]
   } else if (architecture.shape === 'embudo' && anchor !== undefined) {
     // Arriba, a lo ancho, lo que entra; debajo, donde se junta; y más abajo, lo que sale de ahí.

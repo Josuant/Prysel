@@ -6734,27 +6734,33 @@ button.run-panel__line:hover {
 /* Por dónde y cómo se sale de lo que se repite. */
 .arch-gate {
   display: flex;
-  justify-content: flex-start;
-  pointer-events: none;
-}
-.arch-gate__pill {
-  display: inline-flex;
   box-sizing: border-box;
   align-items: center;
-  gap: 6px;
-  height: 100%;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb, var(--ink-muted) 40%, transparent);
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
   border-radius: var(--radius-full);
   background: var(--surface-raised);
-  color: var(--ink-muted);
-  font-size: 11.5px;
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
+  pointer-events: none;
   animation: arch-show 400ms ease-out backwards;
+}
+.arch-gate .react-flow__handle {
+  opacity: 0;
+}
+.arch-gate__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .arch-gate__mark {
   color: var(--accent);
-  font-size: 12px;
+  font-size: 14px;
+  line-height: 1;
 }
 /* Desde dónde se mira el programa: Idea · Partes · Detalle. Arriba, en el centro. */
 .distance {
