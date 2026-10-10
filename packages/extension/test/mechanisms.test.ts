@@ -207,6 +207,48 @@ describe('un mecanismo solo vale si la muestra lo confirma', () => {
     expect(kinds(code, sample({ xs: '[3, 9]' }, '[3, 9]'))).toEqual([])
   })
 
+  it('las notas de un podio pueden ser las que la función calcula dentro', () => {
+    const code =
+      'def seleccion(poblacion, cantidad):\n    notas = [sum(x) for x in poblacion]\n    ...'
+    const inputs = { poblacion: '[[0, 1], [1, 1], [0, 0]]', cantidad: '2' }
+    const taken = sample(inputs, '[[1, 1], [0, 1]]', {
+      made: [{ name: 'notas', value: value('[1, 2, 0]') }],
+    })
+    const [found] = verifiedMechanisms(code, taken)
+    expect(found).toMatchObject({
+      kind: 'podium',
+      input: 'poblacion',
+      scores: 'notas',
+      order: 'max',
+    })
+    expect(found?.kind === 'podium' && found.ranked.map((entry) => entry.place)).toEqual([
+      2,
+      1,
+      null,
+    ])
+    // Sin esas notas no hay manera de comprobar que son los mejores: no se dice.
+    expect(kinds(code, sample(inputs, '[[1, 1], [0, 1]]'))).toEqual([])
+  })
+
+  it('un retoque cambia unos pocos elementos de lo único que recibe', () => {
+    const code = 'def mutar(cromosoma, probabilidad): ...'
+    const taken = sample(
+      { cromosoma: '[0, 1, 1, 0, 1, 0]', probabilidad: '0.1' },
+      '[0, 1, 0, 0, 1, 0]',
+    )
+    const [found] = verifiedMechanisms(code, taken)
+    expect(found).toMatchObject({
+      kind: 'tweak',
+      input: 'cromosoma',
+      changed: [false, false, true, false, false, false],
+    })
+    // Sin cambios es una copia; con casi todo cambiado, otra cosa.
+    const same = sample({ cromosoma: '[0, 1, 1, 0]', probabilidad: '0.1' }, '[0, 1, 1, 0]')
+    expect(kinds(code, same)).toEqual([])
+    const other = sample({ cromosoma: '[0, 1, 1, 0]', probabilidad: '0.9' }, '[1, 0, 0, 1]')
+    expect(kinds(code, other)).toEqual([])
+  })
+
   it('una lista que crece necesita crecer siempre sin tocar lo que ya tenía', () => {
     const steps = (texts: string[]) => texts.map(value)
     const grown = sample({ n: '3' }, '[1, 2, 3]', {

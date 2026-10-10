@@ -58,7 +58,16 @@ export interface BuildRule extends Applied {
   skipped: number
 }
 
-export type Mechanism = MixRule | MatchRule | PodiumRule | BuildRule
+/** Devuelve lo que recibió con unos pocos elementos cambiados (una mutación, una corrección). */
+export interface TweakRule extends Applied {
+  kind: 'tweak'
+  cells: string[]
+  out: string[]
+  /** Qué posiciones no son como entraron. */
+  changed: boolean[]
+}
+
+export type Mechanism = MixRule | MatchRule | PodiumRule | BuildRule | TweakRule
 
 /** Un texto de Python sin sus comillas. */
 const unquoted = (text: string) => (/^(["']).*\1$/s.test(text) ? text.slice(1, -1) : text)
@@ -188,9 +197,10 @@ function podiumRules(sample: Sample): PodiumRule[] {
       value?.kind === 'list' && !value.more && value.items.length === members.length
         ? value.items.map(numberOf)
         : null
+    // Las notas: las suyas (si son números), las de otra entrada, o las que la función calculó dentro.
     const boards = [
       { name: null as string | null, values: numbers(input.value) },
-      ...sample.inputs
+      ...[...sample.inputs, ...(sample.made ?? [])]
         .filter((other) => other.name !== input.name)
         .map((other) => ({ name: other.name as string | null, values: numbers(other.value) })),
     ]
@@ -243,6 +253,25 @@ function podiumRules(sample: Sample): PodiumRule[] {
   return found
 }
 
+/**
+ * Un retoque: devuelve una secuencia del largo de la única que recibe, igual salvo en unas pocas posiciones.
+ * Algo tiene que cambiar (si no, es una copia) y no más de la mitad (si no, es otra cosa).
+ */
+function tweakRules(sample: Sample): TweakRule[] {
+  const out = cellsOf(sample.returned)
+  if (!out || out.length < 3) return []
+  const rows = sample.inputs.flatMap((input) => {
+    const cells = cellsOf(input.value)
+    return cells && cells.length === out.length ? [{ name: input.name, cells }] : []
+  })
+  const [only] = rows
+  if (!only || rows.length !== 1) return []
+  const changed = out.map((cell, at) => only.cells[at] !== cell)
+  const count = changed.filter(Boolean).length
+  if (count === 0 || count > Math.floor(out.length / 2)) return []
+  return [{ kind: 'tweak', input: only.name, cells: only.cells, out, changed }]
+}
+
 /** Cuántos estados de una colección que crece se enseñan: los primeros y el último. */
 const MAX_BUILD = 5
 
@@ -281,6 +310,7 @@ export function verifiedMechanisms(code: string, sample: Sample): Mechanism[] {
     ...matchRules(code, sample),
     ...mixRules(sample),
     ...podiumRules(sample),
+    ...tweakRules(sample),
     ...buildRules(sample),
   ]
 }
@@ -293,5 +323,6 @@ export function mechanismSays(rule: Mechanism): string {
     return `Compara ${rule.input} con ${rule.target.name} posición a posición y cuenta las que ${rule.counts === 'same' ? 'coinciden' : 'no coinciden'}.`
   if (rule.kind === 'podium')
     return `Se queda con ${rule.order === 'max' ? 'los de mayor' : 'los de menor'} valor${rule.scores ? ` según ${rule.scores}` : ''}.`
+  if (rule.kind === 'tweak') return `Devuelve ${rule.input} con unos pocos elementos cambiados.`
   return `Va llenando ${rule.input} paso a paso y la devuelve.`
 }

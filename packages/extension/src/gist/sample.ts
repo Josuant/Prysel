@@ -48,6 +48,12 @@ export interface Sample {
    */
   reads?: { name: string; value: Value }[]
   /**
+   * Lo que **calcula dentro** y da una nota a cada elemento de algo que recibe: una lista de números suya, del
+   * largo de una de sus entradas, tal como quedó al acabar. Es con lo que se puede comprobar que elige «los
+   * mejores» cuando las notas no se las dan, las saca ella.
+   */
+  made?: { name: string; value: Value }[]
+  /**
    * La colección que va llenando hasta devolverla: cómo estaba cada vez que cambió, en orden. Solo si acaba
    * siendo justo lo que devuelve.
    */
@@ -311,6 +317,21 @@ export function samplesIn(
       }
     }
     if (usesChance(facts.code)) sample.chance = true
+    // Las listas de números que calculó dentro y miden lo que una de sus entradas: sus notas.
+    const lengths = new Set(
+      inputs.flatMap((input) => (input.value.kind === 'list' ? [input.value.items.length] : [])),
+    )
+    const made = Object.entries(left?.locals ?? {}).flatMap(([name, shown]) => {
+      if (facts.takes.includes(name)) return []
+      const value = valueOf(shown)
+      const numbers =
+        value.kind === 'list' &&
+        !value.more &&
+        lengths.has(value.items.length) &&
+        value.items.every((item) => item.kind === 'atom' && item.type === 'number')
+      return numbers ? [{ name, value }] : []
+    })
+    if (made.length > 0) sample.made = made.slice(0, MAX_READS)
     // Lo que recibió y sigue siendo el mismo objeto, pero ya no vale lo mismo.
     const changed = facts.takes.flatMap((name) => {
       const was = entered?.locals[name]

@@ -459,10 +459,12 @@ export function verifiedRules(code: string, sample: Sample): Rule[] {
   // antes que «cuenta»; «los dos de mejor nota» antes que «se queda con algunos».
   // (Salvo «el mayor de una lista de números»: eso ya es una cuenta que se lleva, y se cuenta mejor paso a
   // paso; como podio queda de reserva, por si el código no deja leer la cuenta.)
+  // Y «con unos pocos cambiados» es lo que queda cuando no se sabe decir por qué caso cambia cada uno.
   const plain = (rule: Mechanism) =>
-    rule.kind === 'podium' &&
-    rule.scores === null &&
-    rule.ranked.filter((entry) => entry.place !== null).length === 1
+    rule.kind === 'tweak' ||
+    (rule.kind === 'podium' &&
+      rule.scores === null &&
+      rule.ranked.filter((entry) => entry.place !== null).length === 1)
   const first = mechanisms.filter((rule) => rule.kind !== 'build' && !plain(rule))
   const all: Rule[] = [
     ...first,
@@ -496,7 +498,8 @@ export function ruleSays(rule: Rule): string {
     rule.kind === 'mix' ||
     rule.kind === 'match' ||
     rule.kind === 'podium' ||
-    rule.kind === 'build'
+    rule.kind === 'build' ||
+    rule.kind === 'tweak'
   )
     return mechanismSays(rule)
   if (rule.kind === 'cases') {

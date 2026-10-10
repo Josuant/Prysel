@@ -51,14 +51,24 @@ function chance(sample: Sample): GistPiece[] {
         label: sample.chance
           ? 'al azar · con lo mismo, otras veces dio'
           : 'con lo mismo, otras veces dio',
-        strips: sample.rolls.map((roll) => ({ name: '', cells: [{ text: showValue(roll) }] })),
+        strips: sample.rolls.map((roll) => ({ name: '', cells: asCells(roll) })),
       },
     ]
   return sample.chance ? [{ type: 'note', text: 'usa el azar: es una de las veces posibles' }] : []
 }
 
 const isMechanism = (rule: Rule): rule is Mechanism =>
-  rule.kind === 'mix' || rule.kind === 'match' || rule.kind === 'podium' || rule.kind === 'build'
+  rule.kind === 'mix' ||
+  rule.kind === 'match' ||
+  rule.kind === 'podium' ||
+  rule.kind === 'build' ||
+  rule.kind === 'tweak'
+
+/** Un valor como celdas de una tira: sus elementos si es una secuencia de valores sueltos; si no, entero. */
+const asCells = (value: Value): { text: string }[] =>
+  value.kind === 'list' && !value.more && value.items.every((item) => item.kind === 'atom')
+    ? value.items.map((item) => ({ text: bare(showValue(item)) }))
+    : [{ text: showValue(value) }]
 
 /** Cuántos candidatos de un podio se enseñan: los elegidos y los que les siguen. */
 const MAX_PODIUM = 7
@@ -129,9 +139,13 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
     const rows = ordered.slice(0, MAX_PODIUM)
     const left = ordered.length - rows.length
     const winners = rule.ranked.filter((entry) => entry.place !== null).length
+    const inside =
+      rule.scores !== null && !sample.inputs.some((input) => input.name === rule.scores)
+    if (inside) shown = [rule.input]
     strips = {
       type: 'strips',
-      label: `${winners === 1 ? 'el' : `los ${winners}`} de ${rule.order === 'max' ? 'mayor' : 'menor'} ${rule.scores ?? 'valor'}`,
+      // Las notas que no recibe (las calcula dentro) se dicen como lo que son.
+      label: `${winners === 1 ? 'el' : `los ${winners}`} de ${rule.order === 'max' ? 'mayor' : 'menor'} ${rule.scores ?? 'valor'}${inside ? ' (lo calcula)' : ''}`,
       strips: rows.map((entry): GistStrip => ({
         name: '',
         place: entry.place ?? 0,
@@ -139,6 +153,24 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
         note: entry.score,
       })),
       ...(left > 0 ? { foot: `… y ${left} más, por debajo` } : {}),
+    }
+  } else if (rule.kind === 'tweak') {
+    shown = [rule.input]
+    const count = rule.changed.filter(Boolean).length
+    strips = {
+      type: 'strips',
+      label: 'cambia unos pocos',
+      strips: [
+        { name: rule.input, cells: rule.cells.map((text) => ({ text })) },
+        {
+          name: 'devuelve',
+          cells: rule.out.map((text, at) => ({
+            text,
+            ...(rule.changed[at] ? { tone: 'new' as const } : {}),
+          })),
+        },
+      ],
+      foot: `${count} de ${rule.out.length} ${count === 1 ? 'cambia' : 'cambian'}`,
     }
   } else {
     shown = []
@@ -148,7 +180,7 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
       const before = rule.steps[at - 1]?.length ?? 0
       const added = step.slice(before)
       return {
-        name: `${at === rule.steps.length - 1 && rule.skipped > 0 ? '…' : ''}${step.length}`,
+        name: String(step.length),
         cells: step.map((text, k) => ({
           text: short ? text : '',
           ...(k >= before && at > 0 ? { tone: 'new' as const } : {}),
@@ -161,8 +193,19 @@ function mechanismScene(sample: Sample, rule: Mechanism): Pick<GistScene, 'lanes
     strips = {
       type: 'strips',
       label: `${rule.input} se va llenando`,
-      strips: rows,
-      ...(rule.skipped > 0 ? { foot: `… ${rule.skipped} pasos más entre medias` } : {}),
+      // Si no se enseñan todos los pasos, se dice dónde faltan: antes del último.
+      strips:
+        rule.skipped > 0 && rows.length > 1
+          ? [
+              ...rows.slice(0, -1),
+              {
+                name: '⋮',
+                cells: [],
+                note: `${rule.skipped} ${rule.skipped === 1 ? 'paso' : 'pasos'} más`,
+              },
+              ...rows.slice(-1),
+            ]
+          : rows,
     }
   }
   const before = entering(sample, shown)
