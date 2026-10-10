@@ -6119,6 +6119,86 @@ button.run-panel__line:hover {
 }
 
 /*
+ * El esbozo: lo que se está pidiendo, dibujado mientras se escribe. La cosa, en una caja de trazo discontinuo
+ * (aún no existe); debajo, cada parte que la frase ya nombra, que entra cuando se nombra. No es el programa:
+ * es lo que el lienzo ha entendido hasta ahora.
+ */
+.sketch {
+  display: flex;
+  width: min(440px, 100%);
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.sketch__what {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  animation: gist-settle 300ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__kind {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sketch__name {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.sketch__parts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 0 18px;
+  list-style: none;
+}
+.sketch__part {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px dashed color-mix(in srgb, var(--ink-muted) 45%, transparent);
+  border-radius: 12px;
+  color: var(--ink);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+  animation: gist-in 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__n {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  place-items: center;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+.sketch__hint {
+  margin: 2px 0 0;
+  color: var(--ink-faint);
+  font-size: 12px;
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sketch__what,
+  .sketch__part {
+    animation: none;
+  }
+}
+
+/*
  * ── Etapas: el algoritmo a la vista ──
  * Una fase del algoritmo con nombre. Plegada, una tarjeta de cuaderno: su número en un squircle del acento, su
  * título y su subtítulo, lo que usa → lo que deja (chips) y las pastillas de sus subprocesos. Abierta, un marco

@@ -50,6 +50,11 @@ export interface ChatDockProps {
   /** Lo que se le está oyendo decir ahora mismo (`null`: nada, o ya acabó). */
   onHearing?: (text: string | null) => void
   /**
+   * Lo que lleva escrito en la caja (`null`: nada, o ya lo mandó). Sirve para lo mismo que lo que se le oye:
+   * que el lienzo vaya esbozando lo que se pide antes de mandarlo.
+   */
+  onDraft?: (text: string | null) => void
+  /**
    * Lo que dijo el JEV de si eso que se ha oído es una orden entera (1) o está a medias (0). `undefined`:
    * aún no se sabe.
    */
@@ -73,6 +78,8 @@ interface Recognition {
 }
 
 /** Cuánto silencio basta para dar lo dicho por terminado y mandarlo, sin esperar al navegador. */
+/** Lo que se espera tras una tecla antes de contarle al lienzo lo que se lleva escrito. */
+const DRAFT_MS = 220
 const EARLY_MS = 1000
 /** A partir de aquí, el JEV da la frase por entera: se puede mandar ya. */
 const WHOLE_SAID = 0.6
@@ -118,6 +125,7 @@ export function ChatDock({
   onTyping,
   onMic,
   onHearing,
+  onDraft,
   judged,
 }: ChatDockProps) {
   const [text, setText] = useState('')
@@ -138,15 +146,31 @@ export function ChatDock({
 
   // El reconocimiento de voz vive más que un render: lo que llama tiene que ser lo de ahora, no lo de cuando
   // se abrió el micrófono (una orden mandada con datos de entonces llega desfasada y se rechaza).
-  const live = useRef({ onSubmit, onHearing, onMic, judged })
+  const live = useRef({ onSubmit, onHearing, onMic, onDraft, judged })
   useEffect(() => {
-    live.current = { onSubmit, onHearing, onMic, judged }
+    live.current = { onSubmit, onHearing, onMic, onDraft, judged }
   })
+
+  /** Lo escrito se cuenta al lienzo con un pequeño retraso: no en cada tecla, sí en cada palabra. */
+  const drafting = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const draft = (value: string | null) => {
+    if (drafting.current !== null) clearTimeout(drafting.current)
+    drafting.current = null
+    if (value === null || value.trim().length < 4) {
+      live.current.onDraft?.(null)
+      return
+    }
+    drafting.current = setTimeout(() => {
+      drafting.current = null
+      live.current.onDraft?.(value)
+    }, DRAFT_MS)
+  }
 
   const send = (value: string) => {
     const order = value.trim().slice(0, MAX_COMMAND)
     if (order === '') return
     setText('')
+    draft(null)
     live.current.onSubmit(order)
   }
 
@@ -428,6 +452,7 @@ export function ChatDock({
           onChange={(event) => {
             setText(event.target.value)
             onTyping()
+            draft(event.target.value)
           }}
         />
         {Speech && (

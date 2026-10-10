@@ -6,6 +6,39 @@
  * dicho todavía, no se inventa: la caja lo enseña vacío.
  */
 
+/** El esbozo de lo que se está pidiendo: qué es, y las partes que la frase ya nombra. */
+export interface Sketch {
+  what: string
+  parts: string[]
+}
+
+/** Lo que abre una petición sin decir todavía qué se pide: «quiero», «hazme», «necesito que»… */
+const OPENING =
+  /^(?:(?:por favor|oye|vale|bueno|a ver),?\s+)?(?:quiero|quisiera|necesito|me gustar[ií]a|hazme|haz|crea|cr[eé]ame|constr[uú]yeme|construye|escribe|prog?rama|dame|genera)\s+(?:que\s+)?/i
+
+/**
+ * Lo que la frase ya deja ver de lo que se pide, mientras se escribe: la cosa («una lista de tareas») y sus
+ * partes, tal como se van nombrando («añadir», «marcar como hechas», «ver las pendientes»). No decide nada ni
+ * inventa: solo trocea lo que hay escrito por donde la propia frase se separa (comas, «y», «donde», «con»).
+ * Una parte a medio escribir (la última, si aún no se ha puesto el espacio) también cuenta: se ve crecer.
+ */
+export function sketchOf(text: string): Sketch | null {
+  const clean = text.replace(/\s+/g, ' ').replace(OPENING, '').trim()
+  // Solo la palabra con la que se empieza a pedir («haz», «quiero»): aún no se ha dicho qué.
+  if (clean.length < 3 || OPENING.test(`${clean} `)) return null
+  const [head = '', ...rest] = clean.split(
+    /\s+(?:donde|en (?:el|la) que|en (?:el|la) cual|que (?:pueda|tenga|me deje|me permita|sirva para)|para(?: poder)?|con)\s+/i,
+  )
+  const pieces = rest
+    .join(', ')
+    .split(/\s*(?:,|;|\by\b|\be\b|\bo\b)\s*/i)
+    .map((part) => part.replace(/^(?:pueda|poder|que|tambi[eé]n|luego|adem[aá]s)\s+/i, '').trim())
+    .filter((part) => part.length >= 3)
+  const what = head.replace(/[.,;:]+$/, '').trim()
+  if (what === '') return null
+  return { what, parts: pieces.slice(0, 6).map((part) => part.replace(/[.,;:]+$/, '')) }
+}
+
 export interface Draft {
   name?: string
   takes?: string[]

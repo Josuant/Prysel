@@ -37,7 +37,7 @@ import { CommandBar } from './CommandBar.tsx'
 import { answerTo, rejection } from './answering.ts'
 import { dissolve, dragChips, flyNode, gesture } from './dragging.ts'
 import { morph } from './effects.ts'
-import { draftOf } from './drafting.ts'
+import { draftOf, sketchOf, type Sketch } from './drafting.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -315,6 +315,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const voice = voiceOn && !micOpen
   /** Lo que se le está oyendo decir al usuario ahora mismo (`null`: nada). */
   const [hearing, setHearing] = useState<string | null>(null)
+  // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
+  const [typed, setTyped] = useState<string | null>(null)
   /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
   const [preview, setPreview] = useState<{ kind: string; text: string } | null>(null)
   const heardWords = useRef(0)
@@ -1121,6 +1123,20 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     if (previous) view.descend(previous.id)
     else view.open(null)
   }
+  /**
+   * Lo que se le está oyendo o lo que lleva escrito (`was`: lo de antes). Al empezar, lo que se construye se
+   * queda quieto; si no dijo nada, sigue. Con cada palabra nueva se manda lo que lleva: el JEV va adelantando
+   * qué está pidiendo, y el lienzo lo esboza.
+   */
+  const attend = (heard: string | null, was: string | null) => {
+    const words = heard === null ? 0 : heard.trim().split(/\s+/).length
+    if ((heard !== null) !== (was !== null) || words !== heardWords.current) {
+      post({ type: 'listening', on: heard !== null, ...(heard === null ? {} : { text: heard }) })
+    }
+    heardWords.current = words
+    // Si no llegó a frase (un ruido, o lo borró), su hueco se va con ella.
+    if (heard === null && order.phase !== 'deciding') setPreview(null)
+  }
   /** Lo seleccionado, como líneas del programa: lo que eso escribió se resalta en la salida. */
   const picked = selected === null ? undefined : view.nodes.find((node) => node.id === selected)
   const litLines =
@@ -1912,6 +1928,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               }
               intro={intro}
               chat={features.chat === true}
+              sketch={sketchOf(typed ?? hearing ?? '')}
+              kind={
+                preview && preview.kind !== 'nada' ? (HEARD_LABELS[preview.kind] ?? null) : null
+              }
             />
           )}
           {program && (
@@ -2221,20 +2241,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           }}
           judged={(heard) => wholeness.current.get(sayKey(heard))}
           onHearing={(heard) => {
-            // Al empezar a oírle, lo que se construye se queda quieto; si no dijo nada, sigue.
-            // Con cada palabra nueva se manda lo que lleva dicho: el JEV va adelantando qué está pidiendo.
-            const words = heard === null ? 0 : heard.trim().split(/\s+/).length
-            if ((heard !== null) !== (hearing !== null) || words !== heardWords.current) {
-              post({
-                type: 'listening',
-                on: heard !== null,
-                ...(heard === null ? {} : { text: heard }),
-              })
-            }
-            heardWords.current = words
-            // Si no llegó a frase (un ruido), su hueco se va con ella.
-            if (heard === null && order.phase !== 'deciding') setPreview(null)
+            attend(heard, hearing)
             setHearing(heard)
+          }}
+          onDraft={(written) => {
+            attend(written, typed)
+            setTyped(written)
           }}
         />
       )}
@@ -2378,18 +2390,54 @@ function EmptyState({
   title = null,
   intro,
   chat,
+  sketch = null,
+  kind = null,
 }: {
   thinking: string | null
   /** Si se sabe qué se está pidiendo (aún se le oye), su nombre en vez de «La IA está pensando». */
   title?: string | null
   intro: string | null
   chat: boolean
+  /** Lo que se está pidiendo, tal como se va escribiendo o diciendo: la cosa y las partes que ya nombra. */
+  sketch?: Sketch | null
+  /** Qué clase de cosa es, si el JEV ya lo ha dicho («Un programa», «Una función»…). */
+  kind?: string | null
 }) {
   // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
   if (intro !== null) {
     return (
       <div className="flex h-full items-center justify-center p-6" role="status">
         <p className="intro-card">{intro}</p>
+      </div>
+    )
+  }
+  // Se está escribiendo (o diciendo) lo que se quiere: el lienzo lo va esbozando antes de mandarlo. La cosa,
+  // arriba; debajo, cada parte que la frase ya nombra, como el hueco de una pieza que vendrá.
+  if (sketch !== null && intro === null && (thinking === null || kind !== null)) {
+    return (
+      <div className="flex h-full items-center justify-center p-6" role="status" aria-live="polite">
+        <div className="sketch">
+          <div className="sketch__what">
+            <span className="sketch__kind">{kind ?? 'Lo que pides'}</span>
+            <span className="sketch__name">{sketch.what}</span>
+          </div>
+          {sketch.parts.length > 0 && (
+            <ol className="sketch__parts">
+              {sketch.parts.map((part, index) => (
+                // La clave es su sitio: una parte que se sigue escribiendo crece sin volver a entrar.
+                <li key={index} className="sketch__part">
+                  <span className="sketch__n" aria-hidden>
+                    {index + 1}
+                  </span>
+                  {part}
+                </li>
+              ))}
+            </ol>
+          )}
+          <p className="sketch__hint">
+            {thinking ?? 'Sigue escribiendo, o pulsa Intro: lo construyo aquí.'}
+          </p>
+        </div>
       </div>
     )
   }

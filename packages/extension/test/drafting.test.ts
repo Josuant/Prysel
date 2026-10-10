@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftOf } from '../webview/src/drafting.ts'
+import { draftOf, sketchOf } from '../webview/src/drafting.ts'
 
 /**
  * La caja de lo que se está pidiendo se rellena con lo que la frase ya dice, palabra a palabra: su nombre,
@@ -44,5 +44,36 @@ describe('lo que ya se sabe de una pieza mientras se pide', () => {
     expect(draftOf('programa', 'quiero algo que juegue solo')).toEqual({
       does: 'quiero algo que juegue solo',
     })
+  })
+})
+
+describe('el esbozo de lo que se está escribiendo', () => {
+  it('la cosa que se pide, y las partes que la frase ya nombra', () => {
+    expect(
+      sketchOf(
+        'Quiero una lista de tareas donde pueda añadir, marcar como hechas y ver las pendientes',
+      ),
+    ).toEqual({
+      what: 'una lista de tareas',
+      parts: ['añadir', 'marcar como hechas', 'ver las pendientes'],
+    })
+    expect(sketchOf('Hazme un juego de adivinar un número del 1 al 100')).toEqual({
+      what: 'un juego de adivinar un número del 1 al 100',
+      parts: [],
+    })
+  })
+
+  it('crece con lo que se va escribiendo: la última parte, aunque esté a medias', () => {
+    expect(sketchOf('Quiero una lista')).toEqual({ what: 'una lista', parts: [] })
+    expect(sketchOf('Quiero una lista de tareas con fechas y prio')?.parts).toEqual([
+      'fechas',
+      'prio',
+    ])
+  })
+
+  it('sin nada dicho todavía, no hay esbozo', () => {
+    expect(sketchOf('')).toBeNull()
+    expect(sketchOf('Quiero ')).toBeNull()
+    expect(sketchOf('haz')).toBeNull()
   })
 })
