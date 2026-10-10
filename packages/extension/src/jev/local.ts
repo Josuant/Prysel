@@ -303,6 +303,9 @@ export function localDecider(): Decider {
               ? SURE
               : 0.1,
           }
+        } else if (id === 'arranque') {
+          // Sin un modelo que lea, no se sabe cuál es la principal: lo decide quien pregunta.
+          answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'f0', UNSURE)
         } else if (/^papel\d+$/.test(id) || id === 'forma') {
           // Sin un modelo que lea, el papel y la forma se quedan en lo que el código deja ver.
           answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'logica', UNSURE)

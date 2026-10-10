@@ -36,6 +36,7 @@ import {
   layout,
   type Architecture,
   type Axis,
+  type Figure,
   type ModuleRole,
   type SemanticEdge,
   type SemanticGraph,
@@ -223,6 +224,14 @@ export interface CanvasProps {
    * rincón libre, a un lado o por encima, según cómo se vea más grande el diagrama.
    */
   avoid?: { w: number; h: number } | null
+  /**
+   * El **resultado** del programa, como un nodo más al final de la arquitectura: lo último que salió por
+   * pantalla. `from`: los módulos que lo escribieron (le llega una flecha de cada uno); `planned`, si aún
+   * no sale del programa sino de una prueba aparte. No es código.
+   */
+  result?: { content: ViewerContent; from: readonly string[]; planned?: boolean } | null
+  /** Dónde **empieza** el trabajo: el módulo que lo arranca y lo que se dice de ello. */
+  start?: { at: string; label: string } | null
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -394,6 +403,9 @@ const COMMON_CALLS = [
 /** Dónde empieza la cajita del programa. */
 const MODULE_TRAY_AT = { x: 28, y: 28 }
 const EDGE_TYPES = { prysel: PryselEdge, arch: ArchEdge }
+/** El nodo del resultado del programa, y lo que se separa de la arquitectura. */
+const RESULT_ID = 'prysel:result'
+const RESULT_GAP = 110
 /** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
 const SHARED_FROM = 3
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
@@ -435,6 +447,8 @@ function CanvasInner({
   onGistEdit,
   architecture = null,
   avoid = null,
+  result = null,
+  start = null,
   addTarget,
   palette,
   addToModule = true,
@@ -1016,9 +1030,17 @@ function CanvasInner({
   const shiftX = aside && sideW > 0 ? sideW + MODULE_TRAY_AT.x + SIDE_GAP : 0
   const shiftY = !aside && moduleTray ? moduleTray.h + 24 : 0
   /** Hasta dónde llega el diagrama; a partir de ahí, el margen de las notas. */
-  const diagramW = aside
-    ? shiftX + layoutBounds.w
-    : Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0)
+  // El resultado, si lo hay, va a la derecha de la arquitectura: el encuadre le deja su sitio.
+  const resultSize = useMemo(
+    () => (result && figures !== undefined ? viewerSize(result.content) : null),
+    [result, figures],
+  )
+  const resultReserve = resultSize ? RESULT_GAP + resultSize.w : 0
+  const diagramW =
+    (aside
+      ? shiftX + layoutBounds.w
+      : Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0)) +
+    resultReserve
   // Con notas, el margen cuenta para el encuadre: el zoom es el mismo llegue la nota que llegue.
   const noteReserve = noteNodes.length > 0 ? NOTE_GUTTER + NOTE.width + 24 : 0
   const bounds = useMemo(
@@ -1993,21 +2015,90 @@ function CanvasInner({
       },
     ]
   })
+  // ── El resultado y el arranque: los dos extremos de la arquitectura ──
+  const resultAt =
+    resultSize && archModules.size > 0
+      ? {
+          x: shiftX + layoutBounds.w + RESULT_GAP - 28,
+          y: shiftY + Math.max(28, (layoutBounds.h - resultSize.h) / 2),
+          ...resultSize,
+        }
+      : null
+  const resultNodes: ViewerFlowNode[] =
+    result && resultAt
+      ? [
+          {
+            ...viewerNode(
+              { id: RESULT_ID, kind: 'output.display', label: result.content.title },
+              result.content,
+              { x: resultAt.x, y: resultAt.y },
+              { w: resultAt.w, h: resultAt.h },
+            ),
+            draggable: false,
+            selectable: false,
+          },
+        ]
+      : []
+  const resultEdges: ArchFlowEdge[] = (result && resultAt ? result.from : []).flatMap((id, at) => {
+    const from = archModules.has(id) ? boxOf.get(id) : undefined
+    if (!from || !resultAt) return []
+    const others = [...archModules.keys()].flatMap((other) => {
+      const box = other === id ? undefined : boxOf.get(other)
+      return box ? [box] : []
+    })
+    return [
+      {
+        id: `arch:result:${id}`,
+        source: id,
+        target: RESULT_ID,
+        sourceHandle: 'note-out',
+        targetHandle: 'in',
+        type: 'arch' as const,
+        selectable: false,
+        focusable: false,
+        label: result?.planned ? 'daría' : 'enseña',
+        zIndex: 2,
+        data: {
+          kind: 'data' as const,
+          from,
+          to: resultAt,
+          bend: clearBend(from, resultAt, others, 0),
+          turn: at,
+          ...(result?.planned ? { planned: true } : {}),
+        },
+      },
+    ]
+  })
+  const startBox = start && archModules.has(start.at) ? boxOf.get(start.at) : undefined
+  const startFigures: Figure[] = startBox
+    ? [
+        {
+          id: 'start',
+          kind: 'start',
+          x: startBox.x - shiftX + 14,
+          y: startBox.y - shiftY - 26,
+          w: 200,
+          h: 22,
+          label: start?.label ?? '',
+        },
+      ]
+    : []
   /** Las figuras de fondo que dicen la forma: van detrás de todo y no se tocan. */
-  const figureNodes: FigureFlowNode[] = (archModules.size > 0 ? (figures ?? []) : []).map(
-    (figure) => ({
-      id: `figure:${figure.id}`,
-      type: 'figure' as const,
-      position: { x: figure.x + shiftX, y: figure.y + shiftY },
-      ...nodeFrame({ w: figure.w, h: figure.h }),
-      zIndex: -1,
-      draggable: false,
-      selectable: false,
-      focusable: false,
-      style: { pointerEvents: 'none' as const },
-      data: { figure },
-    }),
-  )
+  const figureNodes: FigureFlowNode[] = (
+    archModules.size > 0 ? [...(figures ?? []), ...startFigures] : []
+  ).map((figure) => ({
+    id: `figure:${figure.id}`,
+    type: 'figure' as const,
+    position: { x: figure.x + shiftX, y: figure.y + shiftY },
+    ...nodeFrame({ w: figure.w, h: figure.h }),
+    // La marca de arranque va por delante: se apoya en el borde de su módulo.
+    zIndex: figure.kind === 'start' ? 6 : -1,
+    draggable: false,
+    selectable: false,
+    focusable: false,
+    style: { pointerEvents: 'none' as const },
+    data: { figure },
+  }))
 
   const roles = new Map(drawnEdges.map((edge) => [edge, flowRole(edge)]))
   /** Cuántos caminos llegan a cada punto: si son varios, se juntan en un punto justo encima de él. */
@@ -2486,10 +2577,18 @@ function CanvasInner({
         <EdgeDefs />
       </svg>
       <ReactFlow
-        nodes={[...figureNodes, ...flowNodes, ...dockedNodes, ...sideFlow.nodes, ...noteFlow.nodes]}
+        nodes={[
+          ...figureNodes,
+          ...flowNodes,
+          ...resultNodes,
+          ...dockedNodes,
+          ...sideFlow.nodes,
+          ...noteFlow.nodes,
+        ]}
         // (Las de la arquitectura son otro tipo de arista; el lienzo solo las dibuja, no las edita.)
         edges={[
           ...(archEdges as unknown as PryselFlowEdge[]),
+          ...(resultEdges as unknown as PryselFlowEdge[]),
           ...flowEdges,
           ...sideFlow.edges,
           ...noteFlow.edges,

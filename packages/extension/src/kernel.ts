@@ -386,6 +386,7 @@ export class Kernel {
         resolve({
           events: event['events'] as Trace['events'],
           truncated: event['truncated'] === true,
+          ...(event['finished'] === true ? { finished: true } : {}),
           error: (event['error'] as Trace['error']) ?? null,
           output: String(event['output'] ?? ''),
         })

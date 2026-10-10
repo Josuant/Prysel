@@ -38,6 +38,7 @@ import {
   formulaSystem,
   introSystem,
   judgeChunk,
+  judgeEntry,
   judgeMarks,
   planSystem,
   type Chunk,
@@ -49,6 +50,8 @@ import {
   judgeRemoval,
 } from './plain.ts'
 import { formatVisual, seriesIn, visualOf } from './visual.ts'
+import { entryOf, launchCode, looksInert } from '../gist/entry.ts'
+import { callPrompt, callSystem, validCall } from '../gist/gist.ts'
 import {
   applyOp,
   changesBetween,
@@ -867,7 +870,64 @@ export async function build(
     const echoes = echoEdits((await host.program()).source)
     if (echoes.length > 0) await host.write({ edits: echoes })
   }
+  // Un programa entero que solo define funciones no hace nada: se arranca con un ejemplo, para verlo.
+  if (planned && start.nodes.length === 0 && tally.trouble === null && !host.signal.aborted) {
+    await launchIfInert(host, players, tally)
+  }
   return conclude(host, players, command, tally)
+}
+
+/**
+ * La red de seguridad de un programa entero: si al acabar define funciones pero nadie las llama, se le añade
+ * una etapa final que lo arranca con un ejemplo y enseña lo que da. La IA solo propone la llamada (una línea,
+ * con valores sueltos: se comprueba); cuál es la función principal sale del programa o lo dice el JEV.
+ */
+async function launchIfInert(host: Stagehand, players: Players, tally: Tally): Promise<void> {
+  const program = await host.program()
+  if (!looksInert(program)) return
+  const found = entryOf(program)
+  let entry = found.entry
+  if (!entry && found.tied.length > 0) {
+    const chosen = await judgeEntry(
+      players.decider,
+      found.tied.map((fact) => fact.name),
+    ).catch(() => null)
+    entry = found.tied[chosen ?? found.tied.length - 1] ?? null
+  }
+  if (!entry) return
+  await host.show({ type: 'progress', text: `Arrancando ${entry.name} con un ejemplo…` })
+  let call = entry.takes.length === 0 ? `${entry.name}()` : null
+  if (call === null) {
+    const answer = await players.provider
+      .generate({ system: callSystem(), prompt: callPrompt(program, entry), maxTokens: 200 })
+      .catch(() => '')
+    call = validCall(answer, entry)
+  }
+  if (call === null || host.signal.aborted) return
+  const source = program.source
+  const body = source.replace(/\s+$/, '')
+  const eol = source.includes('\r\n') ? '\r\n' : '\n'
+  const launch = launchCode(call, entry.returns)
+  const failed = await host.write({
+    edits: [
+      {
+        start: body.length,
+        end: source.length,
+        text: `${eol}${eol}${launch.split('\n').join(eol)}${eol}`,
+      },
+    ],
+  })
+  if (failed !== null) return
+  tally.written++
+  tally.code.push(launch)
+  await host.show({
+    type: 'step',
+    index: tally.written,
+    say: 'Lo arranco con un ejemplo, para verlo funcionar.',
+    line: body.split('\n').length + 2,
+    effect: 'born',
+    wide: true,
+  })
 }
 
 export interface ModifyRequest {

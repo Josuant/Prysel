@@ -84,6 +84,7 @@ import type { Gist, RunSummary } from '../../src/gist/gist.ts'
 import { RunPanel } from './RunPanel.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
+import { outcomeOf } from './outcome.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -1329,6 +1330,20 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       ...(anchor === undefined ? {} : { anchor }),
     }
   }, [judgedArchitecture, held, view.moduleFacts])
+  // Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final.
+  const outcome = useMemo(
+    () =>
+      ran && architecture && program
+        ? outcomeOf(
+            ran,
+            view.moduleFacts,
+            program.nodes.find(
+              (node) => node.kind === 'abstraction.collapsed' && node.label === ran.entry,
+            )?.line,
+          )
+        : null,
+    [ran, architecture, program, view.moduleFacts],
+  )
   const tryingGist =
     trying === null ? null : (gists.find((gist) => gist.id === trying && gist.sample) ?? null)
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
@@ -2127,6 +2142,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 onGistEdit={setTrying}
                 architecture={architecture}
                 avoid={consoleBox}
+                result={outcome?.result ?? null}
+                start={outcome?.start ?? null}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
@@ -2369,8 +2386,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   <RunPanel
                     run={ran}
                     lit={litLines}
+                    quiet={outcome?.result != null && ran.asks !== true && ran.ended === 'done'}
                     onPlay={(answers, fresh) => {
                       post({ type: 'play', answers, ...(fresh ? { fresh: true } : {}) })
+                    }}
+                    onWake={(idle) => {
+                      // Nadie lo arranca: se le añade su arranque. Trabaja sin enseñar: se le pide a la IA.
+                      if (idle === 'inert') post({ type: 'launch' })
+                      else sendOrder('Haz que el programa enseñe su resultado en pantalla')
                     }}
                     onPick={(line) => {
                       // El paso más interior que abarca esa línea; si está plegado, lo que lo guarda.

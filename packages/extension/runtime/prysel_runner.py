@@ -856,11 +856,17 @@ class _Tracer:
     en las variables del marco (`ch`), y lo que se imprimió desde el evento anterior (`o`).
     """
 
-    def __init__(self, filename, limit, out, hidden=frozenset()):
+    def __init__(self, filename, limit, out, hidden=frozenset(), finish=0.0):
         self.filename = filename
         self.hidden = hidden
         self.limit = limit
         self.out = out
+        # Al llegar al tope de pasos, en vez de cortar: dejar de grabar y dejar que el programa acabe (con
+        # este tope de segundos). Lo que imprima hasta el final sí se recoge: es su resultado.
+        self.finish = finish
+        self.coasting = False
+        self.deadline = 0.0
+        self.ticks = 0
         self.events = []
         self.stack = []
         self.by_frame = {}
@@ -892,7 +898,17 @@ class _Tracer:
             self.printed = len(text)
         self.events.append(event)
         if len(self.events) >= self.limit:
+            if self.finish <= 0:
+                raise _TraceLimit()
+            self.coasting = True
+            self.deadline = time.perf_counter() + self.finish
+
+    def coast(self, frame, event, arg):
+        """Ya no se graba: solo se vigila, de vez en cuando, que el programa no se quede dando vueltas."""
+        self.ticks += 1
+        if self.ticks & 255 == 0 and time.perf_counter() > self.deadline:
             raise _TraceLimit()
+        return self.coast
 
     def changes(self, record, frame):
         """Las variables de datos que cambiaron (o son nuevas) desde el último evento de este marco."""
@@ -915,6 +931,8 @@ class _Tracer:
         return changed, ids
 
     def global_trace(self, frame, event, arg):
+        if self.coasting:
+            return self.coast(frame, event, arg)
         code = frame.f_code
         if code.co_filename != self.filename or code.co_name in _COMPREHENSIONS:
             return None
@@ -940,6 +958,8 @@ class _Tracer:
         return self.local_trace
 
     def local_trace(self, frame, event, arg):
+        if self.coasting:
+            return self.coast(frame, event, arg)
         record = self.by_frame.get(id(frame))
         if record is None:
             return None
@@ -1089,7 +1109,12 @@ class Runner:
         except _UnsafeCode as unsafe:
             hidden = frozenset()
             error = {"name": "UnsafeCode", "message": str(unsafe), "line": unsafe.line}
-        tracer = _Tracer(filename, limit, out, hidden)
+        # `finish`: al llegar al tope de pasos, el programa sigue sin grabarse hasta acabar (con un tope de
+        # segundos), para no quedarse sin saber qué da.
+        finish = request.get("finish")
+        budget = 0.0 if not finish else (2.5 if finish is True else float(finish))
+        tracer = _Tracer(filename, limit, out, hidden, budget)
+        finished = False
         namespace = {"__name__": "__main__"}
         if isinstance(inputs, list):
             namespace["input"] = _scripted_input(inputs, out)
@@ -1111,6 +1136,9 @@ class Runner:
                 finally:
                     sys.settrace(None)
                     _WIDE = False
+                # Acabó, aunque de lo último no haya quedado grabado el paso a paso.
+                truncated = tracer.coasting
+                finished = tracer.coasting
             except _TraceLimit:
                 truncated = True
             except _NoMoreInput:
@@ -1134,6 +1162,7 @@ class Runner:
                 "id": run,
                 "events": tracer.events,
                 "truncated": truncated,
+                "finished": finished,
                 "error": error,
                 "output": out.getvalue()[-MAX_TEXT:],
             }

@@ -1,6 +1,9 @@
 import type { Program } from '@prysel/python'
 import type { AiProvider } from '../../../packages/extension/src/ai/provider.ts'
-import { functionsIn } from '../../../packages/extension/src/gist/facts.ts'
+import { functionsIn, type Facts } from '../../../packages/extension/src/gist/facts.ts'
+import { entryOf, idleness, withLaunch } from '../../../packages/extension/src/gist/entry.ts'
+import { showValue } from '../../../packages/extension/src/gist/value.ts'
+import { judgeEntry } from '../../../packages/extension/src/jev/plain.ts'
 import {
   ANSWER_ROUNDS,
   GistCache,
@@ -76,6 +79,8 @@ export class Gists {
    */
   private mine: { key: string; answers: string[]; seed: number } | null = null
   private playSeq = 0
+  /** La función que pondría el programa en marcha, si la última vez no hizo nada. */
+  private entry: Facts | null = null
   /** Las pruebas de quien lo usa: con qué llamada quiere ver cada función (por su nombre). */
   private readonly trials = new Map<string, string>()
 
@@ -179,6 +184,68 @@ export class Gists {
     )
   }
 
+  /** La función que pondría el programa en marcha: la que destaca o, si empatan varias, la que diga el JEV. */
+  private async findEntry(program: Program): Promise<Facts | null> {
+    const found = entryOf(program)
+    if (found.entry || found.tied.length === 0) return found.entry
+    const chosen = await judgeEntry(
+      this.port.decider(),
+      found.tied.map((fact) => fact.name),
+    ).catch(() => null)
+    // Sin su criterio, la última del archivo: lo principal suele escribirse al final.
+    return found.tied[chosen ?? found.tied.length - 1] ?? null
+  }
+
+  /** La prueba de la función que arranca, apuntada junto a cómo le fue al programa. */
+  private noteTrial(gist: Gist | undefined) {
+    const sample = gist?.sample
+    if (!sample?.call || !this.ran) return
+    this.ran = {
+      ...this.ran,
+      trial: {
+        call: sample.call,
+        ...(sample.error !== undefined
+          ? { returned: sample.error }
+          : sample.returned !== undefined
+            ? { returned: showValue(sample.returned) }
+            : {}),
+        ...(sample.printed ? { printed: sample.printed } : {}),
+      },
+    }
+  }
+
+  /**
+   * Arrancar el programa: el texto que hay que añadirle al final para que llame a su función principal con
+   * un ejemplo y enseñe lo que da. Usa la llamada con la que ya se probó; si no la hay y hace falta
+   * inventarla, se le pide a la IA. `null` si no se sabe qué llamar o con qué.
+   */
+  async launchEdit(): Promise<{ start: number; end: number; text: string } | null> {
+    const source = this.port.text()
+    const program = await this.port.analyse()
+    const entry = this.entry ?? (await this.findEntry(program))
+    if (!entry) return null
+    const fact = functionsIn(program).find((candidate) => candidate.id === entry.id)
+    if (!fact) return null
+    let call =
+      this.last.find((gist) => gist.id === fact.id)?.sample?.call ??
+      (fact.takes.length === 0 ? `${fact.name}()` : null)
+    const provider = this.port.provider()
+    if (call === null && provider) {
+      const tried = await invent(program, fact, {
+        provider,
+        trace: (code) => this.traced(code),
+      })
+      call = tried.sample?.call ?? null
+    }
+    if (call === null) return null
+    const body = source.replace(/\s+$/, '')
+    return {
+      start: body.length,
+      end: source.length,
+      text: withLaunch(source, call, fact.returns).slice(body.length),
+    }
+  }
+
   private async pass() {
     if (this.running || this.port.busy()) return this.touch()
     const text = this.port.text()
@@ -256,6 +323,19 @@ export class Gists {
       }
     }
     if (raw) this.ran = runSummary(raw, inputs, mine !== null)
+    // ¿Hizo algo que se vea? Si no, se dice por qué; y si es que nadie lo arranca, quién lo arrancaría.
+    this.entry = null
+    const idle = raw ? idleness(program, raw) : null
+    if (idle && this.ran) {
+      if (idle === 'inert') this.entry = await this.findEntry(program)
+      this.ran = {
+        ...this.ran,
+        ended: 'idle',
+        idle,
+        ...(this.entry ? { entry: this.entry.name } : {}),
+      }
+    }
+    const entry = this.entry
     const trace = raw ? settled(raw) : null
     const nothing =
       facts.length === 0 &&
@@ -276,17 +356,35 @@ export class Gists {
       if (mine) gists[at] = mine
     }
     let invented = 0
-    for (const [at, gist] of gists.entries()) {
+    // La función que arranca el programa se prueba la primera, y no gasta el cupo de las demás: es la que
+    // dice si el conjunto funciona.
+    const inOrder = [...gists.entries()].sort(
+      ([, a], [, b]) => Number(b.id === entry?.id) - Number(a.id === entry?.id),
+    )
+    for (const [at, gist] of inOrder) {
       if (gist.status !== 'sin-muestra' || trace?.error) continue
       const fact = facts.find((candidate) => candidate.id === gist.id)
       if (!fact) continue
+      const leads = fact.id === entry?.id
       const known = this.cache.get(fact)
       if (known) {
         gists[at] = { ...known, id: fact.id }
+        if (leads) this.noteTrial(gists[at])
         continue
       }
-      if (!provider || invented >= MAX_INVENTED) continue
-      invented++
+      // Sin nada que recibir, su llamada no hay que inventarla.
+      if (leads && fact.takes.length === 0) {
+        const plain = await tested(program, fact, `${fact.name}()`, (code) =>
+          this.traced(code, inputs ? { answers: inputs, seed } : undefined),
+        )
+        if (plain) {
+          gists[at] = plain
+          this.noteTrial(plain)
+          continue
+        }
+      }
+      if (!provider || (!leads && invented >= MAX_INVENTED)) continue
+      if (!leads) invented++
       const tried = await invent(program, fact, {
         provider,
         trace: async (code) =>
@@ -298,6 +396,7 @@ export class Gists {
           },
       })
       this.cache.set(tried)
+      if (leads) this.noteTrial(tried)
       gists[at] = tried
     }
     // Casi siempre hay una regla o ninguna. Si la muestra confirma varias, el JEV dice cuál es la intención.

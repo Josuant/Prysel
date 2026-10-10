@@ -831,6 +831,35 @@ export async function judgeCover(
   })
 }
 
+// ───────────────────────── quién arranca el programa ─────────────────────────
+
+/**
+ * Varias funciones a las que nadie llama: ¿cuál es la que pone el programa en marcha? El JEV elige entre sus
+ * nombres. Si duda, `null`: decide quien pregunta (la última del archivo suele ser la principal).
+ */
+export async function judgeEntry(
+  decider: Decider,
+  names: readonly string[],
+): Promise<number | null> {
+  if (names.length === 0) return null
+  if (names.length === 1) return 0
+  const { answers } = await decider.decide({
+    state: { funciones: [...names] },
+    questions: {
+      arranque: {
+        type: 'choice',
+        instructions:
+          'Un programa en Python define las funciones de `funciones` y a ninguna de ellas la llama nadie. ¿Cuál es la principal: la que hay que llamar para que el programa entero funcione?',
+        criteria: Object.fromEntries(names.map((name, at) => [`f${at}`, name])),
+      },
+    },
+  })
+  const answer = answers.arranque
+  if (answer?.type !== 'choice' || answer.confidence < ARCH_THRESHOLD) return null
+  const at = Number(answer.choice.slice(1))
+  return Number.isInteger(at) && at >= 0 && at < names.length ? at : null
+}
+
 // ───────────────────────── la arquitectura: qué papel hace cada módulo y qué forma tiene ─────────────────────────
 
 /** Los papeles que puede hacer un módulo, y cómo se le explican al JEV. */
@@ -1034,6 +1063,7 @@ export function planSystem(teach: boolean): string {
       : 'Alguien te pide un programa en Python y tú lo vas a construir explicándolo. Antes de escribir nada, piensa el plan.',
     'Lista las partes por las que pasa, en orden, una por línea: un título de dos a cuatro palabras y, si quieres, detrás de dos puntos, qué ocurre en esa parte en menos de diez palabras.',
     'Piensa también cómo encajan: si una parte necesita lo que otra guarda o hace, dilo al final de su línea, detrás de «<-», con el título exacto de esa otra parte (varias, separadas por comas). Ejemplo: «Mostrar el total: suma todos los precios <- Lista de gastos». La que no necesita a ninguna no lleva «<-».',
+    'Si lo que se pide es un programa entero (no una pieza suelta que se añade a otro), la ÚLTIMA parte lo pone en marcha: lo arranca con un ejemplo concreto y enseña el resultado en pantalla. Quien lo pide quiere verlo funcionar.',
     'Entre 2 y 7 partes. Solo la lista: sin introducción, sin código y sin despedida.',
   ].join('\n')
 }
@@ -1047,7 +1077,7 @@ export function codeSystem(teach: boolean): string {
     'Código claro, de principiante: nombres en español, sin trucos. Usa los nombres que ya existen cuando la orden se refiera a ellos, y no repitas lo que ya está en el programa.',
     teach
       ? 'Usa valores de ejemplo concretos, y enseña el resultado.'
-      : 'Escribe EXACTAMENTE lo que se pide y nada más. Si se pide una clase, solo la clase (con su constructor y lo que la orden nombre): no le inventes métodos. Si se pide una función, solo la función. No añadas ejemplos de uso, llamadas de prueba ni print que la orden no pida: quien lo pidió irá diciendo lo siguiente.',
+      : 'Escribe EXACTAMENTE lo que se pide y nada más. Si se pide una clase, solo la clase (con su constructor y lo que la orden nombre): no le inventes métodos. Si se pide una función, solo la función. No añadas ejemplos de uso, llamadas de prueba ni print que la orden no pida: quien lo pidió irá diciendo lo siguiente. La excepción es un programa entero con plan: en su última parte, llama a lo construido con valores de ejemplo pequeños y enseña el resultado con print y unas palabras («Mejor encontrado:», «Total:»). Un programa que solo define funciones y no las llama no hace nada.',
     'Cuando el cuerpo de una función (o el programa) tenga más de unos cinco pasos, agrúpalos por lo que pretenden: delante de cada grupo, una línea en blanco y un comentario corto que diga su intención con un verbo («# Aplicar la física», «# Comprobar choques», «# Guardar el resultado»). Al menos dos grupos, o ninguno. El editor dibuja cada grupo como una sola caja con ese nombre: es lo que se lee primero. No comentes línea por línea.',
     'Si la orden pide algo nuevo que use lo que ya hay («una clase que use esa función»), escribe solo lo nuevo, con lo que ya existe dentro o llamándolo: no vuelvas a escribir el programa ni lo expliques por partes.',
     'Si hay un plan, sigue su orden al pie de la letra: primero TODO lo de la primera parte, luego lo de la segunda… y que cada parte tenga algo de código. Escribe cada función cuando llegue la parte del plan a la que pertenece, no antes. No pongas comentarios con los títulos de las partes: ya están puestos.',

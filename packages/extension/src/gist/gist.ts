@@ -9,6 +9,7 @@ import { bestSwitch, conditionsIn, type Switch } from './branch.ts'
 import { ruleFor, type Rule } from './patterns.ts'
 import { bestSample, samplesIn, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
+import type { Idleness } from './entry.ts'
 
 /**
  * «Qué hace» una función, comprobado: su nombre, y una vez que se ejecutó de verdad (con qué entró y qué
@@ -215,9 +216,26 @@ export interface RunSummary {
   output: string
   /**
    * `done`: acabó. `waiting`: se quedó pidiendo otro dato (se acabaron las respuestas de ejemplo). `cut`: era
-   * demasiado largo y se cortó. `error`: falló. `blocked`: no se ejecutó.
+   * demasiado largo y se cortó. `error`: falló. `blocked`: no se ejecutó. `idle`: acabó sin error, pero sin
+   * hacer nada que se vea (ver `idle`).
    */
-  ended: 'done' | 'waiting' | 'cut' | 'error' | 'blocked'
+  ended: 'done' | 'waiting' | 'cut' | 'error' | 'blocked' | 'idle'
+  /**
+   * Con `idle`, por qué: `inert`, define cosas pero nadie las arranca; `mute`, trabaja pero no enseña nada.
+   */
+  idle?: Idleness
+  /** Con `inert`: la función que lo pondría en marcha, si se sabe cuál es. */
+  entry?: string
+  /**
+   * Con `inert`: esa función, probada aparte con una llamada de ejemplo (sin tocar el programa). Lo que
+   * devolvió y lo que imprimió, tal como salió.
+   */
+  trial?: { call: string; returned?: string; printed?: string }
+  /**
+   * La línea del programa donde empieza el trabajo: la primera, a la altura del archivo, que llama a una
+   * función propia. Es donde el diagrama marca «empieza aquí».
+   */
+  start?: number
   /** Con `error`: cuál, y en qué línea. Con `blocked`: por qué. */
   problem?: string
   line?: number
@@ -258,7 +276,13 @@ export function runSummary(trace: Trace, typed?: readonly string[], mine = false
   const failed = trace.error !== null && !waiting
   return {
     output: trace.output,
-    ended: failed ? 'error' : waiting ? 'waiting' : trace.truncated ? 'cut' : 'done',
+    ended: failed
+      ? 'error'
+      : waiting
+        ? 'waiting'
+        : trace.truncated && trace.finished !== true
+          ? 'cut'
+          : 'done',
     ...(failed && trace.error
       ? {
           problem: `${trace.error.name}: ${trace.error.message}`,
@@ -267,8 +291,19 @@ export function runSummary(trace: Trace, typed?: readonly string[], mine = false
       : {}),
     ...(typed ? { typed: [...typed], asks: true } : {}),
     ...(mine ? { mine: true } : {}),
+    ...startOf(trace),
     sources: alignedSources(trace),
   }
+}
+
+/** Dónde empieza el trabajo: la línea de arriba que se estaba ejecutando cuando se llamó a la primera función. */
+function startOf(trace: Trace): { start?: number } {
+  let top: number | null = null
+  for (const event of trace.events) {
+    if (event.k === 'line' && event.d === 0) top = event.l
+    if (event.k === 'call') return top === null ? {} : { start: top }
+  }
+  return {}
 }
 
 /** Las fuentes de las líneas de `trace.output` (que puede ser solo el final de todo lo impreso). */

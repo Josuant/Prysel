@@ -410,6 +410,14 @@ export interface CoverMessage {
 }
 
 /**
+ * Arrancar un programa que define su función principal y no la llama: se le añade al final una etapa que la
+ * llama con un ejemplo y enseña lo que da.
+ */
+export interface LaunchMessage {
+  type: 'launch'
+}
+
+/**
  * El programa, visto como módulos: de cada uno, su título y lo que su código deja ver; y las formas que su
  * grafo tiene de verdad. El JEV dice el papel de cada uno y qué forma lo cuenta mejor (llega en `arched`).
  */
@@ -461,6 +469,7 @@ export type HostMessage =
   | ListeningMessage
   | CoverMessage
   | ArchMessage
+  | LaunchMessage
   | PlayMessage
   | TryCallMessage
   | SpokenMessage
@@ -799,6 +808,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
       ? { type: 'listening', on, text: text.slice(0, MAX_COMMAND) }
       : { type: 'listening', on }
   }
+  if (type === 'launch') return { type: 'launch' }
   if (type === 'arch') {
     const { key, modules, shapes } = value as { key?: unknown; modules?: unknown; shapes?: unknown }
     if (typeof key !== 'string' || key.length > MAX_ARCH_KEY || !namesOf(shapes)) return null

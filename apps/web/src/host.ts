@@ -99,7 +99,12 @@ export class WebHost {
       // Ancha: las rejillas pequeñas llegan enteras, para dibujarlas como rejillas.
       // Con azar repetible (la misma partida de ejemplo cada vez) y, si pide datos, sus respuestas.
       trace: (code, inputs, seed = 7) =>
-        this.session.trace(code, 20_000, false, true, { seed, ...(inputs ? { inputs } : {}) }),
+        // Un programa largo no se corta al llegar al tope: deja de grabarse y acaba, para ver qué da.
+        this.session.trace(code, 20_000, false, true, {
+          seed,
+          finish: true,
+          ...(inputs ? { inputs } : {}),
+        }),
       provider: () => {
         const provider = providerFrom(this.settings)
         return provider ? this.calls.provider(provider) : null
@@ -299,6 +304,18 @@ export class WebHost {
       case 'listening':
         this.orders.listening(message.on, message.text)
         return
+      case 'launch': {
+        // Arrancar un programa que no hace nada: se le añade su etapa de arranque (y se puede deshacer).
+        const edit = await this.gists.launchEdit()
+        if (edit && this.writeFrom([edit], true)) await this.refresh()
+        else {
+          this.post({
+            type: 'say',
+            text: 'No sé con qué valores arrancarlo. Dímelo tú: «arráncalo con …».',
+          })
+        }
+        return
+      }
       case 'arch':
         this.orders.arch(message.key, message.modules, message.shapes)
         return

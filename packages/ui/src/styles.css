@@ -6067,6 +6067,7 @@ button.fn-menu__crumb:hover {
 .run-panel[data-ended='error'] .run-panel__dot {
   background: var(--state-error);
 }
+.run-panel[data-ended='idle'] .run-panel__dot,
 .run-panel[data-ended='waiting'] .run-panel__dot,
 .run-panel[data-ended='cut'] .run-panel__dot,
 .run-panel[data-ended='blocked'] .run-panel__dot {
@@ -6663,6 +6664,26 @@ button.run-panel__line:hover {
   }
 }
 
+/* Dónde empieza el trabajo: una marca apoyada en el borde de su módulo. */
+.arch-start {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--state-success) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  animation: arch-show 400ms ease-out backwards;
+}
+.arch-start__play {
+  color: var(--state-success);
+  font-size: 9px;
+}
 /* Cómo se lee: la forma elegida y lo que dice cada trazo. Abajo, en el centro, sin estorbar al puntero. */
 .arch-legend {
   bottom: 14px;

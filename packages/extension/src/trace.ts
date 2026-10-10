@@ -73,8 +73,13 @@ export interface TraceEvent {
 
 export interface Trace {
   events: TraceEvent[]
-  /** Se llegó al tope de pasos: la traza está cortada y el programa no acabó. */
+  /** Se llegó al tope de pasos: la traza está cortada (y, salvo `finished`, el programa no acabó). */
   truncated: boolean
+  /**
+   * Con `truncated`: se dejó de grabar el paso a paso, pero el programa siguió hasta acabar. Lo que imprimió
+   * (`output`) está entero; lo que falta es el detalle de sus últimos pasos.
+   */
+  finished?: boolean
   error: { name: string; message: string; line: number | null } | null
   /** Todo lo que imprimió el programa (el final, si es muy largo). */
   output: string
@@ -88,6 +93,11 @@ export interface Trace {
 export interface TraceExtra {
   inputs?: readonly string[]
   seed?: number
+  /**
+   * Al llegar al tope de pasos, no cortar: dejar de grabar y dejar que el programa acabe (como mucho, unos
+   * segundos), para saber qué da. `true`, o los segundos que se le dan.
+   */
+  finish?: boolean | number
 }
 
 export interface FrameState {

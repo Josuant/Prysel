@@ -44,22 +44,27 @@ interface Script {
   formula?: string
   /** El comentario de entrada. */
   intro?: string
+  /** La llamada de ejemplo con la que arrancar el programa, si se le pide. */
+  call?: string
 }
 
 /** Una IA de mentira: según lo que se le pida (lista, código, frase, fórmula), contesta lo suyo, a trozos. */
 function ai(script: Script): AiProvider & { requests: { kind: string; request: AiRequest }[] } {
   const requests: { kind: string; request: AiRequest }[] = []
   const answer = (request: AiRequest) => {
-    const kind = request.system.includes('Lista las partes')
-      ? 'plan'
-      : request.system.includes('solo el código')
-        ? 'code'
-        : request.system.includes('solo la fórmula')
-          ? 'formula'
-          : request.system.includes('Antes de empezar')
-            ? 'intro'
-            : 'tell'
+    const kind = request.system.includes('una llamada de ejemplo')
+      ? 'call'
+      : request.system.includes('Lista las partes')
+        ? 'plan'
+        : request.system.includes('solo el código')
+          ? 'code'
+          : request.system.includes('solo la fórmula')
+            ? 'formula'
+            : request.system.includes('Antes de empezar')
+              ? 'intro'
+              : 'tell'
     requests.push({ kind, request })
+    if (kind === 'call') return script.call ?? ''
     if (kind === 'plan') return script.plan ?? ''
     if (kind === 'code') return script.code
     if (kind === 'formula') return script.formula ?? ''
@@ -915,5 +920,69 @@ describe('entender un tema, y las ayudas visuales', () => {
       small,
     )
     expect(odd.state.text).toBe('def raiz(x):\n    return x ** 0.5\n')
+  })
+})
+
+describe('un programa entero no se queda sin arrancar', () => {
+  const request = {
+    command: 'un programa que calcule la media de unas notas',
+    gen: 'g1',
+    place: {},
+    where: 'al final del programa',
+    outline: true,
+  }
+  const PLAN = 'Calcular la media: suma y divide\nRedondear: deja un decimal\n'
+  /** Solo define: tal cual, no haría nada. */
+  const DEFINES = lines(
+    'def media(notas):',
+    '    return sum(notas) / len(notas)',
+    '',
+    'def redondear(valor):',
+    '    return round(valor, 1)',
+    '',
+    'def nota_final(notas):',
+    '    return redondear(media(notas))',
+  )
+
+  it('si lo construido solo define funciones, se le añade su arranque con un ejemplo', async () => {
+    const provider = ai({ plan: PLAN, code: DEFINES, call: 'nota_final([7, 4, 9])' })
+    const { host, state } = stage('')
+    const outcome = await build(host, { decider: localDecider(), provider }, request)
+    expect(outcome.trouble).toBeNull()
+    // La función que lo arranca es la que llega a las demás; la llamada la propuso la IA, con valores sueltos.
+    expect(state.text.trimEnd().split('\n').slice(-3)).toEqual([
+      '# Arrancar: prueba con un ejemplo',
+      'resultado = nota_final([7, 4, 9])',
+      'print("Resultado:", resultado)',
+    ])
+    expect(provider.requests.filter((item) => item.kind === 'call')).toHaveLength(1)
+    expect(steps(state).at(-1)).toMatchObject({
+      say: 'Lo arranco con un ejemplo, para verlo funcionar.',
+      effect: 'born',
+    })
+  })
+
+  it('una llamada que no es solo valores no se escribe: el programa se queda como estaba', async () => {
+    const provider = ai({ plan: PLAN, code: DEFINES, call: 'nota_final(open("notas.txt"))' })
+    const { host, state } = stage('')
+    await build(host, { decider: localDecider(), provider }, request)
+    expect(state.text).not.toContain('Arrancar')
+    expect(state.text).not.toContain('open(')
+  })
+
+  it('si ya arranca y enseña algo, no se le añade nada', async () => {
+    const runs = `${DEFINES}\nprint(nota_final([7, 4, 9]))\n`
+    const provider = ai({ plan: PLAN, code: runs, call: 'nota_final([1])' })
+    const { host, state } = stage('')
+    await build(host, { decider: localDecider(), provider }, request)
+    expect(state.text).not.toContain('Arrancar')
+    expect(provider.requests.some((item) => item.kind === 'call')).toBe(false)
+  })
+
+  it('una pieza que se añade a un programa que ya existe no es un programa entero: no se arranca', async () => {
+    const provider = ai({ plan: PLAN, code: DEFINES, call: 'nota_final([7])' })
+    const { host, state } = stage('notas = [7, 4, 9]\n')
+    await build(host, { decider: localDecider(), provider }, request)
+    expect(state.text).not.toContain('Arrancar')
   })
 })

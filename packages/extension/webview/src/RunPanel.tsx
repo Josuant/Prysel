@@ -49,6 +49,7 @@ const ENDED: Record<RunSummary['ended'], string> = {
   cut: 'Era muy largo: se cortó aquí',
   error: 'Falló',
   blocked: 'No se ejecuta solo',
+  idle: 'Todavía no hace nada',
 }
 
 export interface RunPanelProps {
@@ -62,10 +63,35 @@ export interface RunPanelProps {
    * empezar otra partida). Sin esto, la consola solo enseña.
    */
   onPlay?: ((answers: string[] | null, fresh?: boolean) => void) | undefined
+  /**
+   * Lo que arregla un programa que no enseña nada: `inert`, arrancarlo con un ejemplo; `mute`, pedir que
+   * enseñe su resultado. Sin esto, la consola solo lo dice.
+   */
+  onWake?: ((idle: 'inert' | 'mute') => void) | undefined
+  /**
+   * El resultado ya se ve en otro sitio (su nodo en el diagrama): la consola empieza plegada, para no
+   * decirlo dos veces ni tapar nada. Se abre con su botón.
+   */
+  quiet?: boolean | undefined
 }
 
-export function RunPanel({ run, onPick, lit, onPlay }: RunPanelProps) {
-  const [open, setOpen] = useState(true)
+/** Lo que se dice de un programa que acabó sin enseñar nada, y cómo se llama su arreglo. */
+function idleOf(run: RunSummary): { why: string; fix: string } {
+  if (run.idle === 'mute') {
+    return { why: 'Trabaja, pero no enseña nada en pantalla.', fix: 'Que enseñe el resultado' }
+  }
+  return {
+    why: run.entry
+      ? `Define ${run.entry}, pero nadie lo arranca.`
+      : 'Define sus piezas, pero nadie las arranca.',
+    fix: 'Arrancarlo con un ejemplo',
+  }
+}
+
+export function RunPanel({ run, onPick, lit, onPlay, onWake, quiet }: RunPanelProps) {
+  // Abierta o plegada lo decide quien la usa en cuanto toca el botón; hasta entonces, según haga falta.
+  const [toggled, setToggled] = useState<boolean | null>(null)
+  const open = toggled ?? quiet !== true
   const [answer, setAnswer] = useState('')
   /** La salida con la que se mandó la última respuesta: hasta que cambie, se está ejecutando. */
   const [sentFrom, setSentFrom] = useState<RunSummary | null>(null)
@@ -116,7 +142,7 @@ export function RunPanel({ run, onPick, lit, onPlay }: RunPanelProps) {
           aria-expanded={open}
           aria-label={open ? 'Plegar la salida' : 'Ver la salida'}
           onClick={() => {
-            setOpen(!open)
+            setToggled(!open)
           }}
         >
           {open ? '–' : '+'}
@@ -173,6 +199,32 @@ export function RunPanel({ run, onPick, lit, onPlay }: RunPanelProps) {
                 )
               })}
             </pre>
+          ) : run.ended === 'idle' ? (
+            <>
+              <p className="run-panel__empty">{idleOf(run).why}</p>
+              {run.trial && (
+                // Lo que daría si se arrancara: su función principal, probada aparte con un ejemplo.
+                <pre className="run-panel__out" data-trial="">
+                  <span className="run-panel__more">Probado aparte:</span>
+                  <span className="run-panel__line">{run.trial.call}</span>
+                  {run.trial.printed &&
+                    run.trial.printed
+                      .replace(/\n$/, '')
+                      .split('\n')
+                      .slice(-6)
+                      .map((line, index) => (
+                        <span key={index} className="run-panel__line">
+                          {line === '' ? ' ' : line}
+                        </span>
+                      ))}
+                  {run.trial.returned !== undefined && (
+                    <span className="run-panel__line">
+                      → <kbd className="run-panel__typed">{run.trial.returned}</kbd>
+                    </span>
+                  )}
+                </pre>
+              )}
+            </>
           ) : (
             run.ended !== 'blocked' && <p className="run-panel__empty">No imprime nada.</p>
           )}
@@ -211,6 +263,21 @@ export function RunPanel({ run, onPick, lit, onPlay }: RunPanelProps) {
               {run.problem ? `: ${run.problem}` : ''}
               {run.line !== undefined ? ` (línea ${run.line})` : ''}
             </p>
+          )}
+          {run.ended === 'idle' && run.idle && onWake && (
+            <div className="run-panel__actions">
+              <button
+                type="button"
+                className="run-panel__play"
+                disabled={sending}
+                onClick={() => {
+                  setSentFrom(run)
+                  onWake(run.idle ?? 'inert')
+                }}
+              >
+                ▶ {idleOf(run).fix}
+              </button>
+            </div>
           )}
           {playable && (
             <div className="run-panel__actions">

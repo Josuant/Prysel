@@ -69,7 +69,7 @@ export interface Architecture extends ArchGraph, ShapeCandidate {}
 /** Un dibujo de fondo que dice la forma: no es un módulo ni una flecha. */
 export interface Figure {
   id: string
-  kind: 'ring' | 'band' | 'spokes' | 'track' | 'funnel' | 'fan'
+  kind: 'ring' | 'band' | 'spokes' | 'track' | 'funnel' | 'fan' | 'start'
   x: number
   y: number
   w: number

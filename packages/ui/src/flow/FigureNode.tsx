@@ -24,6 +24,14 @@ export function FigureNode({ data }: NodeProps<FigureFlowNode>) {
         {figure.label && <span className="arch-figure__label">{figure.label}</span>}
       </div>
     )
+  // Dónde empieza el trabajo: una marca sobre su módulo.
+  if (figure.kind === 'start')
+    return (
+      <div className="arch-start" style={{ height: h }} aria-hidden>
+        <span className="arch-start__play">▶</span>
+        {figure.label}
+      </div>
+    )
   if (figure.kind === 'track')
     return (
       <div className="arch-figure" data-kind="track" style={{ width: w, height: h }} aria-hidden>
