@@ -39,6 +39,58 @@ export function sketchOf(text: string): Sketch | null {
   return { what, parts: pieces.slice(0, 6).map((part) => part.replace(/[.,;:]+$/, '')) }
 }
 
+/** Palabras que no dicen de qué va una parte: no sirven para reconocerla en el programa. */
+const FILLER = new Set(
+  'el la los las un una unos unas de del al que como por para con sin mi mis su sus lo le se me en cada todo toda todos todas'.split(
+    ' ',
+  ),
+)
+
+/** Las palabras con peso de un texto, sin tildes ni mayúsculas («marcar_como_hecha» → marcar, hecha). */
+const wordsOf = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 3 && !FILLER.has(word))
+
+/** Dos palabras de la misma familia: empiezan igual («hechas» y «hecha», «añadir» y «añade»). */
+const akin = (a: string, b: string) => {
+  const size = Math.min(4, a.length, b.length)
+  return a.slice(0, size) === b.slice(0, size)
+}
+
+/**
+ * Qué pieza del programa cubre cada parte del esbozo, si ya hay alguna: la que más palabras comparte con
+ * ella. `pieces` son los nombres de lo construido (etapas, funciones, clases), en el orden en que aparecen.
+ * No inventa: una parte que ninguna pieza nombra se queda como hueco (`null`).
+ */
+export function filledBy(sketch: Sketch, pieces: readonly string[]): (string | null)[] {
+  const known = pieces.map((piece) => ({ piece, words: wordsOf(piece) }))
+  return sketch.parts.map((part) => {
+    const wanted = wordsOf(part)
+    let best: string | null = null
+    let most = 0
+    for (const { piece, words } of known) {
+      const shared = wanted.filter((word) => words.some((other) => akin(word, other))).length
+      if (shared > most) {
+        most = shared
+        best = piece
+      }
+    }
+    return best
+  })
+}
+
+/** Los nombres de lo que un programa ya tiene: sus etapas y sus funciones y clases. */
+export function piecesOf(source: string, stages: readonly string[]): string[] {
+  const named = [...source.matchAll(/^[ \t]*(?:async\s+)?(?:def|class)\s+([^\s(:]+)/gm)].map(
+    (match) => match[1] ?? '',
+  )
+  return [...named, ...stages].filter((name) => name !== '' && !name.startsWith('__'))
+}
+
 export interface Draft {
   name?: string
   takes?: string[]

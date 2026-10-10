@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftOf, sketchOf } from '../webview/src/drafting.ts'
+import { draftOf, filledBy, piecesOf, sketchOf } from '../webview/src/drafting.ts'
 
 /**
  * La caja de lo que se está pidiendo se rellena con lo que la frase ya dice, palabra a palabra: su nombre,
@@ -75,5 +75,46 @@ describe('el esbozo de lo que se está escribiendo', () => {
     expect(sketchOf('')).toBeNull()
     expect(sketchOf('Quiero ')).toBeNull()
     expect(sketchOf('haz')).toBeNull()
+  })
+})
+
+describe('el esbozo se llena con lo que se construye', () => {
+  const sketch = {
+    what: 'una lista de tareas',
+    parts: ['añadir', 'marcar como hechas', 'ver las pendientes', 'exportar a un archivo'],
+  }
+
+  it('cada parte se queda con la pieza que la nombra; la que nadie nombra sigue siendo un hueco', () => {
+    const source = [
+      'lista_de_tareas = []',
+      'def añadir_tarea(texto):',
+      '    pass',
+      'def marcar_como_hecha(n):',
+      '    pass',
+      'def ver_pendientes():',
+      '    pass',
+      'class Tarea:',
+      '    def __init__(self):',
+      '        pass',
+    ].join(String.fromCharCode(10))
+    const pieces = piecesOf(source, ['Estructura de datos', 'Menú principal'])
+    expect(pieces).toEqual([
+      'añadir_tarea',
+      'marcar_como_hecha',
+      'ver_pendientes',
+      'Tarea',
+      'Estructura de datos',
+      'Menú principal',
+    ])
+    expect(filledBy(sketch, pieces)).toEqual([
+      'añadir_tarea',
+      'marcar_como_hecha',
+      'ver_pendientes',
+      null,
+    ])
+  })
+
+  it('sin nada construido, todo son huecos', () => {
+    expect(filledBy(sketch, [])).toEqual([null, null, null, null])
   })
 })

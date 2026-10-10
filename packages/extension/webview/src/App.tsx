@@ -37,7 +37,7 @@ import { CommandBar } from './CommandBar.tsx'
 import { answerTo, rejection } from './answering.ts'
 import { dissolve, dragChips, flyNode, gesture } from './dragging.ts'
 import { morph } from './effects.ts'
-import { draftOf, sketchOf, type Sketch } from './drafting.ts'
+import { draftOf, filledBy, piecesOf, sketchOf, type Sketch } from './drafting.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -317,6 +317,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
+  /** El esbozo de lo último que se pidió sobre un lienzo vacío: sigue a la vista mientras se construye. */
+  const [asked, setAsked] = useState<{ sketch: Sketch; kind: string | null } | null>(null)
   /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
   const [preview, setPreview] = useState<{ kind: string; text: string } | null>(null)
   const heardWords = useRef(0)
@@ -1156,6 +1158,20 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       ? { done: Math.max(0, stages.length - pendingStages), total: stages.length }
       : null
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
+  /** Lo que se está escribiendo o diciendo ahora, esbozado. */
+  const drawing = sketchOf(typed ?? hearing ?? '')
+  // Cuando ya nadie trabaja en lo pedido (se acabó de construir, o no se pudo), su esbozo se retira: un
+  // momento después, para que se vea completo.
+  const working = order.phase === 'deciding' || building || thinking !== null || intro !== null
+  useEffect(() => {
+    if (asked === null || working) return
+    const timer = window.setTimeout(() => {
+      setAsked(null)
+    }, SKETCH_LINGER_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [asked, working])
   const goTo = (id: string) => {
     // Se selecciona lo que se ve: si el paso está dentro de algo plegado, eso que lo guarda.
     setSelected(shownIds.has(id) ? id : (view.representative(id) ?? id))
@@ -1308,6 +1324,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     awaitingPaint.current = performance.now()
     paintArmed.current = false
     setOrder({ phase: 'deciding', text })
+    // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
+    const drawn = program && program.nodes.length > 0 ? null : sketchOf(text)
+    setAsked(
+      drawn && force === undefined
+        ? {
+            sketch: drawn,
+            kind: preview && preview.kind !== 'nada' ? (HEARD_LABELS[preview.kind] ?? null) : null,
+          }
+        : null,
+    )
     setChat((previous) => [
       ...previous.slice(-60),
       { id, role: 'user', text },
@@ -1937,11 +1963,37 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               }
               intro={intro}
               chat={features.chat === true}
-              sketch={sketchOf(typed ?? hearing ?? '')}
+              sketch={drawing ?? asked?.sketch ?? null}
               kind={
-                preview && preview.kind !== 'nada' ? (HEARD_LABELS[preview.kind] ?? null) : null
+                drawing === null && asked
+                  ? asked.kind
+                  : preview && preview.kind !== 'nada'
+                    ? (HEARD_LABELS[preview.kind] ?? null)
+                    : null
+              }
+              // Ya enviado: el esbozo se queda mientras se decide y se piensa el plan, diciendo en qué va.
+              sent={
+                drawing === null && asked ? (intro ?? thinking ?? 'Decidiendo qué hacer…') : null
               }
             />
+          )}
+          {/* El esbozo de lo pedido sigue a la vista mientras se construye, y se va llenando: cada parte
+              se marca con la pieza del programa que la cubre, en cuanto existe. */}
+          {asked && program && program.nodes.length > 0 && (
+            <div className="canvas-float sketch-pin">
+              <SketchCard
+                sketch={asked.sketch}
+                kind={asked.kind}
+                filled={filledBy(
+                  asked.sketch,
+                  piecesOf(
+                    program.source,
+                    stages.map((stage) => stage.title),
+                  ),
+                )}
+                pinned
+              />
+            </div>
           )}
           {program && (
             <>
@@ -2394,6 +2446,60 @@ const HEARD_LABELS: Record<string, string> = {
   explicacion: 'Una explicación',
 }
 
+/** Cuánto se queda el esbozo de lo pedido cuando ya está construido: lo justo para verlo completo. */
+const SKETCH_LINGER_MS = 3200
+
+/**
+ * El esbozo de lo que se pide: la cosa, arriba; debajo, cada parte que la frase nombra, como el hueco de una
+ * pieza que vendrá. Con `filled`, cada hueco que el programa ya cubre lleva su marca y el nombre de la pieza.
+ */
+function SketchCard({
+  sketch,
+  kind,
+  hint = null,
+  filled,
+  pinned = false,
+}: {
+  sketch: Sketch
+  kind: string | null
+  hint?: string | null
+  filled?: (string | null)[]
+  pinned?: boolean
+}) {
+  const done = filled?.filter((piece) => piece !== null).length ?? 0
+  return (
+    <div className="sketch" data-pinned={pinned ? '' : undefined}>
+      <div className="sketch__what">
+        <span className="sketch__kind">{kind ?? 'Lo que pides'}</span>
+        <span className="sketch__name">{sketch.what}</span>
+        {filled && sketch.parts.length > 0 && (
+          <span className="sketch__count">
+            {done} de {sketch.parts.length}
+          </span>
+        )}
+      </div>
+      {sketch.parts.length > 0 && (
+        <ol className="sketch__parts">
+          {sketch.parts.map((part, index) => {
+            const piece = filled?.[index] ?? null
+            return (
+              // La clave es su sitio: una parte que se sigue escribiendo crece sin volver a entrar.
+              <li key={index} className="sketch__part" data-filled={piece ? '' : undefined}>
+                <span className="sketch__n" aria-hidden>
+                  {piece ? '✓' : index + 1}
+                </span>
+                <span className="sketch__text">{part}</span>
+                {piece && <span className="sketch__piece">{piece}</span>}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+      {hint !== null && <p className="sketch__hint">{hint}</p>}
+    </div>
+  )
+}
+
 function EmptyState({
   thinking,
   title = null,
@@ -2401,7 +2507,10 @@ function EmptyState({
   chat,
   sketch = null,
   kind = null,
+  sent = null,
 }: {
+  /** Ya se envió: en qué va quien lo construye. El esbozo no se quita mientras tanto. */
+  sent?: string | null
   thinking: string | null
   /** Si se sabe qué se está pidiendo (aún se le oye), su nombre en vez de «La IA está pensando». */
   title?: string | null
@@ -2413,6 +2522,13 @@ function EmptyState({
   kind?: string | null
 }) {
   // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
+  if (sketch !== null && sent !== null) {
+    return (
+      <div className="flex h-full items-center justify-center p-6" role="status" aria-live="polite">
+        <SketchCard sketch={sketch} kind={kind} hint={sent} />
+      </div>
+    )
+  }
   if (intro !== null) {
     return (
       <div className="flex h-full items-center justify-center p-6" role="status">
@@ -2425,28 +2541,11 @@ function EmptyState({
   if (sketch !== null && intro === null && (thinking === null || kind !== null)) {
     return (
       <div className="flex h-full items-center justify-center p-6" role="status" aria-live="polite">
-        <div className="sketch">
-          <div className="sketch__what">
-            <span className="sketch__kind">{kind ?? 'Lo que pides'}</span>
-            <span className="sketch__name">{sketch.what}</span>
-          </div>
-          {sketch.parts.length > 0 && (
-            <ol className="sketch__parts">
-              {sketch.parts.map((part, index) => (
-                // La clave es su sitio: una parte que se sigue escribiendo crece sin volver a entrar.
-                <li key={index} className="sketch__part">
-                  <span className="sketch__n" aria-hidden>
-                    {index + 1}
-                  </span>
-                  {part}
-                </li>
-              ))}
-            </ol>
-          )}
-          <p className="sketch__hint">
-            {thinking ?? 'Sigue escribiendo, o pulsa Intro: lo construyo aquí.'}
-          </p>
-        </div>
+        <SketchCard
+          sketch={sketch}
+          kind={kind}
+          hint={thinking ?? 'Sigue escribiendo, o pulsa Intro: lo construyo aquí.'}
+        />
       </div>
     )
   }

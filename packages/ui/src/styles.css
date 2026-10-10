@@ -6189,11 +6189,86 @@ button.run-panel__line:hover {
   margin: 2px 0 0;
   color: var(--ink-faint);
   font-size: 12px;
+  line-height: 1.5;
   text-align: center;
+}
+.sketch__text {
+  flex: 1;
+  min-width: 0;
+}
+/* Una parte que el programa ya cubre: deja de ser un hueco (borde entero, marca) y dice con qué pieza. */
+.sketch__part {
+  transition:
+    border-color 320ms ease,
+    background-color 320ms ease;
+}
+.sketch__part[data-filled] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+}
+.sketch__part[data-filled] .sketch__n {
+  background: var(--accent);
+  color: var(--surface);
+  animation: gist-settle 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__piece {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: gist-in 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch__count {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* Ya hay programa: el esbozo se aparta a una esquina, en pequeño, y sigue llenándose mientras se construye. */
+.sketch-pin {
+  bottom: 64px;
+  left: 16px;
+  width: min(264px, calc(100% - 32px));
+  pointer-events: none;
+  animation: gist-in 320ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+.sketch[data-pinned] {
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.22);
+}
+.sketch[data-pinned] .sketch__what {
+  padding: 7px 10px;
+  border-radius: 10px;
+  animation: none;
+}
+.sketch[data-pinned] .sketch__name {
+  font-size: 13px;
+}
+.sketch[data-pinned] .sketch__parts {
+  gap: 4px;
+  padding-left: 0;
+}
+.sketch[data-pinned] .sketch__part {
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  font-size: 12px;
+  animation: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .sketch__what,
-  .sketch__part {
+  .sketch__part,
+  .sketch__piece,
+  .sketch-pin,
+  .sketch__part[data-filled] .sketch__n {
     animation: none;
   }
 }
