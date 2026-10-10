@@ -51,8 +51,10 @@ export {
   moduleGraph,
   roleOf,
   withPlan,
+  withStory,
   withVerdict,
   type ModuleFacts,
+  type ModuleStory,
   type PlannedModule,
 } from './architecture.ts'
 export { FunctionMenu, type FunctionMenuProps } from './FunctionMenu.tsx'

@@ -7,6 +7,7 @@ import { EdgeLabelRenderer, type EdgeProps, type Edge as FlowEdge } from '@xyflo
  * Hay dos, y se distinguen de un vistazo:
  * - **dato** (continua, con su pastilla): lo que un módulo deja y el otro usa. La pastilla dice qué.
  * - **llamada** (fina, a trazos): un módulo usa algo que el otro define.
+ * - **luego** (fina, continua, sin pastilla): después de un paso viene el otro, sin pasarle nada.
  *
  * `planned`: aún no está en el código; la propuso el plan. Se dibuja punteada y tenue hasta que el código la
  * confirme (o la desmienta, y entonces desaparece).
@@ -20,7 +21,7 @@ interface Box {
 }
 
 export interface ArchEdgeData extends Record<string, unknown> {
-  kind: 'data' | 'call'
+  kind: 'data' | 'call' | 'next'
   /** Dónde están ahora los dos módulos: la flecha va de borde a borde. */
   from: Box
   to: Box

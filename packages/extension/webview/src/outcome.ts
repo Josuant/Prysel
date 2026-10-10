@@ -1,5 +1,6 @@
-import type { ModuleFacts, ViewerContent } from '@prysel/ui'
+import type { ModuleFacts, ModuleStory, ViewerContent } from '@prysel/ui'
 import type { RunSummary } from '../../src/gist/gist.ts'
+import type { Story } from '../../src/gist/story.ts'
 
 /**
  * Los dos extremos de la arquitectura, sacados de cómo le fue al programa al ejecutarlo: **dónde empieza** el
@@ -103,5 +104,43 @@ export function outcomeOf(
         text: shown.map((row) => clip(row)),
       },
     },
+  }
+}
+
+/**
+ * La historia de la ejecución, dicha con los módulos del diagrama: cada función, en el módulo donde está
+ * definida; el bucle, en el suyo. `null` si el bucle no cae en ningún módulo (no hay a quién contársela).
+ */
+export function moduleStory(
+  story: Story,
+  nodes: readonly { kind: string; label: string; line: number }[],
+  modules: readonly ModuleFacts[],
+): ModuleStory | null {
+  const moduleAt = (line: number | undefined) =>
+    line === undefined
+      ? undefined
+      : modules.find((fact) => line >= fact.line && line <= fact.lineEnd)?.id
+  const defined = new Map(
+    nodes.filter((node) => node.kind === 'abstraction.collapsed').map((n) => [n.label, n.line]),
+  )
+  const moduleOf = (fn: string) => moduleAt(defined.get(fn))
+  const anchor = moduleAt(story.loop.line)
+  if (anchor === undefined) return null
+  const all = (fns: readonly string[]) => fns.flatMap((fn) => moduleOf(fn) ?? [])
+  const { laps } = story.loop
+  return {
+    anchor,
+    ring: all(story.ring),
+    before: all(story.before),
+    flows: story.flows.flatMap((flow) => {
+      const from = moduleOf(flow.from)
+      const to = moduleOf(flow.to)
+      if (from === undefined || to === undefined) return []
+      // Una colección se dice con cuántos lleva: «poblacion ×20».
+      return [
+        { from, to, label: flow.size === undefined ? flow.name : `${flow.name} ×${flow.size}` },
+      ]
+    }),
+    caption: `${laps} ${laps === 1 ? 'vuelta' : 'vueltas'}`,
   }
 }

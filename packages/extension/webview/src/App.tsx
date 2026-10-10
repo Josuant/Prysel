@@ -8,6 +8,7 @@ import {
   Canvas,
   factsText,
   withPlan,
+  withStory,
   withVerdict,
   type PlannedModule,
   type CanvasNode,
@@ -84,7 +85,7 @@ import type { Gist, RunSummary } from '../../src/gist/gist.ts'
 import { RunPanel } from './RunPanel.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
-import { outcomeOf } from './outcome.ts'
+import { moduleStory, outcomeOf } from './outcome.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -326,6 +327,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
+  /** En un diagrama contado por su ejecución: enseñar también quién llama a quién. */
+  const [showCalls, setShowCalls] = useState(false)
   /** El plan de lo que se construye, como arquitectura: cada módulo y de cuáles necesita algo. */
   const [planned, setPlanned] = useState<readonly PlannedModule[] | null>(null)
   /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
@@ -1314,7 +1317,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         ? { shape: judgedArchitecture.shape, anchor: titleOf(judgedArchitecture.anchor) }
         : held
   if (holding?.shape !== held?.shape || holding?.anchor !== held?.anchor) setHeld(holding)
-  const architecture = useMemo(() => {
+  const heldArchitecture = useMemo(() => {
     if (!judgedArchitecture || judgedArchitecture.shape !== 'capas' || !held)
       return judgedArchitecture
     const anchor =
@@ -1330,6 +1333,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       ...(anchor === undefined ? {} : { anchor }),
     }
   }, [judgedArchitecture, held, view.moduleFacts])
+  // Y por encima de todo, lo que pasó al ejecutarlo: si el programa lo lleva un bucle, el diagrama cuenta su
+  // vuelta (los pasos en su orden, lo que viaja entre ellos), no quién llama a quién. Mientras se construye
+  // no: lo que se ejecutó era otro programa.
+  const story = constructing ? undefined : ran?.story
+  const architecture = useMemo(() => {
+    if (!heldArchitecture || !story || !program) return heldArchitecture
+    const told = moduleStory(story, program.nodes, view.moduleFacts)
+    return told ? withStory(heldArchitecture, told, { calls: showCalls }) : heldArchitecture
+  }, [heldArchitecture, story, program, view.moduleFacts, showCalls])
   // Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final.
   const outcome = useMemo(
     () =>
@@ -2352,10 +2364,28 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       le pasa un dato
                     </span>
                   )}
+                  {architecture.links.some((link) => link.kind === 'next') && (
+                    <span className="arch-legend__key" data-kind="next">
+                      luego
+                    </span>
+                  )}
                   {architecture.links.some((link) => link.kind === 'call') && (
                     <span className="arch-legend__key" data-kind="call">
                       usa a
                     </span>
+                  )}
+                  {architecture.order !== undefined && (
+                    // Contado por su ejecución, quién llama a quién sobra… salvo para quien quiera verlo.
+                    <button
+                      type="button"
+                      className="arch-legend__toggle"
+                      aria-pressed={showCalls}
+                      onClick={() => {
+                        setShowCalls(!showCalls)
+                      }}
+                    >
+                      quién llama a quién
+                    </button>
                   )}
                   {architecture.links.some((link) => link.planned) && (
                     <span className="arch-legend__key" data-kind="planned">

@@ -281,6 +281,87 @@ export function withVerdict(
   return { ...graph, shape, ...(anchor === undefined ? {} : { anchor }) }
 }
 
+/**
+ * La historia de una ejecución, ya dicha con módulos: el que lleva el bucle, los que pasan en cada vuelta (en
+ * su orden), los de antes, y lo que viaja de uno a otro.
+ */
+export interface ModuleStory {
+  anchor: string
+  ring: readonly string[]
+  before: readonly string[]
+  flows: readonly { from: string; to: string; label: string }[]
+  /** Lo que se dice en el centro del ciclo. */
+  caption: string
+}
+
+/**
+ * La arquitectura **contada por lo que pasó**: un ciclo con sus pasos en el orden en que se ejecutan, lo que
+ * viaja entre ellos como flechas de dato, y «luego» donde un paso sigue a otro sin pasarle nada. Lo que se
+ * hace antes entra al primer paso. Las flechas de «quién llama a quién» se quitan salvo que se pidan
+ * (`calls`): cuentan cómo está escrito, no cómo funciona.
+ */
+export function withStory(
+  architecture: Architecture,
+  story: ModuleStory,
+  options: { calls?: boolean } = {},
+): Architecture {
+  const known = new Set(architecture.modules.map((module) => module.id))
+  if (!known.has(story.anchor)) return architecture
+  const ring = [...new Set(story.ring)].filter((id) => known.has(id) && id !== story.anchor)
+  if (ring.length < 2) return architecture
+  const links: ArchLink[] = []
+  const linked = (from: string, to: string) =>
+    links.some((link) => link.from === from && link.to === to)
+  const add = (link: ArchLink) => {
+    if (link.from !== link.to && !linked(link.from, link.to)) links.push(link)
+  }
+  // Lo que viaja: varios nombres entre los mismos dos módulos, en una sola flecha.
+  const carried = new Map<string, { from: string; to: string; labels: string[] }>()
+  for (const flow of story.flows) {
+    if (!known.has(flow.from) || !known.has(flow.to) || flow.from === flow.to) continue
+    const key = `${flow.from}|${flow.to}`
+    const entry = carried.get(key) ?? { from: flow.from, to: flow.to, labels: [] }
+    if (!entry.labels.includes(flow.label)) entry.labels.push(flow.label)
+    carried.set(key, entry)
+  }
+  const first = ring[0] ?? ''
+  const last = ring[ring.length - 1] ?? ''
+  for (const { from, to, labels } of carried.values()) {
+    const label = labels.slice(0, 2).join(', ')
+    // Lo que el último paso le deja al primero de la vuelta siguiente pasa por la cabeza del ciclo: es ella
+    // quien decide si hay otra vuelta.
+    if (from === last && to === first && ring.length > 1) {
+      add({ from, to: story.anchor, kind: 'data', label })
+      add({ from: story.anchor, to, kind: 'data', label })
+    } else add({ from, to, kind: 'data', label })
+  }
+  // El orden de la vuelta: cabeza → primer paso → … → último → cabeza, donde no viaje ya un dato.
+  const lap = [story.anchor, ...ring, story.anchor]
+  for (let at = 0; at + 1 < lap.length; at++) {
+    add({ from: lap[at] ?? '', to: lap[at + 1] ?? '', kind: 'next' })
+  }
+  // Lo de antes entra al primer paso (o a quien le pase algo).
+  for (const id of story.before) {
+    if (!known.has(id) || ring.includes(id) || id === story.anchor) continue
+    if (!links.some((link) => link.from === id)) add({ from: id, to: first, kind: 'next' })
+  }
+  // Del análisis se conserva lo que la ejecución no contradice: los datos que no pasan por una llamada (los
+  // que guarda un módulo y leen otros) y, si se piden, las llamadas.
+  for (const link of architecture.links) {
+    if (link.kind === 'call' && options.calls !== true) continue
+    if (link.kind === 'data' && (linked(link.from, link.to) || linked(link.to, link.from))) continue
+    links.push(link)
+  }
+  return {
+    modules: architecture.modules,
+    links,
+    shape: 'ciclo',
+    anchor: story.anchor,
+    order: ring,
+    caption: story.caption,
+  }
+}
+
 const SAYS: [keyof ModuleFacts, string][] = [
   ['asks', 'pide datos por teclado'],
   ['prints', 'escribe en pantalla'],

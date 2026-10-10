@@ -3,6 +3,7 @@ import type { AiProvider } from '../../../packages/extension/src/ai/provider.ts'
 import { functionsIn, type Facts } from '../../../packages/extension/src/gist/facts.ts'
 import { entryOf, idleness, withLaunch } from '../../../packages/extension/src/gist/entry.ts'
 import { showValue } from '../../../packages/extension/src/gist/value.ts'
+import { storyOf } from '../../../packages/extension/src/gist/story.ts'
 import { judgeEntry } from '../../../packages/extension/src/jev/plain.ts'
 import {
   ANSWER_ROUNDS,
@@ -325,7 +326,10 @@ export class Gists {
         raw = await this.port.trace(text, inputs, seed)
       }
     }
-    if (raw) this.ran = runSummary(raw, inputs, mine !== null)
+    if (raw) {
+      const story = storyOf(program, raw)
+      this.ran = { ...runSummary(raw, inputs, mine !== null), ...(story ? { story } : {}) }
+    }
     // ¿Hizo algo que se vea? Si no, se dice por qué; y si es que nadie lo arranca, quién lo arrancaría.
     this.entry = null
     const idle = raw ? idleness(program, raw) : null

@@ -127,7 +127,7 @@ export function loopsIn(program: Program): LoopFacts[] {
   return loops
 }
 
-interface Episode {
+export interface Episode {
   /** El paso en el que se entra en el bucle (la primera vez que se llega a su cabecera). */
   start: number
   /** Los pasos en los que se pasa por la cabecera. */
@@ -142,7 +142,7 @@ interface Episode {
 }
 
 /** Cada vez que la ejecución entra en el bucle y sale de él. */
-function episodesOf(trace: Trace, facts: LoopFacts): Episode[] {
+export function episodesOf(trace: Trace, facts: LoopFacts): Episode[] {
   const episodes: Episode[] = []
   const open = new Map<number, Episode>()
   const events = trace.events

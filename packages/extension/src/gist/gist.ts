@@ -10,6 +10,7 @@ import { ruleFor, type Rule } from './patterns.ts'
 import { bestSample, samplesIn, type Sample } from './sample.ts'
 import { parseCall } from './value.ts'
 import type { Idleness } from './entry.ts'
+import type { Story } from './story.ts'
 
 /**
  * «Qué hace» una función, comprobado: su nombre, y una vez que se ejecutó de verdad (con qué entró y qué
@@ -231,6 +232,11 @@ export interface RunSummary {
    * devolvió y lo que imprimió, tal como salió.
    */
   trial?: { call: string; returned?: string; printed?: string }
+  /**
+   * Si lo lleva un bucle: qué pasa en cada vuelta y en qué orden, qué se hizo antes, y qué viaja de un paso a
+   * otro. Sale de la traza (ver `story.ts`); es lo que hace que el diagrama cuente cómo funciona.
+   */
+  story?: Story
   /**
    * La línea del programa donde empieza el trabajo: la primera, a la altura del archivo, que llama a una
    * función propia. Es donde el diagrama marca «empieza aquí».

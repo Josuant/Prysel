@@ -46,7 +46,8 @@ export interface ArchModule {
 export interface ArchLink {
   from: string
   to: string
-  kind: 'data' | 'call'
+  /** `next`: después de `from` viene `to` (el orden de los pasos, cuando entre ellos no viaja ningún dato). */
+  kind: 'data' | 'call' | 'next'
   /** El nombre de lo que pasa (`gastos`) o de lo que se usa (`calcular_total`). */
   label?: string
   planned?: boolean
@@ -64,7 +65,16 @@ export interface ShapeCandidate {
   anchor?: string
 }
 
-export interface Architecture extends ArchGraph, ShapeCandidate {}
+export interface Architecture extends ArchGraph, ShapeCandidate {
+  /**
+   * En un ciclo: los módulos de cada vuelta, **en el orden en que pasan** (sin la cabeza, que es `anchor`).
+   * Sale de la ejecución; con él, el anillo no se reordena. Sin él, el anillo lo forman los módulos a los que
+   * llama la cabeza.
+   */
+  order?: readonly string[]
+  /** En un ciclo: lo que se dice en su centro (cuántas vueltas dio). */
+  caption?: string
+}
 
 /** Un dibujo de fondo que dice la forma: no es un módulo ni una flecha. */
 export interface Figure {
@@ -433,8 +443,11 @@ export function layoutArchitecture(
         .filter((link) => link.kind === 'call' && link.from === anchor)
         .map((link) => link.to),
     )
-    const turning = ids.filter((id) => used.has(id) && id !== anchor)
-    const waiting = ids.filter((id) => id !== anchor && !used.has(id))
+    // Si se sabe en qué orden pasan de verdad, ese es el anillo (y no se toca); si no, a quién llama la cabeza.
+    const told = architecture.order?.filter((id) => ids.includes(id) && id !== anchor)
+    const fixed = told !== undefined && told.length > 0
+    const turning = fixed ? told : ids.filter((id) => used.has(id) && id !== anchor)
+    const waiting = ids.filter((id) => id !== anchor && !turning.includes(id))
     /** El anillo con ese orden y, a su izquierda, la columna de los que esperan en ese otro. */
     const place = (ringOrder: readonly string[], columnOrder: readonly string[]) => {
       const circle = ring([anchor, ...ringOrder], sizeOf)
@@ -461,7 +474,9 @@ export function layoutArchitecture(
     // que menos se aparta del orden del programa).
     let best = place(turning, waiting)
     const searchable =
-      turning.length <= SEARCH_MAX - 1 && waiting.length <= 4 && architecture.links.length > 0
+      (fixed || turning.length <= SEARCH_MAX - 1) &&
+      waiting.length <= 4 &&
+      architecture.links.length > 0
     if (searchable) {
       const moved = (order: readonly string[], from: readonly string[]) =>
         order.reduce((sum, id, at) => sum + Math.abs(at - from.indexOf(id)), 0)
@@ -469,7 +484,7 @@ export function layoutArchitecture(
         cost: crossings([...best.circle, ...best.column], architecture.links),
         moved: 0,
       }
-      for (const ringOrder of permutations(turning)) {
+      for (const ringOrder of fixed ? [turning] : permutations(turning)) {
         for (const columnOrder of permutations(waiting)) {
           if (least.cost === 0) break
           const tried = place(ringOrder, columnOrder)
@@ -484,7 +499,12 @@ export function layoutArchitecture(
         }
       }
     }
-    figures.push({ id: 'ring', kind: 'ring', ...frame(best.circle, 'centre') })
+    figures.push({
+      id: 'ring',
+      kind: 'ring',
+      ...frame(best.circle, 'centre'),
+      ...(architecture.caption ? { label: architecture.caption } : {}),
+    })
     boxes = [...best.circle, ...best.column]
   } else if (architecture.shape === 'embudo' && anchor !== undefined) {
     // Arriba, a lo ancho, lo que entra; debajo, donde se junta; y más abajo, lo que sale de ahí.

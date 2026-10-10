@@ -6603,6 +6603,14 @@ button.run-panel__line:hover {
   animation: arch-travel 2600ms linear infinite;
   animation-delay: calc(1200ms + var(--i, 0) * 260ms);
 }
+/* Luego: el orden de los pasos, cuando entre ellos no viaja nada. Fina y continua, sin pastilla. */
+.arch-edge[data-kind='next'] .arch-edge__line {
+  stroke: color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
+  stroke-width: 1.4;
+}
+.arch-edge[data-kind='next'] .arch-edge__head {
+  fill: color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
+}
 .arch-edge[data-emphasis='dim'] {
   opacity: 0.22;
 }
@@ -6717,6 +6725,23 @@ button.run-panel__line:hover {
 .arch-legend__key[data-kind='call']::before {
   border-top: 1.5px dashed var(--ink-muted);
 }
+.arch-legend__key[data-kind='next']::before {
+  border-top: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
+}
+.arch-legend__toggle {
+  padding: 1px 8px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 11px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.arch-legend__toggle[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+}
 .arch-legend__key[data-kind='planned']::before {
   border-top: 1.5px dotted var(--ink-faint);
 }
@@ -6772,6 +6797,12 @@ button.run-panel__line:hover {
   fill: color-mix(in srgb, var(--accent) 3%, transparent);
   stroke: color-mix(in srgb, var(--accent) 26%, transparent);
   stroke-width: 1.5;
+}
+.arch-figure__caption {
+  fill: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 600;
+  dominant-baseline: central;
 }
 .arch-figure[data-kind='spokes'] .arch-figure__ring {
   stroke-dasharray: 3 7;

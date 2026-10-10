@@ -81,6 +81,12 @@ export function FigureNode({ data }: NodeProps<FigureFlowNode>) {
           pathLength={1}
         />
       )}
+      {figure.kind === 'ring' && figure.label && (
+        // Lo que se repite, y cuántas veces: en el centro del anillo, donde no estorba a nadie.
+        <text className="arch-figure__caption" x={w / 2} y={h / 2} textAnchor="middle">
+          {figure.label}
+        </text>
+      )}
     </svg>
   )
 }
