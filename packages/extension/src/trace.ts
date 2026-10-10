@@ -97,6 +97,22 @@ export function coastOf(raw: unknown): { coast: CoastedLoop[] } | Record<string,
   return coast.length > 0 ? { coast } : {}
 }
 
+/** Lo que el motor dice que se usó tras dejar de grabar, tal como llega (o nada, si no vale). */
+export function laterOf(
+  raw: unknown,
+): { later: NonNullable<Trace['later']> } | Record<string, never> {
+  const found = raw as { calls?: unknown; lines?: unknown } | null
+  if (!found || typeof found !== 'object') return {}
+  const calls: Record<number, number> = {}
+  for (const [line, count] of Object.entries((found.calls ?? {}) as Record<string, unknown>)) {
+    if (Number.isFinite(Number(line)) && typeof count === 'number') calls[Number(line)] = count
+  }
+  const lines = Array.isArray(found.lines)
+    ? found.lines.filter((line): line is number => typeof line === 'number')
+    : []
+  return Object.keys(calls).length + lines.length > 0 ? { later: { calls, lines } } : {}
+}
+
 export interface Trace {
   events: TraceEvent[]
   /** Se llegó al tope de pasos: la traza está cortada (y, salvo `finished`, el programa no acabó). */
@@ -113,6 +129,12 @@ export interface Trace {
    * grabaron las primeras.
    */
   coast?: CoastedLoop[]
+  /**
+   * Lo que se usó **después** de dejar de grabar: cuántas veces se entró en cada función (por la línea de su
+   * `def`) y qué líneas del programa (fuera de toda función) se pisaron. Con `finished`, sumado a lo grabado,
+   * es todo lo que se usó.
+   */
+  later?: { calls: Record<number, number>; lines: number[] }
   error: { name: string; message: string; line: number | null } | null
   /** Todo lo que imprimió el programa (el final, si es muy largo). */
   output: string

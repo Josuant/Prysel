@@ -887,6 +887,11 @@ class _Tracer:
         self.loops = loops
         self.watch = {}
         self.coasted = []
+        # Y lo que se usa mientras tanto: cuántas veces se entra en cada función (por la línea de su `def`) y
+        # qué líneas del programa se pisan. Con ello se sabe, de un programa largo, qué partes trabajan y
+        # cuáles nadie toca, aunque ya no se grabe su paso a paso.
+        self.later_calls = {}
+        self.later_lines = set()
         self.limit = limit
         self.out = out
         # Al llegar al tope de pasos, en vez de cortar: dejar de grabar y dejar que el programa acabe (con
@@ -954,6 +959,13 @@ class _Tracer:
         self.ticks += 1
         if self.ticks & 255 == 0 and time.perf_counter() > self.deadline:
             raise _TraceLimit()
+        code = frame.f_code
+        if event == "call":
+            if code.co_filename == self.filename and code.co_name not in _COMPREHENSIONS:
+                first = code.co_firstlineno
+                self.later_calls[first] = self.later_calls.get(first, 0) + 1
+        elif event == "line" and code.co_name == "<module>" and code.co_filename == self.filename:
+            self.later_lines.add(frame.f_lineno)
         loops = self.watch.get(id(frame))
         if loops is not None:
             if event == "line":
@@ -1254,6 +1266,11 @@ class Runner:
                     {"l": loop["l"], "f": loop["f"], "n": loop["n"], "e": loop["e"]}
                     for loop in tracer.coasted
                 ],
+                # Y de lo que se usó después: las veces que se entró en cada función, y las líneas del programa.
+                "later": {
+                    "calls": {str(line): count for line, count in tracer.later_calls.items()},
+                    "lines": sorted(tracer.later_lines),
+                },
                 "error": error,
                 "output": out.getvalue()[-MAX_TEXT:],
             }

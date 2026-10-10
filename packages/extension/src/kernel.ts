@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { createServer, type Socket } from 'node:net'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { coastOf, type Trace, type TraceExtra } from './trace.ts'
+import { coastOf, laterOf, type Trace, type TraceExtra } from './trace.ts'
 
 /**
  * El cliente del motor de ejecución (`runtime/prysel_runner.py`): lanza un Python, le pide que ejecute
@@ -388,6 +388,7 @@ export class Kernel {
           truncated: event['truncated'] === true,
           ...(event['finished'] === true ? { finished: true } : {}),
           ...coastOf(event['coast']),
+          ...laterOf(event['later']),
           error: (event['error'] as Trace['error']) ?? null,
           output: String(event['output'] ?? ''),
         })

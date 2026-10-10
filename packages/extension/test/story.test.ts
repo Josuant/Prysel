@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { buildProgram, createPythonParser, type Program } from '@prysel/python'
 import { withLaunch } from '../src/gist/entry.ts'
 import { storyOf } from '../src/gist/story.ts'
+import { usageOf } from '../src/gist/gist.ts'
 import { layoutArchitecture } from '@prysel/spatial'
 import {
   architectureOf,
@@ -325,11 +326,19 @@ describe.skipIf(!available)('la historia de un programa que se repite', () => {
       expect(story?.ring).toEqual(['sumar', 'recortar'])
       expect(story?.loop).toMatchObject({ laps: 300, ended: 'done' })
       expect(lapsSaid(story?.loop ?? { laps: 0, ended: 'cut' })).toBe('300')
+      // Y lo que se usó: aunque solo se grabaran unas vueltas, las llamadas se siguieron contando.
+      const usage = usageOf(trace)
+      expect(usage.partial).toBeUndefined()
+      expect(usage.calls[2]).toBe(300)
+      expect(usage.calls[6]).toBe(300)
+      expect(usage.lines).toEqual(expect.arrayContaining([10, 11, 12, 13, 14]))
       // Sin dejarlo acabar, se sigue sin saber: son «más de» las que se grabaron.
       const short = await kernel.trace(source, 150, false, true)
       const unknown = storyOf(parse(source), short)
       expect(unknown?.loop.ended).toBe('cut')
       expect(unknown?.loop.laps).toBeLessThan(300)
+      expect(usageOf(short)).toMatchObject({ partial: true })
+      expect(usageOf(short).calls[2]).toBeLessThan(300)
     })
 
     it('uno que se corta con un `break`: en qué vuelta', async () => {

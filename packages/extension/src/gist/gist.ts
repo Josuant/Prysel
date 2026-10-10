@@ -352,10 +352,16 @@ export function usageOf(trace: Trace): Usage {
     if (event.k === 'call') calls[event.l] = (calls[event.l] ?? 0) + 1
     else if (event.k === 'line' && event.f === 0) lines.add(event.l)
   }
+  // Lo que el motor siguió contando tras dejar de grabar el paso a paso.
+  for (const [line, count] of Object.entries(trace.later?.calls ?? {})) {
+    calls[Number(line)] = (calls[Number(line)] ?? 0) + count
+  }
+  for (const line of trace.later?.lines ?? []) lines.add(line)
   return {
     calls,
     lines: [...lines].sort((a, b) => a - b),
-    ...(trace.truncated ? { partial: true } : {}),
+    // Solo es parcial si de verdad no se vio el final: cortada, y sin haberla dejado acabar.
+    ...(trace.truncated && trace.finished !== true ? { partial: true } : {}),
   }
 }
 

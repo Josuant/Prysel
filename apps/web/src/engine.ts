@@ -6,7 +6,12 @@ import type {
   Summary,
 } from '../../../packages/extension/src/kernel.ts'
 import type { Engine } from '../../../packages/extension/src/session.ts'
-import { coastOf, type Trace, type TraceExtra } from '../../../packages/extension/src/trace.ts'
+import {
+  coastOf,
+  laterOf,
+  type Trace,
+  type TraceExtra,
+} from '../../../packages/extension/src/trace.ts'
 import PythonWorker from './python.worker.ts?worker'
 
 /**
@@ -177,6 +182,7 @@ export class WebKernel implements Engine {
           truncated: event['truncated'] === true,
           ...(event['finished'] === true ? { finished: true } : {}),
           ...coastOf(event['coast']),
+          ...laterOf(event['later']),
           error: (event['error'] as Trace['error']) ?? null,
           output: String(event['output'] ?? ''),
         })
