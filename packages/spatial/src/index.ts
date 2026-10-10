@@ -16,6 +16,10 @@ export {
   type Figure,
   type ModuleRole,
   type ShapeCandidate,
+  fitZoom,
+  tailSide,
+  withTail,
+  TAIL_GAP,
 } from './architecture.ts'
 export { analyze, entryPoints, type Legibility } from './analyze.ts'
 export { generateProgram, type GenerateOptions } from './generate.ts'

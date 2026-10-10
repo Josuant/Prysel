@@ -1391,6 +1391,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     [architecture, outcome],
   )
   const playback = usePlayback(beats.length)
+  // Las franjas que ocupan las barras que flotan sobre la arquitectura: arriba las migas; abajo la leyenda
+  // y, si hay historia, la de ver una vuelta (y la consola, si van encima de ella).
+  const hasStory = beats.length > 0
+  const reserve = useMemo(
+    () =>
+      architecture
+        ? {
+            top: 40,
+            bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
+          }
+        : null,
+    [architecture, hasStory, consoleBox, cramped],
+  )
   const playingBeat = playback.at === null ? undefined : beats[playback.at]
   const beat = useMemo(
     () =>
@@ -2228,6 +2241,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     : null
                 }
                 beat={beat}
+                reserve={reserve}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {

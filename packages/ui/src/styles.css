@@ -6550,7 +6550,14 @@ button.run-panel__line:hover {
   border-top: 2px solid color-mix(in srgb, var(--role-tint) 70%, transparent);
 }
 
-/* Un módulo de la arquitectura se dice con palabras: su subtítulo puede ocupar dos líneas. */
+/* Un módulo de la arquitectura se dice con palabras: su título y su subtítulo pueden ocupar dos líneas. */
+.section-card[data-plain] .section__title {
+  display: -webkit-box;
+  line-height: 19px;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 .section-card[data-plain] .section-card__sub {
   display: -webkit-box;
   white-space: normal;

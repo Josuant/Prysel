@@ -190,6 +190,35 @@ interface Box {
   h: number
 }
 
+/** El zoom al que un plano de ese tamaño cabe entero en un lienzo. */
+export function fitZoom(bounds: Size, frame: Size, pad = 24): number {
+  return Math.min(
+    (frame.w - pad * 2) / Math.max(1, bounds.w),
+    (frame.h - pad * 2) / Math.max(1, bounds.h),
+  )
+}
+
+/** Lo que separa la arquitectura de su **cola** (lo que sale al final: el resultado). */
+export const TAIL_GAP = { x: 110, y: 56 }
+
+/** Lo que ocupa la arquitectura con su cola a la derecha o debajo. */
+export function withTail(bounds: Size, tail: Size, side: 'right' | 'bottom'): Size {
+  return side === 'right'
+    ? { w: bounds.w + TAIL_GAP.x + tail.w, h: Math.max(bounds.h, tail.h + PAD * 2) }
+    : { w: Math.max(bounds.w, tail.w + PAD * 2), h: bounds.h + TAIL_GAP.y + tail.h }
+}
+
+/**
+ * Dónde va la cola: a la derecha (se lee «y al final, esto») salvo que debajo el conjunto se vea claramente
+ * más grande en ese lienzo (uno estrecho, o un diagrama ya muy ancho).
+ */
+export function tailSide(bounds: Size, tail: Size, frame: Size | undefined): 'right' | 'bottom' {
+  if (!frame) return 'right'
+  const right = fitZoom(withTail(bounds, tail, 'right'), frame)
+  const bottom = fitZoom(withTail(bounds, tail, 'bottom'), frame)
+  return Math.min(1, bottom) > Math.min(1, right) * 1.08 ? 'bottom' : 'right'
+}
+
 const overlap = (a: Box, b: Box, margin: number) =>
   Math.abs(a.x - b.x) < (a.w + b.w) / 2 + margin && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + margin
 
@@ -269,6 +298,39 @@ function ring(ids: readonly string[], sizeOf: (id: string) => Size): Box[] {
   })
 }
 
+/** Lo alto que se prueba el anillo, sobre lo mínimo: de apaisado a bien alto. */
+const RING_TALL = [1, 1.4, 1.8, 2.3, 2.9, 3.6]
+
+/**
+ * El anillo a esa altura, **lo más estrecho que se pueda**: cada módulo en su ángulo, y la elipse tan cerrada
+ * a lo ancho como deje que ninguno pise a otro y que entre dos seguidos quede el tramo de su flecha (con su
+ * pastilla, si van uno al lado del otro). Un anillo alto y estrecho cabe más grande en un lienzo que no es
+ * muy apaisado. `null` si a esa altura no hay manera.
+ */
+function ringAt(ids: readonly string[], sizeOf: (id: string) => Size, ry: number): Box[] | null {
+  const count = ids.length
+  const gapX = (a: Box, b: Box) => Math.abs(a.x - b.x) - (a.w + b.w) / 2
+  const gapY = (a: Box, b: Box) => Math.abs(a.y - b.y) - (a.h + b.h) / 2
+  const clear = (boxes: readonly Box[]) =>
+    boxes.every((a, i) =>
+      boxes.every((b, j) => {
+        if (j <= i) return true
+        const next = j === i + 1 || (i === 0 && j === count - 1)
+        // Seguidos: sitio para la flecha (en vertical) o para la flecha con su pastilla (en horizontal).
+        return next ? gapY(a, b) >= 44 || gapX(a, b) >= GAP.x : gapY(a, b) >= 20 || gapX(a, b) >= 28
+      }),
+    )
+  for (let rx = 0; rx <= 1400; rx += 8) {
+    const boxes = ids.map((id, at) => {
+      const angle = -Math.PI / 2 + (2 * Math.PI * at) / count
+      const size = sizeOf(id)
+      return { id, x: Math.cos(angle) * rx, y: Math.sin(angle) * ry, w: size.w, h: size.h }
+    })
+    if (clear(boxes)) return boxes
+  }
+  return null
+}
+
 /** El rectángulo que abarca unos módulos, por sus centros (para un anillo) o por sus bordes. */
 function frame(boxes: readonly Box[], by: 'centre' | 'edge') {
   const half = (box: Box, axis: 'w' | 'h') => (by === 'edge' ? box[axis] / 2 : 0)
@@ -290,6 +352,13 @@ export function layoutArchitecture(
   options: {
     /** Lo más ancho que puede ser una fila de módulos: a partir de ahí, se parte en dos (como un texto). */
     maxWidth?: number
+    /**
+     * El lienzo en el que se va a ver. Con él, donde la forma admite varias colocaciones (el ciclo: más alto
+     * o más ancho, con lo de antes a su izquierda o encima), se queda con la que se ve más grande ahí.
+     */
+    frame?: Size
+    /** Lo que irá a la cola (el resultado): cuenta para saber cuánto cabe. */
+    tail?: Size
   } = {},
 ): ArchLayout {
   const maxWidth = options.maxWidth ?? DEFAULT_WIDTH
@@ -301,13 +370,13 @@ export function layoutArchitecture(
   let boxes: Box[] = []
   const figures: Figure[] = []
   /** Los módulos en filas que caben en el ancho que hay: cada fila, los que entren (uno al menos). */
-  const packed = (line: readonly string[]): string[][] => {
+  const packed = (line: readonly string[], limit = maxWidth): string[][] => {
     const rows: string[][] = []
     let width = 0
     for (const id of line) {
       const own = sizeOf(id).w
       const last = rows[rows.length - 1]
-      if (last && width + GAP.x + own <= maxWidth) {
+      if (last && width + GAP.x + own <= limit) {
         last.push(id)
         width += GAP.x + own
       } else {
@@ -454,12 +523,38 @@ export function layoutArchitecture(
     const fixed = told !== undefined && told.length > 0
     const turning = fixed ? told : ids.filter((id) => used.has(id) && id !== anchor)
     const waiting = ids.filter((id) => id !== anchor && !turning.includes(id))
-    /** El anillo con ese orden y, a su izquierda, la columna de los que esperan en ese otro. */
-    const place = (ringOrder: readonly string[], columnOrder: readonly string[]) => {
-      const circle = ring([anchor, ...ringOrder], sizeOf)
-      spread(circle, { x: 0, y: 0 }, 28)
+    /**
+     * El anillo con ese orden y los que esperan en ese otro: a su izquierda, en columna, o encima, en filas.
+     * `tall`: lo alto que es el anillo sobre lo mínimo (`null`: el apaisado de siempre).
+     */
+    const place = (
+      ringOrder: readonly string[],
+      columnOrder: readonly string[],
+      tall: number | null = null,
+      side: 'left' | 'top' = 'left',
+    ) => {
+      const members = [anchor, ...ringOrder]
+      const lowest = Math.max(60, ...members.map((id) => sizeOf(id).h)) + 44
+      let circle = tall === null ? null : ringAt(members, sizeOf, lowest * tall)
+      if (!circle) {
+        circle = ring(members, sizeOf)
+        spread(circle, { x: 0, y: 0 }, 28)
+      }
       const edge = frame(circle, 'edge')
       const column: Box[] = []
+      if (side === 'top') {
+        // Encima, en filas no más anchas que el anillo: así no lo ensanchan.
+        const lines = packed(columnOrder, Math.max(edge.w, 520))
+        let bottom = edge.y - GAP.y * 0.8
+        for (const line of [...lines].reverse()) {
+          const made = row(line, sizeOf, edge.x + edge.w / 2, 0)
+          const high = heightOf(made)
+          for (const box of made) box.y += bottom - high
+          column.push(...made)
+          bottom -= high + GAP.y * 0.6
+        }
+        return { circle, column }
+      }
       let top = 0
       for (const id of columnOrder) {
         const size = sizeOf(id)
@@ -475,31 +570,66 @@ export function layoutArchitecture(
       }
       return { circle, column }
     }
-    // El orden del programa manda, salvo que con otro haya menos flechas pasando por encima de un módulo:
-    // se prueban los órdenes del anillo y de la columna y se queda el que menos cruza (y, entre esos, el
-    // que menos se aparta del orden del programa).
-    let best = place(turning, waiting)
     const searchable =
       (fixed || turning.length <= SEARCH_MAX - 1) &&
       waiting.length <= 4 &&
       architecture.links.length > 0
-    if (searchable) {
-      const moved = (order: readonly string[], from: readonly string[]) =>
-        order.reduce((sum, id, at) => sum + Math.abs(at - from.indexOf(id)), 0)
+    const moved = (order: readonly string[], from: readonly string[]) =>
+      order.reduce((sum, id, at) => sum + Math.abs(at - from.indexOf(id)), 0)
+    /**
+     * Con esa geometría, el orden: el del programa manda, salvo que con otro haya menos flechas pasando por
+     * encima de un módulo. Se prueban los órdenes del anillo y de los que esperan y se queda el que menos
+     * cruza (y, entre esos, el que menos se aparta del orden del programa).
+     */
+    const arranged = (tall: number | null, side: 'left' | 'top') => {
+      let found = place(turning, waiting, tall, side)
       let least = {
-        cost: crossings([...best.circle, ...best.column], architecture.links),
+        cost: crossings([...found.circle, ...found.column], architecture.links),
         moved: 0,
       }
-      for (const ringOrder of fixed ? [turning] : permutations(turning)) {
-        for (const columnOrder of permutations(waiting)) {
-          if (least.cost === 0) break
-          const tried = place(ringOrder, columnOrder)
-          const found = {
-            cost: crossings([...tried.circle, ...tried.column], architecture.links),
-            moved: moved(ringOrder, turning) + moved(columnOrder, waiting),
+      if (searchable) {
+        for (const ringOrder of fixed ? [turning] : permutations(turning)) {
+          for (const columnOrder of permutations(waiting)) {
+            if (least.cost === 0) break
+            const tried = place(ringOrder, columnOrder, tall, side)
+            const got = {
+              cost: crossings([...tried.circle, ...tried.column], architecture.links),
+              moved: moved(ringOrder, turning) + moved(columnOrder, waiting),
+            }
+            if (got.cost < least.cost || (got.cost === least.cost && got.moved < least.moved)) {
+              least = got
+              found = tried
+            }
           }
-          if (found.cost < least.cost || (found.cost === least.cost && found.moved < least.moved)) {
-            least = found
+        }
+      }
+      return { ...found, cost: least.cost }
+    }
+    let best: { circle: Box[]; column: Box[] } = arranged(null, 'left')
+    const room = options.frame
+    if (room) {
+      // Con el lienzo a la vista: de las colocaciones posibles, la que se ve más grande en él (contando el
+      // resultado, a su lado o debajo). Una flecha que cruza a un módulo resta; y a igualdad, la de siempre.
+      const scoreOf = (tried: { circle: Box[]; column: Box[]; cost: number }) => {
+        const all = frame([...tried.circle, ...tried.column], 'edge')
+        // Con sus márgenes, y el sitio de la marca de salida sobre la cabeza del ciclo.
+        const bounds = { w: all.w + PAD * 2, h: all.h + PAD * 2 + 26 }
+        const zoom = options.tail
+          ? Math.max(
+              fitZoom(withTail(bounds, options.tail, 'right'), room),
+              fitZoom(withTail(bounds, options.tail, 'bottom'), room),
+            )
+          : fitZoom(bounds, room)
+        return Math.min(1, zoom) * 0.88 ** tried.cost
+      }
+      let top = scoreOf(best as { circle: Box[]; column: Box[]; cost: number })
+      for (const side of waiting.length > 0 ? (['left', 'top'] as const) : (['left'] as const)) {
+        for (const tall of [null, ...RING_TALL]) {
+          if (tall === null && side === 'left') continue
+          const tried = arranged(tall, side)
+          const score = scoreOf(tried)
+          if (score > top * 1.03) {
+            top = score
             best = tried
           }
         }

@@ -47,6 +47,9 @@ export interface LayoutOptions {
   architecture?: Architecture
   /** Lo más ancho que puede ser una fila de módulos de la arquitectura (lo que cabe a un tamaño legible). */
   architectureWidth?: number
+  /** El lienzo en el que se verá la arquitectura, y lo que irá a su cola (el resultado): ver `layoutArchitecture`. */
+  architectureFrame?: { w: number; h: number }
+  architectureTail?: { w: number; h: number }
 }
 
 /** Lo que mide de largo una fila antes de plegar a la siguiente, si no se dice otra cosa. */
@@ -424,7 +427,11 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     const arch = layoutArchitecture(
       architecture,
       new Map(modules.map((node) => [node.id, node.size])),
-      o.architectureWidth === undefined ? {} : { maxWidth: o.architectureWidth },
+      {
+        ...(o.architectureWidth === undefined ? {} : { maxWidth: o.architectureWidth }),
+        ...(o.architectureFrame === undefined ? {} : { frame: o.architectureFrame }),
+        ...(o.architectureTail === undefined ? {} : { tail: o.architectureTail }),
+      },
     )
     const loose = g.nodes.filter((node) => !wanted.has(node.id))
     const rest =

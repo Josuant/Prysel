@@ -483,10 +483,35 @@ export const SECTION = {
   /** Cuántos chips caben a cada lado de la flecha; el resto se cuenta («+2»). */
   uses: 3,
   leaves: 4,
-  /** Dicha solo con palabras (en la arquitectura): lo que cabe en una línea del subtítulo, y su ancho mínimo. */
-  plainLine: 34,
-  plainMin: 200,
+  /**
+   * Dicha solo con palabras (en la arquitectura): las letras que caben en una línea del título y del
+   * subtítulo (se parten en dos líneas antes que ensanchar la tarjeta: estrecha, el diagrama se ve más
+   * grande), lo que mide de alto cada línea del título, y su ancho mínimo.
+   */
+  plainTitle: 17,
+  plainLine: 25,
+  titleLine: 19,
+  plainMin: 180,
 } as const
+
+/**
+ * Un texto partido por sus palabras en líneas de hasta `max` letras. Si no cabe en `lines` líneas, se da más
+ * ancho (de letra en letra) hasta que quepa: una palabra larga no se corta.
+ */
+export function wrapWords(text: string, max: number, lines = 2): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return []
+  for (let width = Math.max(1, max); ; width++) {
+    const rows: string[] = []
+    for (const word of words) {
+      const last = rows[rows.length - 1]
+      if (last !== undefined && last.length + 1 + word.length <= width) {
+        rows[rows.length - 1] = `${last} ${word}`
+      } else rows.push(word)
+    }
+    if (rows.length <= lines || width > text.length) return rows
+  }
+}
 
 /** Lo que mide un chip o una pastilla con ese nombre en una tarjeta de etapa. */
 export const sectionChipWidth = (name: string) => Math.ceil(name.length * 6.8 + 22)
@@ -534,21 +559,22 @@ export function sectionCardSize(card: {
 }): { w: number; h: number } {
   const indent = SECTION.pad + SECTION.badge + 10
   if (card.plain) {
-    const text = card.subtitle ?? ''
-    const lines = text.length === 0 ? 0 : text.length > SECTION.plainLine ? 2 : 1
-    const perLine =
-      lines === 2 ? Math.min(SECTION.plainLine + 6, Math.ceil(text.length / 2) + 6) : text.length
+    const longest = (rows: readonly string[]) => Math.max(0, ...rows.map((row) => row.length))
+    const title = wrapWords(card.title, SECTION.plainTitle)
+    const sub = wrapWords(card.subtitle ?? '', SECTION.plainLine)
     const width = Math.max(
-      // El número, el papel, el título y el botón de abrirla.
-      indent + SECTION.badge + Math.ceil(card.title.length * 8.2) + 10 + 20 + SECTION.pad,
-      // Con un poco de holgura: si el texto no cabe en sus líneas, se corta.
-      lines === 0 ? 0 : indent + perLine * 6.9 + SECTION.pad + 8,
+      // El número, el papel, el título y el botón de abrirla. Con un poco de holgura: si el texto no cabe
+      // en sus líneas, se corta.
+      indent + SECTION.badge + Math.ceil(longest(title) * 8.4) + 10 + 20 + SECTION.pad + 6,
+      sub.length === 0 ? 0 : indent + longest(sub) * 6.9 + SECTION.pad + 8,
     )
     return {
       w: snap(clamp(width, SECTION.plainMin, SECTION.max)),
-      // Bajo la cabecera, el hueco de la tarjeta y sus líneas.
+      // La cabecera (más alta si el título va en dos líneas) y, debajo, el hueco y las líneas del subtítulo.
       h: snap(
-        SECTION.pad * 2 + SECTION.head + (lines === 0 ? 0 : SECTION.gap + lines * SECTION.sub),
+        SECTION.pad * 2 +
+          Math.max(SECTION.head, title.length * SECTION.titleLine) +
+          (sub.length === 0 ? 0 : SECTION.gap + sub.length * SECTION.sub),
       ),
     }
   }

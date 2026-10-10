@@ -32,8 +32,10 @@ import {
 } from '@prysel/morphology'
 import {
   SCOPE_FRAME,
+  TAIL_GAP,
   channelOf,
   layout,
+  tailSide,
   type Architecture,
   type Axis,
   type Figure,
@@ -240,6 +242,11 @@ export interface CanvasProps {
    * por las que le llega algo (`desde>hasta`), y lo que dura el paso. `serial` cambia en cada paso.
    */
   beat?: { at: string; links: readonly string[]; serial: number; ms: number } | null
+  /**
+   * Lo que ocupan, arriba y abajo, las barras que flotan sobre el lienzo (las migas, la de ver una vuelta, la
+   * leyenda): el encuadre deja esas franjas libres, y la arquitectura se coloca para lo que queda.
+   */
+  reserve?: { top?: number; bottom?: number } | null
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -413,7 +420,6 @@ const MODULE_TRAY_AT = { x: 28, y: 28 }
 const EDGE_TYPES = { prysel: PryselEdge, arch: ArchEdge }
 /** El nodo del resultado del programa, y lo que se separa de la arquitectura. */
 const RESULT_ID = RESULT_BEAT
-const RESULT_GAP = 110
 const RESULT_NODE: CanvasNode = { id: RESULT_ID, kind: 'output.display', label: 'Resultado' }
 /** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
 const SHARED_FROM = 3
@@ -460,6 +466,7 @@ function CanvasInner({
   start = null,
   exit = null,
   beat = null,
+  reserve = null,
   addTarget,
   palette,
   addToModule = true,
@@ -600,6 +607,17 @@ function CanvasInner({
   const [run, setRun] = useState<number | undefined>(undefined)
   /** Lo más ancho que puede ser una fila de módulos de la arquitectura, para el ancho que tiene el lienzo. */
   const [archRun, setArchRun] = useState<number | undefined>(undefined)
+  /** Lo que mide el lienzo (a saltos, para no recolocar a cada píxel): la arquitectura se coloca para él. */
+  const [frameSize, setFrameSize] = useState<{ w: number; h: number } | undefined>(undefined)
+  const reserveTop = reserve?.top ?? 0
+  const reserveBottom = reserve?.bottom ?? 0
+  const archFrame = useMemo(
+    () =>
+      frameSize
+        ? { w: frameSize.w, h: Math.max(200, frameSize.h - reserveTop - reserveBottom) }
+        : undefined,
+    [frameSize, reserveTop, reserveBottom],
+  )
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
   /** El diagrama (su `fitKey`) al que una orden llevó la cámara: ahí el encuadre ya no se rehace solo. */
@@ -623,6 +641,11 @@ function CanvasInner({
    * únicamente como chips. No hay cables de datos, ni puertos para ellos.
    */
   const flow = aside
+  // El resultado, si lo hay, va a la cola de la arquitectura: cuenta para saber cuánto cabe.
+  const tailSize = useMemo(
+    () => (result && flow && architecture ? viewerSize(result.content) : undefined),
+    [result, flow, architecture],
+  )
   const nodes = useMemo(
     () => allNodes.filter((node) => !node.handwritten && !(aside && node.viewer)),
     [allNodes, aside],
@@ -905,10 +928,29 @@ function CanvasInner({
       ...(axis === 'vertical' ? { maxRun: 0 } : run === undefined ? {} : { maxRun: run }),
       // Las filas de módulos miden lo que cabe a un tamaño que se lea, sin contar lo que va al margen.
       ...(flow && architecture
-        ? { architecture, ...(archRun === undefined ? {} : { architectureWidth: archRun }) }
+        ? {
+            architecture,
+            ...(archRun === undefined ? {} : { architectureWidth: archRun }),
+            ...(archFrame === undefined ? {} : { architectureFrame: archFrame }),
+            ...(tailSize === undefined ? {} : { architectureTail: tailSize }),
+          }
         : {}),
     })
-  }, [plan, densityOf, axis, flow, gapX, gapY, linked, resized, run, architecture, archRun])
+  }, [
+    plan,
+    densityOf,
+    axis,
+    flow,
+    gapX,
+    gapY,
+    linked,
+    resized,
+    run,
+    architecture,
+    archRun,
+    archFrame,
+    tailSize,
+  ])
 
   /**
    * La procedencia a demanda: al seleccionar un nodo se dibujan sus cables ocultos (de dónde le llegan
@@ -1046,12 +1088,15 @@ function CanvasInner({
   const shiftX = aside && sideW > 0 ? sideW + MODULE_TRAY_AT.x + SIDE_GAP : 0
   const shiftY = !aside && moduleTray ? moduleTray.h + 24 : 0
   /** Hasta dónde llega el diagrama; a partir de ahí, el margen de las notas. */
-  // El resultado, si lo hay, va a la derecha de la arquitectura: el encuadre le deja su sitio.
+  // El resultado, si lo hay, va a la cola de la arquitectura: a su derecha o, si así se ve más grande en
+  // este lienzo, debajo. El encuadre le deja su sitio.
   const resultSize = useMemo(
     () => (result && figures !== undefined ? viewerSize(result.content) : null),
     [result, figures],
   )
-  const resultReserve = resultSize ? RESULT_GAP + resultSize.w : 0
+  const resultSide = resultSize ? tailSide(layoutBounds, resultSize, archFrame) : 'right'
+  const resultReserve = resultSize && resultSide === 'right' ? TAIL_GAP.x + resultSize.w : 0
+  const resultBelow = resultSize && resultSide === 'bottom' ? TAIL_GAP.y + resultSize.h : 0
   const diagramW =
     (aside
       ? shiftX + layoutBounds.w
@@ -1063,12 +1108,13 @@ function CanvasInner({
     () => ({
       // Un salto que sale de un bucle (`break`) baja por su derecha: el encuadre le deja sitio.
       w: diagramW + noteReserve + (flow ? FLOW_LANE + 8 : 0),
-      h: Math.max(
-        layoutBounds.h + shiftY,
-        aside && moduleTray ? moduleTray.h + MODULE_TRAY_AT.y * 2 : 0,
-      ),
+      h:
+        Math.max(
+          layoutBounds.h + shiftY,
+          aside && moduleTray ? moduleTray.h + MODULE_TRAY_AT.y * 2 : 0,
+        ) + resultBelow,
     }),
-    [diagramW, noteReserve, layoutBounds.h, shiftY, aside, moduleTray, flow],
+    [diagramW, noteReserve, layoutBounds.h, shiftY, aside, moduleTray, flow, resultBelow],
   )
 
   const motionItems = useMemo(
@@ -2038,11 +2084,17 @@ function CanvasInner({
   // ── El resultado y el arranque: los dos extremos de la arquitectura ──
   const resultAt =
     resultSize && archModules.size > 0
-      ? {
-          x: shiftX + layoutBounds.w + RESULT_GAP - 28,
-          y: shiftY + Math.max(28, (layoutBounds.h - resultSize.h) / 2),
-          ...resultSize,
-        }
+      ? resultSide === 'bottom'
+        ? {
+            x: shiftX + Math.max(28, (layoutBounds.w - resultSize.w) / 2),
+            y: shiftY + layoutBounds.h - 28 + TAIL_GAP.y,
+            ...resultSize,
+          }
+        : {
+            x: shiftX + layoutBounds.w + TAIL_GAP.x - 28,
+            y: shiftY + Math.max(28, (layoutBounds.h - resultSize.h) / 2),
+            ...resultSize,
+          }
       : null
   const resultNodes: ViewerFlowNode[] =
     result && resultAt
@@ -2461,7 +2513,7 @@ function CanvasInner({
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
   const avoidW = avoid?.w ?? 0
   const avoidH = avoid?.h ?? 0
-  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}`
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}|${reserveTop}:${reserveBottom}`
   const lastSettle = useRef(settle)
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
@@ -2480,11 +2532,12 @@ function CanvasInner({
       // La cámara está donde la dejó una orden: no se la lleva un reencuadre.
       if (spotHeld.current === fitKey) return
       const pad = 24
-      // Lo que hay para el diagrama: el lienzo, menos el rincón que ocupe la consola.
+      // Lo que hay para el diagrama: el lienzo, menos las franjas de las barras que flotan arriba y abajo y
+      // el rincón que ocupe la consola (lo que sobresalga de la franja de abajo).
       const room = roomFor(
-        { w: frame.clientWidth, h: frame.clientHeight },
+        { w: frame.clientWidth, h: frame.clientHeight - reserveTop - reserveBottom },
         bounds,
-        avoidW > 0 && avoidH > 0 ? { w: avoidW, h: avoidH } : null,
+        avoidW > 0 && avoidH > reserveBottom ? { w: avoidW, h: avoidH - reserveBottom } : null,
         pad,
       )
       const byWidth = Math.max(0.15, (room.w - pad * 2) / bounds.w)
@@ -2507,7 +2560,7 @@ function CanvasInner({
       void setViewport(
         {
           x: (room.w - bounds.w * zoom) / 2,
-          y: Math.max(pad, (room.h - bounds.h * zoom) / 2),
+          y: reserveTop + Math.max(pad, (room.h - bounds.h * zoom) / 2),
           zoom,
         },
         { duration: first || !animate ? 0 : 300 },
@@ -2534,6 +2587,8 @@ function CanvasInner({
     follow,
     avoidW,
     avoidH,
+    reserveTop,
+    reserveBottom,
   ])
 
   // El foco de una orden: la cámara va a donde el nodo **va a quedar** (no a donde está a medio camino de
@@ -2591,6 +2646,9 @@ function CanvasInner({
     const observer = new ResizeObserver(() => {
       setRun(runFor(frame.clientWidth))
       setArchRun(archRunFor(frame.clientWidth))
+      const w = Math.floor(frame.clientWidth / 40) * 40
+      const h = Math.floor(frame.clientHeight / 40) * 40
+      setFrameSize((known) => (known?.w === w && known.h === h ? known : { w, h }))
     })
     observer.observe(frame)
     return () => {
