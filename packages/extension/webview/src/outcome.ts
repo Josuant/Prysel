@@ -1,4 +1,4 @@
-import type { ModuleFacts, ModuleStory, ViewerContent } from '@prysel/ui'
+import type { ModuleFacts, ModuleState, ModuleStory, ViewerContent } from '@prysel/ui'
 import type { RunSummary } from '../../src/gist/gist.ts'
 import type { Story } from '../../src/gist/story.ts'
 
@@ -105,6 +105,66 @@ export function outcomeOf(
       },
     },
   }
+}
+
+/**
+ * El **estado de cada módulo** tras ejecutar el programa: cuántas veces se usó, si nadie lo usa, si no llegó a
+ * ejecutarse, o si es donde falló. Sale de lo que se usó de verdad (`RunSummary.usage`): un módulo de
+ * funciones, por las veces que se entró en ellas; uno con código suelto, por si se pisó alguna de sus líneas.
+ *
+ * Si la traza se dejó de grabar antes del final, las veces son «al menos» y de lo que no aparece no se dice
+ * que no se use: pudo usarse después.
+ */
+export function moduleStates(
+  run: RunSummary | null,
+  nodes: readonly { kind: string; line: number }[],
+  modules: readonly ModuleFacts[],
+): Record<string, ModuleState> {
+  const usage = run?.usage
+  if (!run || !usage || run.ended === 'blocked') return {}
+  const states: Record<string, ModuleState> = {}
+  const defs = nodes.filter((node) => node.kind === 'abstraction.collapsed').map((n) => n.line)
+  for (const fact of modules) {
+    const within = (line: number) => line >= fact.line && line <= fact.lineEnd
+    if (run.ended === 'error' && run.line !== undefined && within(run.line)) {
+      states[fact.id] = {
+        tone: 'failed',
+        label: 'falló aquí',
+        title: run.problem ? `Aquí se paró: ${run.problem}` : 'Aquí se paró el programa.',
+      }
+      continue
+    }
+    const own = defs.filter(within)
+    if (fact.defines && own.length > 0) {
+      const times = own.reduce((sum, line) => sum + (usage.calls[line] ?? 0), 0)
+      if (times > 0) {
+        states[fact.id] = {
+          tone: 'ran',
+          label: `×${times}${usage.partial ? '+' : ''}`,
+          title: usage.partial
+            ? `Se usó al menos ${times} ${times === 1 ? 'vez' : 'veces'} (luego se dejó de contar).`
+            : `Se usó ${times} ${times === 1 ? 'vez' : 'veces'} al ejecutar el programa.`,
+        }
+      } else if (!usage.partial && run.ended !== 'error') {
+        states[fact.id] = {
+          tone: 'unused',
+          label: 'sin usar',
+          title: 'El programa no llegó a usarlo: nadie lo llama.',
+        }
+      }
+      continue
+    }
+    // Código suelto: o se pisó alguna de sus líneas (sin contar las que solo definen algo), o no llegó.
+    const ran = usage.lines.some((line) => within(line) && !own.includes(line))
+    if (!ran && !usage.partial && run.ended !== 'error') {
+      states[fact.id] = {
+        tone: 'idle',
+        label: 'no se ejecutó',
+        title: 'El programa acabó sin pasar por aquí.',
+      }
+    }
+  }
+  return states
 }
 
 /** Cuántas vueltas dio, dicho sin prometer de más: si no se le vio salir, son «más de» las que se contaron. */

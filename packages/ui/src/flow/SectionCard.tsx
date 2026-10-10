@@ -14,6 +14,16 @@ import type { SectionGlyph, SectionInfo, Subprocess } from '../program.ts'
  * un marco con esa misma cabecera y, dentro, el diagrama de flujo de siempre.
  */
 
+/**
+ * El estado de un módulo tras ejecutar el programa, dicho en una pestaña sobre su borde: `ran` (cuántas veces
+ * se usó), `unused` (nadie lo usa), `idle` (no llegó a ejecutarse) o `failed` (ahí se paró).
+ */
+export interface ModuleState {
+  tone: 'ran' | 'unused' | 'idle' | 'failed'
+  label: string
+  title: string
+}
+
 /** Las pastillas de los subprocesos: cada una abre la función, la clase o el método al que se llama. */
 export function Subprocesses({
   opens,
@@ -152,6 +162,8 @@ export interface SectionCardProps {
   role?: ModuleRole | undefined
   /** En la arquitectura: cuántos módulos usan lo que guarda (sus flechas salen al seleccionarlo). */
   usedBy?: number | undefined
+  /** En la arquitectura: cómo le fue al ejecutar el programa (cuántas veces se usó, si nadie lo usa…). */
+  state?: ModuleState | undefined
   /** Lo que dice el rótulo en sus demás líneas. */
   note?: string | undefined
   /** Solo con palabras: sin los nombres del código (en la arquitectura; el código queda a un gesto). */
@@ -168,6 +180,7 @@ export function SectionCard({
   info,
   role,
   usedBy,
+  state,
   note,
   plain,
   size,
@@ -250,6 +263,11 @@ export function SectionCard({
         )}
         {onToggle && <Toggle info={info} open={false} onToggle={onToggle} />}
       </header>
+      {state && (
+        <span className="section__state" data-tone={state.tone} title={state.title}>
+          {state.label}
+        </span>
+      )}
       {info.subtitle && (
         <p
           className="section-card__sub"

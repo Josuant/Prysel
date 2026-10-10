@@ -29,7 +29,7 @@ import { LAPS_HEADROOM } from '../laps.ts'
 import { titledScene } from '../gist.ts'
 import { GistCard } from './GistCard.tsx'
 import { markOpening, openingNow, unrollDelay } from './opening.ts'
-import { SectionCard, SectionFrame } from './SectionCard.tsx'
+import { SectionCard, SectionFrame, type ModuleState } from './SectionCard.tsx'
 import { TRAY, resultNames, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
 
@@ -121,6 +121,8 @@ export interface PryselNodeData extends Record<string, unknown> {
   role?: ModuleRole
   /** En la arquitectura: cuántos módulos usan lo que este guarda (cuando son muchos, se dice aquí). */
   usedBy?: number
+  /** En la arquitectura: cómo le fue a este módulo al ejecutar el programa. */
+  moduleState?: ModuleState
   /** Abrir un subproceso (la función, la clase o el método al que llama) desde su pastilla. */
   onOpen?: (id: string) => void
 }
@@ -520,6 +522,7 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
             info={stage}
             role={data.role}
             usedBy={data.usedBy}
+            state={data.moduleState}
             note={node.note}
             plain={data.role !== undefined}
             size={size}

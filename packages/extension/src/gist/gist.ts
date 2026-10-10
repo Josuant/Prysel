@@ -297,6 +297,12 @@ export interface RunSummary {
    * función propia. Es donde el diagrama marca «empieza aquí».
    */
   start?: number
+  /**
+   * Lo que se usó de verdad al ejecutarlo: cuántas veces se entró en cada función (por la línea de su `def`)
+   * y qué líneas del programa (fuera de toda función) se pisaron. `partial`: se dejó de grabar antes de que
+   * acabara, así que son «al menos» (y lo que no aparece puede haberse usado después).
+   */
+  usage?: Usage
   /** Con `error`: cuál, y en qué línea. Con `blocked`: por qué. */
   problem?: string
   line?: number
@@ -332,6 +338,27 @@ export function outputSources(trace: Trace): (number | null)[] {
 }
 
 /** El resumen de una ejecución, a partir de su traza. */
+export interface Usage {
+  calls: Record<number, number>
+  lines: number[]
+  partial?: boolean
+}
+
+/** Lo que se usó al ejecutar el programa: ver `RunSummary.usage`. */
+export function usageOf(trace: Trace): Usage {
+  const calls: Record<number, number> = {}
+  const lines = new Set<number>()
+  for (const event of trace.events) {
+    if (event.k === 'call') calls[event.l] = (calls[event.l] ?? 0) + 1
+    else if (event.k === 'line' && event.f === 0) lines.add(event.l)
+  }
+  return {
+    calls,
+    lines: [...lines].sort((a, b) => a - b),
+    ...(trace.truncated ? { partial: true } : {}),
+  }
+}
+
 export function runSummary(trace: Trace, typed?: readonly string[], mine = false): RunSummary {
   const waiting = trace.error?.name === 'NoMoreInput'
   const failed = trace.error !== null && !waiting
@@ -354,6 +381,7 @@ export function runSummary(trace: Trace, typed?: readonly string[], mine = false
     ...(mine ? { mine: true } : {}),
     ...startOf(trace),
     sources: alignedSources(trace),
+    usage: usageOf(trace),
   }
 }
 

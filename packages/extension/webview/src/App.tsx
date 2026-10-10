@@ -89,7 +89,7 @@ import { Transport, usePlayback } from './Transport.tsx'
 import { IdeaView } from './IdeaView.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
-import { moduleStory, outcomeOf } from './outcome.ts'
+import { moduleStates, moduleStory, outcomeOf } from './outcome.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -1401,6 +1401,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       }) as React.CSSProperties,
     [consoleBox, cramped],
   )
+  // Cómo le fue a cada módulo al ejecutarlo (cuántas veces se usó, si nadie lo usa, si ahí falló). Mientras se
+  // construye no: lo que se ejecutó era otro programa.
+  const states = useMemo(
+    () =>
+      architecture && program && !constructing
+        ? moduleStates(ran, program.nodes, view.moduleFacts)
+        : null,
+    [architecture, program, constructing, ran, view.moduleFacts],
+  )
   // Ver pasar una vuelta: los pasos de la historia, y el mando que los recorre.
   const beats = useMemo(
     () =>
@@ -2285,6 +2294,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 }
                 beat={beat}
                 reserve={reserve}
+                moduleStates={states}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {

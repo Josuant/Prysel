@@ -6652,6 +6652,37 @@ button.run-panel__line:hover {
   background: color-mix(in srgb, var(--role-tint, var(--ink-muted)) 16%, var(--surface));
   color: var(--role-tint, var(--ink-muted));
 }
+/* El estado tras ejecutar: una pestaña sobre el borde de abajo. */
+.section__state {
+  position: absolute;
+  z-index: 1;
+  right: 18px;
+  bottom: -9px;
+  padding: 0 7px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--ink-muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.section__state[data-tone='unused'],
+.section__state[data-tone='idle'] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--state-warning) 60%, transparent);
+  color: var(--state-warning);
+}
+.section__state[data-tone='failed'] {
+  border-color: color-mix(in srgb, var(--state-error) 65%, transparent);
+  color: var(--state-error);
+}
+/* Un módulo que nadie usa (o por el que no se pasó) se retira un poco: no es parte de lo que ocurre. */
+.flow-node:has(.section__state[data-tone='unused']) .section-card,
+.flow-node:has(.section__state[data-tone='idle']) .section-card {
+  border-style: dashed;
+}
 /* Va sobre el borde, como una pestaña: no le quita sitio al título. */
 .section__shared {
   position: absolute;

@@ -47,6 +47,7 @@ import { EdgeDefs } from './Edge.tsx'
 import { NoteNode, type NoteFlowNode } from './flow/NoteNode.tsx'
 import { NOTE, NOTE_GUTTER, noteSize, placeNotes, type NoteContent, type NoteSlot } from './note.ts'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
+import type { ModuleState } from './flow/SectionCard.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
 import {
   ArchEdge,
@@ -257,6 +258,8 @@ export interface CanvasProps {
    * leyenda): el encuadre deja esas franjas libres, y la arquitectura se coloca para lo que queda.
    */
   reserve?: { top?: number; bottom?: number } | null
+  /** En la arquitectura: el estado de cada módulo tras ejecutar el programa (por su id). */
+  moduleStates?: Readonly<Record<string, ModuleState>> | null
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -477,6 +480,7 @@ function CanvasInner({
   exit = null,
   beat = null,
   reserve = null,
+  moduleStates = null,
   addTarget,
   palette,
   addToModule = true,
@@ -1763,6 +1767,9 @@ function CanvasInner({
           // En la arquitectura, el papel del módulo: su icono y su tinte.
           ...(roleOf[node.id] === undefined ? {} : { role: roleOf[node.id] }),
           ...(sharedBy[node.id] === undefined ? {} : { usedBy: sharedBy[node.id] }),
+          ...(roleOf[node.id] !== undefined && moduleStates?.[node.id]
+            ? { moduleState: moduleStates[node.id] }
+            : {}),
           showStatus,
           linkedSlots: linked[node.id] ?? [],
           connectable,
