@@ -7619,8 +7619,24 @@ button.run-panel__line:hover {
 .arch-legend__key[data-kind='next']::before {
   border-top: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
 }
+/* Las siluetas son lo primero que cede si la leyenda no cabe: las que no entran pasan a otra fila, que no
+   se ve. Lo demás (la forma, las flechas, la radiografía) no se encoge. */
+.arch-legend > * {
+  flex: none;
+}
+.arch-legend > .arch-legend__roles {
+  display: flex;
+  min-width: 0;
+  height: 20px;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  overflow: hidden;
+}
 /* Las siluetas, en pequeño: la misma forma que lleva cada módulo según su papel. */
 .arch-legend__role {
+  height: 20px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -7660,7 +7676,7 @@ button.run-panel__line:hover {
 }
 /* Con poco ancho la leyenda dice lo justo: la forma y las flechas. */
 @media (max-width: 720px) {
-  .arch-legend__role {
+  .arch-legend > .arch-legend__roles {
     display: none;
   }
 }

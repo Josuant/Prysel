@@ -2879,17 +2879,22 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       usa a
                     </span>
                   )}
-                  {/* Las siluetas: qué clase de parte es cada una, para reconocerla sin leer. */}
-                  {roleKeys.map((role) => (
-                    <span
-                      key={role}
-                      className="arch-legend__role"
-                      data-role={role}
-                      title={ROLE_KEYS[role].why}
-                    >
-                      {ROLE_KEYS[role].word}
+                  {/* Las siluetas: qué clase de parte es cada una, para reconocerla sin leer. Si no caben
+                      todas, se quedan las que quepan: lo demás de la leyenda va antes. */}
+                  {roleKeys.length > 0 && (
+                    <span className="arch-legend__roles">
+                      {roleKeys.map((role) => (
+                        <span
+                          key={role}
+                          className="arch-legend__role"
+                          data-role={role}
+                          title={ROLE_KEYS[role].why}
+                        >
+                          {ROLE_KEYS[role].word}
+                        </span>
+                      ))}
                     </span>
-                  ))}
+                  )}
                   {/* La radiografía: lo que el diagrama dice con palabras, visto por dentro. Cada módulo
                       enseña los nombres que usa y deja, y vuelven las flechas de quién llama a quién. */}
                   <button
@@ -3135,6 +3140,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 ...previous.slice(-60),
                 { id: -Date.now(), role: 'ai', text: 'Deshecho.', tone: 'muted' },
               ])
+              // Y cuando se vuelva a ejecutar, se dice cómo quedó.
+              if (version !== null)
+                healthWait.current = { before: ran, how: 'order', from: version + 1 }
               post({ type: 'undoOrder' })
             } else if (option.order) sendOrder(option.order)
             else sendOrder(lastOrder.current, option.force)
