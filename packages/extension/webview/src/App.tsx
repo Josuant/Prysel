@@ -166,9 +166,10 @@ const ROLE_KEYS: Record<ModuleRole, { word: string; why: string }> = {
 
 /**
  * Lo que ocupa el panel de las perillas abierto: lo que se le deja a su lado (su ancho y su margen), y arriba
- * cuando no hay ancho para ponerse al lado (lo de la barra y lo de cada fila).
+ * cuando no hay ancho para ponerse al lado (lo de la barra y lo de cada fila). `bar` y `under`: lo que se baja
+ * el diagrama abierto (que no reserva nada más arriba) con la barra plegada, y con el panel abierto.
  */
-const KNOBS = { width: 324, top: 104, row: 30 }
+const KNOBS = { width: 324, top: 104, row: 30, bar: 46, under: 54 }
 
 /** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
 const WIDE_PANEL = 1100
@@ -1609,6 +1610,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // Las perillas abiertas son un panel: el diagrama se coloca en lo que queda (a su lado si hay ancho, debajo
   // si no), en vez de quedar tapado.
   const knobsShown = hasKnobs && knobsOpen && knobs.length > 0
+  // (La barra solo está en el programa entero, y no mientras se construye.)
+  const knobsBar = hasKnobs && lesson === null && view.focus === null && !constructing
   const reserve = useMemo(
     () =>
       architecture
@@ -1617,8 +1620,21 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
             ...(knobsShown && !narrow ? { left: KNOBS.width } : {}),
           }
-        : null,
-    [architecture, hasStory, hasKnobs, knobsShown, narrow, knobs.length, consoleBox, cramped],
+        : knobsBar
+          ? // En el diagrama abierto la barra flota sobre su esquina: el diagrama empieza debajo de ella.
+            { top: knobsShown ? KNOBS.under + KNOBS.row * knobs.length : KNOBS.bar, bottom: 0 }
+          : null,
+    [
+      architecture,
+      hasStory,
+      hasKnobs,
+      knobsBar,
+      knobsShown,
+      narrow,
+      knobs.length,
+      consoleBox,
+      cramped,
+    ],
   )
   const playingBeat = playback.at === null ? undefined : beats[playback.at]
   const beat = useMemo(

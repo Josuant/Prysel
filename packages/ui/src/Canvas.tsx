@@ -2287,15 +2287,18 @@ function CanvasInner({
       h: figure.h,
     })),
   ]
-  const labelledEdges: ArchFlowEdge[] = archEdges.map((edge) => {
+  const withLabel = (edge: ArchFlowEdge): ArchFlowEdge => {
     const text = typeof edge.label === 'string' ? edge.label : ''
     if (text === '' || !edge.data) return edge
     const size = labelSize(text)
     const { from, to, bend = 0 } = edge.data
     const labelAt = labelSpot(from, to, bend, size, labelObstacles)
-    // Quién llama a quién ya lo dice la flecha (a trazos): si su pastilla no cabe sin tapar un módulo, se
-    // queda sin ella. Lo que viaja sí se dice siempre.
-    if (edge.data.kind === 'call' && labelCover(from, to, bend, size, moduleBoxes, labelAt) > 0) {
+    // Quién llama a quién ya lo dice la flecha (a trazos): si su pastilla no cabe sin tapar a nadie (un
+    // módulo, u otra pastilla), se queda sin ella. Lo que viaja sí se dice siempre.
+    if (
+      edge.data.kind === 'call' &&
+      labelCover(from, to, bend, size, labelObstacles, labelAt) > 0
+    ) {
       const bare = { ...edge }
       delete bare.label
       return bare
@@ -2303,7 +2306,14 @@ function CanvasInner({
     const { mid } = archPath(from, to, bend, labelAt)
     labelObstacles.push({ x: mid.x - size.w / 2, y: mid.y - size.h / 2, ...size })
     return labelAt === 0.5 ? edge : { ...edge, data: { ...edge.data, labelAt } }
-  })
+  }
+  // Primero las de lo que viaja (se dicen siempre); las de llamada, después, en el sitio que quede.
+  const placedLabels = new Map<string, ArchFlowEdge>()
+  for (const edge of archEdges)
+    if (edge.data?.kind !== 'call') placedLabels.set(edge.id, withLabel(edge))
+  for (const edge of archEdges)
+    if (edge.data?.kind === 'call') placedLabels.set(edge.id, withLabel(edge))
+  const labelledEdges: ArchFlowEdge[] = archEdges.map((edge) => placedLabels.get(edge.id) ?? edge)
   // Al reproducir: el marco de «ahora está aquí», alrededor del módulo (o del resultado) al que se llega.
   const spotBox = !beat
     ? undefined
