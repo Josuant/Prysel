@@ -427,13 +427,22 @@ export function spokenHead(head: string): string {
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
 /** Por qué acabó un bucle, dicho para quien lo lee. */
-function endOf(laps: Laps, head: string): string {
-  const total = plural(laps.total, 'vuelta', 'vueltas')
-  if (laps.ended === 'break') return `Salió con break en la vuelta ${laps.total}.`
-  if (laps.ended === 'return')
-    return `Devolvió algo en la vuelta ${laps.total} y salió de la función.`
-  if (laps.ended === 'error') return `Falló en la vuelta ${laps.total}: ${laps.error ?? 'error'}`
-  if (laps.ended === 'cut') return `${total}… y aquí se quedó: no acabó en esta ejecución.`
+export function endOf(laps: Laps, head: string): string {
+  // Si se dejó de mirar vuelta a vuelta pero el motor siguió contando, las vueltas y la salida son las de
+  // verdad: se dice igual que si se hubiera visto entero.
+  const count = laps.total + (laps.later?.laps ?? 0)
+  const ended = laps.later ? (laps.later.ended ?? 'cut') : laps.ended
+  const total = plural(count, 'vuelta', 'vueltas')
+  if (ended === 'break') return `Salió con break en la vuelta ${count}.`
+  if (ended === 'return') return `Devolvió algo en la vuelta ${count} y salió de la función.`
+  if (ended === 'error')
+    return laps.later
+      ? `Falló en la vuelta ${count}.`
+      : `Falló en la vuelta ${count}: ${laps.error ?? 'error'}`
+  if (ended === 'cut')
+    return laps.later
+      ? `Llevaba ${total} y seguía: no se le vio acabar.`
+      : `${total}… y aquí se quedó: no acabó en esta ejecución.`
   const test = /^while\s+(.+)$/.exec(head)?.[1]
   return test
     ? `${total}; luego «${test}» dejó de cumplirse.`
@@ -472,6 +481,8 @@ export function loopScene(gist: Gist): GistScene | null {
   const takes = laps.laps[0]?.takes.map((take) => take.name) ?? []
   const carried = laps.laps[0]?.leaves.map((leave) => leave.name) ?? []
   const prints = laps.laps.some((lap) => lap.printed)
+  // Las veces de verdad: las que se miraron y las que el motor contó después.
+  const times = laps.total + (laps.later?.laps ?? 0)
   const columns = [...takes, ...carried, ...(prints ? ['imprime'] : [])]
   const start =
     laps.carried.length > 0
@@ -507,8 +518,8 @@ export function loopScene(gist: Gist): GistScene | null {
     block: 'loop',
     title:
       carried.length > 0
-        ? `Repite ${plural(laps.total, 'vez', 'veces')}, llevando ${carried.join(', ')}`
-        : `Repite ${plural(laps.total, 'vez', 'veces')}`,
+        ? `Repite ${plural(times, 'vez', 'veces')}, llevando ${carried.join(', ')}`
+        : `Repite ${plural(times, 'vez', 'veces')}`,
     beats: rows.length,
     stepMs: 650,
     lanes: [

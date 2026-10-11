@@ -49,9 +49,15 @@ export interface Laps {
   /** Cuántas vueltas dio de verdad. */
   total: number
   /** Cuántas vueltas se saltaron al enseñarlas, y dónde (antes de la vuelta con ese índice en `laps`). */
+  /** (`at` igual al número de filas: las que faltan van detrás de la última que se enseña.) */
   skipped?: { count: number; at: number }
   /** Por qué acabó. */
   ended: 'done' | 'break' | 'return' | 'error' | 'cut'
+  /**
+   * Con `cut`: lo que pasó después de dejar de grabar, que el motor siguió contando. Cuántas vueltas más dio
+   * y cómo salió (`null`: tampoco entonces se le vio salir).
+   */
+  later?: { laps: number; ended: 'done' | 'break' | 'return' | 'error' | null }
   /** Con `error`: cuál. */
   error?: string
 }
@@ -294,17 +300,38 @@ function lapsOf(trace: Trace, index: TraceIndex, facts: LoopFacts, episode: Epis
     }
   })
   const total = laps.length
-  const shownLaps =
-    total <= MAX_LAPS ? laps : [...laps.slice(0, MAX_LAPS - 2), ...laps.slice(total - 1)]
+  // La última pasada por la cabecera de un bucle que acaba solo es la comprobación final, no una vuelta.
+  const later =
+    episode.ended === 'cut' && episode.coast
+      ? {
+          laps: Math.max(0, episode.coast.heads - (episode.coast.ended === 'done' ? 1 : 0)),
+          ended: episode.coast.ended,
+        }
+      : undefined
+  // Si siguió después de dejar de grabar, la última vuelta grabada no es la última: se enseñan las primeras
+  // y, detrás, cuántas más dio.
+  const shownLaps = later
+    ? laps.slice(0, MAX_LAPS - 1)
+    : total <= MAX_LAPS
+      ? laps
+      : [...laps.slice(0, MAX_LAPS - 2), ...laps.slice(total - 1)]
+  const unseen = later ? total + later.laps - shownLaps.length : 0
   return {
     carried: kept
       .filter((name) => name in opening)
       .map((name) => ({ name, value: valueOf(opening[name]) })),
     laps: shownLaps,
     total,
-    ...(total > MAX_LAPS ? { skipped: { count: total - (MAX_LAPS - 1), at: MAX_LAPS - 2 } } : {}),
+    ...(later
+      ? unseen > 0
+        ? { skipped: { count: unseen, at: shownLaps.length } }
+        : {}
+      : total > MAX_LAPS
+        ? { skipped: { count: total - (MAX_LAPS - 1), at: MAX_LAPS - 2 } }
+        : {}),
     ended: episode.ended,
     ...(episode.error !== undefined ? { error: episode.error } : {}),
+    ...(later ? { later } : {}),
   }
 }
 

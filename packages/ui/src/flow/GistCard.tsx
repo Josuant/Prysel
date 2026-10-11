@@ -559,6 +559,18 @@ function LapsTable({ piece }: { piece: Extract<GistPiece, { type: 'laps' }> }) {
             ),
           ]
         })}
+        {/* Las que dio después de las que se enseñan (se dejó de mirar vuelta a vuelta). */}
+        {piece.skipped &&
+          piece.skipped.at >= piece.rows.length &&
+          row(
+            'skip',
+            [
+              <span key="n" className="gist-laps__skip" style={{ gridColumn: '1 / -1' }}>
+                … {piece.skipped.count} vueltas más
+              </span>,
+            ],
+            finished ? {} : { 'data-wait': '' },
+          )}
         {row(
           'end',
           [

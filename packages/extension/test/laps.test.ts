@@ -7,6 +7,7 @@ import { gistsOf } from '../src/gist/gist.ts'
 import { bestLaps, loopsIn, targetsOf, type LoopFacts } from '../src/gist/laps.ts'
 import { showValue } from '../src/gist/value.ts'
 import { Kernel } from '../src/kernel.ts'
+import { endOf } from '../webview/src/gisting.ts'
 
 /**
  * «Cómo funciona» un bucle: de una vez que se ejecutó de verdad, vuelta a vuelta. Qué tomó cada vuelta, cómo
@@ -206,6 +207,45 @@ describe.skipIf(!available)('las vueltas: lo que pasó al ejecutarlo de verdad',
     expect(laps?.laps).toHaveLength(7)
     expect(laps?.skipped).toEqual({ count: 13, at: 6 })
     expect(showValue(laps?.laps.at(-1)?.takes[0]?.value ?? { kind: 'opaque', text: '' })).toBe('19')
+  })
+
+  it('si la traza se corta dentro, dice las vueltas que dio de verdad y cómo salió', async () => {
+    const source = lines('s = 0', 'for i in range(300):', '    s += i', 'print(s)')
+    // Con sitio para unas pocas vueltas: se deja de grabar, pero el motor sigue contando.
+    const laps = bestLaps(
+      await kernel.trace(source, 60, false, false, { finish: true }),
+      loopAt(parse(source), 2),
+    )
+    expect(laps?.ended).toBe('cut')
+    expect(laps?.later?.ended).toBe('done')
+    expect((laps?.total ?? 0) + (laps?.later?.laps ?? 0)).toBe(300)
+    expect(laps?.total).toBeLessThan(60)
+    // Se enseñan las primeras y, detrás, cuántas más dio: la última que se grabó no era la última.
+    expect(laps?.laps).toHaveLength(7)
+    expect(laps?.skipped).toEqual({ count: 293, at: 7 })
+    // Y se dice como si se hubiera visto entero.
+    if (!laps) throw new Error('sin vueltas')
+    expect(endOf(laps, 'for i in range(300)')).toBe('300 vueltas; no quedaban más elementos.')
+  })
+
+  it('y si salió con break después de dejar de grabar, también lo dice', async () => {
+    const source = lines(
+      'n = 0',
+      'while True:',
+      '    n += 1',
+      '    if n == 200:',
+      '        break',
+      'print(n)',
+    )
+    const laps = bestLaps(
+      await kernel.trace(source, 60, false, false, { finish: true }),
+      loopAt(parse(source), 2),
+    )
+    expect(laps?.ended).toBe('cut')
+    expect(laps?.later?.ended).toBe('break')
+    expect((laps?.total ?? 0) + (laps?.later?.laps ?? 0)).toBe(200)
+    if (!laps) throw new Error('sin vueltas')
+    expect(endOf(laps, 'while True')).toBe('Salió con break en la vuelta 200.')
   })
 
   it('dentro de una función, y llega como tarjeta junto a las de las funciones', async () => {

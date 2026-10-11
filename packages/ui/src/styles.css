@@ -781,7 +781,8 @@
   color: var(--ink-faint);
   cursor: pointer;
 }
-.segmented__item[aria-pressed='true'] {
+.segmented__item[aria-pressed='true'],
+.segmented__item[aria-selected='true'] {
   background: var(--surface);
   box-shadow: var(--shadow-card);
   color: var(--ink);
@@ -4506,7 +4507,8 @@ button.fn-menu__crumb:hover {
   font-size: 12px;
   font-weight: 500;
 }
-.segmented--float .segmented__item[aria-pressed='true'] {
+.segmented--float .segmented__item[aria-pressed='true'],
+.segmented--float .segmented__item[aria-selected='true'] {
   background: var(--surface-raised);
   color: var(--ink);
 }
@@ -6696,19 +6698,24 @@ button.run-panel__line:hover {
   font-size: 10.5px;
   white-space: nowrap;
 }
-.flow-node[data-role='entrada'] {
+.flow-node[data-role='entrada'],
+.arch-legend__role[data-role='entrada'] {
   --role-tint: var(--state-warning);
 }
-.flow-node[data-role='datos'] {
+.flow-node[data-role='datos'],
+.arch-legend__role[data-role='datos'] {
   --role-tint: var(--state-success);
 }
-.flow-node[data-role='logica'] {
+.flow-node[data-role='logica'],
+.arch-legend__role[data-role='logica'] {
   --role-tint: var(--accent);
 }
-.flow-node[data-role='control'] {
+.flow-node[data-role='control'],
+.arch-legend__role[data-role='control'] {
   --role-tint: var(--ink);
 }
-.flow-node[data-role='salida'] {
+.flow-node[data-role='salida'],
+.arch-legend__role[data-role='salida'] {
   --role-tint: var(--state-error);
 }
 /*
@@ -7043,6 +7050,10 @@ button.run-panel__line:hover {
   border: 1px solid var(--border-card);
   border-radius: 14px;
   background: var(--surface-raised);
+}
+/* Abiertas tienen un ancho fijo: es el sitio que el diagrama les deja al lado. */
+.knobs[data-open] {
+  width: min(300px, calc(100% - 24px));
 }
 .knobs__bar {
   display: flex;
@@ -7607,6 +7618,51 @@ button.run-panel__line:hover {
 }
 .arch-legend__key[data-kind='next']::before {
   border-top: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--ink-muted));
+}
+/* Las siluetas, en pequeño: la misma forma que lleva cada módulo según su papel. */
+.arch-legend__role {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.arch-legend__role::before {
+  box-sizing: border-box;
+  width: 17px;
+  height: 11px;
+  border: 1px solid color-mix(in srgb, var(--ink-muted) 55%, transparent);
+  border-top: 2px solid color-mix(in srgb, var(--role-tint) 80%, transparent);
+  border-radius: 3px;
+  content: '';
+}
+.arch-legend__role[data-role='entrada']::before {
+  border-top-width: 1px;
+  border-top-color: color-mix(in srgb, var(--ink-muted) 55%, transparent);
+  border-left: 3px solid color-mix(in srgb, var(--role-tint) 80%, transparent);
+  border-radius: 1px 6px 6px 1px;
+}
+.arch-legend__role[data-role='salida']::before {
+  border-top-width: 1px;
+  border-top-color: color-mix(in srgb, var(--ink-muted) 55%, transparent);
+  border-right: 3px solid color-mix(in srgb, var(--role-tint) 80%, transparent);
+  border-radius: 6px 1px 1px 6px;
+}
+.arch-legend__role[data-role='control']::before {
+  border: 1.5px solid color-mix(in srgb, var(--role-tint) 55%, transparent);
+  border-radius: 6px;
+}
+.arch-legend__role[data-role='datos']::before {
+  height: 9px;
+  margin-bottom: 3px;
+  border-top-width: 1px;
+  border-top-color: color-mix(in srgb, var(--ink-muted) 55%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--role-tint) 80%, transparent);
+  box-shadow: 0 3px 0 -1px color-mix(in srgb, var(--role-tint) 45%, transparent);
+}
+/* Con poco ancho la leyenda dice lo justo: la forma y las flechas. */
+@media (max-width: 720px) {
+  .arch-legend__role {
+    display: none;
+  }
 }
 .arch-legend__toggle {
   padding: 1px 8px;

@@ -54,6 +54,7 @@ import {
   archPath,
   clearBend,
   labelSize,
+  labelCover,
   labelSpot,
   type ArchFlowEdge,
 } from './flow/ArchEdge.tsx'
@@ -255,9 +256,10 @@ export interface CanvasProps {
   beat?: { at: string; links: readonly string[]; serial: number; ms: number } | null
   /**
    * Lo que ocupan, arriba y abajo, las barras que flotan sobre el lienzo (las migas, la de ver una vuelta, la
-   * leyenda): el encuadre deja esas franjas libres, y la arquitectura se coloca para lo que queda.
+   * leyenda): el encuadre deja esas franjas libres, y la arquitectura se coloca para lo que queda. `left`: un
+   * panel abierto a la izquierda (las perillas).
    */
-  reserve?: { top?: number; bottom?: number } | null
+  reserve?: { top?: number; bottom?: number; left?: number } | null
   /**
    * La **radiografía** de la arquitectura: sus módulos, que se dicen con palabras, enseñan además lo que
    * llevan dentro (los nombres que usan y que dejan, a quién llaman). El código, a un gesto.
@@ -631,12 +633,16 @@ function CanvasInner({
   const [frameSize, setFrameSize] = useState<{ w: number; h: number } | undefined>(undefined)
   const reserveTop = reserve?.top ?? 0
   const reserveBottom = reserve?.bottom ?? 0
+  const reserveLeft = reserve?.left ?? 0
   const archFrame = useMemo(
     () =>
       frameSize
-        ? { w: frameSize.w, h: Math.max(200, frameSize.h - reserveTop - reserveBottom) }
+        ? {
+            w: Math.max(240, frameSize.w - reserveLeft),
+            h: Math.max(200, frameSize.h - reserveTop - reserveBottom),
+          }
         : undefined,
-    [frameSize, reserveTop, reserveBottom],
+    [frameSize, reserveTop, reserveBottom, reserveLeft],
   )
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
@@ -2287,6 +2293,13 @@ function CanvasInner({
     const size = labelSize(text)
     const { from, to, bend = 0 } = edge.data
     const labelAt = labelSpot(from, to, bend, size, labelObstacles)
+    // Quién llama a quién ya lo dice la flecha (a trazos): si su pastilla no cabe sin tapar un módulo, se
+    // queda sin ella. Lo que viaja sí se dice siempre.
+    if (edge.data.kind === 'call' && labelCover(from, to, bend, size, moduleBoxes, labelAt) > 0) {
+      const bare = { ...edge }
+      delete bare.label
+      return bare
+    }
     const { mid } = archPath(from, to, bend, labelAt)
     labelObstacles.push({ x: mid.x - size.w / 2, y: mid.y - size.h / 2, ...size })
     return labelAt === 0.5 ? edge : { ...edge, data: { ...edge.data, labelAt } }
@@ -2643,7 +2656,7 @@ function CanvasInner({
   const avoidH = avoid?.h ?? 0
   /** Se está viendo la arquitectura: el encuadre la enseña entera. */
   const picture = asArchitecture
-  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}|${reserveTop}:${reserveBottom}|${picture}`
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}|${reserveTop}:${reserveBottom}:${reserveLeft}|${picture}`
   const lastSettle = useRef(settle)
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
@@ -2665,7 +2678,10 @@ function CanvasInner({
       // Lo que hay para el diagrama: el lienzo, menos las franjas de las barras que flotan arriba y abajo y
       // el rincón que ocupe la consola (lo que sobresalga de la franja de abajo).
       const room = roomFor(
-        { w: frame.clientWidth, h: frame.clientHeight - reserveTop - reserveBottom },
+        {
+          w: frame.clientWidth - reserveLeft,
+          h: frame.clientHeight - reserveTop - reserveBottom,
+        },
         bounds,
         avoidW > 0 && avoidH > reserveBottom ? { w: avoidW, h: avoidH - reserveBottom } : null,
         pad,
@@ -2695,7 +2711,7 @@ function CanvasInner({
       lastFit.current = shape
       void setViewport(
         {
-          x: (room.w - bounds.w * zoom) / 2,
+          x: reserveLeft + (room.w - bounds.w * zoom) / 2,
           y: reserveTop + Math.max(pad, (room.h - bounds.h * zoom) / 2),
           zoom,
         },
@@ -2725,6 +2741,7 @@ function CanvasInner({
     avoidH,
     reserveTop,
     reserveBottom,
+    reserveLeft,
     picture,
   ])
 

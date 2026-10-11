@@ -126,27 +126,35 @@ export function labelSpot(
   size: { w: number; h: number },
   obstacles: readonly Box[],
 ): number {
-  const curve = curveOf(from, to, bend)
-  const air = 3
-  const covered = (t: number) => {
-    const at = along(curve, t)
-    const left = at.x - size.w / 2 - air
-    const top = at.y - size.h / 2 - air
-    let area = 0
-    for (const box of obstacles) {
-      const w = Math.min(left + size.w + air * 2, box.x + box.w) - Math.max(left, box.x)
-      const h = Math.min(top + size.h + air * 2, box.y + box.h) - Math.max(top, box.y)
-      if (w > 0 && h > 0) area += w * h
-    }
-    return area
-  }
   let best = { t: 0.5, area: Infinity }
   for (const t of LABEL_SPOTS) {
-    const area = covered(t)
+    const area = labelCover(from, to, bend, size, obstacles, t)
     if (area === 0) return t
     if (area < best.area) best = { t, area }
   }
   return best.t
+}
+
+/** Cuánto pisa una pastilla, puesta en ese punto de su flecha, a esas cajas (`0`: a nadie). */
+export function labelCover(
+  from: Box,
+  to: Box,
+  bend: number,
+  size: { w: number; h: number },
+  obstacles: readonly Box[],
+  t: number,
+): number {
+  const air = 3
+  const at = along(curveOf(from, to, bend), t)
+  const left = at.x - size.w / 2 - air
+  const top = at.y - size.h / 2 - air
+  let area = 0
+  for (const box of obstacles) {
+    const w = Math.min(left + size.w + air * 2, box.x + box.w) - Math.max(left, box.x)
+    const h = Math.min(top + size.h + air * 2, box.y + box.h) - Math.max(top, box.y)
+    if (w > 0 && h > 0) area += w * h
+  }
+  return area
 }
 
 /** ¿Pasa la flecha por encima de alguna de esas cajas? */

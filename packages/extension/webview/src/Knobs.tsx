@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { knobMoved, knobText, type Knob } from './knobs.ts'
 
 /**
@@ -12,29 +11,34 @@ import { knobMoved, knobText, type Knob } from './knobs.ts'
 export function Knobs({
   knobs,
   chance,
+  open,
+  onOpen,
   onTurn,
   onRoll,
 }: {
   knobs: readonly Knob[]
   /** El programa usa el azar: se puede volver a tirar. */
   chance: boolean
+  /** Abiertas: con su fila por perilla. Lo lleva quien las pone, que le hace sitio en el lienzo. */
+  open: boolean
+  onOpen: (open: boolean) => void
   /** Poner una perilla en otro valor. */
   onTurn: (knob: Knob, text: string) => void
   onRoll: () => void
 }) {
-  const [open, setOpen] = useState(false)
   if (knobs.length === 0 && !chance) return null
+  const shown = open && knobs.length > 0
   return (
-    <div className="canvas-float knobs" data-open={open ? '' : undefined}>
+    <div className="canvas-float knobs" data-open={shown ? '' : undefined}>
       <div className="knobs__bar">
         {knobs.length > 0 && (
           <button
             type="button"
             className="knobs__toggle"
-            aria-expanded={open}
+            aria-expanded={shown}
             title="Los números con los que se puede jugar: cámbialos y mira qué pasa"
             onClick={() => {
-              setOpen(!open)
+              onOpen(!shown)
             }}
           >
             Perillas
@@ -52,7 +56,7 @@ export function Knobs({
           </button>
         )}
       </div>
-      {open && (
+      {shown && (
         <ul className="knobs__list">
           {knobs.map((knob) => (
             <li key={`${knob.line}:${knob.start}`} className="knobs__row">

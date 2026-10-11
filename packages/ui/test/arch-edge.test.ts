@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { archPath, clearBend, crosses, labelSize, labelSpot } from '../src/flow/ArchEdge.tsx'
+import {
+  archPath,
+  clearBend,
+  crosses,
+  labelCover,
+  labelSize,
+  labelSpot,
+} from '../src/flow/ArchEdge.tsx'
 
 /**
  * Las flechas de la arquitectura van de borde a borde y no pasan por encima de ningún otro módulo: si hay uno
@@ -88,6 +95,19 @@ describe('la pastilla de una flecha', () => {
       }, 0)
     // Nunca peor que en la mitad.
     expect(covered(placed)).toBeLessThanOrEqual(covered(middle))
+  })
+
+  it('se sabe cuándo no cabe sin tapar a nadie: es lo que deja a una flecha de llamada sin pastilla', () => {
+    // Con sitio, en su mejor punto no pisa nada.
+    const from = box(0, 0)
+    const far = box(600, 0)
+    expect(
+      labelCover(from, far, 0, size, [from, far], labelSpot(from, far, 0, size, [from, far])),
+    ).toBe(0)
+    // Dos módulos pegados: ni en el mejor punto cabe.
+    const glued = box(from.w + 8, 0)
+    const best = labelSpot(from, glued, 0, size, [from, glued])
+    expect(labelCover(from, glued, 0, size, [from, glued], best)).toBeGreaterThan(0)
   })
 
   it('no se pone encima de otra pastilla que ya está', () => {

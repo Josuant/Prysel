@@ -35,6 +35,7 @@ import {
   type DecisionMessage,
   type GeneratedMessage,
   type SayMessage,
+  type FlavoursMessage,
   type StepMessage,
   type Theme,
 } from '../../src/protocol.ts'
@@ -134,7 +135,40 @@ interface SavedState {
   narrate?: boolean
   /** Decir en voz alta lo que se hace con cada orden. */
   voice?: boolean
+  /** La versión que se hizo de una petición abierta (y las otras que se propusieron), por archivo. */
+  flavours?: Record<string, Flavours>
 }
+
+/** Una petición abierta: lo que se pidió, las versiones que se propusieron y cuál se hizo. */
+interface Flavours {
+  command: string
+  options: { title: string; shows: string }[]
+  chosen: number
+}
+
+/** La leyenda de las siluetas: cómo se dice cada papel, en una palabra, y qué quiere decir. */
+const ROLE_KEYS: Record<ModuleRole, { word: string; why: string }> = {
+  entrada: {
+    word: 'entra',
+    why: 'Trae lo que el programa necesita de fuera: lo que se le da para empezar',
+  },
+  datos: {
+    word: 'guarda',
+    why: 'Guarda o prepara los datos con los que trabajan las demás partes',
+  },
+  logica: { word: 'calcula', why: 'Hace una parte del trabajo: recibe algo y devuelve otra cosa' },
+  control: {
+    word: 'manda',
+    why: 'Decide el orden: llama a las demás partes y repite lo que haga falta',
+  },
+  salida: { word: 'sale', why: 'Enseña o entrega el resultado' },
+}
+
+/**
+ * Lo que ocupa el panel de las perillas abierto: lo que se le deja a su lado (su ancho y su margen), y arriba
+ * cuando no hay ancho para ponerse al lado (lo de la barra y lo de cada fila).
+ */
+const KNOBS = { width: 324, top: 104, row: 30 }
 
 /** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
 const WIDE_PANEL = 1100
@@ -334,6 +368,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
+  /** Las perillas, abiertas: el diagrama les hace sitio. */
+  const [knobsOpen, setKnobsOpen] = useState(false)
   /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
   const [xray, setXray] = useState(false)
   /**
@@ -343,9 +379,31 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const healthWait = useRef<{
     before: RunSummary | null
     how: 'order' | 'knob' | 'roll'
+    /** La versión del texto a partir de la cual vale: una ejecución de un texto anterior no dice nada. */
+    from?: number
   } | null>(null)
   /** Cómo le iba al programa cuando se dio la última orden (`null`: no había programa). */
   const baseline = useRef<RunSummary | null>(null)
+  /** La última ejecución que se ha visto, y de qué versión del texto era. */
+  const seenRun = useRef<{ version: number; run: RunSummary } | null>(null)
+  /** Dice en el chat cómo quedó el programa tras un cambio. */
+  const sayHealth = useCallback(
+    (before: RunSummary | null, after: RunSummary, how: 'order' | 'knob' | 'roll') => {
+      const health = healthOf(before, after, how)
+      if (!health) return
+      setChat((previous) => [
+        ...previous.slice(-60),
+        {
+          id: -Date.now(),
+          role: 'ai',
+          text: health.text,
+          tone: health.tone,
+          ...(health.undo ? { options: [{ label: 'Deshacer el cambio', undo: true }] } : {}),
+        },
+      ])
+    },
+    [],
+  )
   /** Una frase que se deja empezada en el chat al tocar una línea del guion («Cambia «X» para que »). */
   const [prefill, setPrefill] = useState<{ text: string; seq: number } | null>(null)
   const prefillSeq = useRef(0)
@@ -353,11 +411,23 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * La petición era abierta y se hizo una versión concreta: lo que se pidió, las versiones que se propusieron
    * y cuál se hizo. Las otras quedan a mano en el chat, para rehacerlo con una de ellas.
    */
-  const [flavours, setFlavours] = useState<{
-    command: string
-    options: { title: string; shows: string }[]
-    chosen: number
-  } | null>(null)
+  const [allFlavours, setAllFlavours] = useState<Record<string, Flavours>>(
+    () => saved().flavours ?? {},
+  )
+  const flavours = allFlavours[file ?? ''] ?? null
+  // Se recuerda al recargar: las otras versiones siguen a mano mientras el programa sea ese.
+  const setFlavours = useCallback(
+    (next: Flavours | null) => {
+      setAllFlavours((all) => {
+        const rest = Object.fromEntries(Object.entries(all).filter(([key]) => key !== (file ?? '')))
+        return next ? { ...rest, [file ?? '']: next } : rest
+      })
+    },
+    [file],
+  )
+  useEffect(() => {
+    vscode.setState({ ...saved(), flavours: allFlavours } satisfies SavedState)
+  }, [allFlavours])
   /**
    * Desde dónde se mira el programa: su **idea** (qué hace, en unas líneas), sus **partes** (la arquitectura)
    * o su **detalle** (el diagrama abierto, paso a paso).
@@ -433,7 +503,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   /** La corrección que viene tras un «no, eso no»: se manda cuando lo deshecho ya se ve. */
   const afterUndo = useRef<string | null>(null)
   /** La línea de la función o la clase en la que hay que entrar en cuanto el programa la traiga. */
-  const [enterLine, setEnterLine] = useState<number | null>(null)
+  const [enterLine, setEnterLine] = useState<{ line: number; seq: number } | null>(null)
+  /** La última petición de entrar que ya se atendió: en cada cosa construida se entra una vez. */
+  const entered = useRef(0)
   /** El cambio de una orden ya está en el lienzo: en cuanto se pinte, se sabe cuánto tardó. */
   const markPainted = useCallback(() => {
     const from = awaitingPaint.current
@@ -467,6 +539,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const onGenerated = useRef<(message: GeneratedMessage) => void>(() => undefined)
   const onSay = useRef<(message: SayMessage) => void>(() => undefined)
   const onStep = useRef<(message: StepMessage) => void>(() => undefined)
+  const onFlavours = useRef<(message: FlavoursMessage) => void>(() => undefined)
   const { pending, change: changeControl, submit, received } = useWriteBack(post, focusCreated)
   const [theme, setTheme] = useState<Theme>('dark')
   const [density, setDensity] = useState<Density>(() => {
@@ -516,25 +589,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
         // La salud tras un cambio: el programa se volvió a ejecutar, y se dice cómo quedó respecto a antes.
+        if (message.run) seenRun.current = { version: message.version, run: message.run }
         const waiting = healthWait.current
-        if (waiting && message.run) {
+        if (
+          waiting &&
+          message.run &&
+          (waiting.from === undefined || message.version >= waiting.from)
+        ) {
           healthWait.current = null
-          const health = healthOf(waiting.before, message.run, waiting.how)
-          if (health) {
-            setChat((previous) => [
-              ...previous.slice(-60),
-              {
-                id: -Date.now(),
-                role: 'ai',
-                text: health.text,
-                tone: health.tone,
-                ...(health.undo ? { options: [{ label: 'Deshacer el cambio', undo: true }] } : {}),
-              },
-            ])
-          }
+          sayHealth(waiting.before, message.run, waiting.how)
         }
       } else if (message.type === 'flavours') {
-        setFlavours({ command: message.command, options: message.options, chosen: message.chosen })
+        onFlavours.current(message)
       } else if (message.type === 'architecture') {
         setPlanned(message.modules)
         if (message.complete) setPlanDone(true)
@@ -607,7 +673,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [received, markPainted])
+  }, [received, markPainted, sayHealth])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -1534,15 +1600,25 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // (Arriba, además, la barra de las perillas y el dado, si el programa los tiene.)
   const hasKnobs =
     features.chat === true && (knobs.length > 0 || /\brandom\b/.test(program?.source ?? ''))
+  // Las siluetas que hay en el dibujo, en el orden en que se leen. Con una sola no hay nada que distinguir.
+  const roleKeys = useMemo(() => {
+    const present = new Set(architecture?.modules.map((module) => module.role))
+    const keys = MODULE_ROLES.filter((role) => present.has(role))
+    return keys.length > 1 ? keys : []
+  }, [architecture])
+  // Las perillas abiertas son un panel: el diagrama se coloca en lo que queda (a su lado si hay ancho, debajo
+  // si no), en vez de quedar tapado.
+  const knobsShown = hasKnobs && knobsOpen && knobs.length > 0
   const reserve = useMemo(
     () =>
       architecture
         ? {
-            top: hasKnobs ? 90 : 40,
+            top: !hasKnobs ? 40 : knobsShown && narrow ? KNOBS.top + KNOBS.row * knobs.length : 90,
             bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
+            ...(knobsShown && !narrow ? { left: KNOBS.width } : {}),
           }
         : null,
-    [architecture, hasStory, hasKnobs, consoleBox, cramped],
+    [architecture, hasStory, hasKnobs, knobsShown, narrow, knobs.length, consoleBox, cramped],
   )
   const playingBeat = playback.at === null ? undefined : beats[playback.at]
   const beat = useMemo(
@@ -1729,13 +1805,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const functions = view.functions
   const methods = view.methods
   useEffect(() => {
-    if (enterLine === null || !program) return
-    const head = program.nodes.find((n) => n.range && n.line === enterLine)
+    if (enterLine === null || !program || entered.current === enterLine.seq) return
+    const head = program.nodes.find((n) => n.range && n.line === enterLine.line)
     if (!head) return
+    entered.current = enterLine.seq
     if (functions.some((fn) => fn.id === head.id) || methods.some((fn) => fn.id === head.id)) {
       openView(head.id)
     }
-    setEnterLine(null)
   }, [enterLine, program, functions, methods, openView])
   // Mientras se habla de una pieza, se subraya —como con un rotulador— el trozo exacto del que habla la
   // frase. Se espera un momento a que el nodo esté pintado en su sitio; al pasar a otra cosa, se quita.
@@ -1839,6 +1915,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     paintArmed.current = false
     setOrder({ phase: 'deciding', text })
     baseline.current = (program?.nodes.length ?? 0) === 0 ? null : ran
+    // Otra orden: la salud que se esperaba de un cambio anterior ya no viene a cuento.
+    healthWait.current = null
     // Algo nuevo sobre un lienzo vacío: las versiones de lo anterior ya no vienen a cuento.
     if (!flavour && (program?.nodes.length ?? 0) === 0) setFlavours(null)
     // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
@@ -1984,6 +2062,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         }
         orderCreates.current = effect.action.type === 'add'
         const action = effect.action
+        // Un cambio directo (borrar, mover, envolver…) también se ejecuta después: se dirá cómo quedó.
+        healthWait.current = { before: baseline.current, how: 'order', from: message.version + 1 }
         const to =
           action.type === 'move' ? (action.into ?? action.after ?? action.before) : undefined
         const shown = directive.kind === 'do' ? directive.gesture : undefined
@@ -2037,8 +2117,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             hidden ? 900 : 550,
           )
         }
-      } else if (effect.type === 'undo' || effect.type === 'redo') post({ type: effect.type })
-      else if (effect.type === 'modify' && directive.kind === 'do' && directive.gesture) {
+      } else if (effect.type === 'undo' || effect.type === 'redo') {
+        healthWait.current = { before: baseline.current, how: 'order', from: message.version + 1 }
+        post({ type: effect.type })
+      } else if (effect.type === 'modify' && directive.kind === 'do' && directive.gesture) {
         // Juntar o extraer: el código lo reescribe la IA (tarda); mientras, se ve qué se va a hacer.
         const shown = directive.gesture
         if (!reducedMotion) {
@@ -2106,6 +2188,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       )
       if (named && wanted?.id !== named.id) setWanted({ id: named.id, key: ++spotSeq.current })
     }
+    onFlavours.current = (message) => {
+      setFlavours({ command: message.command, options: message.options, chosen: message.chosen })
+    }
     onStep.current = (message) => {
       // Llega la pieza de verdad: la caja provisional se va… convirtiéndose en ella.
       if (preview !== null) {
@@ -2154,9 +2239,21 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setIntro(null)
         setPreview(null)
         // Lo construido es una función o una clase: la vista entra en ella, que es donde se va a seguir.
-        if (message.enter !== undefined) setEnterLine(message.enter)
+        const enter = message.enter
+        if (enter !== undefined) setEnterLine((was) => ({ line: enter, seq: (was?.seq ?? 0) + 1 }))
         // Algo se escribió: cuando el programa se vuelva a ejecutar, se dirá cómo quedó.
-        if (message.ok) healthWait.current = { before: baseline.current, how: 'order' }
+        // (Si ya se ejecutó lo último que se escribió, se dice ya; si no, cuando llegue.)
+        if (message.ok) {
+          const seen = seenRun.current
+          if (seen && version !== null && seen.version >= version)
+            sayHealth(baseline.current, seen.run, 'order')
+          else
+            healthWait.current = {
+              before: baseline.current,
+              how: 'order',
+              ...(version === null ? {} : { from: version }),
+            }
+        }
       }
       const note = message.done
         ? (message.say ?? message.error ?? '')
@@ -2253,7 +2350,6 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 role="tab"
                 className="segmented__item"
                 aria-selected={tab === 'canvas'}
-                aria-pressed={tab === 'canvas'}
                 onClick={() => {
                   setTab('canvas')
                 }}
@@ -2265,7 +2361,6 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 role="tab"
                 className="segmented__item"
                 aria-selected={tab === 'calls'}
-                aria-pressed={tab === 'calls'}
                 title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
                 onClick={() => {
                   setTab('calls')
@@ -2641,9 +2736,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 <Knobs
                   knobs={knobs}
                   chance={/\brandom\b/.test(program.source)}
+                  open={knobsOpen}
+                  onOpen={setKnobsOpen}
                   onTurn={(knob, text) => {
                     if (version === null) return
-                    healthWait.current = { before: ran, how: 'knob' }
+                    healthWait.current = { before: ran, how: 'knob', from: version + 1 }
                     post({
                       type: 'edit',
                       version,
@@ -2766,6 +2863,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       usa a
                     </span>
                   )}
+                  {/* Las siluetas: qué clase de parte es cada una, para reconocerla sin leer. */}
+                  {roleKeys.map((role) => (
+                    <span
+                      key={role}
+                      className="arch-legend__role"
+                      data-role={role}
+                      title={ROLE_KEYS[role].why}
+                    >
+                      {ROLE_KEYS[role].word}
+                    </span>
+                  ))}
                   {/* La radiografía: lo que el diagrama dice con palabras, visto por dentro. Cada módulo
                       enseña los nombres que usa y deja, y vuelven las flechas de quién llama a quién. */}
                   <button

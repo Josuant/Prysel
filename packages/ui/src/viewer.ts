@@ -53,6 +53,8 @@ export const VIEWER = {
   row: 21,
   headRow: 34,
   line: 17,
+  /** Lo que mide una letra de un texto (de ancho fijo), para saber cuándo se parte una línea. */
+  char: 6.8,
   /** Alto de la curva de una serie. */
   chart: 84,
 }
@@ -85,7 +87,15 @@ export function viewerHeight(content: ViewerContent): number {
   if (content.table) body += VIEWER.headRow + content.table.rows.length * VIEWER.row + 4
   if (content.image) body += viewerImageSize(content).h + 4
   if (content.series) body += VIEWER.chart + 4
-  if (content.text?.length) body += content.text.length * VIEWER.line + 4
+  if (content.text?.length) {
+    // Una línea más larga que el visor se parte: cuenta por las filas que ocupa, no por una.
+    const perRow = Math.max(8, Math.floor((viewerWidth(content) - 2 * VIEWER.pad) / VIEWER.char))
+    const rows = content.text.reduce(
+      (sum, line) => sum + Math.max(1, Math.ceil(line.length / perRow)),
+      0,
+    )
+    body += rows * VIEWER.line + 4
+  }
   return VIEWER.head + Math.max(body, VIEWER.line) + VIEWER.pad
 }
 

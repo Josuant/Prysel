@@ -63,6 +63,17 @@ describe('el alto de un visor', () => {
     )
   })
 
+  it('una línea más larga que el visor cuenta por las filas que ocupa', () => {
+    const short = viewerHeight({ title: 'x', text: ['Mejor: 42'] })
+    const long = viewerHeight({ title: 'x', text: ['Mejor encontrado: hola mundo, tras 120 gen.'] })
+    expect(long).toBe(short + VIEWER.line)
+    // Y una que cabe justa no pide una fila de más.
+    const perRow = Math.floor(
+      (viewerWidth({ title: 'x', text: ['a'] }) - 2 * VIEWER.pad) / VIEWER.char,
+    )
+    expect(viewerHeight({ title: 'x', text: ['a'.repeat(perRow)] })).toBe(short)
+  })
+
   it('siempre cabe su cabecera y una línea', () => {
     expect(viewerHeight({ title: 'x' })).toBeGreaterThanOrEqual(VIEWER.head + VIEWER.line)
   })
