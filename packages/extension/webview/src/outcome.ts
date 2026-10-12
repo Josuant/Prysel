@@ -111,7 +111,7 @@ export function outcomeOf(
 /** Cómo quedó el programa tras un cambio, dicho en una frase. `undo`: merece ofrecer deshacerlo. */
 /** Cuántos momentos se enseñan de algo que va cambiando, y cuánto cabe de cada uno en una fila. */
 export const PROGRESS_ROWS = 7
-const PROGRESS_TEXT = 36
+const PROGRESS_TEXT = 48
 
 /**
  * El visor de **cómo avanza** el programa vuelta a vuelta: lo que se eligió mirar para este programa (ver

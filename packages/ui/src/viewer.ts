@@ -71,7 +71,12 @@ export function viewerWidth(content: ViewerContent): number {
     return clamp(content.table.columns.length * 92 + 2 * VIEWER.pad, VIEWER.minW, VIEWER.tableMaxW)
   }
   if (content.image) return clamp(content.image.w + 2 * VIEWER.pad, VIEWER.minW, VIEWER.maxW)
-  if (content.series || content.steps) return 320
+  if (content.steps) {
+    // Lo que se lee fila a fila manda en el ancho: una lista corta cabe entera.
+    const longest = Math.max(0, ...content.steps.map((step) => step.text.length))
+    return clamp(Math.ceil(longest * VIEWER.char) + 2 * VIEWER.pad + 46, 320, VIEWER.maxW)
+  }
+  if (content.series) return 320
   return 300
 }
 

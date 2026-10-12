@@ -726,7 +726,16 @@ def _probe_value(value):
         return value if abs(value) < 1e15 else str(value)
     if isinstance(value, str):
         return {"s": value if len(value) <= _PROBE_TEXT else value[: _PROBE_TEXT - 1] + "…"}
-    return {"o": _short(reprlib.repr(value), _PROBE_TEXT)}
+    # Una colección corta se enseña entera (es lo que se quiere leer: la lista que se va ordenando); una
+    # larga, resumida.
+    try:
+        small = len(value) <= 40
+    except TypeError:
+        small = False
+    text = repr(value) if small else reprlib.repr(value)
+    if len(text) > _PROBE_TEXT:
+        text = reprlib.repr(value)
+    return {"o": _short(text, _PROBE_TEXT)}
 
 
 class _TraceLimit(BaseException):
