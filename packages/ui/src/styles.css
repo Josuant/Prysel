@@ -1777,14 +1777,35 @@ button.fn-menu__crumb:hover {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-card);
 }
-/* El puerto de una parte de la arquitectura: de él sale el cable para pedir lo que va detrás. */
+/*
+ * El puerto de una parte de la arquitectura: de él sale el cable para pedir lo que va detrás. Es un botón con
+ * su «+», más grande que los puertos de orden (el dibujo se ve de lejos), y se coge con holgura.
+ */
 .react-flow__handle.order-port.ask-port {
-  width: 16px;
-  height: 16px;
   /* Por encima de su tarjeta: se coge entero, no solo la mitad que asoma. */
   z-index: 6;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--surface);
   border-radius: 50%;
   background: var(--accent);
+}
+.react-flow__handle.order-port.ask-port::before {
+  position: absolute;
+  inset: 0;
+  color: var(--void, var(--surface));
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  content: '+';
+  pointer-events: none;
+}
+.react-flow__handle.order-port.ask-port::after {
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+  content: '';
 }
 .quick-add .palette__item {
   padding: 5px 6px;
