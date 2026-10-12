@@ -79,6 +79,13 @@ describe('el visor de las ejecuciones', () => {
     expect(viewer?.text).toHaveLength(2)
   })
 
+  it('ni si lo que enseña cambió: los números de dos frases distintas no se comparan', () => {
+    const other: RunEntry = { n: 3, cause: '«enseña la longitud»', said: 'Longitud: 18', value: 18 }
+    const viewer = runsViewer([entry(1, 41), entry(2, 30), other])
+    expect(viewer?.series).toBeUndefined()
+    expect(viewer?.text?.[2]).toBe('3. «enseña la longitud» → Longitud: 18')
+  })
+
   it('enseña las últimas, con su número de orden de verdad', () => {
     const many = Array.from({ length: RUNS_SHOWN + 3 }, (_, at) => entry(at + 1, at))
     const viewer = runsViewer(many)

@@ -142,17 +142,21 @@ export function runEntry(run: RunSummary, cause: string, n: number): RunEntry | 
 
 /**
  * El visor de las **ejecuciones**: lo que fue dando el programa cada vez que se ejecutó, y qué provocó cada
- * una. Si todas enseñan un número, además se dibuja cómo va cambiando. Con una sola no hay historia que
+ * una. Si todas enseñan lo mismo con otro número, además se dibuja cómo va cambiando. Con una sola no hay historia que
  * contar: lo dice el resultado.
  */
 export function runsViewer(entries: readonly RunEntry[]): ViewerContent | null {
   if (entries.length < 2) return null
   const shown = entries.slice(-RUNS_SHOWN)
   const values = shown.flatMap((entry) => (entry.value === null ? [] : [entry.value]))
+  // La curva compara lo mismo de una vez a otra: solo si todas dicen la misma frase con otro número («tras
+  // 41 generaciones», «tras 38 generaciones»). Si lo que enseña cambió, sus números no se comparan.
+  const shape = (said: string) => said.replace(/-?\d+(?:[.,]\d+)?/g, '#')
+  const alike = shown.every((entry) => shape(entry.said) === shape(shown[0]?.said ?? ''))
   return {
     title: 'Ejecuciones',
     subtitle: 'qué cambió y qué dio',
-    ...(values.length === shown.length
+    ...(values.length === shown.length && alike
       ? { series: { at: shown.map((_, at) => at), values, n: shown.length } }
       : {}),
     text: shown.map((entry) => `${entry.n}. ${entry.cause} → ${entry.said}`),

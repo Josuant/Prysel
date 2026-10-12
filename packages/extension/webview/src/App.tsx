@@ -2738,7 +2738,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           ref={stage}
           className="relative min-h-0 min-w-0 flex-1"
           data-hearing={hearing !== null ? '' : undefined}
-          data-hub={hub ? '' : undefined}
+          // (Si las barras de abajo van subidas sobre la consola, el botón de la IA no les quita sitio.)
+          data-hub={hub && !(consoleBox && cramped) ? '' : undefined}
         >
           {/* Le estamos oyendo: se ve, grande, y con lo que va diciendo. Lo que se construía está quieto. */}
           {hearing !== null && (
