@@ -72,6 +72,19 @@ describe('las perillas de un programa', () => {
     expect(knobsOf(many).length).toBe(6)
   })
 
+  it('un número que el programa va cambiando (un contador) no es una perilla', () => {
+    const source = lines(
+      'TOPE = 10',
+      'pasadas = 0',
+      'total = 0',
+      'while pasadas < TOPE:',
+      '    pasadas += 1',
+      '    total = total + pasadas',
+      'print(total)',
+    )
+    expect(knobsOf(source).map((knob) => knob.name)).toEqual(['TOPE'])
+  })
+
   it('una llamada a algo que no es del programa no da perillas', () => {
     const source = lines('import random', 'x = random.randint(1, 6)', 'print(max(3, x))')
     expect(knobsOf(source, FUNCTIONS)).toEqual([])

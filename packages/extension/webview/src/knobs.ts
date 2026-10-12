@@ -29,6 +29,15 @@ export const MAX_KNOBS = 6
 const NUMBER = String.raw`-?\d+(?:\.\d+)?`
 const CONSTANT = new RegExp(String.raw`^([A-Za-z_]\w*)\s*=\s*(${NUMBER})\s*(?:#.*)?$`)
 
+/** ¿Se le vuelve a dar valor a ese nombre en algún otro sitio del programa (`n += 1`, `n = n * 2`)? */
+function changedLater(source: string, name: string): boolean {
+  const assigned = new RegExp(
+    String.raw`^[ \t]*${name}[ \t]*(?:[+\-*/%&|^]|//|\*\*|<<|>>)?=(?!=)`,
+    'gm',
+  )
+  return (source.match(assigned)?.length ?? 0) > 1
+}
+
 /** Las perillas del programa. `functions`: sus funciones, con lo que recibe cada una. */
 export function knobsOf(
   source: string,
@@ -44,8 +53,11 @@ export function knobsOf(
       const constant = CONSTANT.exec(line)
       if (constant) {
         const [, name = '', text = ''] = constant
-        const start = offset + line.indexOf(text, name.length)
-        knobs.push(knob(name, text, start, at + 1, 'constant'))
+        // Un número que el programa va cambiando (un contador, un total) no es una perilla: es su trabajo.
+        if (!changedLater(source, name)) {
+          const start = offset + line.indexOf(text, name.length)
+          knobs.push(knob(name, text, start, at + 1, 'constant'))
+        }
       } else {
         // Una llamada a una función del programa, con números escritos: los datos con los que arranca.
         for (const call of line.matchAll(/\b([A-Za-z_]\w*)\(([^()]*)\)/g)) {
