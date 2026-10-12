@@ -188,6 +188,17 @@ export function progressViewer(progress: Progress): ViewerContent | null {
     ...(steps.length > 0 ? { steps } : {}),
     ...(strips.length > 0 ? { strips } : {}),
     ...(grids.length > 0 ? { grids } : {}),
+    // La película: todo lo medido, para reproducirlo de corrido con «Ver una vuelta».
+    film: text
+      ? { laps: text.laps, texts: text.values.map((value) => clip(value, PROGRESS_TEXT)) }
+      : bars
+        ? { laps: bars.laps, lists: bars.values }
+        : grid
+          ? {
+              laps: grid.laps,
+              boards: grid.values.map((board) => board.map((row) => row.map(toneOf))),
+            }
+          : { laps: number?.laps ?? [] },
     ...(number
       ? {
           series: { at: number.laps, values: number.values, n: Math.max(2, progress.total) },

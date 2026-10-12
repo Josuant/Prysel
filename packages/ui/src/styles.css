@@ -1814,8 +1814,8 @@ button.fn-menu__crumb:hover {
 .react-flow__handle.order-port.ask-port {
   /* Por encima de su tarjeta: se coge entero, no solo la mitad que asoma. */
   z-index: 6;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: 2px solid var(--surface);
   border-radius: 50%;
   background: var(--accent);
@@ -1824,16 +1824,16 @@ button.fn-menu__crumb:hover {
   position: absolute;
   inset: 0;
   color: var(--void, var(--surface));
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  line-height: 17px;
+  line-height: 21px;
   text-align: center;
   content: '+';
   pointer-events: none;
 }
 .react-flow__handle.order-port.ask-port::after {
   position: absolute;
-  inset: -9px;
+  inset: -12px;
   border-radius: 50%;
   content: '';
 }
@@ -7883,6 +7883,20 @@ button.run-panel__line:hover {
 }
 .arch-laps__spark {
   overflow: visible;
+}
+/* En una pantalla estrecha la barra dice lo justo: sus botones y cuántas vueltas. */
+@media (max-width: 520px) {
+  .arch-laps__bar,
+  .arch-laps__spark,
+  .arch-laps__value {
+    display: none;
+  }
+  .arch-transport {
+    gap: 6px;
+  }
+  .arch-transport__guide {
+    padding: 0 9px;
+  }
 }
 .arch-laps__spark polyline {
   fill: none;

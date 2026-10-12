@@ -338,6 +338,8 @@ describe('el visor de cómo avanza', () => {
     expect(viewer?.steps?.[1]?.lit).toEqual([true, false, false, false])
     expect(viewer?.steps?.[2]?.lit).toEqual([true, true, true, true])
     expect(viewer?.series).toEqual({ at: [0, 1, 2, 3], values: [0, 1, 1, 4], n: 40 })
+    // Y la película lleva todas las muestras, también las que no son un momento: es lo que se reproduce.
+    expect(viewer?.film).toEqual({ laps: [0, 1, 2, 3], texts: ['xkzq', 'hkzq', 'hkzq', 'hola'] })
     expect(viewer?.text).toEqual(['su puntuación: de 0 a 4'])
   })
 

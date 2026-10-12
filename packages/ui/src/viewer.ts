@@ -55,6 +55,13 @@ export interface ViewerContent {
    * (`0`, vacía; del `1` en adelante, cada clase de ficha).
    */
   grids?: { label: string; cells: number[][] }[]
+  /**
+   * La **película**: todo lo que se midió, vuelta a vuelta (los momentos de arriba son solo unos pocos). Al
+   * reproducirse, el visor la recorre entera: la fila de «ahora» va cambiando hasta llegar a cada momento, y
+   * la curva se dibuja de corrido. `laps`: la vuelta de cada fotograma; y lo que valía en él, según lo que
+   * enseñe el visor (su texto, su lista o su tablero).
+   */
+  film?: { laps: number[]; texts?: string[]; lists?: number[][]; boards?: number[][][] }
 }
 
 /**
@@ -100,6 +107,78 @@ export function playCursor(
   if (play.phase === 'start') return 0
   if (play.phase === 'end') return count - 1
   return Math.max(0, Math.min(count - 1, step))
+}
+
+/** Las vueltas por las que pasa la reproducción de un visor: las de su película o, sin ella, sus momentos. */
+export function playFrames(content: ViewerContent): number[] {
+  const film = content.film?.laps ?? []
+  return film.length > 1 ? film : momentLaps(content)
+}
+
+/**
+ * Por dónde va la reproducción, en momentos: el último que ya se alcanzó (`cursor`) o, si se va camino del
+ * siguiente, ese (`live`: su fila enseña lo de ahora mismo, que aún no es lo de ese momento).
+ */
+export function playStage(
+  moments: readonly number[],
+  upto: number | null,
+): { cursor: number; live: boolean } | null {
+  if (upto === null || moments.length === 0) return null
+  let reached = 0
+  for (const [at, lap] of moments.entries()) if (lap <= upto) reached = at
+  return reached + 1 < moments.length && upto > (moments[reached] ?? 0)
+    ? { cursor: reached + 1, live: true }
+    : { cursor: reached, live: false }
+}
+
+/**
+ * El visor tal como se ve en un fotograma de su reproducción: la fila de «ahora» lleva lo que valía en ese
+ * fotograma (su vuelta, y su texto, su lista o su tablero), con encendido lo que ya es lo del final.
+ */
+export function withLive(
+  content: ViewerContent,
+  frame: number | null,
+  stage: { cursor: number; live: boolean } | null,
+): ViewerContent {
+  const film = content.film
+  if (!film || frame === null || !stage?.live) return content
+  const label = String(film.laps[frame] ?? '')
+  const at = stage.cursor
+  const text = film.texts?.[frame]
+  const final = film.texts?.[film.texts.length - 1] ?? ''
+  const list = film.lists?.[frame]
+  const settled = film.lists?.[film.lists.length - 1] ?? []
+  const board = film.boards?.[frame]
+  return {
+    ...content,
+    ...(content.steps && text !== undefined
+      ? {
+          steps: content.steps.map((step, k) =>
+            k !== at
+              ? step
+              : {
+                  label,
+                  text,
+                  ...(step.lit && text.length === final.length
+                    ? { lit: [...text].map((letter, i) => letter === final[i]) }
+                    : {}),
+                },
+          ),
+        }
+      : {}),
+    ...(content.strips && list
+      ? {
+          strips: content.strips.map((strip, k) =>
+            k !== at
+              ? strip
+              : { label, values: list, lit: list.map((value, i) => value === settled[i]) },
+          ),
+        }
+      : {}),
+    ...(content.grids && board
+      ? { grids: content.grids.map((grid, k) => (k !== at ? grid : { label, cells: board })) }
+      : {}),
+  }
 }
 
 /** Lo que mide un visor: crece con su contenido hasta un tope, y no más. */

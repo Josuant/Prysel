@@ -7,6 +7,9 @@ import {
   gridLayout,
   momentLaps,
   playCursor,
+  playFrames,
+  playStage,
+  withLive,
   viewerImageSize,
   type ViewerContent,
   type ViewerPlay,
@@ -28,9 +31,12 @@ export interface ViewerNodeData extends Record<string, unknown> {
   play?: ViewerPlay | undefined
 }
 
+/** Cada cuánto se pinta, como poco, un fotograma de la reproducción. */
+const FRAME_MS = 40
+
 /**
- * Por qué momento va el visor mientras se reproduce: al correr, da un paso cada cierto tiempo hasta el
- * último (dejando un respiro al final, para que se vea acabado).
+ * Por qué fotograma va el visor mientras se reproduce: al correr, avanza cada poco hasta el último (dejando
+ * un respiro al final, para que se vea acabado). Con muchos fotogramas, se salta los que no daría tiempo a ver.
  */
 function useMoment(play: ViewerPlay | undefined, count: number): number | null {
   const [tick, setTick] = useState({ serial: -1, step: 0 })
@@ -39,15 +45,15 @@ function useMoment(play: ViewerPlay | undefined, count: number): number | null {
   const ms = play?.ms ?? 0
   useEffect(() => {
     if (!running) return
+    const span = ms * 0.85
+    const every = Math.max(FRAME_MS, span / (count - 1))
+    const stride = Math.max(1, Math.ceil((count - 1) / Math.max(1, span / every)))
     let step = 0
-    const timer = setInterval(
-      () => {
-        step += 1
-        setTick({ serial, step })
-        if (step >= count - 1) clearInterval(timer)
-      },
-      Math.max(60, (ms * 0.85) / (count - 1)),
-    )
+    const timer = setInterval(() => {
+      step = Math.min(count - 1, step + stride)
+      setTick({ serial, step })
+      if (step >= count - 1) clearInterval(timer)
+    }, every)
     return () => {
       clearInterval(timer)
     }
@@ -75,12 +81,16 @@ const GHOST_ICON = {
 } as const
 
 export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
-  const { content, size } = data
-  const image = viewerImageSize(content, size.w)
-  // Si se reproduce la historia, el visor va por un momento: lo de después aún no se ve.
-  const laps = momentLaps(content)
-  const cursor = useMoment(data.play, laps.length)
-  const upto = cursor === null ? null : (laps[cursor] ?? null)
+  const { size } = data
+  const image = viewerImageSize(data.content, size.w)
+  // Si se reproduce la historia, el visor va por un fotograma de su película: lo de después aún no se ve, y
+  // la fila de «ahora» enseña lo que valía justo entonces.
+  const frames = playFrames(data.content)
+  const frame = useMoment(data.play, frames.length)
+  const upto = frame === null ? null : (frames[frame] ?? null)
+  const stage = playStage(momentLaps(data.content), upto)
+  const content = withLive(data.content, frame, stage)
+  const cursor = stage?.cursor ?? null
   // La caja de algo que se está pidiendo: con la forma de lo que va a ser, rellenándose al hablar.
   if (content.ghost && content.draft) {
     const { name, takes = [], does } = content.draft

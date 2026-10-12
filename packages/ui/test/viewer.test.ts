@@ -4,6 +4,9 @@ import {
   gridLayout,
   momentLaps,
   playCursor,
+  playFrames,
+  playStage,
+  withLive,
   viewerHeight,
   viewerImageSize,
   viewerSize,
@@ -150,5 +153,81 @@ describe('un visor que se reproduce', () => {
     expect([0, 1, 2, 9].map((step) => playCursor(play('run'), 3, step))).toEqual([0, 1, 2, 2])
     expect(playCursor(play('end'), 3, 0)).toBe(2)
     expect(playCursor(play('run'), 0, 0)).toBeNull()
+  })
+})
+
+describe('la película de un visor: reproducirlo de corrido', () => {
+  const content = {
+    title: 'x',
+    steps: [
+      { label: '0', text: 'xkzq', lit: [false, false, false, false] },
+      { label: '4', text: 'hkzq', lit: [true, false, false, false] },
+      { label: '9', text: 'hola', lit: [true, true, true, true] },
+    ],
+    film: {
+      laps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      texts: ['xkzq', 'xkzq', 'xkza', 'hkza', 'hkzq', 'hkzq', 'hkla', 'hkla', 'hola', 'hola'],
+    },
+  }
+
+  it('recorre todos sus fotogramas; sin película, sus momentos', () => {
+    expect(playFrames(content)).toEqual(content.film.laps)
+    expect(playFrames({ title: 'x', steps: content.steps })).toEqual([0, 4, 9])
+  })
+
+  it('va por el último momento alcanzado o, camino del siguiente, por ese (en vivo)', () => {
+    const moments = [0, 4, 9]
+    expect(playStage(moments, null)).toBeNull()
+    expect(playStage(moments, 0)).toEqual({ cursor: 0, live: false })
+    expect(playStage(moments, 2)).toEqual({ cursor: 1, live: true })
+    expect(playStage(moments, 4)).toEqual({ cursor: 1, live: false })
+    expect(playStage(moments, 7)).toEqual({ cursor: 2, live: true })
+    expect(playStage(moments, 9)).toEqual({ cursor: 2, live: false })
+  })
+
+  it('la fila de «ahora» lleva lo que valía en ese fotograma, con encendido lo que ya es del final', () => {
+    const live = withLive(content, 6, playStage([0, 4, 9], 6))
+    // Las filas ya alcanzadas no cambian; la siguiente enseña la vuelta 6.
+    expect(live.steps?.[1]).toEqual(content.steps[1])
+    expect(live.steps?.[2]).toEqual({ label: '6', text: 'hkla', lit: [true, false, true, true] })
+    // Justo en un momento, o sin reproducir, el visor es el de siempre.
+    expect(withLive(content, 4, playStage([0, 4, 9], 4))).toBe(content)
+    expect(withLive(content, null, null)).toBe(content)
+  })
+
+  it('lo mismo con una lista (sus barras) y con un tablero', () => {
+    const bars = {
+      title: 'x',
+      strips: [
+        { label: '0', values: [3, 1, 2] },
+        { label: '2', values: [1, 2, 3] },
+      ],
+      film: {
+        laps: [0, 1, 2],
+        lists: [
+          [3, 1, 2],
+          [1, 3, 2],
+          [1, 2, 3],
+        ],
+      },
+    }
+    expect(withLive(bars, 1, playStage([0, 2], 1)).strips?.[1]).toEqual({
+      label: '1',
+      values: [1, 3, 2],
+      lit: [true, false, false],
+    })
+    const grid = (cell: number) => [[cell, 0]]
+    const boards = {
+      title: 'x',
+      grids: [
+        { label: '0', cells: grid(1) },
+        { label: '2', cells: grid(0) },
+      ],
+      film: { laps: [0, 1, 2], boards: [grid(1), grid(2), grid(0)] },
+    }
+    expect(withLive(boards, 1, playStage([0, 2], 1)).grids?.[1]).toEqual({
+      label: '1',
+      cells: grid(2),
+    })
   })
 })

@@ -149,6 +149,8 @@ interface SavedState {
   voice?: boolean
   /** La versión que se hizo de una petición abierta (y las otras que se propusieron), por archivo. */
   flavours?: Record<string, Flavours>
+  /** Las ejecuciones del programa (qué provocó cada una y qué dio), por archivo: su historia sigue al recargar. */
+  runs?: Record<string, RunEntry[]>
 }
 
 /** Una petición abierta: lo que se pidió, las versiones que se propusieron y cuál se hizo. */
@@ -385,6 +387,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const runCause = useRef<{ text: string; at: number; again?: boolean } | null>(null)
   /** De qué archivo es esa historia: con otro, empieza de nuevo. */
   const runsOf = useRef<string | null>(null)
+  /** Aún no se ha visto ejecutar desde que se abrió: lo primero que llegue puede ser lo que ya estaba apuntado. */
+  const firstRun = useRef(true)
+  // La historia se guarda con el lienzo: al recargar, sigue ahí.
+  useEffect(() => {
+    if (file === null) return
+    vscode.setState({
+      ...saved(),
+      runs: { ...saved().runs, [file]: pastRuns },
+    } satisfies SavedState)
+  }, [pastRuns, file])
   /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
   const [xray, setXray] = useState(false)
   /**
@@ -611,13 +623,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       if (message.type === 'update') {
         setProgram(message.program)
         setFile(message.file ?? null)
-        // Otro archivo, u otro programa desde cero: su historia de ejecuciones empieza de nuevo.
-        if (
-          (message.file ?? null) !== runsOf.current ||
-          (message.program?.nodes.length ?? 0) === 0
-        ) {
+        // Otro archivo: la historia de sus ejecuciones es la suya (la que se guardó, si la hay). Y un
+        // programa que empieza desde cero, sin historia.
+        if ((message.program?.nodes.length ?? 0) === 0) {
           runsOf.current = message.file ?? null
           setPastRuns((previous) => (previous.length === 0 ? previous : []))
+        } else if ((message.file ?? null) !== runsOf.current) {
+          runsOf.current = message.file ?? null
+          const kept = saved().runs?.[message.file ?? ''] ?? []
+          firstRun.current = true
+          setPastRuns(kept)
         }
         setVersion(message.version ?? null)
         received(message.program, message.version ?? null)
@@ -664,13 +679,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           if (seenRun.current?.version !== message.version || due?.again === true) {
             runCause.current = null
             const run = message.run
+            const reopened = firstRun.current && due === null
+            firstRun.current = false
             setPastRuns((previous) => {
+              const last = previous[previous.length - 1]
               const entry = runEntry(
                 run,
-                due?.text ?? (previous.length === 0 ? 'al abrirlo' : 'un cambio'),
-                (previous[previous.length - 1]?.n ?? 0) + 1,
+                due?.text ?? (previous.length === 0 || reopened ? 'al abrirlo' : 'un cambio'),
+                (last?.n ?? 0) + 1,
               )
-              return entry ? [...previous.slice(-(RUNS_KEPT - 1)), entry] : previous
+              // Recién abierto, si da lo mismo que lo último apuntado es esa misma ejecución: no se repite.
+              if (!entry || (reopened && last?.said === entry.said)) return previous
+              return [...previous.slice(-(RUNS_KEPT - 1)), entry]
             })
           }
           seenRun.current = { version: message.version, run: message.run }
