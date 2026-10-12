@@ -215,6 +215,8 @@ export type AskWhere =
   | { at: 'after'; id: string; port: OrderPort }
   | { at: 'value'; id: string; name: string }
   | { at: 'link'; from: string; to: string }
+  /** Sobre lo que el programa enseña al acabar (el nodo «Resultado»). */
+  | { at: 'result' }
 
 /**
  * **Pedir con palabras desde el propio lienzo.** Con ello, un clic derecho (o un doble clic) en el vacío abre
@@ -3036,6 +3038,18 @@ function CanvasInner({
                 event.preventDefault()
                 const frame = frameRef.current?.getBoundingClientRect()
                 if (!frame) return
+                // El resultado no es una sentencia: no tiene menú, pero se puede pedir algo sobre él.
+                if (node.id === RESULT_ID) {
+                  if (!ask) return
+                  setQuick(null)
+                  setMenu(null)
+                  setAsking({
+                    x: event.clientX - frame.left,
+                    y: event.clientY - frame.top,
+                    where: { at: 'result' },
+                  })
+                  return
+                }
                 select(node.id)
                 setQuick(null)
                 setMenu({
@@ -3295,11 +3309,15 @@ function CanvasInner({
           y={asking.y}
           {...(asking.where.at === 'link'
             ? { title: `De «${nameOf(asking.where.from)}» a «${nameOf(asking.where.to)}»` }
-            : {})}
+            : asking.where.at === 'result'
+              ? { title: 'Sobre el resultado' }
+              : {})}
           placeholder={
             asking.where.at === 'link'
               ? '¿Qué quieres entre los dos?'
-              : 'Pide algo: «añade…», «explícame…»'
+              : asking.where.at === 'result'
+                ? '¿Qué quieres que enseñe al acabar?'
+                : 'Pide algo: «añade…», «explícame…»'
           }
           chips={ask.chips?.(asking.where) ?? []}
           onSubmit={(text) => {

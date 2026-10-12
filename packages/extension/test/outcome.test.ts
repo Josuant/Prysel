@@ -199,6 +199,9 @@ describe('la salud del programa tras un cambio', () => {
     expect(hurt).toMatchObject({ tone: 'error', undo: true })
     expect(hurt?.text).toContain('Antes funcionaba y ahora falla')
     expect(hurt?.text).toContain('NameError')
+    // Con el fallo, lo que dijo el error: es lo que se manda al pedir que lo arregle.
+    expect(hurt?.fix).toContain('NameError')
+    expect(healthOf(before, ok('Total: 12' + NL))?.fix).toBeUndefined()
     // Y al arreglarlo, se dice.
     expect(healthOf(broken, ok('Total: 10' + NL))?.text).toBe('Ya no falla: da «Total: 10».')
   })

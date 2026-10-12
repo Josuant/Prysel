@@ -23,7 +23,8 @@ export interface AskBoxProps {
   placeholder: string
   /** Lo que ya trae escrito (una frase empezada). */
   initial?: string
-  chips?: readonly AskChip[]
+  /** Lo que se ofrece debajo (o cómo saberlo: se pregunta al dibujar la caja). */
+  chips?: readonly AskChip[] | (() => readonly AskChip[])
   maxLength?: number
   /** Coge el foco al aparecer. */
   focus?: boolean
@@ -37,7 +38,7 @@ export interface AskBoxProps {
 export function AskBox({
   placeholder,
   initial = '',
-  chips = [],
+  chips: offered = [],
   maxLength = 400,
   focus = true,
   onSubmit,
@@ -45,6 +46,7 @@ export function AskBox({
   onDone,
 }: AskBoxProps) {
   const [text, setText] = useState(initial)
+  const chips = typeof offered === 'function' ? offered() : offered
   const input = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (!focus) return
@@ -152,7 +154,7 @@ export function AskBubble({ x, y, title, onClose, onSubmit, ...box }: AskBubbleP
     const room = 6
     bubble.style.left = `${Math.max(room, Math.min(x, stage.clientWidth - bubble.offsetWidth - room))}px`
     bubble.style.top = `${Math.max(room, Math.min(y, stage.clientHeight - bubble.offsetHeight - room))}px`
-  }, [x, y, box.chips?.length])
+  }, [x, y, box.chips])
 
   useEffect(() => {
     const onPointer = (event: PointerEvent) => {

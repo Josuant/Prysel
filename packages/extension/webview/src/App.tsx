@@ -171,9 +171,10 @@ const ROLE_KEYS: Record<ModuleRole, { word: string; why: string }> = {
 /**
  * Lo que ocupa el panel de las perillas abierto: lo que se le deja a su lado (su ancho y su margen), y arriba
  * cuando no hay ancho para ponerse al lado (lo de la barra y lo de cada fila). `bar` y `under`: lo que se baja
- * el diagrama abierto (que no reserva nada más arriba) con la barra plegada, y con el panel abierto.
+ * el diagrama abierto (que no reserva nada más arriba) con la barra plegada, y con el panel abierto. `down`: lo
+ * que baja la barra en una pantalla estrecha, donde su fila la ocupa el mando de las distancias.
  */
-const KNOBS = { width: 324, top: 104, row: 30, bar: 46, under: 54 }
+const KNOBS = { width: 324, top: 104, row: 30, bar: 46, under: 54, down: 44 }
 
 /** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
 const WIDE_PANEL = 1100
@@ -1427,8 +1428,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       const slash = event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey
       const palette = event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)
       if (!slash && !palette) return
-      const target = event.target as HTMLElement | null
-      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      const target = event.target
+      if (
+        target instanceof Element &&
+        target.closest('input, textarea, select, [contenteditable="true"]')
+      )
+        return
       event.preventDefault()
       openAsk(
         aboutId !== undefined && aboutLabel !== undefined
@@ -1697,13 +1702,23 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     () =>
       architecture
         ? {
-            top: !hasKnobs ? 40 : knobsShown && narrow ? KNOBS.top + KNOBS.row * knobs.length : 90,
+            // (En una pantalla estrecha la barra de las perillas va una fila más abajo: ver `KNOBS.down`.)
+            top: !hasKnobs
+              ? 40
+              : knobsShown && narrow
+                ? KNOBS.top + KNOBS.down + KNOBS.row * knobs.length
+                : 90 + (narrow ? KNOBS.down : 0),
             bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
             ...(knobsShown && !narrow ? { left: KNOBS.width } : {}),
           }
         : knobsBar
           ? // En el diagrama abierto la barra flota sobre su esquina: el diagrama empieza debajo de ella.
-            { top: knobsShown ? KNOBS.under + KNOBS.row * knobs.length : KNOBS.bar, bottom: 0 }
+            {
+              top:
+                (knobsShown ? KNOBS.under + KNOBS.row * knobs.length : KNOBS.bar) +
+                (narrow ? KNOBS.down : 0),
+              bottom: 0,
+            }
           : null,
     [
       architecture,
@@ -2126,6 +2141,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       case 'value':
         hear(`${text} (usando «${where.name}»)`, where.id, { place: 'despues' })
         break
+      // Sobre lo que enseña al acabar.
+      case 'result':
+        hear(`${text} (sobre el resultado que el programa enseña al acabar)`, null)
+        break
       // De una pieza a otra: lo que se pide va entre las dos.
       case 'link':
         hear(`${text} (entre «${pieceName(where.from)}» y «${pieceName(where.to)}»)`, where.from, {
@@ -2142,6 +2161,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         { label: 'Explícamelo', say: 'Explícame esto' },
         { label: 'Cámbialo para que…', prefill: 'Cambia esto para que ' },
         { label: 'Quítalo', say: 'Quita esto' },
+      ]
+    }
+    if (where.at === 'result') {
+      return [
+        { label: '¿Por qué da esto?', say: '¿Por qué da este resultado el programa?' },
+        {
+          label: 'Que lo enseñe paso a paso',
+          say: 'Haz que enseñe cómo va avanzando, no solo el final',
+        },
       ]
     }
     if (where.at !== 'canvas') return []
@@ -3179,7 +3207,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               style={
                 {
                   ...dock,
-                  '--above': architecture && hasStory && !showIdea ? '46px' : '8px',
+                  // Lo que dice va por encima de las barras de abajo (y de la consola, si van sobre ella).
+                  '--above': `${
+                    (architecture && hasStory && !showIdea ? 46 : 8) +
+                    (consoleBox && cramped ? consoleBox.h : 0)
+                  }px`,
                 } as React.CSSProperties
               }
               onAsk={() => {
@@ -3242,7 +3274,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   ? 'Cámbialo, o pregunta por ello…'
                   : 'Pide algo: «añade…», «explícame…»'
               }
-              chips={askChips(asking.about ? { at: 'node', id: asking.about } : { at: 'canvas' })}
+              chips={() =>
+                askChips(asking.about ? { at: 'node', id: asking.about } : { at: 'canvas' })
+              }
               onSubmit={(text) => {
                 if (asking.about) hear(text, asking.about, {})
                 else hear(text, null)

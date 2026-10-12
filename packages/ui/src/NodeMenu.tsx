@@ -38,7 +38,7 @@ export function NodeMenu({ x, y, title, items, ask, onClose }: NodeMenuProps) {
     const room = 4
     menu.style.left = `${Math.max(room, Math.min(x, stage.clientWidth - menu.offsetWidth - room))}px`
     menu.style.top = `${Math.max(room, Math.min(y, stage.clientHeight - menu.offsetHeight - room))}px`
-  }, [x, y, items.length, ask?.chips?.length])
+  }, [x, y, items.length, ask?.chips])
 
   const asks = ask !== undefined
   useEffect(() => {

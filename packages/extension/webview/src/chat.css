@@ -3,7 +3,8 @@
  * señalar nada, el micrófono, lo último que contestó y, desplegada, la conversación entera.
  */
 .ai-hub {
-  bottom: calc(10px + var(--lift, 0px) + env(safe-area-inset-bottom));
+  /* Abajo, a la izquierda: la consola va a la derecha, así que no se sube con las demás barras. */
+  bottom: calc(10px + env(safe-area-inset-bottom));
   left: 10px;
   z-index: 26;
   display: flex;

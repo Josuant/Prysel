@@ -1781,6 +1781,8 @@ button.fn-menu__crumb:hover {
 .react-flow__handle.order-port.ask-port {
   width: 16px;
   height: 16px;
+  /* Por encima de su tarjeta: se coge entero, no solo la mitad que asoma. */
+  z-index: 6;
   border-radius: 50%;
   background: var(--accent);
 }
@@ -7332,6 +7334,10 @@ button.run-panel__line:hover {
   /* En una pantalla estrecha no cabe entre las migas y «Paso a paso»: baja una fila. */
   .distance {
     top: 54px;
+  }
+  /* Y las perillas, otra: esa fila es ahora la suya. */
+  .knobs {
+    top: 94px;
   }
   .idea .idea__scroll {
     top: 96px;
