@@ -2798,7 +2798,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 avoid={consoleBox}
                 result={outcome?.result ?? null}
                 runs={outcome?.result ? runsShown : null}
-                progress={outcome?.result ? progressShown : null}
+                progress={progressShown}
                 knobs={knobsPanel}
                 start={outcome?.start ?? null}
                 exit={

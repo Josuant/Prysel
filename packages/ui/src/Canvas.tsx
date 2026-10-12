@@ -520,17 +520,17 @@ const RUNS_GAP = 18
 type Size2 = { w: number; h: number }
 /** La cola de la arquitectura: el resultado y, debajo, sus ejecuciones si las hay. */
 const tailOf = (
-  result: ViewerContent,
-  more: readonly (ViewerContent | null)[],
-): { w: number; h: number } => {
-  let { w, h } = viewerSize(result)
-  for (const content of more) {
+  contents: readonly (ViewerContent | null | undefined)[],
+): { w: number; h: number } | null => {
+  let w = 0
+  let h = 0
+  for (const content of contents) {
     if (!content) continue
     const size = viewerSize(content)
     w = Math.max(w, size.w)
-    h += RUNS_GAP + size.h
+    h += (h > 0 ? RUNS_GAP : 0) + size.h
   }
-  return { w, h }
+  return h > 0 ? { w, h } : null
 }
 /** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
 const SHARED_FROM = 3
@@ -788,7 +788,8 @@ function CanvasInner({
   // El resultado, si lo hay, va a la cola de la arquitectura: cuenta para saber cuánto cabe.
   // (Y bajo él, si las hay, las ejecuciones: los dos son la cola.)
   const tailSize = useMemo(
-    () => (result && flow && architecture ? tailOf(result.content, [progress, runs]) : undefined),
+    () =>
+      flow && architecture ? (tailOf([result?.content, progress, runs]) ?? undefined) : undefined,
     [result, progress, runs, flow, architecture],
   )
   const nodes = useMemo(
@@ -1251,7 +1252,8 @@ function CanvasInner({
   )
   // Con las ejecuciones debajo, la cola son los dos visores, uno sobre otro.
   const tailBox = useMemo(
-    () => (result && figures !== undefined ? tailOf(result.content, [progress, runs]) : null),
+    // (Puede no haber resultado —el programa se cortó sin enseñar nada— y sí algo que contar de cómo iba.)
+    () => (figures !== undefined ? tailOf([result?.content, progress, runs]) : null),
     [result, progress, runs, figures],
   )
   // En la arquitectura las perillas van a la entrada y el resultado a la salida: de izquierda a derecha,
@@ -2313,31 +2315,31 @@ function CanvasInner({
     ]
   })
   // ── El resultado y el arranque: los dos extremos de la arquitectura ──
-  const resultAt =
-    resultSize && tailBox && archModules.size > 0
+  // Dónde empieza la cola (su esquina de arriba a la izquierda): a la derecha del dibujo, o debajo.
+  const tailAt =
+    tailBox && archModules.size > 0
       ? resultSide === 'bottom'
         ? {
-            x: shiftX + Math.max(28, (layoutBounds.w - resultSize.w) / 2),
+            x: shiftX + Math.max(28, (layoutBounds.w - tailBox.w) / 2),
             y: shiftY + layoutBounds.h - 28 + TAIL_GAP.y,
-            ...resultSize,
           }
         : {
             x: shiftX + layoutBounds.w + TAIL_GAP.x - 28,
             y: shiftY + Math.max(28, (layoutBounds.h - tailBox.h) / 2),
-            ...resultSize,
           }
       : null
+  const resultAt = resultSize && tailAt ? { ...tailAt, ...resultSize } : null
   // Las ejecuciones, bajo el resultado: es su historia.
   const tailViewers: { node: CanvasNode; content: ViewerContent; at: Point; size: Size2 }[] = []
-  if (resultAt) {
-    let y = resultAt.y + resultAt.h + RUNS_GAP
+  if (tailAt) {
+    let y = tailAt.y + (resultAt ? resultAt.h + RUNS_GAP : 0)
     for (const [node, content] of [
       [PROGRESS_NODE, progress],
       [RUNS_NODE, runs],
     ] as const) {
       if (!content) continue
       const size = viewerSize(content)
-      tailViewers.push({ node, content, at: { x: resultAt.x, y }, size })
+      tailViewers.push({ node, content, at: { x: tailAt.x, y }, size })
       y += size.h + RUNS_GAP
     }
   }
@@ -2431,8 +2433,8 @@ function CanvasInner({
       ]
     },
   )
-  const resultNodes: ViewerFlowNode[] =
-    result && resultAt
+  const resultNodes: ViewerFlowNode[] = [
+    ...(result && resultAt
       ? [
           {
             ...viewerNode(
@@ -2446,34 +2448,35 @@ function CanvasInner({
             // No es un visor que se haya fijado: no se quita.
             data: { node: RESULT_NODE, content: result.content, size: resultAt },
           },
-          ...tailViewers.map(({ node, content, at, size }) => ({
-            ...viewerNode(node, content, at, size),
-            draggable: false,
-            selectable: false,
-            // Al reproducir la historia, el visor de cómo avanza va al paso: el punto de partida durante la
-            // primera vuelta, corriendo en el «y otra vez», y entero al llegar al resultado.
-            data: {
-              node,
-              content,
-              size,
-              ...(node === PROGRESS_NODE && beat?.phase
-                ? {
-                    play: {
-                      phase:
-                        beat.phase === 'again'
-                          ? ('run' as const)
-                          : beat.phase === 'result'
-                            ? ('end' as const)
-                            : ('start' as const),
-                      ms: beat.ms,
-                      serial: beat.serial,
-                    },
-                  }
-                : {}),
-            },
-          })),
         ]
-      : []
+      : []),
+    ...tailViewers.map(({ node, content, at, size }) => ({
+      ...viewerNode(node, content, at, size),
+      draggable: false,
+      selectable: false,
+      // Al reproducir la historia, el visor de cómo avanza va al paso: el punto de partida durante la
+      // primera vuelta, corriendo en el «y otra vez», y entero al llegar al resultado.
+      data: {
+        node,
+        content,
+        size,
+        ...(node === PROGRESS_NODE && beat?.phase
+          ? {
+              play: {
+                phase:
+                  beat.phase === 'again'
+                    ? ('run' as const)
+                    : beat.phase === 'result'
+                      ? ('end' as const)
+                      : ('start' as const),
+                ms: beat.ms,
+                serial: beat.serial,
+              },
+            }
+          : {}),
+      },
+    })),
+  ]
   // Quién escribe el resultado le tiende una flecha… salvo en un ciclo con su compuerta de salida: ahí el
   // resultado llega «al salir», y esa es la única flecha que lo dice (la de quien lo escribe, que está fuera
   // de la vuelta, tendría que cruzar el anillo para decir lo mismo).
