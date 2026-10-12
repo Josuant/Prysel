@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  endSides,
   fitZoom,
   layoutArchitecture,
   tailSide,
+  withHead,
   withTail,
   type Architecture,
   type Size,
@@ -147,5 +149,36 @@ describe('la arquitectura, colocada para su lienzo', () => {
     // Debajo no ensancha el conjunto; al lado no lo alarga.
     expect(withTail(wide, TAIL, 'bottom').w).toBe(1200)
     expect(withTail(wide, TAIL, 'right').h).toBe(300)
+  })
+
+  it('con algo a la entrada (las perillas), los dos extremos se colocan a la vez para verse lo más grande', () => {
+    const body = { w: 900, h: 420 }
+    const head = { w: 268, h: 140 }
+    // Con sitio, de izquierda a derecha: lo que entra, el programa, lo que sale.
+    expect(endSides(body, TAIL, head, { w: 2400, h: 900 })).toEqual({ tail: 'right', head: 'left' })
+    // En un lienzo estrecho, de arriba abajo.
+    expect(endSides(body, TAIL, head, { w: 700, h: 1100 })).toEqual({ tail: 'bottom', head: 'top' })
+    // Lo elegido nunca se ve más pequeño que la colocación de siempre.
+    for (const frame of [
+      { w: 1280, h: 640 },
+      { w: 1024, h: 560 },
+      { w: 900, h: 900 },
+      { w: 375, h: 600 },
+    ]) {
+      const ends = endSides(body, TAIL, head, frame)
+      const size = (tail: 'right' | 'bottom', side: 'left' | 'top') =>
+        withHead(withTail(body, TAIL, tail), head, side)
+      expect(fitZoom(size(ends.tail, ends.head), frame)).toBeGreaterThanOrEqual(
+        fitZoom(size('right', 'left'), frame),
+      )
+    }
+    // Sin perillas, es la cola de siempre; sin lienzo que mirar, lo natural.
+    expect(endSides(body, TAIL, null, { w: 600, h: 900 }).tail).toBe(
+      tailSide(body, TAIL, { w: 600, h: 900 }),
+    )
+    expect(endSides(body, TAIL, head, undefined)).toEqual({ tail: 'right', head: 'left' })
+    // A un lado no alarga el conjunto; encima no lo ensancha.
+    expect(withHead(body, head, 'left').h).toBe(420)
+    expect(withHead(body, head, 'top').w).toBe(900)
   })
 })

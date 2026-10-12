@@ -32,16 +32,12 @@ export interface KnobsPanel {
   into?: readonly string[]
 }
 
-export const KNOBS_NODE = { w: 244, head: 34, row: 30, foot: 38, pad: 12 }
+export const KNOBS_NODE = { w: 268, head: 34, row: 30, foot: 38, pad: 12 }
 
 /** Lo que mide el nodo: su cabecera, una fila por perilla y, si se puede tirar, el dado. */
-export const knobsSize = (panel: KnobsPanel): { w: number; h: number } => ({
+export const knobsSize = (rows: number, chance: boolean): { w: number; h: number } => ({
   w: KNOBS_NODE.w,
-  h:
-    KNOBS_NODE.head +
-    panel.items.length * KNOBS_NODE.row +
-    (panel.chance ? KNOBS_NODE.foot : 0) +
-    KNOBS_NODE.pad,
+  h: KNOBS_NODE.head + rows * KNOBS_NODE.row + (chance ? KNOBS_NODE.foot : 0) + KNOBS_NODE.pad,
 })
 
 export interface KnobsNodeData extends Record<string, unknown> {

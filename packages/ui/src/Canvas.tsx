@@ -35,7 +35,8 @@ import {
   TAIL_GAP,
   channelOf,
   layout,
-  tailSide,
+  endSides,
+  HEAD_GAP,
   type Architecture,
   type Axis,
   type Figure,
@@ -494,9 +495,8 @@ const RESULT_NODE: CanvasNode = { id: RESULT_ID, kind: 'output.display', label: 
 const RUNS_ID = 'prysel:runs'
 const RUNS_NODE: CanvasNode = { id: RUNS_ID, kind: 'output.display', label: 'Ejecuciones' }
 const KNOBS_ID = 'prysel:knobs'
-/** Lo que separa el resultado de sus ejecuciones, y las perillas del dibujo. */
+/** Lo que separa el resultado de sus ejecuciones. */
 const RUNS_GAP = 18
-const HEAD_GAP = { x: 64, y: 40 }
 /** La cola de la arquitectura: el resultado y, debajo, sus ejecuciones si las hay. */
 const tailOf = (result: ViewerContent, runs: ViewerContent | null): { w: number; h: number } => {
   const size = viewerSize(result)
@@ -702,7 +702,7 @@ function CanvasInner({
   const reserveTop = reserve?.top ?? 0
   const reserveBottom = reserve?.bottom ?? 0
   const reserveLeft = reserve?.left ?? 0
-  const archFrame = useMemo(
+  const fullFrame = useMemo(
     () =>
       frameSize
         ? {
@@ -712,6 +712,21 @@ function CanvasInner({
         : undefined,
     [frameSize, reserveTop, reserveBottom, reserveLeft],
   )
+  // Las perillas, si las hay, son un nodo más: lo que miden (por sus filas, no por quién las trae: así no
+  // se recoloca nada en cada dibujo).
+  const headRows = knobs?.items.length ?? 0
+  const headChance = knobs?.chance === true
+  const headSize = useMemo(
+    () => (headRows > 0 || headChance ? knobsSize(headRows, headChance) : null),
+    [headRows, headChance],
+  )
+  // La arquitectura se coloca para el lienzo que le queda con ellas: a su lado si es apaisado; debajo, si no.
+  const archFrame = useMemo(() => {
+    if (!fullFrame || !headSize) return fullFrame
+    return fullFrame.w >= fullFrame.h * 1.2
+      ? { w: Math.max(240, fullFrame.w - headSize.w - HEAD_GAP.x), h: fullFrame.h }
+      : { w: fullFrame.w, h: Math.max(200, fullFrame.h - headSize.h - HEAD_GAP.y) }
+  }, [fullFrame, headSize])
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
   /** El diagrama (su `fitKey`) al que una orden llevó la cámara: ahí el encuadre ya no se rehace solo. */
@@ -1188,10 +1203,6 @@ function CanvasInner({
   // Los pasos van por el centro. A la izquierda, lo auxiliar (la cajita de variables y los visores); a la
   // derecha, las notas. Leído en horizontal, la cajita va arriba y el resto del plano baja lo que ocupa.
   // Las perillas: en el diagrama abierto van en esa columna de la izquierda, bajo la cajita.
-  const headSize = useMemo(
-    () => (knobs && (knobs.items.length > 0 || knobs.chance) ? knobsSize(knobs) : null),
-    [knobs],
-  )
   const headAside = headSize !== null && aside && !asArchitecture
   const sideW = aside
     ? Math.max(
@@ -1218,13 +1229,15 @@ function CanvasInner({
     () => (result && figures !== undefined ? tailOf(result.content, runs) : null),
     [result, runs, figures],
   )
-  const resultSide = tailBox ? tailSide(layoutBounds, tailBox, archFrame) : 'right'
+  // En la arquitectura las perillas van a la entrada y el resultado a la salida: de izquierda a derecha,
+  // salvo que de otro modo (alguno encima o debajo) el conjunto se vea claramente más grande en este lienzo.
+  const headArch = headSize !== null && asArchitecture
+  const ends = endSides(layoutBounds, tailBox, headArch ? headSize : null, fullFrame)
+  const resultSide = tailBox ? ends.tail : 'right'
   const resultReserve = tailBox && resultSide === 'right' ? TAIL_GAP.x + tailBox.w : 0
   const resultBelow = tailBox && resultSide === 'bottom' ? TAIL_GAP.y + tailBox.h : 0
-  // En la arquitectura las perillas van a la entrada: a la izquierda del dibujo, o encima si el resultado
-  // va debajo (un lienzo estrecho). El dibujo se corre lo que ocupan.
-  const headSide: 'left' | 'top' = resultSide === 'bottom' ? 'top' : 'left'
-  const headArch = headSize !== null && asArchitecture
+  // El dibujo se corre lo que ocupan las perillas.
+  const headSide = ends.head
   const shiftX = baseX + (headArch && headSide === 'left' ? headSize.w + HEAD_GAP.x : 0)
   const shiftY = baseY + (headArch && headSide === 'top' ? headSize.h + HEAD_GAP.y : 0)
   const diagramW =
@@ -2295,6 +2308,8 @@ function CanvasInner({
       ? { x: resultAt.x, y: resultAt.y + resultAt.h + RUNS_GAP, ...runsSize }
       : null
   // Las perillas, a la entrada del dibujo (o, en el diagrama abierto, bajo la cajita del programa).
+  const knobInto = (knobs?.into ?? []).filter((id) => archModules.has(id))
+  const knobTarget = knobInto.length === 1 ? boxOf.get(knobInto[0] ?? '') : undefined
   const knobsAt = !headSize
     ? null
     : headArch
@@ -2303,11 +2318,26 @@ function CanvasInner({
         : headSide === 'left'
           ? {
               x: baseX + 28,
-              y: shiftY + Math.max(28, (layoutBounds.h - headSize.h) / 2),
+              // A la altura de la parte a la que apuntan (o en medio, si son varias o ninguna).
+              y: Math.max(
+                shiftY + 28,
+                Math.min(
+                  shiftY + layoutBounds.h - 28 - headSize.h,
+                  (knobTarget ? knobTarget.y + knobTarget.h / 2 : shiftY + layoutBounds.h / 2) -
+                    headSize.h / 2,
+                ),
+              ),
               ...headSize,
             }
           : {
-              x: shiftX + Math.max(28, (layoutBounds.w - headSize.w) / 2),
+              x: Math.max(
+                shiftX + 28,
+                Math.min(
+                  shiftX + layoutBounds.w - 28 - headSize.w,
+                  (knobTarget ? knobTarget.x + knobTarget.w / 2 : shiftX + layoutBounds.w / 2) -
+                    headSize.w / 2,
+                ),
+              ),
               y: baseY + 28,
               ...headSize,
             }

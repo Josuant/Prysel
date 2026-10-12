@@ -221,6 +221,47 @@ export function tailSide(bounds: Size, tail: Size, frame: Size | undefined): 'ri
   return Math.min(1, bottom) > Math.min(1, right) * 1.08 ? 'bottom' : 'right'
 }
 
+/** Lo que separa la arquitectura de su **cabeza** (lo que va a la entrada: las perillas). */
+export const HEAD_GAP = { x: 64, y: 40 }
+
+/** Lo que ocupa la arquitectura con su cabeza a la izquierda o encima. */
+export function withHead(bounds: Size, head: Size, side: 'left' | 'top'): Size {
+  return side === 'left'
+    ? { w: bounds.w + HEAD_GAP.x + head.w, h: Math.max(bounds.h, head.h + PAD * 2) }
+    : { w: Math.max(bounds.w, head.w + PAD * 2), h: bounds.h + HEAD_GAP.y + head.h }
+}
+
+/**
+ * Dónde van los dos extremos de la arquitectura, la **cabeza** (lo que entra) y la **cola** (lo que sale),
+ * para verla lo más grande posible en ese lienzo. Lo natural es leerla de izquierda a derecha (cabeza a la
+ * izquierda, cola a la derecha); otra colocación solo se elige si con ella se ve claramente más grande.
+ */
+export function endSides(
+  bounds: Size,
+  tail: Size | null,
+  head: Size | null,
+  frame: Size | undefined,
+): { tail: 'right' | 'bottom'; head: 'left' | 'top' } {
+  if (!frame || (!tail && !head)) return { tail: 'right', head: 'left' }
+  const zoomOf = (tailSide: 'right' | 'bottom', headSide: 'left' | 'top') => {
+    const tailed = tail ? withTail(bounds, tail, tailSide) : bounds
+    return Math.min(1, fitZoom(head ? withHead(tailed, head, headSide) : tailed, frame))
+  }
+  let best = { tail: 'right' as 'right' | 'bottom', head: 'left' as 'left' | 'top' }
+  let bestZoom = zoomOf('right', 'left') * 1.08
+  for (const tailSide of ['right', 'bottom'] as const) {
+    for (const headSide of ['left', 'top'] as const) {
+      if ((!tail && tailSide === 'bottom') || (!head && headSide === 'top')) continue
+      const zoom = zoomOf(tailSide, headSide)
+      if (zoom > bestZoom) {
+        best = { tail: tailSide, head: headSide }
+        bestZoom = zoom
+      }
+    }
+  }
+  return best
+}
+
 const overlap = (a: Box, b: Box, margin: number) =>
   Math.abs(a.x - b.x) < (a.w + b.w) / 2 + margin && Math.abs(a.y - b.y) < (a.h + b.h) / 2 + margin
 

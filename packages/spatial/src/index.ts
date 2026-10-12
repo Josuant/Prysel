@@ -18,6 +18,9 @@ export {
   type ShapeCandidate,
   fitZoom,
   tailSide,
+  endSides,
+  withHead,
+  HEAD_GAP,
   withTail,
   TAIL_GAP,
 } from './architecture.ts'
