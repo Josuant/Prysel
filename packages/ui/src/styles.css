@@ -7205,28 +7205,49 @@ button.run-panel__line:hover {
   line-height: 1;
 }
 /* Las perillas del programa y el dado: arriba a la izquierda, bajo las migas. */
-.knobs {
-  top: 50px;
-  left: 12px;
+/*
+ * Las perillas, como un nodo del diagrama: una tarjeta a la entrada del programa, con una fila por número
+ * (su nombre, menos, valor, más) y, si el programa usa el azar, el dado.
+ */
+.knobs-node {
   display: flex;
-  max-width: min(320px, calc(100% - 24px));
+  box-sizing: border-box;
   flex-direction: column;
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid var(--border-card);
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border-card));
   border-radius: 14px;
   background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  cursor: default;
 }
-/* Abiertas tienen un ancho fijo: es el sitio que el diagrama les deja al lado. */
-.knobs[data-open] {
-  width: min(300px, calc(100% - 24px));
-}
-.knobs__bar {
+.knobs-node__head {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  height: 26px;
+  flex: none;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 6px 0;
+  white-space: nowrap;
 }
-.knobs__toggle,
+.knobs-node__title {
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.knobs-node__sub {
+  overflow: hidden;
+  color: var(--ink-faint);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+}
+.knobs-node .knobs__roll {
+  width: 100%;
+  height: 28px;
+  flex: none;
+  justify-content: center;
+  margin-top: 4px;
+  border: 1px dashed var(--border-card);
+}
 .knobs__roll {
   display: inline-flex;
   align-items: center;
@@ -7242,21 +7263,9 @@ button.run-panel__line:hover {
   cursor: pointer;
   white-space: nowrap;
 }
-.knobs__toggle:hover,
 .knobs__roll:hover {
   background: var(--field);
   color: var(--ink);
-}
-.knobs__toggle[aria-expanded='true'] {
-  color: var(--accent);
-}
-.knobs__count {
-  padding: 0 6px;
-  border-radius: var(--radius-full);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
 }
 .knobs__roll > span {
   font-size: 15px;
@@ -7355,10 +7364,6 @@ button.run-panel__line:hover {
   /* En una pantalla estrecha no cabe entre las migas y «Paso a paso»: baja una fila. */
   .distance {
     top: 54px;
-  }
-  /* Y las perillas, otra: esa fila es ahora la suya. */
-  .knobs {
-    top: 94px;
   }
   .idea .idea__scroll {
     top: 96px;

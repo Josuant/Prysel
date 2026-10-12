@@ -79,6 +79,7 @@ import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { IconButton } from './chrome.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
+import { KnobsNode, knobsSize, type KnobsFlowNode, type KnobsPanel } from './flow/KnobsNode.tsx'
 import { gistSize, titledScene, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
@@ -270,6 +271,17 @@ export interface CanvasProps {
    * no sale del programa sino de una prueba aparte. No es código.
    */
   result?: { content: ViewerContent; from: readonly string[]; planned?: boolean } | null
+  /**
+   * Las **ejecuciones**: lo que fue dando el programa cada vez que se ejecutó (al mover una perilla, al
+   * tirar otra vez, tras una orden). Un visor más, junto al resultado: es su historia.
+   */
+  runs?: ViewerContent | null
+  /**
+   * Las **perillas**, como un nodo del diagrama: los números con los que se puede jugar y el dado. En la
+   * arquitectura va a la entrada (a la izquierda, o encima si el dibujo es estrecho), con una flecha a cada
+   * parte donde están escritos; en el diagrama abierto, bajo la cajita del programa.
+   */
+  knobs?: KnobsPanel | null
   /** Dónde **empieza** el trabajo: el módulo que lo arranca y lo que se dice de ello. */
   start?: { at: string; label: string } | null
   /**
@@ -437,13 +449,20 @@ const NODE_TYPES = {
   chip: ChipNode,
   tray: TrayNode,
   viewer: ViewerNode,
+  knobs: KnobsNode,
   note: NoteNode,
   figure: FigureNode,
 }
 
 /** Todo lo que el lienzo dibuja: nodos, chips y la cajita del programa. */
 type AnyFlowNode =
-  PryselFlowNode | ChipFlowNode | TrayFlowNode | ViewerFlowNode | NoteFlowNode | FigureFlowNode
+  | PryselFlowNode
+  | ChipFlowNode
+  | TrayFlowNode
+  | ViewerFlowNode
+  | KnobsFlowNode
+  | NoteFlowNode
+  | FigureFlowNode
 
 /** Funciones de uso común que se ofrecen al elegir a quién llama una llamada. */
 const COMMON_CALLS = [
@@ -471,6 +490,20 @@ const EDGE_TYPES = { prysel: PryselEdge, arch: ArchEdge }
 /** El nodo del resultado del programa, y lo que se separa de la arquitectura. */
 const RESULT_ID = RESULT_BEAT
 const RESULT_NODE: CanvasNode = { id: RESULT_ID, kind: 'output.display', label: 'Resultado' }
+/** Las ejecuciones (la historia del resultado) y las perillas: dos nodos más del dibujo, que no son código. */
+const RUNS_ID = 'prysel:runs'
+const RUNS_NODE: CanvasNode = { id: RUNS_ID, kind: 'output.display', label: 'Ejecuciones' }
+const KNOBS_ID = 'prysel:knobs'
+/** Lo que separa el resultado de sus ejecuciones, y las perillas del dibujo. */
+const RUNS_GAP = 18
+const HEAD_GAP = { x: 64, y: 40 }
+/** La cola de la arquitectura: el resultado y, debajo, sus ejecuciones si las hay. */
+const tailOf = (result: ViewerContent, runs: ViewerContent | null): { w: number; h: number } => {
+  const size = viewerSize(result)
+  if (!runs) return size
+  const more = viewerSize(runs)
+  return { w: Math.max(size.w, more.w), h: size.h + RUNS_GAP + more.h }
+}
 /** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
 const SHARED_FROM = 3
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
@@ -513,6 +546,8 @@ function CanvasInner({
   architecture = null,
   avoid = null,
   result = null,
+  runs = null,
+  knobs = null,
   start = null,
   exit = null,
   beat = null,
@@ -707,9 +742,10 @@ function CanvasInner({
     [exitLabel],
   )
   // El resultado, si lo hay, va a la cola de la arquitectura: cuenta para saber cuánto cabe.
+  // (Y bajo él, si las hay, las ejecuciones: los dos son la cola.)
   const tailSize = useMemo(
-    () => (result && flow && architecture ? viewerSize(result.content) : undefined),
-    [result, flow, architecture],
+    () => (result && flow && architecture ? tailOf(result.content, runs) : undefined),
+    [result, runs, flow, architecture],
   )
   const nodes = useMemo(
     () => allNodes.filter((node) => !node.handwritten && !(aside && node.viewer)),
@@ -1151,14 +1187,21 @@ function CanvasInner({
   const moduleTray = asArchitecture ? undefined : plan.trays.get(MODULE)
   // Los pasos van por el centro. A la izquierda, lo auxiliar (la cajita de variables y los visores); a la
   // derecha, las notas. Leído en horizontal, la cajita va arriba y el resto del plano baja lo que ocupa.
+  // Las perillas: en el diagrama abierto van en esa columna de la izquierda, bajo la cajita.
+  const headSize = useMemo(
+    () => (knobs && (knobs.items.length > 0 || knobs.chance) ? knobsSize(knobs) : null),
+    [knobs],
+  )
+  const headAside = headSize !== null && aside && !asArchitecture
   const sideW = aside
     ? Math.max(
         moduleTray?.w ?? 0,
+        headAside ? headSize.w : 0,
         ...sideViewers.map((node) => (node.viewer ? viewerSize(node.viewer).w : 0)),
       )
     : 0
-  const shiftX = aside && sideW > 0 ? sideW + MODULE_TRAY_AT.x + SIDE_GAP : 0
-  const shiftY = !aside && moduleTray ? moduleTray.h + 24 : 0
+  const baseX = aside && sideW > 0 ? sideW + MODULE_TRAY_AT.x + SIDE_GAP : 0
+  const baseY = !aside && moduleTray ? moduleTray.h + 24 : 0
   /** Hasta dónde llega el diagrama; a partir de ahí, el margen de las notas. */
   // El resultado, si lo hay, va a la cola de la arquitectura: a su derecha o, si así se ve más grande en
   // este lienzo, debajo. El encuadre le deja su sitio.
@@ -1166,9 +1209,24 @@ function CanvasInner({
     () => (result && figures !== undefined ? viewerSize(result.content) : null),
     [result, figures],
   )
-  const resultSide = resultSize ? tailSide(layoutBounds, resultSize, archFrame) : 'right'
-  const resultReserve = resultSize && resultSide === 'right' ? TAIL_GAP.x + resultSize.w : 0
-  const resultBelow = resultSize && resultSide === 'bottom' ? TAIL_GAP.y + resultSize.h : 0
+  // Con las ejecuciones debajo, la cola son los dos visores, uno sobre otro.
+  const runsSize = useMemo(
+    () => (runs && result && figures !== undefined ? viewerSize(runs) : null),
+    [runs, result, figures],
+  )
+  const tailBox = useMemo(
+    () => (result && figures !== undefined ? tailOf(result.content, runs) : null),
+    [result, runs, figures],
+  )
+  const resultSide = tailBox ? tailSide(layoutBounds, tailBox, archFrame) : 'right'
+  const resultReserve = tailBox && resultSide === 'right' ? TAIL_GAP.x + tailBox.w : 0
+  const resultBelow = tailBox && resultSide === 'bottom' ? TAIL_GAP.y + tailBox.h : 0
+  // En la arquitectura las perillas van a la entrada: a la izquierda del dibujo, o encima si el resultado
+  // va debajo (un lienzo estrecho). El dibujo se corre lo que ocupan.
+  const headSide: 'left' | 'top' = resultSide === 'bottom' ? 'top' : 'left'
+  const headArch = headSize !== null && asArchitecture
+  const shiftX = baseX + (headArch && headSide === 'left' ? headSize.w + HEAD_GAP.x : 0)
+  const shiftY = baseY + (headArch && headSide === 'top' ? headSize.h + HEAD_GAP.y : 0)
   const diagramW =
     (aside
       ? shiftX + layoutBounds.w
@@ -1183,10 +1241,25 @@ function CanvasInner({
       h:
         Math.max(
           layoutBounds.h + shiftY,
-          aside && moduleTray ? moduleTray.h + MODULE_TRAY_AT.y * 2 : 0,
+          aside && (moduleTray || headAside)
+            ? (moduleTray ? moduleTray.h + 16 : 0) +
+                (headAside ? headSize.h + 16 : 0) +
+                MODULE_TRAY_AT.y * 2
+            : 0,
         ) + resultBelow,
     }),
-    [diagramW, noteReserve, layoutBounds.h, shiftY, aside, moduleTray, flow, resultBelow],
+    [
+      diagramW,
+      noteReserve,
+      layoutBounds.h,
+      shiftY,
+      aside,
+      moduleTray,
+      flow,
+      resultBelow,
+      headAside,
+      headSize,
+    ],
   )
 
   const motionItems = useMemo(
@@ -2203,7 +2276,7 @@ function CanvasInner({
   })
   // ── El resultado y el arranque: los dos extremos de la arquitectura ──
   const resultAt =
-    resultSize && archModules.size > 0
+    resultSize && tailBox && archModules.size > 0
       ? resultSide === 'bottom'
         ? {
             x: shiftX + Math.max(28, (layoutBounds.w - resultSize.w) / 2),
@@ -2212,10 +2285,88 @@ function CanvasInner({
           }
         : {
             x: shiftX + layoutBounds.w + TAIL_GAP.x - 28,
-            y: shiftY + Math.max(28, (layoutBounds.h - resultSize.h) / 2),
+            y: shiftY + Math.max(28, (layoutBounds.h - tailBox.h) / 2),
             ...resultSize,
           }
       : null
+  // Las ejecuciones, bajo el resultado: es su historia.
+  const runsAt =
+    resultAt && runsSize
+      ? { x: resultAt.x, y: resultAt.y + resultAt.h + RUNS_GAP, ...runsSize }
+      : null
+  // Las perillas, a la entrada del dibujo (o, en el diagrama abierto, bajo la cajita del programa).
+  const knobsAt = !headSize
+    ? null
+    : headArch
+      ? archModules.size === 0
+        ? null
+        : headSide === 'left'
+          ? {
+              x: baseX + 28,
+              y: shiftY + Math.max(28, (layoutBounds.h - headSize.h) / 2),
+              ...headSize,
+            }
+          : {
+              x: shiftX + Math.max(28, (layoutBounds.w - headSize.w) / 2),
+              y: baseY + 28,
+              ...headSize,
+            }
+      : headAside
+        ? {
+            x: MODULE_TRAY_AT.x,
+            y: MODULE_TRAY_AT.y + (moduleTray ? moduleTray.h + 16 : 0),
+            ...headSize,
+          }
+        : null
+  const knobsNodes: KnobsFlowNode[] =
+    knobs && knobsAt
+      ? [
+          {
+            id: KNOBS_ID,
+            type: 'knobs' as const,
+            position: { x: knobsAt.x, y: knobsAt.y },
+            ...nodeFrame(knobsAt),
+            zIndex: 4,
+            draggable: false,
+            selectable: false,
+            data: {
+              panel: knobs,
+              size: knobsAt,
+              out: headArch && headSide === 'top' ? 'bottom' : 'right',
+            },
+          },
+        ]
+      : []
+  // De las perillas, una flecha a cada parte donde están escritos sus números.
+  const knobEdges: ArchFlowEdge[] = (headArch && knobsAt ? (knobs?.into ?? []) : []).flatMap(
+    (id) => {
+      const to = archModules.has(id) ? boxOf.get(id) : undefined
+      if (!to || !knobsAt) return []
+      const others = [...archModules.keys()].flatMap((other) => {
+        const box = other === id ? undefined : boxOf.get(other)
+        return box ? [box] : []
+      })
+      return [
+        {
+          id: `arch:knobs:${id}`,
+          source: KNOBS_ID,
+          target: id,
+          sourceHandle: 'out',
+          targetHandle: 'step-in',
+          type: 'arch' as const,
+          selectable: false,
+          focusable: false,
+          zIndex: 2,
+          data: {
+            kind: 'call' as const,
+            from: knobsAt,
+            to,
+            bend: clearBend(knobsAt, to, others, 0),
+          },
+        },
+      ]
+    },
+  )
   const resultNodes: ViewerFlowNode[] =
     result && resultAt
       ? [
@@ -2231,6 +2382,21 @@ function CanvasInner({
             // No es un visor que se haya fijado: no se quita.
             data: { node: RESULT_NODE, content: result.content, size: resultAt },
           },
+          ...(runs && runsAt
+            ? [
+                {
+                  ...viewerNode(
+                    RUNS_NODE,
+                    runs,
+                    { x: runsAt.x, y: runsAt.y },
+                    { w: runsAt.w, h: runsAt.h },
+                  ),
+                  draggable: false,
+                  selectable: false,
+                  data: { node: RUNS_NODE, content: runs, size: runsAt },
+                },
+              ]
+            : []),
         ]
       : []
   // Quién escribe el resultado le tiende una flecha… salvo en un ciclo con su compuerta de salida: ahí el
@@ -2544,7 +2710,12 @@ function CanvasInner({
       const anchor = anchorRects.get(linkOf.get(node.id)?.from ?? '')
       if (anchor && node.viewer) slots.push({ id: node.id, anchor, size: viewerSize(node.viewer) })
     }
-    const top = moduleTray ? MODULE_TRAY_AT.y + moduleTray.h + 16 : -Infinity
+    const top =
+      moduleTray || headAside
+        ? MODULE_TRAY_AT.y +
+          (moduleTray ? moduleTray.h + 16 : 0) +
+          (headAside ? headSize.h + 16 : 0)
+        : -Infinity
     const placed = placeNotes(slots, MODULE_TRAY_AT.x, 14, top)
     for (const node of sideViewers) {
       const at = placed.get(node.id)
@@ -2955,6 +3126,7 @@ function CanvasInner({
           ...figureNodes,
           ...flowNodes,
           ...resultNodes,
+          ...knobsNodes,
           ...dockedNodes,
           ...sideFlow.nodes,
           ...noteFlow.nodes,
@@ -2963,6 +3135,7 @@ function CanvasInner({
         edges={[
           ...(labelledEdges as unknown as PryselFlowEdge[]),
           ...(resultEdges as unknown as PryselFlowEdge[]),
+          ...(knobEdges as unknown as PryselFlowEdge[]),
           ...(exitEdges as unknown as PryselFlowEdge[]),
           ...flowEdges,
           ...sideFlow.edges,

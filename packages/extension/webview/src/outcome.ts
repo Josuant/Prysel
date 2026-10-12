@@ -108,6 +108,57 @@ export function outcomeOf(
 }
 
 /** Cómo quedó el programa tras un cambio, dicho en una frase. `undo`: merece ofrecer deshacerlo. */
+/** Una ejecución del programa, para su historia: qué la provocó y qué dio. */
+export interface RunEntry {
+  /** Cuál es, contando desde la primera. */
+  n: number
+  cause: string
+  /** Lo último que enseñó (o que falló, o que no enseñó nada). */
+  said: string
+  /** El último número de lo que enseñó, si enseñó alguno: con él se dibuja cómo va cambiando. */
+  value: number | null
+}
+
+/** Cuántas ejecuciones enseña el visor: las últimas. */
+export const RUNS_SHOWN = 6
+
+/** Lo que se apunta de una ejecución (`null`: no llegó a ejecutarse, o se quedó pidiendo un dato). */
+export function runEntry(run: RunSummary, cause: string, n: number): RunEntry | null {
+  if (run.ended === 'blocked' || run.ended === 'waiting') return null
+  if (run.ended === 'error') {
+    return {
+      n,
+      cause,
+      said: `falla${run.problem ? `: ${clip(run.problem, 44)}` : ''}`,
+      value: null,
+    }
+  }
+  const said = run.ended === 'idle' ? '' : lastSaid(run)
+  if (said === '') return { n, cause, said: 'no enseña nada', value: null }
+  const numbers = said.match(/-?\d+(?:[.,]\d+)?/g)
+  const value = numbers ? Number((numbers[numbers.length - 1] ?? '').replace(',', '.')) : NaN
+  return { n, cause, said, value: Number.isFinite(value) ? value : null }
+}
+
+/**
+ * El visor de las **ejecuciones**: lo que fue dando el programa cada vez que se ejecutó, y qué provocó cada
+ * una. Si todas enseñan un número, además se dibuja cómo va cambiando. Con una sola no hay historia que
+ * contar: lo dice el resultado.
+ */
+export function runsViewer(entries: readonly RunEntry[]): ViewerContent | null {
+  if (entries.length < 2) return null
+  const shown = entries.slice(-RUNS_SHOWN)
+  const values = shown.flatMap((entry) => (entry.value === null ? [] : [entry.value]))
+  return {
+    title: 'Ejecuciones',
+    subtitle: 'qué cambió y qué dio',
+    ...(values.length === shown.length
+      ? { series: { at: shown.map((_, at) => at), values, n: shown.length } }
+      : {}),
+    text: shown.map((entry) => `${entry.n}. ${entry.cause} → ${entry.said}`),
+  }
+}
+
 export interface Health {
   tone: 'ok' | 'muted' | 'error'
   text: string

@@ -95,9 +95,16 @@ import { holdShape, sameHeld, type Held } from './holding.ts'
 import { IdeaView } from './IdeaView.tsx'
 import { sampleScene } from './gisting.ts'
 import { TryPanel } from './TryPanel.tsx'
-import { healthOf, moduleStates, moduleStory, outcomeOf } from './outcome.ts'
-import { Knobs } from './Knobs.tsx'
-import { knobsOf } from './knobs.ts'
+import {
+  healthOf,
+  moduleStates,
+  moduleStory,
+  outcomeOf,
+  runEntry,
+  runsViewer,
+  type RunEntry,
+} from './outcome.ts'
+import { knobMoved, knobText, knobsOf, type Knob } from './knobs.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -167,14 +174,6 @@ const ROLE_KEYS: Record<ModuleRole, { word: string; why: string }> = {
   },
   salida: { word: 'sale', why: 'Enseña o entrega el resultado' },
 }
-
-/**
- * Lo que ocupa el panel de las perillas abierto: lo que se le deja a su lado (su ancho y su margen), y arriba
- * cuando no hay ancho para ponerse al lado (lo de la barra y lo de cada fila). `bar` y `under`: lo que se baja
- * el diagrama abierto (que no reserva nada más arriba) con la barra plegada, y con el panel abierto. `down`: lo
- * que baja la barra en una pantalla estrecha, donde su fila la ocupa el mando de las distancias.
- */
-const KNOBS = { width: 324, top: 104, row: 30, bar: 46, under: 54, down: 44 }
 
 /** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
 const WIDE_PANEL = 1100
@@ -374,8 +373,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [hearing, setHearing] = useState<string | null>(null)
   // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
   const [typed, setTyped] = useState<string | null>(null)
-  /** Las perillas, abiertas: el diagrama les hace sitio. */
-  const [knobsOpen, setKnobsOpen] = useState(false)
+  /**
+   * Las **ejecuciones** del programa, una tras otra: qué provocó cada una (una perilla, otra tirada, una
+   * orden) y qué dio. Es lo que enseña el visor que va junto al resultado.
+   */
+  const [pastRuns, setPastRuns] = useState<RunEntry[]>([])
+  /** Lo que va a provocar la próxima ejecución (`again`: sin cambiar el texto, solo otra tirada). */
+  const runCause = useRef<{ text: string; at: number; again?: boolean } | null>(null)
+  /** De qué archivo es esa historia: con otro, empieza de nuevo. */
+  const runsOf = useRef<string | null>(null)
   /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
   const [xray, setXray] = useState(false)
   /**
@@ -602,6 +608,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       if (message.type === 'update') {
         setProgram(message.program)
         setFile(message.file ?? null)
+        // Otro archivo, u otro programa desde cero: su historia de ejecuciones empieza de nuevo.
+        if (
+          (message.file ?? null) !== runsOf.current ||
+          (message.program?.nodes.length ?? 0) === 0
+        ) {
+          runsOf.current = message.file ?? null
+          setPastRuns((previous) => (previous.length === 0 ? previous : []))
+        }
         setVersion(message.version ?? null)
         received(message.program, message.version ?? null)
         markPainted()
@@ -627,7 +641,24 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
         // La salud tras un cambio: el programa se volvió a ejecutar, y se dice cómo quedó respecto a antes.
-        if (message.run) seenRun.current = { version: message.version, run: message.run }
+        if (message.run) {
+          // Una ejecución nueva (otro texto, u otra tirada del mismo): se apunta con lo que la provocó.
+          const cause = runCause.current
+          const due = cause !== null && Date.now() - cause.at < RUN_CAUSE_MS ? cause : null
+          if (seenRun.current?.version !== message.version || due?.again === true) {
+            runCause.current = null
+            const run = message.run
+            setPastRuns((previous) => {
+              const entry = runEntry(
+                run,
+                due?.text ?? (previous.length === 0 ? 'al abrirlo' : 'un cambio'),
+                (previous[previous.length - 1]?.n ?? 0) + 1,
+              )
+              return entry ? [...previous.slice(-(RUNS_KEPT - 1)), entry] : previous
+            })
+          }
+          seenRun.current = { version: message.version, run: message.run }
+        }
         const waiting = healthWait.current
         if (
           waiting &&
@@ -1417,6 +1448,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const about = picked
     ? { id: picked.id, label: picked.section?.title ?? picked.gist?.name ?? picked.label }
     : undefined
+  /** Mover una perilla: se escribe su número en el programa, que se vuelve a ejecutar. */
+  const turnKnob = (knob: Knob, text: string) => {
+    if (version === null) return
+    healthWait.current = { before: ran, how: 'knob', from: version + 1 }
+    runCause.current = {
+      text: `${knob.name.replace(/_+/g, ' ').toLowerCase()} = ${text}`,
+      at: Date.now(),
+    }
+    post({ type: 'edit', version, edits: [{ start: knob.start, end: knob.end, text }] })
+  }
   /** La IA se maneja desde el lienzo (sin barra de escribir abajo): su botón flota sobre él. */
   const hub = features.chat === true && features.orders === true
   // «/» (o Ctrl+K) abre la caja de pedir desde el teclado: sobre lo elegido, o sobre el programa.
@@ -1693,45 +1734,61 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     const keys = MODULE_ROLES.filter((role) => present.has(role))
     return keys.length > 1 ? keys : []
   }, [architecture])
-  // Las perillas abiertas son un panel: el diagrama se coloca en lo que queda (a su lado si hay ancho, debajo
-  // si no), en vez de quedar tapado.
-  const knobsShown = hasKnobs && knobsOpen && knobs.length > 0
-  // (La barra solo está en el programa entero, y no mientras se construye.)
-  const knobsBar = hasKnobs && lesson === null && view.focus === null && !constructing
+  // Las perillas van en el diagrama, como un nodo más: en el programa entero, y no mientras se construye.
+  const knobsPanel =
+    hasKnobs && lesson === null && view.focus === null && !constructing
+      ? {
+          items: knobs.map((knob) => ({
+            key: `${knob.line}:${knob.start}`,
+            name: knob.name.replace(/_+/g, ' ').toLowerCase(),
+            hint:
+              knob.from === 'launch'
+                ? `${knob.name}: un dato con el que se arranca (línea ${knob.line})`
+                : `${knob.name}: un número que el programa define (línea ${knob.line})`,
+            text: knobText(knob, knob.value),
+          })),
+          chance: /\brandom\b/.test(program?.source ?? ''),
+          // Las partes donde están escritos: el nodo les tiende una flecha.
+          into: [
+            ...new Set(
+              knobs.flatMap(
+                (knob) =>
+                  view.moduleFacts.find(
+                    (fact) => knob.line >= fact.line && knob.line <= fact.lineEnd,
+                  )?.id ?? [],
+              ),
+            ),
+          ],
+          onStep: (key: string, direction: 1 | -1) => {
+            const knob = knobs.find((one) => `${one.line}:${one.start}` === key)
+            if (knob) turnKnob(knob, knobText(knob, knobMoved(knob, direction)))
+          },
+          onSet: (key: string, typed: string) => {
+            const knob = knobs.find((one) => `${one.line}:${one.start}` === key)
+            const value = Number(typed.replace(',', '.'))
+            if (!knob || !Number.isFinite(value)) return
+            const text = knobText(knob, value)
+            if (Number(text) !== knob.value) turnKnob(knob, text)
+          },
+          onRoll: () => {
+            healthWait.current = { before: ran, how: 'roll' }
+            runCause.current = { text: 'otra tirada', at: Date.now(), again: true }
+            post({ type: 'reroll' })
+          },
+        }
+      : null
   const reserve = useMemo(
     () =>
       architecture
         ? {
-            // (En una pantalla estrecha la barra de las perillas va una fila más abajo: ver `KNOBS.down`.)
-            top: !hasKnobs
-              ? 40
-              : knobsShown && narrow
-                ? KNOBS.top + KNOBS.down + KNOBS.row * knobs.length
-                : 90 + (narrow ? KNOBS.down : 0),
+            top: 40,
             bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
-            ...(knobsShown && !narrow ? { left: KNOBS.width } : {}),
           }
-        : knobsBar
-          ? // En el diagrama abierto la barra flota sobre su esquina: el diagrama empieza debajo de ella.
-            {
-              top:
-                (knobsShown ? KNOBS.under + KNOBS.row * knobs.length : KNOBS.bar) +
-                (narrow ? KNOBS.down : 0),
-              bottom: 0,
-            }
-          : null,
-    [
-      architecture,
-      hasStory,
-      hasKnobs,
-      knobsBar,
-      knobsShown,
-      narrow,
-      knobs.length,
-      consoleBox,
-      cramped,
-    ],
+        : null,
+    [architecture, hasStory, consoleBox, cramped],
   )
+  // Las ejecuciones: lo que fue dando el programa cada vez, junto al resultado.
+  const runsShown = useMemo(() => runsViewer(pastRuns), [pastRuns])
   const playingBeat = playback.at === null ? undefined : beats[playback.at]
   const beat = useMemo(
     () =>
@@ -2031,6 +2088,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     baseline.current = (program?.nodes.length ?? 0) === 0 ? null : ran
     // Otra orden: la salud que se esperaba de un cambio anterior ya no viene a cuento.
     healthWait.current = null
+    runCause.current = {
+      text: `«${flavour ? flavour.title : text.length > 30 ? `${text.slice(0, 29)}…` : text}»`,
+      at: Date.now(),
+    }
     // Algo nuevo sobre un lienzo vacío: las versiones de lo anterior ya no vienen a cuento.
     if (!flavour && (program?.nodes.length ?? 0) === 0) setFlavours(null)
     // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
@@ -2722,6 +2783,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 architecture={architecture}
                 avoid={consoleBox}
                 result={outcome?.result ?? null}
+                runs={outcome?.result ? runsShown : null}
+                knobs={knobsPanel}
                 start={outcome?.start ?? null}
                 exit={
                   architecture?.order !== undefined && told?.exit !== undefined
@@ -2950,33 +3013,6 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   </span>
                 </div>
               )}
-              {/* Las perillas: los números con los que se puede jugar, y el dado para tirar otra vez. */}
-              {/* (Sobre el diagrama: la idea es para leer, y ahí no van.) */}
-              {features.chat &&
-                lesson === null &&
-                view.focus === null &&
-                !constructing &&
-                !showIdea && (
-                  <Knobs
-                    knobs={knobs}
-                    chance={/\brandom\b/.test(program.source)}
-                    open={knobsOpen}
-                    onOpen={setKnobsOpen}
-                    onTurn={(knob, text) => {
-                      if (version === null) return
-                      healthWait.current = { before: ran, how: 'knob', from: version + 1 }
-                      post({
-                        type: 'edit',
-                        version,
-                        edits: [{ start: knob.start, end: knob.end, text }],
-                      })
-                    }}
-                    onRoll={() => {
-                      healthWait.current = { before: ran, how: 'roll' }
-                      post({ type: 'reroll' })
-                    }}
-                  />
-                )}
               {/* Desde dónde se mira: la idea, las partes o el detalle. Solo en el programa entero (no dentro
                   de una función) y cuando tiene partes que contar. */}
               {features.chat &&
@@ -3564,6 +3600,9 @@ const DISTANCES: readonly { id: Distance; label: string; title: string }[] = [
 ]
 /** Lo que necesitan, a lo ancho, las barras de abajo para ir al lado de la consola y no encima. */
 const DOCK_ROOM = 480
+/** Cuántas ejecuciones se recuerdan, y lo que vale lo que se dijo que iba a provocar la siguiente. */
+const RUNS_KEPT = 12
+const RUN_CAUSE_MS = 120_000
 /** Lo que se espera tras una tecla antes de contarle al lienzo lo que se lleva escrito. */
 const DRAFT_MS = 220
 /** Lo que ocupa, a su izquierda, el botón de la IA (ver `--hub` en los estilos). */
