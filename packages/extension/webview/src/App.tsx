@@ -2951,27 +2951,32 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 </div>
               )}
               {/* Las perillas: los números con los que se puede jugar, y el dado para tirar otra vez. */}
-              {features.chat && lesson === null && view.focus === null && !constructing && (
-                <Knobs
-                  knobs={knobs}
-                  chance={/\brandom\b/.test(program.source)}
-                  open={knobsOpen}
-                  onOpen={setKnobsOpen}
-                  onTurn={(knob, text) => {
-                    if (version === null) return
-                    healthWait.current = { before: ran, how: 'knob', from: version + 1 }
-                    post({
-                      type: 'edit',
-                      version,
-                      edits: [{ start: knob.start, end: knob.end, text }],
-                    })
-                  }}
-                  onRoll={() => {
-                    healthWait.current = { before: ran, how: 'roll' }
-                    post({ type: 'reroll' })
-                  }}
-                />
-              )}
+              {/* (Sobre el diagrama: la idea es para leer, y ahí no van.) */}
+              {features.chat &&
+                lesson === null &&
+                view.focus === null &&
+                !constructing &&
+                !showIdea && (
+                  <Knobs
+                    knobs={knobs}
+                    chance={/\brandom\b/.test(program.source)}
+                    open={knobsOpen}
+                    onOpen={setKnobsOpen}
+                    onTurn={(knob, text) => {
+                      if (version === null) return
+                      healthWait.current = { before: ran, how: 'knob', from: version + 1 }
+                      post({
+                        type: 'edit',
+                        version,
+                        edits: [{ start: knob.start, end: knob.end, text }],
+                      })
+                    }}
+                    onRoll={() => {
+                      healthWait.current = { before: ran, how: 'roll' }
+                      post({ type: 'reroll' })
+                    }}
+                  />
+                )}
               {/* Desde dónde se mira: la idea, las partes o el detalle. Solo en el programa entero (no dentro
                   de una función) y cuando tiene partes que contar. */}
               {features.chat &&
@@ -3209,8 +3214,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   ...dock,
                   // Lo que dice va por encima de las barras de abajo (y de la consola, si van sobre ella).
                   '--above': `${
-                    (architecture && hasStory && !showIdea ? 46 : 8) +
-                    (consoleBox && cramped ? consoleBox.h : 0)
+                    (architecture && hasStory ? 46 : 8) + (consoleBox && cramped ? consoleBox.h : 0)
                   }px`,
                 } as React.CSSProperties
               }
