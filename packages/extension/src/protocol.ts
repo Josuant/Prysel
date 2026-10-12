@@ -404,6 +404,16 @@ export interface RerollMessage {
   type: 'reroll'
 }
 
+/**
+ * Decir **qué se quiere ver** en el visor de cómo avanza («cuántas letras acierta el peor»). La IA lo
+ * convierte en algo que mirar en cada vuelta, y el programa se vuelve a ejecutar midiéndolo. `''`: volver a
+ * lo que elija Prysel.
+ */
+export interface WatchMessage {
+  type: 'watch'
+  text: string
+}
+
 export interface StopOrderMessage {
   type: 'stopOrder'
 }
@@ -497,6 +507,7 @@ export type HostMessage =
   | JevKeyMessage
   | StopOrderMessage
   | RerollMessage
+  | WatchMessage
   | UndoOrderMessage
   | ListeningMessage
   | CoverMessage
@@ -870,6 +881,12 @@ export function parseHostMessage(value: unknown): HostMessage | null {
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
   if (type === 'reroll') return { type: 'reroll' }
+  if (type === 'watch') {
+    const { text } = value as { text?: unknown }
+    return typeof text === 'string' && text.length <= MAX_COMMAND
+      ? { type: 'watch', text: text.trim() }
+      : null
+  }
   if (type === 'undoOrder') return { type: 'undoOrder' }
   if (type === 'listening') {
     const { on, text } = value as { on?: unknown; text?: unknown }

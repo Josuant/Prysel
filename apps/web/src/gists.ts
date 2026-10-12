@@ -35,6 +35,7 @@ import {
   pickWatches,
   progressOf,
   proposeWatches,
+  wishedWatches,
   type Progress,
   type Watch,
 } from '../../../packages/extension/src/gist/progress.ts'
@@ -113,7 +114,12 @@ export class Gists {
    * Qué mirar en cada vuelta de un bucle para contar cómo avanza el programa, por el texto de ese bucle
    * (`null`: se miró y no hay nada que contar). Se decide una vez; después solo se mide.
    */
-  private readonly watching = new Map<string, { text: Watch | null; number: Watch | null } | null>()
+  private readonly watching = new Map<
+    string,
+    { text: Watch | null; number: Watch | null; wish?: string } | null
+  >()
+  /** Lo que quien lo usa dijo que quería ver en cada vuelta (`null`: lo que se elija solo). */
+  private wish: string | null = null
   /** Lo que hace falta para decidirlo, de la última ejecución: se hace después de enseñar lo demás. */
   private toWatch: {
     text: string
@@ -146,6 +152,17 @@ export class Gists {
    */
   reroll() {
     this.rolled = 1 + Math.floor(Math.random() * 100_000)
+    this.done = null
+    this.touch()
+  }
+
+  /**
+   * Quien lo usa dice qué quiere ver avanzar (`''`: lo que se elija solo). Lo decidido hasta ahora se olvida
+   * y el programa se vuelve a mirar: la IA propone cómo medir eso, y se mide.
+   */
+  rewatch(text: string) {
+    this.wish = text.trim() === '' ? null : text.trim()
+    this.watching.clear()
     this.done = null
     this.touch()
   }
@@ -311,12 +328,14 @@ export class Gists {
     const key = this.watchKey(loop)
     const provider = this.port.provider()
     const auto = autoWatches(text, loop)
+    const wish = this.wish ?? undefined
     const proposed = provider
       ? await proposeWatches(
           provider,
           text,
           loop,
           auto.map((one) => one.expr),
+          wish,
         )
       : []
     const watches = [
@@ -335,18 +354,23 @@ export class Gists {
       this.watching.set(key, null)
       return null
     }
-    const picked = await pickWatches(
-      this.port.decider(),
-      loop.head,
-      measuredOf(again.probe, watches),
-    )
+    const measured = measuredOf(again.probe, watches)
+    // Si quien lo usa dijo qué quería ver, es eso (lo que la IA propuso para ello y se pudo medir); si no
+    // se pudo, o no dijo nada, elige el JEV entre todo lo medido.
+    const wished = wish ? wishedWatches(measured) : null
+    const picked = wished ?? (await pickWatches(this.port.decider(), loop.head, measured))
     this.watching.set(
       key,
       picked.text || picked.number
-        ? { text: picked.text?.watch ?? null, number: picked.number?.watch ?? null }
+        ? {
+            text: picked.text?.watch ?? null,
+            number: picked.number?.watch ?? null,
+            ...(wished && wish ? { wish } : {}),
+          }
         : null,
     )
-    return progressOf(again.probe, picked)
+    const progress = progressOf(again.probe, picked)
+    return progress && wished && wish ? { ...progress, wish } : progress
   }
 
   private async pass() {
@@ -455,10 +479,11 @@ export class Gists {
         const measured = measuredOf(raw.probe, watched.exprs)
         const of = (one: Watch | null) =>
           (one && measured.find((item) => item.watch.expr === one.expr)) ?? null
-        progress = progressOf(raw.probe, {
+        const told = progressOf(raw.probe, {
           text: of(watched.known.text),
           number: of(watched.known.number),
         })
+        progress = told && watched.known.wish ? { ...told, wish: watched.known.wish } : told
       } else if (loop && !raw.error && !this.watching.has(this.watchKey(loop))) {
         this.toWatch = { text, loop, output: raw.output, inputs, seed }
       }

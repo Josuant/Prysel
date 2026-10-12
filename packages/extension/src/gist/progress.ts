@@ -31,6 +31,8 @@ export interface Progress {
   /** La línea del bucle que se miró, y las veces que se pasó por su cabecera. */
   line: number
   total: number
+  /** Lo que quien lo usa pidió ver («cuántas letras acierta el peor»), si esto responde a ello. */
+  wish?: string
   /** Algo que se lee, y cómo fue cambiando: lo que valía al empezar esas vueltas. */
   text?: { says: string; expr: string; laps: number[]; values: string[] }
   /** O una lista corta de números (se dibuja como barras), en esas vueltas. */
@@ -73,6 +75,8 @@ export function watchPrompt(
   source: string,
   loop: { line: number; head: string },
   changing: readonly string[],
+  /** Lo que quien lo usa quiere ver en cada vuelta, con sus palabras. */
+  wish?: string,
 ): string {
   return [
     'El programa:',
@@ -81,6 +85,9 @@ export function watchPrompt(
     '```',
     `Su bucle principal (línea ${loop.line}): ${loop.head}`,
     changing.length > 0 ? `Variables que va cambiando: ${changing.join(', ')}` : '',
+    wish
+      ? `Quien lo usa quiere ver, vuelta a vuelta, esto: «${wish}». Propón las expresiones que lo enseñen (primero la que mejor lo haga; si pide algo que se ve y también un número, las dos).`
+      : '',
   ]
     .filter((row) => row !== '')
     .join('\n')
@@ -122,11 +129,12 @@ export async function proposeWatches(
   source: string,
   loop: { line: number; head: string },
   changing: readonly string[],
+  wish?: string,
 ): Promise<Watch[]> {
   const answer = await provider
     .generate({
       system: watchSystem(),
-      prompt: watchPrompt(source, loop, changing),
+      prompt: watchPrompt(source, loop, changing, wish),
       maxTokens: 220,
     })
     .catch(() => '')
@@ -300,6 +308,20 @@ export async function pickWatches(
   } catch {
     return fallback
   }
+}
+
+/**
+ * Lo que se enseña cuando quien lo usa **dijo qué quería ver**: de lo que la IA propuso para eso y se pudo
+ * medir, lo primero que se ve y el primer número. No lo elige nadie más: lo pidió así. `null`: nada de lo
+ * propuesto se pudo mirar (o no cambia).
+ */
+export function wishedWatches(
+  measured: readonly Measured[],
+): { text: Measured | null; number: Measured | null } | null {
+  const proposed = measured.filter((one) => one.watch.proposed)
+  const text = proposed.find((one) => one.kind !== 'number') ?? null
+  const number = proposed.find((one) => one.kind === 'number') ?? null
+  return text || number ? { text, number } : null
 }
 
 /** El avance, con lo que se eligió enseñar (`null`: no hay nada que contar). */

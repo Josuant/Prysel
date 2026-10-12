@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
+  NodeToolbar,
   Panel,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -78,6 +80,7 @@ import { QuickAdd } from './QuickAdd.tsx'
 import { AskBubble, type AskChip } from './AskBox.tsx'
 import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { IconButton } from './chrome.tsx'
+import { Icon } from './Icon.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
 import { KnobsNode, knobsSize, type KnobsFlowNode, type KnobsPanel } from './flow/KnobsNode.tsx'
@@ -219,6 +222,8 @@ export type AskWhere =
   | { at: 'link'; from: string; to: string }
   /** Sobre lo que el programa enseña al acabar (el nodo «Resultado»). */
   | { at: 'result' }
+  /** Sobre el visor de cómo avanza: qué se quiere ver en cada vuelta. */
+  | { at: 'progress' }
 
 /**
  * **Pedir con palabras desde el propio lienzo.** Con ello, un clic derecho (o un doble clic) en el vacío abre
@@ -1234,10 +1239,17 @@ function CanvasInner({
   // derecha, las notas. Leído en horizontal, la cajita va arriba y el resto del plano baja lo que ocupa.
   // Las perillas: en el diagrama abierto van en esa columna de la izquierda, bajo la cajita.
   const headAside = headSize !== null && aside && !asArchitecture
+  // Y debajo, el visor de cómo avanza (en la arquitectura va en la cola, con el resultado).
+  const sideProgress = useMemo(
+    () => (progress && aside && !asArchitecture ? viewerSize(progress) : null),
+    [progress, aside, asArchitecture],
+  )
+  const sideExtra = (headAside ? headSize.h + 16 : 0) + (sideProgress ? sideProgress.h + 16 : 0)
   const sideW = aside
     ? Math.max(
         moduleTray?.w ?? 0,
         headAside ? headSize.w : 0,
+        sideProgress?.w ?? 0,
         ...sideViewers.map((node) => (node.viewer ? viewerSize(node.viewer).w : 0)),
       )
     : 0
@@ -1281,10 +1293,8 @@ function CanvasInner({
       h:
         Math.max(
           layoutBounds.h + shiftY,
-          aside && (moduleTray || headAside)
-            ? (moduleTray ? moduleTray.h + 16 : 0) +
-                (headAside ? headSize.h + 16 : 0) +
-                MODULE_TRAY_AT.y * 2
+          aside && (moduleTray || sideExtra > 0)
+            ? (moduleTray ? moduleTray.h + 16 : 0) + sideExtra + MODULE_TRAY_AT.y * 2
             : 0,
         ) + resultBelow,
     }),
@@ -1297,8 +1307,7 @@ function CanvasInner({
       moduleTray,
       flow,
       resultBelow,
-      headAside,
-      headSize,
+      sideExtra,
     ],
   )
 
@@ -2384,6 +2393,21 @@ function CanvasInner({
             ...headSize,
           }
         : null
+  // En el diagrama abierto, el visor de cómo avanza va bajo las perillas.
+  if (sideProgress && progress) {
+    tailViewers.push({
+      node: PROGRESS_NODE,
+      content: progress,
+      at: {
+        x: MODULE_TRAY_AT.x,
+        y:
+          MODULE_TRAY_AT.y +
+          (moduleTray ? moduleTray.h + 16 : 0) +
+          (headAside && headSize ? headSize.h + 16 : 0),
+      },
+      size: sideProgress,
+    })
+  }
   const knobsNodes: KnobsFlowNode[] =
     knobs && knobsAt
       ? [
@@ -2789,10 +2813,8 @@ function CanvasInner({
       if (anchor && node.viewer) slots.push({ id: node.id, anchor, size: viewerSize(node.viewer) })
     }
     const top =
-      moduleTray || headAside
-        ? MODULE_TRAY_AT.y +
-          (moduleTray ? moduleTray.h + 16 : 0) +
-          (headAside ? headSize.h + 16 : 0)
+      moduleTray || sideExtra > 0
+        ? MODULE_TRAY_AT.y + (moduleTray ? moduleTray.h + 16 : 0) + sideExtra
         : -Infinity
     const placed = placeNotes(slots, MODULE_TRAY_AT.x, 14, top)
     for (const node of sideViewers) {
@@ -3085,7 +3107,8 @@ function CanvasInner({
     const gesture = spotlight ? `${spotlight.key}:${spotlight.id}` : ''
     if (!frame || !spotlight || spotDone.current === gesture) return
     // Mientras se construye, la vista es la del conjunto: el gesto se da por hecho sin mover la cámara.
-    if (!follow) {
+    // Y en la arquitectura, también: es un dibujo que se ve de una vez (lo nuevo se enciende en su sitio).
+    if (!follow || picture) {
       spotDone.current = gesture
       return
     }
@@ -3120,7 +3143,7 @@ function CanvasInner({
       // Hacia una caja que crece, despacio: es un acompañar, no un salto.
       duration: animate ? (spotlight.camera ? 700 : 450) : 0,
     })
-  }, [spotlight, motionItems, setCenter, animate, fitKey, follow])
+  }, [spotlight, motionItems, setCenter, animate, fitKey, follow, picture])
 
   // Un lienzo de trabajo (que se ajusta al ancho) pliega sus filas según el ancho que tiene.
   const narrowing = interactive && (fitMode ?? 'width') === 'width'
@@ -3290,17 +3313,19 @@ function CanvasInner({
                 const frame = frameRef.current?.getBoundingClientRect()
                 if (!frame) return
                 // El resultado no es una sentencia: no tiene menú, pero se puede pedir algo sobre él.
-                if (node.id === RESULT_ID) {
+                if (node.id === RESULT_ID || node.id === PROGRESS_NODE.id) {
                   if (!ask) return
                   setQuick(null)
                   setMenu(null)
                   setAsking({
                     x: event.clientX - frame.left,
                     y: event.clientY - frame.top,
-                    where: { at: 'result' },
+                    where: { at: node.id === RESULT_ID ? 'result' : 'progress' },
                   })
                   return
                 }
+                // (Los demás visores de la cola no tienen menú.)
+                if (node.id === RUNS_ID) return
                 select(node.id)
                 setQuick(null)
                 setMenu({
@@ -3428,6 +3453,41 @@ function CanvasInner({
         elevateNodesOnSelect={false}
       >
         {interactive && <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} />}
+        {ask &&
+          interactive &&
+          selectedId !== null &&
+          byId.has(selectedId) &&
+          !byId.get(selectedId)?.viewer &&
+          menu === null &&
+          !beat && (
+            <NodeToolbar
+              nodeId={selectedId}
+              isVisible
+              position={Position.Top}
+              align="end"
+              offset={6}
+            >
+              <button
+                type="button"
+                className="ask-spark nodrag nopan"
+                title="Pedir algo sobre esto: cambiarlo, preguntar qué hace… (también con clic derecho)"
+                onClick={(event) => {
+                  const frame = frameRef.current?.getBoundingClientRect()
+                  if (!frame) return
+                  setQuick(null)
+                  setAsking(null)
+                  setMenu({
+                    id: selectedId,
+                    x: event.clientX - frame.left - 20,
+                    y: event.clientY - frame.top + 16,
+                  })
+                }}
+              >
+                <Icon name="sparkles" size={12} />
+                Pedir
+              </button>
+            </NodeToolbar>
+          )}
         {interactive && controls && (
           <Panel position="bottom-right" className="canvas-controls">
             <IconButton
@@ -3562,13 +3622,17 @@ function CanvasInner({
             ? { title: `De «${nameOf(asking.where.from)}» a «${nameOf(asking.where.to)}»` }
             : asking.where.at === 'result'
               ? { title: 'Sobre el resultado' }
-              : {})}
+              : asking.where.at === 'progress'
+                ? { title: 'Qué ver en cada vuelta' }
+                : {})}
           placeholder={
             asking.where.at === 'link'
               ? '¿Qué quieres entre los dos?'
               : asking.where.at === 'result'
                 ? '¿Qué quieres que enseñe al acabar?'
-                : 'Pide algo: «añade…», «explícame…»'
+                : asking.where.at === 'progress'
+                  ? '¿Qué quieres ver avanzar?'
+                  : 'Pide algo: «añade…», «explícame…»'
           }
           chips={ask.chips?.(asking.where) ?? []}
           onSubmit={(text) => {

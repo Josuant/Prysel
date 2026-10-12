@@ -7,11 +7,14 @@ import {
   pickWatches,
   plausibleWatch,
   progressOf,
+  watchPrompt,
+  wishedWatches,
   type Watch,
 } from '../src/gist/progress.ts'
 import type { Decider } from '../src/jev/client.ts'
 import { Kernel } from '../src/kernel.ts'
 import type { Probe } from '../src/trace.ts'
+import { parseHostMessage } from '../src/protocol.ts'
 import { PROGRESS_ROWS, progressViewer } from '../webview/src/outcome.ts'
 
 /**
@@ -423,5 +426,46 @@ describe('las formas de lo medido: barras y rejilla', () => {
       [0, 0],
       [0, 1],
     ])
+  })
+})
+
+describe('cuando quien lo usa dice qué quiere ver', () => {
+  it('se le dice a la IA con sus palabras, y el mensaje llega tal cual', () => {
+    const prompt = watchPrompt('x = 1', { line: 3, head: 'while True' }, ['x'], 'la peor frase')
+    expect(prompt).toContain('«la peor frase»')
+    expect(watchPrompt('x = 1', { line: 3, head: 'while True' }, ['x'])).not.toContain('quiere ver')
+    expect(parseHostMessage({ type: 'watch', text: '  la peor frase ' })).toEqual({
+      type: 'watch',
+      text: 'la peor frase',
+    })
+    // Vacío: volver a lo que se elige solo.
+    expect(parseHostMessage({ type: 'watch', text: '' })).toEqual({ type: 'watch', text: '' })
+    expect(parseHostMessage({ type: 'watch' })).toBeNull()
+  })
+
+  it('se enseña lo que la IA propuso para eso y se pudo medir; lo demás no compite', () => {
+    const watches: Watch[] = [
+      { expr: 'peor', says: 'la peor frase', proposed: true },
+      { expr: 'puntos', says: 'su puntuación', proposed: true },
+      { expr: 'total', says: 'total' },
+    ]
+    const probe: Probe = {
+      line: 3,
+      names: ['peor', 'puntos', 'total'],
+      laps: [0, 1, 2],
+      values: [
+        [{ s: 'zzzz' }, { s: 'hzzz' }, { s: 'hozz' }],
+        [0, 1, 2.5],
+        [5, 9, 30],
+      ],
+      errors: [null, null, null],
+      total: 3,
+      cut: false,
+    }
+    const wished = wishedWatches(measuredOf(probe, watches))
+    expect(wished?.text?.watch.expr).toBe('peor')
+    expect(wished?.number?.watch.expr).toBe('puntos')
+    // Si de lo propuesto no se pudo medir nada, no hay deseo que cumplir: decide quien decide siempre.
+    expect(wishedWatches(measuredOf(probe, [{ expr: 'total', says: 'total' }]))).toBeNull()
   })
 })

@@ -329,6 +329,9 @@ export class WebHost {
       case 'reroll':
         this.gists.reroll()
         return
+      case 'watch':
+        this.gists.rewatch(message.text)
+        return
       case 'cover':
         this.orders.cover(message.what, message.parts, message.pieces, message.plan === true)
         return

@@ -379,6 +379,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * orden) y qué dio. Es lo que enseña el visor que va junto al resultado.
    */
   const [pastRuns, setPastRuns] = useState<RunEntry[]>([])
+  /** Se pidió ver algo en «Cómo avanza» y aún no ha llegado medido. */
+  const watchWait = useRef<{ wish: string; at: number } | null>(null)
   /** Lo que va a provocar la próxima ejecución (`again`: sin cambiar el texto, solo otra tirada). */
   const runCause = useRef<{ text: string; at: number; again?: boolean } | null>(null)
   /** De qué archivo es esa historia: con otro, empieza de nuevo. */
@@ -642,6 +644,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         setRan(message.run ?? null)
         setSettled((count) => count + 1)
         // La salud tras un cambio: el programa se volvió a ejecutar, y se dice cómo quedó respecto a antes.
+        // Llegó medido lo que se pidió ver: se dice.
+        const wished = watchWait.current
+        if (wished && message.run?.progress?.wish === wished.wish) {
+          watchWait.current = null
+          const shown = message.run.progress
+          const says = [(shown.text ?? shown.bars ?? shown.grid)?.says, shown.number?.says]
+            .filter(Boolean)
+            .join(' y ')
+          setChat((previous) => [
+            ...previous.slice(-60),
+            { id: -Date.now(), role: 'ai', text: `Hecho: «Cómo avanza» enseña ahora ${says}.` },
+          ])
+        }
         if (message.run) {
           // Una ejecución nueva (otro texto, u otra tirada del mismo): se apunta con lo que la provocó.
           const cause = runCause.current
@@ -2197,6 +2212,48 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       'esto'
     )
   }
+  /**
+   * Decir qué se quiere ver en «Cómo avanza» (`''`: lo que se elija solo). Se dice en la conversación; el
+   * visor cambia cuando el programa se ha vuelto a ejecutar midiéndolo (y si no se pudo, se dice también).
+   */
+  const watchFor = (wish: string) => {
+    const say = (text: string, tone?: 'muted' | 'error') => {
+      setChat((previous) => [
+        ...previous.slice(-60),
+        { id: -Date.now(), role: 'ai', text, ...(tone ? { tone } : {}) },
+      ])
+    }
+    if (wish !== '') {
+      setChat((previous) => [
+        ...previous.slice(-60),
+        { id: Date.now(), role: 'user', text: `Quiero ver en cada vuelta: ${wish}` },
+      ])
+      if (models?.ai === null) {
+        say(
+          'Para eso hace falta la IA: ella dice cómo medirlo. Conéctala y vuelve a pedirlo.',
+          'error',
+        )
+        return
+      }
+    }
+    say(
+      wish === ''
+        ? 'Vale: vuelvo a elegir yo qué enseñar.'
+        : 'Lo mido en cada vuelta: ahora lo verás.',
+      'muted',
+    )
+    const waiting = { wish, at: Date.now() }
+    watchWait.current = wish === '' ? null : waiting
+    post({ type: 'watch', text: wish })
+    // Si pasado un rato el visor no enseña lo pedido, es que no se pudo medir: se dice.
+    if (wish !== '') {
+      window.setTimeout(() => {
+        if (watchWait.current !== waiting) return
+        watchWait.current = null
+        say('No encontré cómo mirar eso en cada vuelta: dejo lo que se elige solo.', 'error')
+      }, WATCH_WAIT_MS)
+    }
+  }
   /** Lo que se pidió con palabras en el lienzo: la frase, y dónde se señaló. */
   const askHere = (text: string, where: AskWhere) => {
     hush()
@@ -2214,6 +2271,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       // Un cable que lleva un valor: lo que se pide lo usa, y va detrás de donde sale.
       case 'value':
         hear(`${text} (usando «${where.name}»)`, where.id, { place: 'despues' })
+        break
+      // Qué se quiere ver en cada vuelta: la IA lo convierte en algo que medir, y se mide.
+      case 'progress':
+        watchFor(text)
         break
       // Sobre lo que enseña al acabar.
       case 'result':
@@ -2235,6 +2296,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         { label: 'Explícamelo', say: 'Explícame esto' },
         { label: 'Cámbialo para que…', prefill: 'Cambia esto para que ' },
         { label: 'Quítalo', say: 'Quita esto' },
+      ]
+    }
+    if (where.at === 'progress') {
+      return [
+        {
+          label: 'Lo que elija Prysel',
+          title: 'Volver a lo que se elige solo para este programa',
+          onPick: () => {
+            watchFor('')
+          },
+        },
       ]
     }
     if (where.at === 'result') {
@@ -3618,6 +3690,8 @@ const DOCK_ROOM = 480
 /** Cuántas ejecuciones se recuerdan, y lo que vale lo que se dijo que iba a provocar la siguiente. */
 const RUNS_KEPT = 12
 const RUN_CAUSE_MS = 120_000
+/** Lo que se espera a que llegue medido lo que se pidió ver, antes de decir que no se pudo. */
+const WATCH_WAIT_MS = 30_000
 /** Lo que se espera tras una tecla antes de contarle al lienzo lo que se lleva escrito. */
 const DRAFT_MS = 220
 /** Lo que ocupa, a su izquierda, el botón de la IA (ver `--hub` en los estilos). */
