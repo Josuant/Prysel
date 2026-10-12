@@ -6,11 +6,13 @@ import type { CallEntry } from './calls.ts'
 import type { Gist, RunSummary } from './gist/gist.ts'
 import {
   INTENTS,
+  PLACES,
   type Decision,
   type Directive,
   type Evidence,
   type Forced,
   type Intent,
+  type PlaceId,
 } from './jev/engine.ts'
 import { TEMPLATE_IDS, type TemplateId } from '@prysel/morphology'
 
@@ -374,6 +376,11 @@ export interface CommandMessage {
    * `FlavoursMessage`). El programa se rehace desde el principio con ella; `text` es la petición de entonces.
    */
   flavour?: { title: string; shows: string }
+  /**
+   * La orden se dio **sobre** `selected`, en el propio lienzo (en su menú, o al soltar un cable que sale de
+   * ello): habla de eso aunque no lo nombre. `place`: el gesto dice, además, dónde va lo nuevo.
+   */
+  pointed?: { place?: PlaceId }
 }
 
 /** Guardar la clave de TypeSafe (la pide VS Code en su propia caja: el lienzo nunca la ve). */
@@ -564,6 +571,14 @@ function parseFlavour(value: unknown): { title: string; shows: string } | null {
   if (typeof title !== 'string' || title.trim() === '' || title.length > 80) return null
   if (typeof shows !== 'string' || shows.length > 240) return null
   return { title: title.trim(), shows: shows.trim() }
+}
+
+function parsePointed(value: unknown): { place?: PlaceId } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { place } = value as { place?: unknown }
+  if (place === undefined) return {}
+  const known = PLACES.find((id) => id === place)
+  return known === undefined ? null : { place: known }
 }
 
 function parseForced(value: unknown): Forced | null {
@@ -826,7 +841,10 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return Number.isInteger(version) ? { type: 'trace', version: version as number } : null
   }
   if (type === 'command') {
-    const { id, text, version, selected, focus, force, flavour } = value as Record<string, unknown>
+    const { id, text, version, selected, focus, force, flavour, pointed } = value as Record<
+      string,
+      unknown
+    >
     if (!Number.isInteger(id) || !Number.isInteger(version)) return null
     if (typeof text !== 'string' || text.trim() === '' || text.length > MAX_COMMAND) return null
     if (selected !== null && !isId(selected)) return null
@@ -835,6 +853,8 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     if (forced === null) return null
     const version2 = flavour === undefined ? undefined : parseFlavour(flavour)
     if (version2 === null) return null
+    const gesture = pointed === undefined ? undefined : parsePointed(pointed)
+    if (gesture === null) return null
     return {
       type: 'command',
       id: id as number,
@@ -844,6 +864,7 @@ export function parseHostMessage(value: unknown): HostMessage | null {
       focus,
       ...(forced === undefined ? {} : { force: forced }),
       ...(version2 === undefined ? {} : { flavour: version2 }),
+      ...(gesture === undefined ? {} : { pointed: gesture }),
     }
   }
   if (type === 'jevKey') return { type: 'jevKey' }

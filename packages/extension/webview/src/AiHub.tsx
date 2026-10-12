@@ -5,9 +5,10 @@ import './chat.css'
 import type { AskOption } from './orders.ts'
 
 /**
- * El chat con la IA, abajo del diagrama: lo que se pide y lo que contesta, como una conversación. Es la
- * misma tubería que la caja de órdenes (el motor JEV decide y la IA redacta), pensada para el móvil: una
- * línea para escribir (o dictar), la última respuesta a la vista, y la conversación entera al desplegarla.
+ * **La IA, sobre el lienzo.** Lo que se pide se escribe donde se señala (un clic derecho, un cable soltado):
+ * aquí no hay caja de texto. Esto es lo que queda de la conversación: un botón para pedir algo sin señalar
+ * nada, el micrófono, lo último que contestó (un momento, o hasta que se le responda si pregunta algo) y la
+ * conversación entera, al desplegarla.
  */
 
 export interface ChatEntry {
@@ -26,45 +27,29 @@ export interface ChatEntry {
   needsKey?: boolean
 }
 
-export interface ChatDockProps {
+export interface AiHubProps {
   entries: ChatEntry[]
   /** Se está construyendo algo paso a paso: se puede detener. */
   building: boolean
   voice: boolean
   /** La IA que redacta (`null`: falta su clave). */
   ai: string | null
-  suggestions: string[]
-  /**
-   * Lo que está seleccionado en el diagrama: se ofrece qué hacer con ello sin tener que escribirlo (preguntar
-   * qué hace, cambiarlo, quitarlo). La orden habla de «esto», y va con la selección.
-   */
-  about?: { label: string } | undefined
-  /**
-   * La petición era abierta y se hizo una versión concreta: cuál (`chosen`) y las otras que se propusieron.
-   * Se dice, y cada una de las otras es un botón que rehace el programa con ella.
-   */
-  flavours?: { options: readonly { title: string; shows: string }[]; chosen: number } | undefined
-  onFlavour?: (at: number) => void
-  /**
-   * Una frase que se deja empezada en la caja (para decir cómo se quiere un cambio): `seq` cambia cada vez que
-   * se pide, aunque el texto sea el mismo.
-   */
-  prefill?: { text: string; seq: number } | undefined
+  /** Dónde va respecto a las demás barras del lienzo (`--lift`, `--above`). */
+  style?: React.CSSProperties | undefined
+  /** Pedir algo sin señalar nada: se abre la caja en medio del lienzo. */
+  onAsk: () => void
+  /** Una frase dicha con el micrófono abierto: es una orden. */
   onSubmit: (text: string) => void
   onChoose: (option: AskOption) => void
   onStop: () => void
   onToggleVoice: () => void
   onSettings: () => void
+  /** Se va a hablar o a escribir: lo que se estaba diciendo en voz alta se calla. */
   onTyping: () => void
   /** El micrófono se abrió o se cerró (abierto: se escucha todo el rato, sin pulsar para cada frase). */
   onMic?: (open: boolean) => void
   /** Lo que se le está oyendo decir ahora mismo (`null`: nada, o ya acabó). */
   onHearing?: (text: string | null) => void
-  /**
-   * Lo que lleva escrito en la caja (`null`: nada, o ya lo mandó). Sirve para lo mismo que lo que se le oye:
-   * que el lienzo vaya esbozando lo que se pide antes de mandarlo.
-   */
-  onDraft?: (text: string | null) => void
   /**
    * Lo que dijo el JEV de si eso que se ha oído es una orden entera (1) o está a medias (0). `undefined`:
    * aún no se sabe.
@@ -89,8 +74,6 @@ interface Recognition {
 }
 
 /** Cuánto silencio basta para dar lo dicho por terminado y mandarlo, sin esperar al navegador. */
-/** Lo que se espera tras una tecla antes de contarle al lienzo lo que se lleva escrito. */
-const DRAFT_MS = 220
 const EARLY_MS = 1000
 /** A partir de aquí, el JEV da la frase por entera: se puede mandar ya. */
 const WHOLE_SAID = 0.6
@@ -98,6 +81,8 @@ const WHOLE_SAID = 0.6
 const HALF_SAID = 0.4
 /** Lo que se espera a que se termine una frase a medias antes de mandarla tal cual. */
 const HELD_MS = 4500
+/** Lo que se queda a la vista una respuesta que no pide nada, antes de recogerse sola. */
+const TOAST_MS = 9000
 
 /** Lo dicho, para comparar: sin mayúsculas, signos ni espacios de más. */
 const spoken = (text: string) =>
@@ -121,16 +106,13 @@ function recognitionClass(): (new () => Recognition) | null {
   return scope.__pryselSpeech ?? scope.SpeechRecognition ?? scope.webkitSpeechRecognition ?? null
 }
 
-export function ChatDock({
+export function AiHub({
   entries,
   building,
   voice,
   ai,
-  suggestions,
-  about,
-  flavours,
-  onFlavour,
-  prefill,
+  style,
+  onAsk,
   onSubmit,
   onChoose,
   onStop,
@@ -139,27 +121,8 @@ export function ChatDock({
   onTyping,
   onMic,
   onHearing,
-  onDraft,
   judged,
-}: ChatDockProps) {
-  const [text, setText] = useState('')
-  const composer = useRef<HTMLInputElement>(null)
-  // Una frase empezada desde fuera (tocar una línea del guion): se pone en la caja y se le da el foco.
-  const [filled, setFilled] = useState(prefill?.seq ?? 0)
-  if (prefill && prefill.seq !== filled) {
-    setFilled(prefill.seq)
-    setText(prefill.text)
-  }
-  const prefilled = prefill?.seq
-  useEffect(() => {
-    if (prefilled === undefined) return
-    const input = composer.current
-    if (!input) return
-    input.focus()
-    // El cursor, al final: se sigue escribiendo donde acaba la frase.
-    const end = input.value.length
-    input.setSelectionRange(end, end)
-  }, [prefilled])
+}: AiHubProps) {
   const [open, setOpen] = useState(false)
   const [listening, setListening] = useState(false)
   const recognition = useRef<Recognition | null>(null)
@@ -176,31 +139,14 @@ export function ChatDock({
 
   // El reconocimiento de voz vive más que un render: lo que llama tiene que ser lo de ahora, no lo de cuando
   // se abrió el micrófono (una orden mandada con datos de entonces llega desfasada y se rechaza).
-  const live = useRef({ onSubmit, onHearing, onMic, onDraft, judged })
+  const live = useRef({ onSubmit, onHearing, onMic, judged })
   useEffect(() => {
-    live.current = { onSubmit, onHearing, onMic, onDraft, judged }
+    live.current = { onSubmit, onHearing, onMic, judged }
   })
-
-  /** Lo escrito se cuenta al lienzo con un pequeño retraso: no en cada tecla, sí en cada palabra. */
-  const drafting = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const draft = (value: string | null) => {
-    if (drafting.current !== null) clearTimeout(drafting.current)
-    drafting.current = null
-    if (value === null || value.trim().length < 4) {
-      live.current.onDraft?.(null)
-      return
-    }
-    drafting.current = setTimeout(() => {
-      drafting.current = null
-      live.current.onDraft?.(value)
-    }, DRAFT_MS)
-  }
 
   const send = (value: string) => {
     const order = value.trim().slice(0, MAX_COMMAND)
     if (order === '') return
-    setText('')
-    draft(null)
     live.current.onSubmit(order)
   }
 
@@ -221,7 +167,6 @@ export function ChatDock({
     // Si lo oído no llega a frase (un ruido, una tos), se suelta solo.
     if (value !== null) {
       quiet.current = setTimeout(() => {
-        setText('')
         live.current.onHearing?.(null)
       }, HEARING_PATIENCE_MS)
     }
@@ -278,7 +223,6 @@ export function ChatDock({
         const sure = live.current.judged?.(whole) ?? live.current.judged?.(more)
         if (sure !== undefined && sure < HALF_SAID) {
           held.current = whole
-          setText(whole)
           hearing(whole)
           if (waiting.current) clearTimeout(waiting.current)
           waiting.current = setTimeout(flush, HELD_MS)
@@ -294,7 +238,6 @@ export function ChatDock({
         // Sigue hablando: lo que estaba guardado espera a que acabe.
         if (waiting.current) clearTimeout(waiting.current)
         const whole = joined(more)
-        setText(whole)
         hearing(whole)
         // El navegador tarda en dar una frase por terminada. Si lo dicho no cambia durante un momento y
         // el JEV dice que la frase está entera, se manda sin esperarle. Si está a medias, se espera.
@@ -356,160 +299,149 @@ export function ChatDock({
     [],
   )
 
-  const preview = lastAi ? lastLine(lastAi) : null
+  // Lo último que contestó: se ve un momento y se recoge solo, salvo que esté en ello, pregunte algo, pida
+  // la clave o sea un fallo (eso se queda hasta que se atienda o se quite).
+  const preview = lastAi ? lastLine(lastAi) : ''
+  const asks = last?.role === 'ai' && (last.options?.length ?? 0) > 0 ? (last.options ?? []) : []
+  const stays =
+    lastAi !== undefined &&
+    (lastAi.busy === true || asks.length > 0 || lastAi.needsKey === true || lastAi.tone === 'error')
+  const key = lastAi ? `${lastAi.id}:${preview}` : null
+  const [gone, setGone] = useState<string | null>(null)
+  useEffect(() => {
+    if (key === null || stays) return
+    const timer = setTimeout(() => {
+      setGone(key)
+    }, TOAST_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [key, stays])
+  const shown = !open && lastAi !== undefined && preview !== '' && key !== gone
+  /** Se puede quitar a mano lo que no está en marcha ni espera una respuesta. */
+  const dismissible = lastAi?.busy !== true && asks.length === 0 && lastAi?.needsKey !== true
 
   return (
-    <section className="chat" data-open={open || undefined} aria-label="Chat con la IA">
+    <section className="canvas-float ai-hub" aria-label="La IA" style={style}>
       {open && (
-        <div className="chat__thread" ref={thread} role="log" aria-live="polite">
-          {entries.length === 0 && (
-            <p className="chat__empty">
-              Pídele que te enseñe algo («enséñame la recursión»), que explique el programa o que lo
-              cambie. Lo verás construirse en el diagrama mientras te lo cuenta.
-            </p>
-          )}
-          {entries.map((entry) => (
-            <Bubble
-              key={`${entry.role}${entry.id}`}
-              entry={entry}
-              onChoose={onChoose}
-              onSettings={onSettings}
-            />
-          ))}
-        </div>
-      )}
-
-      {!open && preview && (
-        <button
-          type="button"
-          className="chat__preview"
-          data-busy={lastAi?.busy || undefined}
-          onClick={() => setOpen(true)}
-        >
-          <span className="chat__preview-text">{preview}</span>
-          <span className="chat__preview-more">Ver conversación</span>
-        </button>
-      )}
-
-      {!open && last?.role === 'ai' && last.options && last.options.length > 0 && (
-        <div className="chat__chips">
-          {last.options.map((option) => (
+        <div className="ai-hub__panel">
+          <header className="ai-hub__head">
+            <span className="ai-hub__title">Conversación</span>
             <button
-              key={option.label}
               type="button"
-              className="chat__chip"
-              onClick={() => onChoose(option)}
+              className="chat__icon"
+              aria-pressed={voice}
+              aria-label={
+                voice
+                  ? 'Voz activada: pulsa para silenciar'
+                  : 'Voz apagada: pulsa para oír las explicaciones'
+              }
+              title={voice ? 'Lee en voz alta lo que contesta' : 'No lee en voz alta'}
+              onClick={onToggleVoice}
             >
-              {option.label}
+              <Icon name={voice ? 'volume' : 'volume-off'} size={16} />
             </button>
-          ))}
+            <button
+              type="button"
+              className="chat__icon"
+              aria-label="Ocultar la conversación"
+              onClick={() => {
+                setOpen(false)
+              }}
+            >
+              <Icon name="chevron" size={16} />
+            </button>
+          </header>
+          <div className="chat__thread" ref={thread} role="log" aria-live="polite">
+            {entries.length === 0 && (
+              <p className="chat__empty">
+                Pide algo con un clic derecho en el lienzo o en una pieza, o suelta un cable en el
+                vacío. Lo que se diga y lo que conteste queda aquí.
+              </p>
+            )}
+            {entries.map((entry) => (
+              <Bubble
+                key={`${entry.role}${entry.id}`}
+                entry={entry}
+                onChoose={onChoose}
+                onSettings={onSettings}
+              />
+            ))}
+          </div>
         </div>
       )}
 
-      {ai === null && (
-        <button type="button" className="chat__key" onClick={onSettings}>
+      {shown && (
+        <div
+          className="ai-hub__toast"
+          role="status"
+          data-tone={lastAi.tone}
+          data-busy={lastAi.busy || undefined}
+        >
+          <button
+            type="button"
+            className="ai-hub__said"
+            title="Ver la conversación"
+            onClick={() => {
+              setOpen(true)
+            }}
+          >
+            {preview}
+          </button>
+          {dismissible && (
+            <button
+              type="button"
+              className="ai-hub__dismiss"
+              aria-label="Quitar"
+              onClick={() => {
+                setGone(key)
+              }}
+            >
+              ×
+            </button>
+          )}
+          {(asks.length > 0 || lastAi.needsKey) && (
+            <div className="chat__chips">
+              {asks.map((option) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  className="chat__chip"
+                  onClick={() => {
+                    onChoose(option)
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+              {lastAi.needsKey && (
+                <button type="button" className="chat__chip" onClick={onSettings}>
+                  Abrir ajustes
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Sin IA conectada no hay quien escriba ni explique: se dice, y se ofrece conectarla. */}
+      {ai === null && !shown && !open && (
+        <button type="button" className="ai-hub__key" onClick={onSettings}>
           <Icon name="sparkles" size={14} />
           Conecta la IA para que escriba y explique
         </button>
       )}
 
-      {about && !building && (
-        <div className="chat__chips chat__chips--about">
-          <span className="chat__about" title={about.label}>
-            {about.label.length > 28 ? `${about.label.slice(0, 27)}…` : about.label}
-          </span>
-          <button type="button" className="chat__chip" onClick={() => send('¿Qué hace esto?')}>
-            ¿Qué hace?
-          </button>
-          <button
-            type="button"
-            className="chat__chip"
-            onClick={() => {
-              // Se deja empezada la frase: falta decir cómo se quiere.
-              setText('Cambia esto para que ')
-              composer.current?.focus()
-            }}
-          >
-            Cámbialo…
-          </button>
-          <button type="button" className="chat__chip" onClick={() => send('Quita esto')}>
-            Quítalo
-          </button>
-        </div>
-      )}
-
-      {/* Se eligió una versión de lo que se pidió: se dice cuál, y las otras quedan a un toque. */}
-      {flavours && !about && !building && (
-        <div className="chat__chips chat__chips--flavours">
-          <span
-            className="chat__about"
-            title={`${flavours.options[flavours.chosen]?.title ?? ''}: ${flavours.options[flavours.chosen]?.shows ?? ''}`}
-          >
-            Versión: {flavours.options[flavours.chosen]?.title ?? ''}
-          </span>
-          {flavours.options.map((option, at) =>
-            at === flavours.chosen ? null : (
-              <button
-                key={option.title}
-                type="button"
-                className="chat__chip"
-                title={`Rehacerlo así: ${option.shows}`}
-                onClick={() => onFlavour?.(at)}
-              >
-                ↻ {option.title}
-              </button>
-            ),
-          )}
-        </div>
-      )}
-
-      {!about && entries.length === 0 && suggestions.length > 0 && (
-        <div className="chat__chips">
-          {suggestions.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              className="chat__chip"
-              onClick={() => send(suggestion)}
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-      )}
-
-      <form
-        className="chat__composer"
-        onSubmit={(event) => {
-          event.preventDefault()
-          send(text)
-        }}
-      >
+      <div className="ai-hub__bar">
         <button
           type="button"
-          className="chat__icon"
-          aria-label={open ? 'Ocultar la conversación' : 'Ver la conversación'}
-          aria-expanded={open}
-          onClick={() => setOpen((value) => !value)}
+          className="ai-hub__ask"
+          title="Pedir algo a la IA (también con clic derecho en el lienzo, o la tecla /)"
+          onClick={onAsk}
         >
-          <Icon name={open ? 'chevron' : 'chevron-up'} size={18} />
+          <Icon name="sparkles" size={16} />
+          <span className="ai-hub__ask-label">Pedir</span>
         </button>
-        <input
-          ref={composer}
-          className="chat__input"
-          type="text"
-          value={text}
-          maxLength={MAX_COMMAND}
-          enterKeyHint="send"
-          autoComplete="off"
-          aria-label="Mensaje para la IA"
-          placeholder={listening ? 'Te escucho: di lo que quieras…' : 'Pregunta o pide algo…'}
-          onChange={(event) => {
-            setText(event.target.value)
-            onTyping()
-            draft(event.target.value)
-          }}
-        />
         {Speech && (
           <button
             type="button"
@@ -531,40 +463,31 @@ export function ChatDock({
             <Icon name="mic" size={18} />
           </button>
         )}
-        {building ? (
+        {building && (
           <button
             type="button"
             className="chat__send"
             data-stop=""
             aria-label="Detener"
+            title="Detener lo que se está construyendo"
             onClick={onStop}
           >
-            <Icon name="stop" size={16} />
-          </button>
-        ) : (
-          <button
-            type="submit"
-            className="chat__send"
-            aria-label="Enviar"
-            disabled={text.trim() === ''}
-          >
-            <Icon name="send" size={16} />
+            <Icon name="stop" size={14} />
           </button>
         )}
         <button
           type="button"
           className="chat__icon"
-          aria-pressed={voice}
-          aria-label={
-            voice
-              ? 'Voz activada: pulsa para silenciar'
-              : 'Voz apagada: pulsa para oír las explicaciones'
-          }
-          onClick={onToggleVoice}
+          aria-label={open ? 'Ocultar la conversación' : 'Ver la conversación'}
+          aria-expanded={open}
+          title="La conversación"
+          onClick={() => {
+            setOpen((value) => !value)
+          }}
         >
-          <Icon name={voice ? 'volume' : 'volume-off'} size={18} />
+          <Icon name={open ? 'chevron' : 'chevron-up'} size={18} />
         </button>
-      </form>
+      </div>
     </section>
   )
 }
@@ -614,7 +537,9 @@ function Bubble({
               key={option.label}
               type="button"
               className="chat__chip"
-              onClick={() => onChoose(option)}
+              onClick={() => {
+                onChoose(option)
+              }}
             >
               {option.label}
             </button>

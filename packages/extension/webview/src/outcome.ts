@@ -112,6 +112,8 @@ export interface Health {
   tone: 'ok' | 'muted' | 'error'
   text: string
   undo?: boolean
+  /** Falla al ejecutarlo: lo que dijo el error, para pedir que se arregle. */
+  fix?: string
 }
 
 /** Lo último que salió por pantalla, corto: es por lo que se reconoce «da lo mismo» o «ahora da otra cosa». */
@@ -139,9 +141,15 @@ export function healthOf(
     run !== null && (run.ended === 'done' || run.ended === 'cut' || run.ended === 'idle')
   if (after.ended === 'error') {
     const what = after.problem ? `: ${clip(after.problem, 90)}` : '.'
+    const fix = after.problem ? { fix: clip(after.problem, 160) } : {}
     return worked(before)
-      ? { tone: 'error', text: `Antes funcionaba y ahora falla al ejecutarlo${what}`, undo: true }
-      : { tone: 'error', text: `Falla al ejecutarlo${what}` }
+      ? {
+          tone: 'error',
+          text: `Antes funcionaba y ahora falla al ejecutarlo${what}`,
+          undo: true,
+          ...fix,
+        }
+      : { tone: 'error', text: `Falla al ejecutarlo${what}`, ...fix }
   }
   if (after.ended === 'idle') {
     return {

@@ -79,6 +79,14 @@ export {
 export { addPlace, checkConnection, type Link, type Verdict } from './connect.ts'
 export { CodePanel, type CodePanelProps } from './CodePanel.tsx'
 export type { NodeMenuItem } from './NodeMenu.tsx'
+export {
+  AskBox,
+  AskBubble,
+  type AskBoxProps,
+  type AskBubbleProps,
+  type AskChip,
+} from './AskBox.tsx'
+export type { AskWhere, CanvasAsk } from './Canvas.tsx'
 export { viewerSize, type ViewerContent } from './viewer.ts'
 export {
   gistSize,

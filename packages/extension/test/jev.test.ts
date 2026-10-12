@@ -316,6 +316,34 @@ describe('la resolución: de las respuestas a la directiva', () => {
     expect(applied(end.directive)).toContain('    print("Hola")\n    return mejor\n')
   })
 
+  it('una orden dada sobre un elemento habla de él, y el gesto dice dónde va lo nuevo', async () => {
+    const program = parse(SOURCE)
+    const decision = idOf(program, 'if mejor')
+    // Un cable que sale por el «no» de la decisión: lo que se pide va en su else, sin que la orden lo diga
+    // (ni el JEV lo sepa: aquí contesta que «al final», con toda certeza).
+    const answers = { accion: pick('agregar'), pieza: pick('print'), donde: pick('final') }
+    const { directive } = await decideCommand(
+      input('imprime el límite', { selected: decision, pointed: { place: 'camino_no' } }),
+      scripted(answers),
+    )
+    expect(applied(directive)).toContain('        print(mejor)\n    else:\n        print("Hola")\n')
+    // Sin gesto, la misma orden con lo mismo seleccionado va donde dijo el JEV.
+    const plain = await decideCommand(
+      input('imprime el límite', { selected: decision }),
+      scripted(answers),
+    )
+    expect(applied(plain.directive)).not.toContain('    else:\n        print("Hola")\n')
+    // Y detrás de un paso, con el cable que sale de él.
+    const after = await decideCommand(
+      input('imprime algo', {
+        selected: idOf(program, 'limite = 10'),
+        pointed: { place: 'despues' },
+      }),
+      scripted(answers),
+    )
+    expect(applied(after.directive)).toContain('limite = 10\nprint("Hola")\n')
+  })
+
   it('el camino del «no» de una decisión crea su else', async () => {
     const program = parse(SOURCE)
     const decision = targetsOf(program, null).find((t) => t.head.startsWith('if mejor'))
@@ -635,6 +663,12 @@ describe('los mensajes de las órdenes se validan', () => {
     ).toMatchObject({
       force: { intent: 'agregar', piece: 'for' },
     })
+    // Dada sobre lo seleccionado, con el sitio que dice el gesto.
+    expect(
+      parseHostMessage({ ...message, selected: 'n1', pointed: { place: 'despues' } }),
+    ).toMatchObject({ pointed: { place: 'despues' } })
+    expect(parseHostMessage({ ...message, pointed: {} })).toMatchObject({ pointed: {} })
+    expect(parseHostMessage({ ...message, pointed: { place: 'en la luna' } })).toBeNull()
     expect(parseHostMessage({ ...message, text: '   ' })).toBeNull()
     expect(parseHostMessage({ ...message, text: 'x'.repeat(401) })).toBeNull()
     expect(parseHostMessage({ ...message, force: { intent: 'formatear el disco' } })).toBeNull()

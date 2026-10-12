@@ -174,6 +174,12 @@ export interface EngineInput {
    * más reciente. Sin ella, un «pero usando la clase» no se sabe a qué se refiere.
    */
   history?: readonly { order: string; did: string }[]
+  /**
+   * La orden se dio **sobre** lo seleccionado (se escribió en su menú, o al soltar un cable que sale de
+   * ello): habla de eso aunque no diga «esto». `place`: el gesto dice, además, dónde va lo nuevo (un cable
+   * que sale por detrás de un paso, o por el «sí» de una decisión).
+   */
+  pointed?: { place?: PlaceId }
 }
 
 /** Dónde se escribe algo nuevo (lo mismo que admite la acción de añadir). */
@@ -923,16 +929,34 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
   // Lo que quedó seleccionado solo es «de lo que se habla» si la orden lo señala («esto», «aquí») o si
   // lo que se pide es añadir algo (va junto a lo seleccionado, como con el botón). Para borrar, mover o
   // cambiar algo, una selección que se quedó de antes no dice nada: mandaría borrar lo que no se nombró.
-  const pointed = /\b(esto|este|esta|estos|estas|aqui|eso|ese|esa|seleccionad[oa]s?)\b/.test(
-    input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
-  )
+  // (O si el propio gesto lo señala: la orden se escribió sobre ello.)
+  const pointed =
+    input.pointed !== undefined ||
+    /\b(esto|este|esta|estos|estas|aqui|eso|ese|esa|seleccionad[oa]s?)\b/.test(
+      input.text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(),
+    )
+  /** Dónde va lo que se añade: lo que dijo el gesto o, si no, lo que el JEV entendió de la orden. */
+  const placeAsked = (): PlaceId | null => {
+    if (input.pointed?.place !== undefined) return input.pointed.place
+    const where = choice(answers.donde)
+    return where && where.confidence >= THRESHOLDS.place
+      ? (PLACES.find((id) => id === where.choice) ?? null)
+      : null
+  }
   const implied =
     pointed || intent === 'agregar' || intent === 'componer' || intent === 'etapa' ? chosen : null
+  // La orden se dio sobre un elemento (en su menú, o con un cable que sale de él): es ese, diga lo que diga
+  // de pasada el texto («imprime el límite» no pide ponerlo junto a `limite`).
+  const gestured = input.pointed !== undefined ? chosen : null
   const target =
-    forced.target !== undefined ? byId(forced.target) : (namedTarget ?? literal ?? implied)
+    forced.target !== undefined
+      ? byId(forced.target)
+      : (gestured ?? namedTarget ?? literal ?? implied)
   /** Con cuánta certeza se sabe el objetivo: lo que el usuario eligió a mano, o nombró, es seguro. */
   const targetSure =
-    forced.target !== undefined || (namedTarget === null && (literal !== null || implied !== null))
+    forced.target !== undefined ||
+    gestured !== null ||
+    (namedTarget === null && (literal !== null || implied !== null))
       ? 1
       : (named?.confidence ?? 0)
   const viewing = byId(input.focus)
@@ -965,12 +989,8 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
           : 'Para escribir eso hace falta una IA generativa: configura un proveedor (DeepSeek, Anthropic o el de VS Code).',
       })
     }
-    const where = choice(answers.donde)
     const size = choice(answers.alcance)
-    const place =
-      where && where.confidence >= THRESHOLDS.place
-        ? (PLACES.find((id) => id === where.choice) ?? null)
-        : null
+    const place = placeAsked()
     // Sin un sitio claro, lo que la orden nombra de pasada («la media de las notas») no es dónde ponerlo.
     // La explicacion de un tema no va dentro de lo que este seleccionado ni de la funcion que se mira:
     // es un trozo nuevo, al final.
@@ -1233,11 +1253,7 @@ export async function decideCommand(input: EngineInput, decider: Decider): Promi
           })),
         })
       }
-      const where = choice(answers.donde)
-      const place =
-        where && where.confidence >= THRESHOLDS.place
-          ? (PLACES.find((id) => id === where.choice) ?? null)
-          : null
+      const place = placeAsked()
       const { phrase, ...at }: Placed =
         apartSpot(place) ?? placeOf(place, place === null ? chosen : target, viewing)
       // Un `return` o un `break` no tienen contenido que escribir: son lo que son.

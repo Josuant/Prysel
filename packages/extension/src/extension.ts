@@ -1066,6 +1066,7 @@ async function decideOrder(order: OrderContext, text: string, single: boolean) {
       // Llega de la caja de órdenes: es una orden, no algo oído de pasada.
       typed: true,
       ...(message.force && !single ? { forced: message.force } : {}),
+      ...(message.pointed ? { pointed: message.pointed } : {}),
       ...(provider ? { genId: newGenId() } : {}),
       ...(single ? { single: true } : {}),
       ...(lastWork.has(doc.uri.toString())

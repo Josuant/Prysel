@@ -338,6 +338,7 @@ export class Orders {
         focus: message.focus,
         typed: true,
         ...(message.force && !single ? { forced: message.force } : {}),
+        ...(message.pointed ? { pointed: message.pointed } : {}),
         ...(provider ? { genId: newGenId() } : {}),
         ...(single ? { single: true } : {}),
         ...(this.lastWork ? { last: this.lastWork } : {}),

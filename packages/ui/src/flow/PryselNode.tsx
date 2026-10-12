@@ -111,6 +111,8 @@ export interface PryselNodeData extends Record<string, unknown> {
    * abrir ahí lo que se puede crear.
    */
   onAddAfter?: (id: string, at: { x: number; y: number }) => void
+  /** Se puede pedir con palabras lo que va detrás: una etapa enseña un puerto del que sale un cable. */
+  askPort?: boolean
   phase: MotionPhase
   onControlChange?: (id: string, next: ControlModel) => void
   onNodeEdit?: (id: string, edit: NodeEdit) => void
@@ -484,6 +486,16 @@ export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<
               {...(spineStyle ? { style: spineStyle } : {})}
             />
           </>
+        )}
+        {data.askPort && (
+          <Handle
+            type="source"
+            id="order-out"
+            position={Position.Right}
+            className="order-port ask-port"
+            title="Arrastra desde aquí y suelta: pide lo que va después de esta parte"
+            isConnectable
+          />
         )}
         {flow && data.onAddAfter && (
           <button

@@ -74,6 +74,7 @@ import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
 import { QuickAdd } from './QuickAdd.tsx'
+import { AskBubble, type AskChip } from './AskBox.tsx'
 import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { IconButton } from './chrome.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
@@ -203,6 +204,31 @@ export interface CanvasNode {
   gist?: GistScene
 }
 
+/**
+ * Sobre qué se pide algo con palabras, según dónde se señaló en el lienzo: en el vacío, en un nodo, al final
+ * de un cable de orden que sale de un nodo (`port`: por dónde sale), con un valor que sale de un nodo, o entre
+ * dos nodos (un cable tendido de uno a otro, o la flecha que ya los une).
+ */
+export type AskWhere =
+  | { at: 'canvas' }
+  | { at: 'node'; id: string }
+  | { at: 'after'; id: string; port: OrderPort }
+  | { at: 'value'; id: string; name: string }
+  | { at: 'link'; from: string; to: string }
+
+/**
+ * **Pedir con palabras desde el propio lienzo.** Con ello, un clic derecho (o un doble clic) en el vacío abre
+ * una caja donde escribir; el menú de un nodo la lleva arriba; y un cable soltado en el vacío pregunta qué va
+ * ahí. El lienzo no sabe quién lo atiende: entrega la frase y dónde se señaló.
+ */
+export interface CanvasAsk {
+  onAsk: (text: string, where: AskWhere) => void
+  /** Lo que se ofrece bajo la caja, a un toque, según dónde se señaló. */
+  chips?: (where: AskWhere) => readonly AskChip[]
+  /** Lo que se lleva escrito en la caja del vacío (`null`: nada): se puede ir esbozando. */
+  onDraft?: (text: string | null) => void
+}
+
 export interface CanvasProps {
   nodes: CanvasNode[]
   edges: SemanticEdge[]
@@ -280,6 +306,8 @@ export interface CanvasProps {
   onRun?: (id: string) => void
   /** Más entradas para el menú de un nodo (por ejemplo, fijar su valor en un visor). */
   extraMenu?: (id: string) => NodeMenuItem[]
+  /** Pedir con palabras desde el lienzo (ver `CanvasAsk`). */
+  ask?: CanvasAsk | undefined
   /** Quitar un visor del lienzo. */
   onUnpin?: (id: string) => void
   onEnter?: (id: string) => void
@@ -504,6 +532,7 @@ function CanvasInner({
   showActions = true,
   onRun,
   extraMenu,
+  ask,
   onUnpin,
   showStatus = true,
   animate = true,
@@ -589,6 +618,8 @@ function CanvasInner({
   )
   /** El menú de un nodo, abierto donde se hizo clic derecho. */
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  /** La caja para pedir con palabras, abierta donde se señaló (en el vacío, o entre dos nodos). */
+  const [asking, setAsking] = useState<{ x: number; y: number; where: AskWhere } | null>(null)
   /** Un nodo al que el menú le ha pedido renombrarse: el contador abre su cuadro cada vez. */
   const [renaming, setRenaming] = useState<{ id: string; n: number }>({ id: '', n: 0 })
   /** Por qué no se pudo conectar: un aviso breve, para que el rechazo no parezca un fallo. */
@@ -1262,15 +1293,34 @@ function CanvasInner({
       const dragged = ordering
       setOrdering(null)
       if (dragged) {
-        // Soltado sobre un nodo pero no sobre su puerto: vale igual, es ese nodo el que se coloca.
-        if (!state.isValid && state.toNode) orderTo(dragged.from, dragged.port, state.toNode.id)
-        else if (!state.isValid) {
+        if (state.isValid) return
+        const frame = frameRef.current?.getBoundingClientRect()
+        const point = 'changedTouches' in event ? event.changedTouches[0] : event
+        // Una etapa no tiene puerto de entrada: el nodo sobre el que se soltó es el que hay bajo el puntero.
+        const under =
+          state.toNode?.id ??
+          (point
+            ? document
+                .elementFromPoint(point.clientX, point.clientY)
+                ?.closest<HTMLElement>('.react-flow__node')?.dataset['id']
+            : undefined)
+        const onto = under !== undefined && under !== dragged.from && byId.has(under) ? under : null
+        const stages =
+          byId.get(dragged.from)?.kind === 'space.section' ||
+          (onto !== null && byId.get(onto)?.kind === 'space.section')
+        if (onto !== null && ask && stages && frame && point) {
+          // De una parte a otra: no hay un «mover» que valga, pero sí algo que pedir entre las dos.
+          setAsking({
+            x: point.clientX - frame.left,
+            y: point.clientY - frame.top,
+            where: { at: 'link', from: dragged.from, to: onto },
+          })
+        } else if (onto !== null) {
+          // Soltado sobre un nodo pero no sobre su puerto: vale igual, es ese nodo el que se coloca.
+          orderTo(dragged.from, dragged.port, onto)
+        } else if (frame && point) {
           // En el vacío: se ofrece crear ahí una sentencia nueva.
-          const frame = frameRef.current?.getBoundingClientRect()
-          const point = 'changedTouches' in event ? event.changedTouches[0] : event
-          if (frame && point) {
-            setOrderAdd({ ...dragged, x: point.clientX - frame.left, y: point.clientY - frame.top })
-          }
+          setOrderAdd({ ...dragged, x: point.clientX - frame.left, y: point.clientY - frame.top })
         }
         return
       }
@@ -1304,8 +1354,26 @@ function CanvasInner({
         setQuick({ ...origin, x: point.clientX - frame.left, y: point.clientY - frame.top })
       }
     },
-    [byId, lookup, eligible, onAction, ordering, orderTo],
+    [byId, lookup, eligible, onAction, ordering, orderTo, ask],
   )
+
+  /** Cómo se llama un nodo para quien lo lee: el título de su etapa, o su rótulo. */
+  const nameOf = (id: string): string => {
+    const node = byId.get(id)
+    const name = node?.section?.title ?? node?.label ?? ''
+    return name.length > 30 ? `${name.slice(0, 29)}…` : name
+  }
+  /** La caja de pedir, para un sitio: lo que dice, lo que ofrece y a quién entrega la frase. */
+  const askFor = (where: AskWhere, placeholder: string) =>
+    ask
+      ? {
+          placeholder,
+          chips: ask.chips?.(where) ?? [],
+          onSubmit: (text: string) => {
+            ask.onAsk(text, where)
+          },
+        }
+      : undefined
 
   /** Lo que ofrece el menú de un nodo: lo que se hacía con los iconos de su cabecera, y más. */
   const menuItems = (id: string): NodeMenuItem[] => {
@@ -1821,6 +1889,8 @@ function CanvasInner({
           ...(connectable ? { onAddChip, onClearChip } : {}),
           ...(container && interactive ? { onResize } : {}),
           ...(flow && connectable ? { onAddAfter } : {}),
+          // En la arquitectura, de cada parte sale un cable para pedir lo que va detrás.
+          ...(ask && connectable && roleOf[node.id] !== undefined ? { askPort: true } : {}),
           phase: item.phase,
           ...(onControlChange ? { onControlChange: changeControl } : {}),
           ...(onAction ? { onNodeEdit } : {}),
@@ -2846,6 +2916,23 @@ function CanvasInner({
       role="group"
       aria-label={ariaLabel ?? 'Diagrama del programa'}
       onKeyDown={interactive ? onKeyDown : undefined}
+      // Un doble clic en el vacío: lo mismo que el clic derecho, para quien no lo tiene a mano.
+      onDoubleClick={
+        ask && interactive
+          ? (event) => {
+              const frame = frameRef.current?.getBoundingClientRect()
+              if (!frame || !(event.target as HTMLElement).classList.contains('react-flow__pane'))
+                return
+              setMenu(null)
+              setQuick(null)
+              setAsking({
+                x: event.clientX - frame.left,
+                y: event.clientY - frame.top,
+                where: { at: 'canvas' },
+              })
+            }
+          : undefined
+      }
       onPointerDown={
         interactive
           ? (event) => {
@@ -2903,6 +2990,42 @@ function CanvasInner({
                 select(null)
                 setQuick(null)
                 setMenu(null)
+              }
+            : undefined
+        }
+        onPaneContextMenu={
+          ask && interactive
+            ? (event) => {
+                // El menú del navegador no pinta nada aquí: se abre la caja para pedir, junto al puntero.
+                event.preventDefault()
+                const frame = frameRef.current?.getBoundingClientRect()
+                if (!frame) return
+                select(null)
+                setQuick(null)
+                setMenu(null)
+                setAsking({
+                  x: event.clientX - frame.left,
+                  y: event.clientY - frame.top,
+                  where: { at: 'canvas' },
+                })
+              }
+            : undefined
+        }
+        onEdgeContextMenu={
+          ask && interactive
+            ? (event, edge) => {
+                // Sobre una flecha entre dos nodos del programa: se pide algo para ahí en medio.
+                if (!byId.has(edge.source) || !byId.has(edge.target)) return
+                event.preventDefault()
+                const frame = frameRef.current?.getBoundingClientRect()
+                if (!frame) return
+                setQuick(null)
+                setMenu(null)
+                setAsking({
+                  x: event.clientX - frame.left,
+                  y: event.clientY - frame.top,
+                  where: { at: 'link', from: edge.source, to: edge.target },
+                })
               }
             : undefined
         }
@@ -3090,6 +3213,11 @@ function CanvasInner({
           y={menu.y}
           title={byId.get(menu.id)?.label ?? ''}
           items={menuItems(menu.id)}
+          ask={
+            byId.get(menu.id)?.viewer
+              ? undefined
+              : askFor({ at: 'node', id: menu.id }, 'Cámbialo, o pregunta por ello…')
+          }
           onClose={() => {
             setMenu(null)
           }}
@@ -3114,7 +3242,13 @@ function CanvasInner({
         <QuickAdd
           x={orderAdd.x}
           y={orderAdd.y}
-          title="Crear aquí…"
+          title={ask ? `Después de «${nameOf(orderAdd.from)}»…` : 'Crear aquí…'}
+          ask={askFor(
+            { at: 'after', id: orderAdd.from, port: orderAdd.port },
+            '¿Qué va aquí? Dilo con palabras…',
+          )}
+          // De una parte de la arquitectura no cuelga una sentencia suelta: ahí solo se pide.
+          templates={!asArchitecture}
           onPick={(template) => {
             onAction?.({ type: 'add', template, ...orderPlace(orderAdd.from, orderAdd.port) })
             setOrderAdd(null)
@@ -3130,6 +3264,14 @@ function CanvasInner({
           y={quick.y}
           type={byId.get(quick.from)?.valueType ?? 'any'}
           name={outputName(byId.get(quick.from) as CanvasNode, quick.port) ?? ''}
+          ask={askFor(
+            {
+              at: 'value',
+              id: quick.from,
+              name: outputName(byId.get(quick.from) as CanvasNode, quick.port) ?? '',
+            },
+            '¿Qué hago con ello? Dilo con palabras…',
+          )}
           onPick={(template) => {
             const source = byId.get(quick.from)
             if (source) {
@@ -3144,6 +3286,29 @@ function CanvasInner({
           }}
           onClose={() => {
             setQuick(null)
+          }}
+        />
+      )}
+      {asking && ask && (
+        <AskBubble
+          x={asking.x}
+          y={asking.y}
+          {...(asking.where.at === 'link'
+            ? { title: `De «${nameOf(asking.where.from)}» a «${nameOf(asking.where.to)}»` }
+            : {})}
+          placeholder={
+            asking.where.at === 'link'
+              ? '¿Qué quieres entre los dos?'
+              : 'Pide algo: «añade…», «explícame…»'
+          }
+          chips={ask.chips?.(asking.where) ?? []}
+          onSubmit={(text) => {
+            ask.onAsk(text, asking.where)
+          }}
+          {...(ask.onDraft && asking.where.at === 'canvas' ? { onDraft: ask.onDraft } : {})}
+          onClose={() => {
+            ask.onDraft?.(null)
+            setAsking(null)
           }}
         />
       )}

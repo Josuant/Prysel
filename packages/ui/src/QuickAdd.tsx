@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { TEMPLATES, VALUE_NAMES, type TemplateId, type ValueType } from '@prysel/morphology'
+import { AskBox, type AskBoxProps } from './AskBox.tsx'
 import { Icon } from './Icon.tsx'
 
 /**
@@ -45,15 +46,30 @@ export interface QuickAddProps {
   name?: string
   /** Un cable de orden no lleva valor: se ofrecen sentencias y este es el título. */
   title?: string
+  /** Decir con palabras lo que va ahí: la caja va arriba, y es lo primero que coge el foco. */
+  ask?: Omit<AskBoxProps, 'focus' | 'onDone'> | undefined
+  /** `false`: sin la lista de piezas (de una etapa no cuelga una sentencia suelta: solo se pide). */
+  templates?: boolean
   onPick: (template: TemplateId) => void
   onClose: () => void
 }
 
-export function QuickAdd({ x, y, type = 'any', name = '', title, onPick, onClose }: QuickAddProps) {
+export function QuickAdd({
+  x,
+  y,
+  type = 'any',
+  name = '',
+  title,
+  ask,
+  templates = true,
+  onPick,
+  onClose,
+}: QuickAddProps) {
   const root = useRef<HTMLDivElement>(null)
 
+  const asks = ask !== undefined
   useEffect(() => {
-    root.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    if (!asks) root.current?.querySelector<HTMLButtonElement>('button')?.focus()
     const onPointer = (event: PointerEvent) => {
       if (root.current && !root.current.contains(event.target as Node)) onClose()
     }
@@ -66,12 +82,13 @@ export function QuickAdd({ x, y, type = 'any', name = '', title, onPick, onClose
       document.removeEventListener('pointerdown', onPointer)
       document.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [onClose, asks])
 
   return (
     <div
       ref={root}
       className="quick-add"
+      data-ask={asks ? '' : undefined}
       role="menu"
       aria-label={title ?? `Nuevo nodo conectado a ${name}`}
       style={{ left: x, top: y }}
@@ -79,7 +96,18 @@ export function QuickAdd({ x, y, type = 'any', name = '', title, onPick, onClose
       <p className="quick-add__title type-field-label">
         {title ?? `Conectar «${name}» (${VALUE_NAMES[type]}) a…`}
       </p>
-      <div className="quick-add__list">
+      {ask && (
+        <AskBox
+          {...ask}
+          onSubmit={(text) => {
+            ask.onSubmit(text)
+            onClose()
+          }}
+          onDone={onClose}
+        />
+      )}
+      {ask && templates && <p className="quick-add__or type-field-label">o una pieza ya hecha</p>}
+      <div className="quick-add__list" hidden={!templates}>
         {(title === undefined ? SUGGESTED[type] : STATEMENTS).map((id) => (
           <button
             key={id}

@@ -1641,6 +1641,149 @@ button.fn-menu__crumb:hover {
   margin: 4px 8px 6px;
   color: var(--ink-muted);
 }
+.quick-add[data-ask] {
+  width: 290px;
+}
+.quick-add__or {
+  margin: 8px 8px 4px;
+  color: var(--ink-faint);
+}
+
+/*
+ * Pedir con palabras, en el sitio: una línea para escribir, con su marca y su botón, y debajo lo que se
+ * ofrece a un toque. Va sola (al señalar el vacío), o arriba del menú de un nodo o del de un cable soltado.
+ */
+.ask-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ask-box__form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 38px;
+  padding: 0 4px 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-card));
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ask-box__form:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.ask-box__mark {
+  display: grid;
+  flex: none;
+  color: var(--accent);
+  place-items: center;
+}
+.ask-box__input {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  padding: 0 6px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  /* 16px como mínimo en pantallas táctiles: con menos, iOS hace zoom al enfocar. */
+  font-size: 14px;
+}
+@media (pointer: coarse) {
+  .ask-box__input {
+    font-size: 16px;
+  }
+}
+.ask-box__input::placeholder {
+  color: var(--ink-faint);
+}
+.ask-box__send {
+  display: grid;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--void, var(--surface));
+  cursor: pointer;
+  place-items: center;
+}
+.ask-box__send:disabled {
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: default;
+}
+.ask-box__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.ask-box__chip {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 10px;
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ask-box__chip:hover,
+.ask-box__chip:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: none;
+  color: var(--ink);
+}
+.ask-bubble {
+  position: absolute;
+  z-index: 40;
+  width: min(340px, calc(100% - 12px));
+  padding: 8px;
+  border: 1px solid var(--border-card);
+  border-radius: 16px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  animation: ask-pop 140ms ease-out;
+}
+.ask-bubble__title {
+  margin: 0 4px 6px;
+  color: var(--ink-muted);
+}
+@keyframes ask-pop {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ask-bubble {
+    animation: none;
+  }
+}
+/* En el menú de un nodo, la caja va arriba y el resto debajo, separado. */
+.node-menu[data-ask] {
+  width: 290px;
+}
+.node-menu[data-ask] .ask-box {
+  margin: 4px 4px 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-card);
+}
+/* El puerto de una parte de la arquitectura: de él sale el cable para pedir lo que va detrás. */
+.react-flow__handle.order-port.ask-port {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .quick-add .palette__item {
   padding: 5px 6px;
 }
@@ -7416,12 +7559,12 @@ button.run-panel__line:hover {
 /* La barra de transporte: ver pasar una vuelta. Encima de la leyenda. */
 .arch-transport {
   bottom: calc(48px + var(--lift, 0px));
-  left: calc((100% - var(--avoid, 0px)) / 2);
+  left: calc(var(--hub, 0px) + (100% - var(--avoid, 0px) - var(--hub, 0px)) / 2);
   display: flex;
   box-sizing: border-box;
   align-items: center;
   gap: 10px;
-  max-width: min(calc(100% - var(--avoid, 0px) - 20px), 760px);
+  max-width: min(calc(100% - var(--avoid, 0px) - var(--hub, 0px) - 20px), 760px);
   padding: 4px 12px 4px 4px;
   border: 1px solid var(--border-card);
   border-radius: var(--radius-full);
@@ -7582,11 +7725,12 @@ button.run-panel__line:hover {
 .arch-legend {
   bottom: calc(14px + var(--lift, 0px));
   /* En el centro de lo que la consola (abajo, a la derecha) deja libre: `--avoid` es lo que ocupa a lo
-     ancho. Si a su lado no caben, van encima de ella: `--lift` es lo que ocupa a lo alto. */
-  left: calc((100% - var(--avoid, 0px)) / 2);
+     ancho. Si a su lado no caben, van encima de ella: `--lift` es lo que ocupa a lo alto. Y a la izquierda,
+     el botón de la IA: `--hub` es lo que ocupa. */
+  left: calc(var(--hub, 0px) + (100% - var(--avoid, 0px) - var(--hub, 0px)) / 2);
   display: flex;
   box-sizing: border-box;
-  max-width: calc(100% - var(--avoid, 0px) - 20px);
+  max-width: calc(100% - var(--avoid, 0px) - var(--hub, 0px) - 20px);
   align-items: center;
   gap: 12px;
   overflow: hidden;

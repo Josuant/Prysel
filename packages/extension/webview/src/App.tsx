@@ -4,6 +4,8 @@ import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
 import {
   AddNodeMenu,
+  AskBox,
+  AskBubble,
   Button,
   Canvas,
   beatsOf,
@@ -16,6 +18,8 @@ import {
   type CanvasNode,
   type ViewerContent,
   type NodeMenuItem,
+  type AskChip,
+  type AskWhere,
   FunctionMenu,
   Icon,
   IconButton,
@@ -39,11 +43,11 @@ import {
   type StepMessage,
   type Theme,
 } from '../../src/protocol.ts'
-import type { Forced } from '../../src/jev/engine.ts'
+import type { Forced, PlaceId as Place } from '../../src/jev/engine.ts'
 import { MODULE_ROLES, shapeCandidates, type ArchShape, type ModuleRole } from '@prysel/spatial'
 import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
-import { ChatDock, type ChatEntry } from './ChatDock.tsx'
+import { AiHub, type ChatEntry } from './AiHub.tsx'
 import { CommandBar } from './CommandBar.tsx'
 import { answerTo, rejection } from './answering.ts'
 import { dissolve, dragChips, flyNode, gesture } from './dragging.ts'
@@ -399,15 +403,47 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           role: 'ai',
           text: health.text,
           tone: health.tone,
-          ...(health.undo ? { options: [{ label: 'Deshacer el cambio', undo: true }] } : {}),
+          ...(health.undo || health.fix
+            ? {
+                options: [
+                  ...(health.fix
+                    ? [{ label: 'Arréglalo', order: `Arregla este error: ${health.fix}` }]
+                    : []),
+                  ...(health.undo ? [{ label: 'Deshacer el cambio', undo: true }] : []),
+                ],
+              }
+            : {}),
         },
       ])
     },
     [],
   )
   /** Una frase que se deja empezada en el chat al tocar una línea del guion («Cambia «X» para que »). */
-  const [prefill, setPrefill] = useState<{ text: string; seq: number } | null>(null)
-  const prefillSeq = useRef(0)
+  /**
+   * La caja de pedir, abierta por la app y no por un gesto sobre el lienzo (el botón de la IA, la tecla «/»,
+   * una línea del guion): dónde, de qué pieza habla (si de alguna) y la frase que ya trae empezada.
+   */
+  const [asking, setAsking] = useState<{
+    x: number
+    y: number
+    seq: number
+    about?: string
+    title?: string
+    text?: string
+  } | null>(null)
+  const askSeq = useRef(0)
+  const stage = useRef<HTMLElement>(null)
+  const openAsk = useCallback((about?: { id: string; title: string }, text?: string) => {
+    const w = stage.current?.clientWidth ?? 640
+    const h = stage.current?.clientHeight ?? 480
+    setAsking({
+      x: Math.max(6, (w - 340) / 2),
+      y: Math.max(56, h * 0.28),
+      seq: ++askSeq.current,
+      ...(about ? { about: about.id, title: `Sobre «${about.title}»` } : {}),
+      ...(text === undefined ? {} : { text }),
+    })
+  }, [])
   /**
    * La petición era abierta y se hizo una versión concreta: lo que se pidió, las versiones que se propusieron
    * y cuál se hizo. Las otras quedan a mano en el chat, para rehacerlo con una de ellas.
@@ -478,7 +514,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       const w = Math.ceil((element.offsetWidth + CONSOLE_MARGIN) / 20) * 20
       const h = Math.ceil((element.offsetHeight + CONSOLE_MARGIN) / 20) * 20
       setConsoleBox((known) => (known?.w === w && known.h === h ? known : { w, h }))
-      setCramped(around !== null && around.clientWidth - w < DOCK_ROOM)
+      setCramped(around !== null && around.clientWidth - w < DOCK_ROOM + HUB_ROOM)
     }
     const observer = new ResizeObserver(measure)
     observer.observe(element)
@@ -1377,7 +1413,52 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       ? undefined
       : { from: picked.line, to: picked.lineEnd ?? picked.line }
   /** Lo que se dice de lo seleccionado en el chat: su nombre, para ofrecer qué hacer con ello. */
-  const about = picked ? { label: picked.gist?.name ?? picked.label } : undefined
+  const about = picked
+    ? { id: picked.id, label: picked.section?.title ?? picked.gist?.name ?? picked.label }
+    : undefined
+  /** La IA se maneja desde el lienzo (sin barra de escribir abajo): su botón flota sobre él. */
+  const hub = features.chat === true && features.orders === true
+  // «/» (o Ctrl+K) abre la caja de pedir desde el teclado: sobre lo elegido, o sobre el programa.
+  const aboutId = about?.id
+  const aboutLabel = about?.label
+  useEffect(() => {
+    if (!hub) return
+    const onKey = (event: KeyboardEvent) => {
+      const slash = event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey
+      const palette = event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)
+      if (!slash && !palette) return
+      const target = event.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      event.preventDefault()
+      openAsk(
+        aboutId !== undefined && aboutLabel !== undefined
+          ? { id: aboutId, title: aboutLabel }
+          : undefined,
+      )
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [hub, aboutId, aboutLabel, openAsk])
+  /** Lo que se lleva escrito en una caja de pedir se cuenta al lienzo, que lo va esbozando: no en cada tecla. */
+  const drafting = useRef<number | null>(null)
+  const draft = (written: string | null) => {
+    if (drafting.current !== null) window.clearTimeout(drafting.current)
+    drafting.current = null
+    const tell = (value: string | null) => {
+      attend(value, typed)
+      setTyped(value)
+    }
+    if (written === null || written.trim().length < 4) {
+      if (typed !== null) tell(null)
+      return
+    }
+    drafting.current = window.setTimeout(() => {
+      drafting.current = null
+      tell(written)
+    }, DRAFT_MS)
+  }
   /** Cuánto lleva lo que se está construyendo por etapas: las que ya tienen código, de las que hay. */
   const stages = program?.sections ?? NO_SECTIONS
   const pendingStages = program
@@ -1920,8 +2001,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     force?: Forced,
     /** Rehacerlo con otra de las versiones que se propusieron (`text` es la petición de entonces). */
     flavour?: { title: string; shows: string },
-    /** De qué pieza se habla, si no es la seleccionada (se tocó una línea del guion). */
-    about?: string,
+    /** De qué pieza se habla, si no es la seleccionada (`null`: de ninguna, se pidió en el vacío). */
+    about?: string | null,
+    /** Se pidió **sobre** esa pieza, en el lienzo: y, si el gesto lo dice, dónde va lo nuevo. */
+    pointed?: { place?: Place },
   ) => {
     if (version === null) return
     hush()
@@ -1960,10 +2043,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       id,
       text,
       version,
-      selected: flavour ? null : (about ?? selected),
+      selected: flavour ? null : about === undefined ? selected : about,
       focus: flavour ? null : (view.focus?.id ?? null),
       ...(force ? { force } : {}),
       ...(flavour ? { flavour } : {}),
+      ...(pointed && !flavour && about ? { pointed } : {}),
     })
   }
   /**
@@ -1971,7 +2055,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * pendiente («sí», «la segunda») o un «no, eso no», que deshace lo último y, si trae la corrección detrás,
    * la pide.
    */
-  const hear = (text: string) => {
+  const hear = (text: string, about?: string | null, pointed?: { place?: Place }) => {
     if (order.phase === 'ask') {
       const answer = answerTo(
         text,
@@ -2011,7 +2095,75 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       post({ type: 'undoOrder' })
       return
     }
-    sendOrder(text)
+    sendOrder(text, undefined, undefined, about, pointed)
+  }
+  /** Cómo se llama una pieza (un paso o una etapa) para decirlo en una orden. */
+  const pieceName = (id: string): string => {
+    const node = view.nodes.find((one) => one.id === id)
+    return (
+      program?.sections?.find((section) => section.id === id)?.title ??
+      node?.section?.title ??
+      node?.gist?.name ??
+      node?.label ??
+      'esto'
+    )
+  }
+  /** Lo que se pidió con palabras en el lienzo: la frase, y dónde se señaló. */
+  const askHere = (text: string, where: AskWhere) => {
+    hush()
+    switch (where.at) {
+      case 'canvas':
+        hear(text, null)
+        break
+      case 'node':
+        hear(text, where.id, {})
+        break
+      // Un cable soltado en el vacío: lo que se pide va donde dice el puerto del que sale.
+      case 'after':
+        hear(text, where.id, { place: PORT_PLACE[where.port] ?? 'despues' })
+        break
+      // Un cable que lleva un valor: lo que se pide lo usa, y va detrás de donde sale.
+      case 'value':
+        hear(`${text} (usando «${where.name}»)`, where.id, { place: 'despues' })
+        break
+      // De una pieza a otra: lo que se pide va entre las dos.
+      case 'link':
+        hear(`${text} (entre «${pieceName(where.from)}» y «${pieceName(where.to)}»)`, where.from, {
+          place: 'despues',
+        })
+        break
+    }
+  }
+  /** Lo que se ofrece bajo la caja, a un toque, según dónde se señaló. */
+  const askChips = (where: AskWhere): AskChip[] => {
+    if (where.at === 'node') {
+      return [
+        { label: '¿Qué hace?', say: '¿Qué hace esto?' },
+        { label: 'Explícamelo', say: 'Explícame esto' },
+        { label: 'Cámbialo para que…', prefill: 'Cambia esto para que ' },
+        { label: 'Quítalo', say: 'Quita esto' },
+      ]
+    }
+    if (where.at !== 'canvas') return []
+    return [
+      ...(features.suggestions ?? []).slice(0, 3).map((say) => ({ label: say, say })),
+      // Se eligió una versión de lo que se pidió: las otras quedan a un toque.
+      ...(flavours?.options ?? []).flatMap((option, at): AskChip[] =>
+        at === flavours?.chosen
+          ? []
+          : [
+              {
+                label: `↻ ${option.title}`,
+                title: `Rehacerlo así: ${option.shows}`,
+                onPick: () => {
+                  if (!flavours) return
+                  setFlavours({ ...flavours, chosen: at })
+                  sendOrder(flavours.command, undefined, option)
+                },
+              },
+            ],
+      ),
+    ]
   }
   const sendLater = useRef<(text: string) => void>(() => undefined)
   useEffect(() => {
@@ -2494,8 +2646,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
 
       <div className={`flex min-h-0 flex-1 ${wide ? 'flex-row' : 'flex-col'}`}>
         <main
+          ref={stage}
           className="relative min-h-0 min-w-0 flex-1"
           data-hearing={hearing !== null ? '' : undefined}
+          data-hub={hub ? '' : undefined}
         >
           {/* Le estamos oyendo: se ve, grande, y con lo que va diciendo. Lo que se construía está quieto. */}
           {hearing !== null && (
@@ -2567,6 +2721,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     }
                   : {})}
                 extraMenu={viewerMenu}
+                ask={
+                  features.orders && lesson === null && !constructing
+                    ? { onAsk: askHere, chips: askChips, onDraft: draft }
+                    : undefined
+                }
                 onUnpin={(id) => {
                   const key = pins.find((p) => pinNodeId(p) === id)
                   if (key) pin(key)
@@ -2624,6 +2783,22 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               // Ya enviado: el esbozo se queda mientras se decide y se piensa el plan, diciendo en qué va.
               sent={
                 drawing === null && asked ? (intro ?? thinking ?? 'Decidiendo qué hacer…') : null
+              }
+              prompt={
+                hub && lesson === null && !constructing ? (
+                  <AskBox
+                    placeholder="Escribe aquí lo que quieres construir…"
+                    focus={!narrow}
+                    chips={(features.starters ?? features.suggestions ?? []).map((say) => ({
+                      label: say,
+                      say,
+                    }))}
+                    onSubmit={(text) => {
+                      hear(text, null)
+                    }}
+                    onDraft={draft}
+                  />
+                ) : null
               }
             />
           )}
@@ -2815,17 +2990,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       ? {
                           onChange: (step) => {
                             setSelected(step.id)
-                            setPrefill({
-                              text: `Cambia «${step.title}» para que `,
-                              seq: ++prefillSeq.current,
-                            })
+                            openAsk(step, `Cambia «${step.title}» para que `)
                           },
                           onAdd: (step) => {
                             setSelected(step.id)
-                            setPrefill({
-                              text: `Añade después de «${step.title}» un paso que `,
-                              seq: ++prefillSeq.current,
-                            })
+                            openAsk(step, `Añade después de «${step.title}» un paso que `)
                           },
                           onRemove: (step) => {
                             sendOrder(
@@ -2999,6 +3168,92 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               )}
             </>
           )}
+          {/* La IA, sobre el lienzo: pedir sin señalar nada, el micrófono, lo último que dijo y la
+              conversación. Lo demás se pide donde se señala (clic derecho, un cable soltado). */}
+          {hub && (
+            <AiHub
+              entries={chat}
+              building={order.phase === 'done' && order.building === true}
+              voice={voice}
+              ai={models ? models.ai : ''}
+              style={
+                {
+                  ...dock,
+                  '--above': architecture && hasStory && !showIdea ? '46px' : '8px',
+                } as React.CSSProperties
+              }
+              onAsk={() => {
+                hush()
+                // Con algo elegido, se pide sobre ello; si no, sobre el programa.
+                openAsk(about ? { id: about.id, title: about.label } : undefined)
+              }}
+              onSubmit={(text) => {
+                hear(text)
+              }}
+              onChoose={(option) => {
+                if (option.undo) {
+                  // «Deshacer el cambio»: lo último que se escribió, fuera.
+                  setChat((previous) => [
+                    ...previous.slice(-60),
+                    { id: -Date.now(), role: 'ai', text: 'Deshecho.', tone: 'muted' },
+                  ])
+                  // Y cuando se vuelva a ejecutar, se dice cómo quedó.
+                  if (version !== null)
+                    healthWait.current = { before: ran, how: 'order', from: version + 1 }
+                  post({ type: 'undoOrder' })
+                } else if (option.order) sendOrder(option.order)
+                else sendOrder(lastOrder.current, option.force)
+              }}
+              onStop={() => {
+                hush()
+                post({ type: 'stopOrder' })
+              }}
+              onToggleVoice={() => {
+                if (voice) hush()
+                vscode.setState({ ...saved(), voice: !voiceOn } satisfies SavedState)
+                setVoice(!voiceOn)
+              }}
+              onSettings={() => {
+                post({ type: 'pickModel' })
+              }}
+              onTyping={hush}
+              onMic={(open) => {
+                if (open) hush()
+                setMicOpen(open)
+                if (!open) setHearing(null)
+              }}
+              judged={(heard) => wholeness.current.get(sayKey(heard))}
+              onHearing={(heard) => {
+                attend(heard, hearing)
+                setHearing(heard)
+              }}
+            />
+          )}
+          {/* La caja de pedir que abre la app: en medio, sobre lo que haya elegido o sobre el programa. */}
+          {asking && (
+            <AskBubble
+              key={asking.seq}
+              x={asking.x}
+              y={asking.y}
+              {...(asking.title ? { title: asking.title } : {})}
+              {...(asking.text === undefined ? {} : { initial: asking.text })}
+              placeholder={
+                asking.about
+                  ? 'Cámbialo, o pregunta por ello…'
+                  : 'Pide algo: «añade…», «explícame…»'
+              }
+              chips={askChips(asking.about ? { at: 'node', id: asking.about } : { at: 'canvas' })}
+              onSubmit={(text) => {
+                if (asking.about) hear(text, asking.about, {})
+                else hear(text, null)
+              }}
+              {...(asking.about ? {} : { onDraft: draft })}
+              onClose={() => {
+                draft(null)
+                setAsking(null)
+              }}
+            />
+          )}
         </main>
 
         {program && replay && player.state && (insightIds.length > 0 || question) && (
@@ -3107,74 +3362,6 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             }}
           />
         </ErrorBoundary>
-      )}
-
-      {features.chat && features.orders && (
-        <ChatDock
-          entries={chat}
-          building={order.phase === 'done' && order.building === true}
-          voice={voice}
-          ai={models ? models.ai : ''}
-          about={about}
-          // Con el lienzo vacío se propone algo que construir; con un programa delante, qué hacer con él.
-          suggestions={
-            (program?.nodes.length ?? 0) === 0
-              ? (features.starters ?? features.suggestions ?? [])
-              : (features.suggestions ?? [])
-          }
-          flavours={flavours ?? undefined}
-          prefill={prefill ?? undefined}
-          onFlavour={(at) => {
-            const option = flavours?.options[at]
-            if (!flavours || !option) return
-            setFlavours({ ...flavours, chosen: at })
-            sendOrder(flavours.command, undefined, option)
-          }}
-          onSubmit={(text) => {
-            hear(text)
-          }}
-          onChoose={(option) => {
-            if (option.undo) {
-              // «Deshacer el cambio»: lo último que se escribió, fuera.
-              setChat((previous) => [
-                ...previous.slice(-60),
-                { id: -Date.now(), role: 'ai', text: 'Deshecho.', tone: 'muted' },
-              ])
-              // Y cuando se vuelva a ejecutar, se dice cómo quedó.
-              if (version !== null)
-                healthWait.current = { before: ran, how: 'order', from: version + 1 }
-              post({ type: 'undoOrder' })
-            } else if (option.order) sendOrder(option.order)
-            else sendOrder(lastOrder.current, option.force)
-          }}
-          onStop={() => {
-            hush()
-            post({ type: 'stopOrder' })
-          }}
-          onToggleVoice={() => {
-            if (voice) hush()
-            vscode.setState({ ...saved(), voice: !voiceOn } satisfies SavedState)
-            setVoice(!voiceOn)
-          }}
-          onSettings={() => {
-            post({ type: 'pickModel' })
-          }}
-          onTyping={hush}
-          onMic={(open) => {
-            if (open) hush()
-            setMicOpen(open)
-            if (!open) setHearing(null)
-          }}
-          judged={(heard) => wholeness.current.get(sayKey(heard))}
-          onHearing={(heard) => {
-            attend(heard, hearing)
-            setHearing(heard)
-          }}
-          onDraft={(written) => {
-            attend(written, typed)
-            setTyped(written)
-          }}
-        />
       )}
     </div>
   )
@@ -3339,6 +3526,17 @@ const DISTANCES: readonly { id: Distance; label: string; title: string }[] = [
 ]
 /** Lo que necesitan, a lo ancho, las barras de abajo para ir al lado de la consola y no encima. */
 const DOCK_ROOM = 480
+/** Lo que se espera tras una tecla antes de contarle al lienzo lo que se lleva escrito. */
+const DRAFT_MS = 220
+/** Lo que ocupa, a su izquierda, el botón de la IA (ver `--hub` en los estilos). */
+const HUB_ROOM = 190
+/** Por dónde sale el cable dice dónde va lo que se pide al soltarlo. */
+const PORT_PLACE: Record<string, Place> = {
+  'order-out': 'despues',
+  'order-yes': 'camino_si',
+  'order-no': 'camino_no',
+  'order-body': 'dentro',
+}
 
 /** Cómo se dice cada forma de la arquitectura, y por qué se eligió. */
 const SHAPE_NAMES: Record<ArchShape, string> = {
@@ -3459,6 +3657,7 @@ function EmptyState({
   sketch = null,
   kind = null,
   sent = null,
+  prompt = null,
 }: {
   /** Ya se envió: en qué va quien lo construye. El esbozo no se quita mientras tanto. */
   sent?: string | null
@@ -3471,68 +3670,60 @@ function EmptyState({
   sketch?: Sketch | null
   /** Qué clase de cosa es, si el JEV ya lo ha dicho («Un programa», «Una función»…). */
   kind?: string | null
+  /** La caja donde se pide lo que se quiere construir: va debajo, y se queda mientras lo de arriba cambia. */
+  prompt?: React.ReactNode
 }) {
-  // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
-  if (sketch !== null && sent !== null) {
-    return (
-      <div className="flex h-full items-center justify-center p-6" role="status" aria-live="polite">
-        <SketchCard sketch={sketch} kind={kind} hint={sent} />
-      </div>
-    )
-  }
-  if (intro !== null) {
-    return (
-      <div className="flex h-full items-center justify-center p-6" role="status">
-        <p className="intro-card">{intro}</p>
-      </div>
-    )
-  }
-  // Se está escribiendo (o diciendo) lo que se quiere: el lienzo lo va esbozando antes de mandarlo. La cosa,
-  // arriba; debajo, cada parte que la frase ya nombra, como el hueco de una pieza que vendrá.
-  if (sketch !== null && intro === null && (thinking === null || kind !== null)) {
-    return (
-      <div className="flex h-full items-center justify-center p-6" role="status" aria-live="polite">
+  const said = (() => {
+    // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
+    if (sketch !== null && sent !== null) {
+      return <SketchCard sketch={sketch} kind={kind} hint={sent} />
+    }
+    if (intro !== null) return <p className="intro-card">{intro}</p>
+    // Se está escribiendo (o diciendo) lo que se quiere: el lienzo lo va esbozando antes de mandarlo. La
+    // cosa, arriba; debajo, cada parte que la frase ya nombra, como el hueco de una pieza que vendrá.
+    if (sketch !== null && (thinking === null || kind !== null)) {
+      return (
         <SketchCard
           sketch={sketch}
           kind={kind}
           hint={thinking ?? 'Sigue escribiendo, o pulsa Intro: lo construyo aquí.'}
         />
-      </div>
-    )
-  }
-  // Aún no hay diagrama, pero la IA ya está en ello: se dice aquí, donde va a aparecer.
-  if (thinking !== null) {
-    return (
-      <div className="flex h-full items-center justify-center p-6" role="status">
+      )
+    }
+    // Aún no hay diagrama, pero la IA ya está en ello: se dice aquí, donde va a aparecer.
+    if (thinking !== null) {
+      return (
         <div className="thinking-card" data-preview={title ? '' : undefined}>
           {title ?? 'La IA está pensando'} · {thinking}
         </div>
-      </div>
-    )
-  }
-  if (chat) {
-    return (
-      <div className="flex h-full items-center justify-center p-6 text-center" role="status">
-        <div className="max-w-xs">
+      )
+    }
+    if (chat) {
+      return (
+        <div className="max-w-sm text-center">
           <p className="text-base text-ink">¿Qué quieres construir?</p>
           <p className="mt-2 text-sm leading-6 text-ink-faint">
-            Dilo con tus palabras, abajo o con el micrófono: «un juego de adivinar el número»,
-            «llevar la cuenta de mis gastos». Verás el programa crecer aquí, y funcionar. También
-            puedes pedir que te enseñe un tema.
+            Dilo con tus palabras: «un juego de adivinar el número», «llevar la cuenta de mis
+            gastos». Verás el programa crecer aquí, y funcionar. Luego, con un clic derecho sobre
+            cualquier parte, lo cambias.
           </p>
         </div>
-      </div>
-    )
-  }
-  return (
-    <div className="flex h-full items-center justify-center p-6 text-center" role="status">
-      <div className="max-w-xs">
+      )
+    }
+    return (
+      <div className="max-w-xs text-center">
         <p className="text-sm text-ink">Sin diagrama que mostrar</p>
         <p className="mt-1 text-xs leading-5 text-ink-faint">
           Abre un archivo <code className="type-code">.py</code> y concéntralo para ver su diagrama,
           o ejecuta «Prysel: Abrir lienzo». En un archivo vacío, empieza con «Añadir».
         </p>
       </div>
+    )
+  })()
+  return (
+    <div className="empty-stage" role="status" aria-live="polite">
+      <div className="empty-stage__said">{said}</div>
+      {prompt && <div className="empty-stage__prompt">{prompt}</div>}
     </div>
   )
 }

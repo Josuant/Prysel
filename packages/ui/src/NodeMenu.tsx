@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
+import { AskBox, type AskBoxProps } from './AskBox.tsx'
 
 /**
  * El menú de un nodo (clic derecho, o la tecla de menú con el nodo enfocado): duplicar, editar como
@@ -21,10 +22,12 @@ export interface NodeMenuProps {
   /** A quién pertenece: es lo que dice el menú a un lector de pantalla. */
   title: string
   items: NodeMenuItem[]
+  /** Pedir algo sobre el nodo con palabras: la caja va arriba, y es lo primero que coge el foco. */
+  ask?: Omit<AskBoxProps, 'focus' | 'onDone'> | undefined
   onClose: () => void
 }
 
-export function NodeMenu({ x, y, title, items, onClose }: NodeMenuProps) {
+export function NodeMenu({ x, y, title, items, ask, onClose }: NodeMenuProps) {
   const root = useRef<HTMLDivElement>(null)
 
   // Cerca de un borde del lienzo el menú se abriría cortado: se recoloca para que quepa entero.
@@ -35,10 +38,12 @@ export function NodeMenu({ x, y, title, items, onClose }: NodeMenuProps) {
     const room = 4
     menu.style.left = `${Math.max(room, Math.min(x, stage.clientWidth - menu.offsetWidth - room))}px`
     menu.style.top = `${Math.max(room, Math.min(y, stage.clientHeight - menu.offsetHeight - room))}px`
-  }, [x, y, items.length])
+  }, [x, y, items.length, ask?.chips?.length])
 
+  const asks = ask !== undefined
   useEffect(() => {
-    root.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    // Con caja para pedir, el foco es suyo: se escribe sin más.
+    if (!asks) root.current?.querySelector<HTMLButtonElement>('button')?.focus()
     const onPointer = (event: PointerEvent) => {
       if (root.current && !root.current.contains(event.target as Node)) onClose()
     }
@@ -48,7 +53,9 @@ export function NodeMenu({ x, y, title, items, onClose }: NodeMenuProps) {
         return
       }
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-      const buttons = [...(root.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+      const buttons = [
+        ...(root.current?.querySelectorAll<HTMLButtonElement>('.node-menu__item') ?? []),
+      ]
       if (buttons.length === 0) return
       event.preventDefault()
       const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
@@ -61,12 +68,13 @@ export function NodeMenu({ x, y, title, items, onClose }: NodeMenuProps) {
       document.removeEventListener('pointerdown', onPointer)
       document.removeEventListener('keydown', onKey)
     }
-  }, [onClose])
+  }, [onClose, asks])
 
   return (
     <div
       ref={root}
       className="node-menu"
+      data-ask={asks ? '' : undefined}
       role="menu"
       aria-label={`Acciones de ${title}`}
       tabIndex={-1}
@@ -76,6 +84,16 @@ export function NodeMenu({ x, y, title, items, onClose }: NodeMenuProps) {
         event.preventDefault()
       }}
     >
+      {ask && (
+        <AskBox
+          {...ask}
+          onSubmit={(text) => {
+            ask.onSubmit(text)
+            onClose()
+          }}
+          onDone={onClose}
+        />
+      )}
       {items.map((item) => (
         <button
           key={item.label}
