@@ -45,6 +45,16 @@ export interface ViewerContent {
    * de esa fila ya son las del final: se encienden, y se ve cómo se va acercando.
    */
   steps?: { label: string; text: string; lit?: boolean[] }[]
+  /**
+   * Una **lista de números** en varios momentos: una tira de barras por momento (todas a la misma escala).
+   * `lit`: las que ya valen lo que al final; se ve cómo la lista se va colocando.
+   */
+  strips?: { label: string; values: number[]; lit?: boolean[] }[]
+  /**
+   * Un **tablero** en varios momentos: una rejilla pequeña por momento. `cells`: el tono de cada casilla
+   * (`0`, vacía; del `1` en adelante, cada clase de ficha).
+   */
+  grids?: { label: string; cells: number[][] }[]
 }
 
 /** Lo que mide un visor: crece con su contenido hasta un tope, y no más. */
@@ -62,6 +72,28 @@ export const VIEWER = {
   char: 6.8,
   /** Alto de la curva de una serie. */
   chart: 84,
+  /** Alto de una tira de barras, y lo que se deja entre dos rejillas (y a su rótulo). */
+  strip: 24,
+  gridGap: 10,
+  gridLabel: 14,
+}
+
+/**
+ * Cómo se reparten las rejillas de un visor: lo que mide cada casilla (para que el tablero se vea, sea de 3×3
+ * o de 20×20), lo que ocupa cada rejilla, y cuántas caben por fila en ese ancho.
+ */
+export function gridLayout(
+  grids: NonNullable<ViewerContent['grids']>,
+  width: number,
+): { cell: number; w: number; h: number; perRow: number; rows: number } {
+  const rows = grids[0]?.cells.length ?? 1
+  const cols = grids[0]?.cells[0]?.length ?? 1
+  const cell = Math.min(14, Math.max(3, Math.floor(104 / Math.max(rows, cols))))
+  const w = cols * cell
+  const h = rows * cell
+  const room = width - 2 * VIEWER.pad
+  const perRow = Math.max(1, Math.floor((room + VIEWER.gridGap) / (w + VIEWER.gridGap)))
+  return { cell, w, h, perRow, rows: Math.ceil(grids.length / perRow) }
 }
 
 /** El ancho de un visor: el de su imagen o su tabla, dentro de unos límites. */
@@ -71,6 +103,15 @@ export function viewerWidth(content: ViewerContent): number {
     return clamp(content.table.columns.length * 92 + 2 * VIEWER.pad, VIEWER.minW, VIEWER.tableMaxW)
   }
   if (content.image) return clamp(content.image.w + 2 * VIEWER.pad, VIEWER.minW, VIEWER.maxW)
+  if (content.grids?.length) {
+    // Las rejillas, en una fila si caben: tantas como haya, hasta el tope.
+    const cols = content.grids[0]?.cells[0]?.length ?? 1
+    const rows = content.grids[0]?.cells.length ?? 1
+    const cell = Math.min(14, Math.max(3, Math.floor(104 / Math.max(rows, cols))))
+    const all = content.grids.length * (cols * cell + VIEWER.gridGap) - VIEWER.gridGap
+    return clamp(all + 2 * VIEWER.pad + 2, 320, VIEWER.maxW)
+  }
+  if (content.strips) return 320
   if (content.steps) {
     // Lo que se lee fila a fila manda en el ancho: una lista corta cabe entera.
     const longest = Math.max(0, ...content.steps.map((step) => step.text.length))
@@ -98,6 +139,11 @@ export function viewerHeight(content: ViewerContent): number {
   if (content.image) body += viewerImageSize(content).h + 4
   if (content.series) body += VIEWER.chart + 4
   if (content.steps?.length) body += content.steps.length * VIEWER.line + 6
+  if (content.strips?.length) body += content.strips.length * VIEWER.strip + 6
+  if (content.grids?.length) {
+    const layout = gridLayout(content.grids, viewerWidth(content))
+    body += layout.rows * (layout.h + VIEWER.gridLabel + 6) + 4
+  }
   if (content.text?.length) {
     // Una línea más larga que el visor se parte: cuenta por las filas que ocupa, no por una.
     const perRow = Math.max(8, Math.floor((viewerWidth(content) - 2 * VIEWER.pad) / VIEWER.char))

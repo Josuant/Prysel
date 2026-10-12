@@ -1,7 +1,7 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import type { CanvasNode } from '../Canvas.tsx'
 import { Icon } from '../Icon.tsx'
-import { VIEWER, viewerImageSize, type ViewerContent } from '../viewer.ts'
+import { VIEWER, gridLayout, viewerImageSize, type ViewerContent } from '../viewer.ts'
 
 /**
  * Un visor dentro de React Flow: una ventana con el valor que un nodo dejó al ejecutarse. Solo lee y
@@ -168,6 +168,12 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
             ))}
           </ol>
         )}
+        {content.strips && content.strips.length > 0 && (
+          <Strips strips={content.strips} width={size.w - 2 * VIEWER.pad - 2} />
+        )}
+        {content.grids && content.grids.length > 0 && (
+          <Grids grids={content.grids} width={size.w} />
+        )}
         {content.series && <Curve series={content.series} width={size.w - 2 * VIEWER.pad - 2} />}
         {content.image && (
           <img
@@ -185,6 +191,89 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
         ))}
       </div>
     </div>
+  )
+}
+
+/**
+ * Una lista de números en varios momentos: una tira de barras por momento, todas a la misma escala. Las que
+ * ya valen lo que al final van encendidas: se ve cómo la lista se va colocando.
+ */
+function Strips({
+  strips,
+  width,
+}: {
+  strips: NonNullable<ViewerContent['strips']>
+  width: number
+}) {
+  const label = 34
+  const room = width - label - 8
+  const height = VIEWER.strip - 6
+  const all = strips.flatMap((strip) => strip.values)
+  const low = Math.min(0, ...all)
+  const span = Math.max(...all) - low || 1
+  return (
+    <ol className="viewer__strips">
+      {strips.map((strip, at) => {
+        const step = room / Math.max(1, strip.values.length)
+        const bar = Math.max(1, Math.min(14, step - 2))
+        return (
+          <li key={at} className="viewer__strip">
+            <span className="viewer__step-label">{strip.label}</span>
+            <svg
+              width={room}
+              height={height}
+              viewBox={`0 0 ${room} ${height}`}
+              role="img"
+              aria-label={`${strip.label}: ${strip.values.join(', ')}`}
+            >
+              {strip.values.map((value, k) => {
+                const tall = Math.max(2, ((value - low) / span) * height)
+                return (
+                  <rect
+                    key={k}
+                    x={k * step + (step - bar) / 2}
+                    y={height - tall}
+                    width={bar}
+                    height={tall}
+                    rx={1}
+                    data-lit={strip.lit?.[k] ? '' : undefined}
+                  />
+                )
+              })}
+            </svg>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+/** Un tablero en varios momentos: una rejilla pequeña por momento, con su rótulo debajo. */
+function Grids({ grids, width }: { grids: NonNullable<ViewerContent['grids']>; width: number }) {
+  const { cell, w, h } = gridLayout(grids, width)
+  return (
+    <ol className="viewer__grids">
+      {grids.map((grid, at) => (
+        <li key={at} className="viewer__grid">
+          <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={grid.label}>
+            {grid.cells.flatMap((row, y) =>
+              row.map((tone, x) => (
+                <rect
+                  key={`${x}:${y}`}
+                  x={x * cell + 0.5}
+                  y={y * cell + 0.5}
+                  width={cell - 1}
+                  height={cell - 1}
+                  rx={cell > 6 ? 1.5 : 0.5}
+                  data-tone={tone}
+                />
+              )),
+            )}
+          </svg>
+          <span className="viewer__grid-label">{grid.label}</span>
+        </li>
+      ))}
+    </ol>
   )
 }
 

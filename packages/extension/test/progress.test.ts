@@ -149,7 +149,56 @@ describe.skipIf(!available)('las sondas: lo que vale algo en cada vuelta', () =>
     const errors = watched.probe?.errors ?? []
     expect(errors.slice(0, 4).every((problem) => problem !== null)).toBe(true)
     expect(errors[4]).toBeNull()
-    expect(watched.probe?.values[4]?.[0]).toEqual({ o: '[1, 2, 3]' })
+    expect(watched.probe?.values[4]?.[0]).toEqual({ n: [1, 2, 3], o: '[1, 2, 3]' })
+  })
+})
+
+describe.skipIf(!available)('las sondas entregan cada cosa con su forma', () => {
+  let kernel: Kernel
+  beforeAll(async () => {
+    kernel = await Kernel.start({ python })
+  }, 30_000)
+  afterAll(() => {
+    kernel.dispose()
+  })
+
+  it('una lista corta de números, como lista; un tablero, como filas de casillas', async () => {
+    const source = lines(
+      'numeros = [3, 1, 2]',
+      'tablero = ["..#", "#..", ".#."]',
+      'celdas = [[0, 1], [1, 0]]',
+      'dibujo = "ab" + chr(10) + "ba"',
+      'frases = ["hola mundo", "otra frase", "y una mas!"]',
+      'for vuelta in range(1):',
+      '    pass',
+    )
+    const watched = await kernel.trace(source, 20_000, false, false, {
+      watch: { line: 6, exprs: ['numeros', 'tablero', 'celdas', 'dibujo', 'frases'] },
+    })
+    const first = (at: number) => watched.probe?.values[at]?.[0]
+    expect(first(0)).toEqual({ n: [3, 1, 2], o: '[3, 1, 2]' })
+    expect(first(1)).toMatchObject({
+      g: [
+        ['.', '.', '#'],
+        ['#', '.', '.'],
+        ['.', '#', '.'],
+      ],
+    })
+    expect(first(2)).toMatchObject({
+      g: [
+        [0, 1],
+        [1, 0],
+      ],
+    })
+    expect(first(3)).toMatchObject({
+      g: [
+        ['a', 'b'],
+        ['b', 'a'],
+      ],
+    })
+    // Unas frases no son un tablero (demasiadas clases de casilla): se leen.
+    const phrases = first(4)
+    expect(phrases !== null && typeof phrases === 'object' && 'g' in phrases).toBe(false)
   })
 })
 
@@ -302,5 +351,77 @@ describe('el visor de cómo avanza', () => {
     expect(viewer?.steps?.[0]?.lit).toBeUndefined()
     expect(viewer?.series).toBeUndefined()
     expect(progressViewer({ line: 2, total: 3 })).toBeNull()
+  })
+})
+
+describe('las formas de lo medido: barras y rejilla', () => {
+  const watches: Watch[] = [
+    { expr: 'numeros', says: 'la lista', proposed: true },
+    { expr: 'tablero', says: 'el tablero', proposed: true },
+    { expr: 'mezcla', says: 'una mezcla', proposed: true },
+  ]
+  const board = (cells: string[]) => ({ g: cells.map((row) => [...row]), o: cells.join('/') })
+  const probe: Probe = {
+    line: 4,
+    names: watches.map((watch) => watch.expr),
+    laps: [0, 1, 2],
+    values: [
+      [
+        { n: [3, 1, 2], o: '[3, 1, 2]' },
+        { n: [1, 3, 2], o: '[1, 3, 2]' },
+        { n: [1, 2, 3], o: '[1, 2, 3]' },
+      ],
+      [board(['.#', '..']), board(['..', '#.']), board(['..', '.#'])],
+      // Unas veces una lista y otras un texto: no tiene una forma, se lee.
+      [{ n: [1, 2], o: '[1, 2]' }, { s: 'nada' }, { n: [1, 2, 3], o: '[1, 2, 3]' }],
+    ],
+    errors: [null, null, null],
+    total: 3,
+    cut: false,
+  }
+
+  it('una lista de números del mismo largo son barras; un tablero del mismo tamaño, una rejilla', () => {
+    const measured = measuredOf(probe, watches)
+    expect(measured.map((one) => [one.watch.expr, one.kind])).toEqual([
+      ['numeros', 'bars'],
+      ['tablero', 'grid'],
+      ['mezcla', 'text'],
+    ])
+    expect(measured[0]?.bars).toEqual([
+      [3, 1, 2],
+      [1, 3, 2],
+      [1, 2, 3],
+    ])
+    const [bars, grid] = measured
+    if (!bars || !grid) throw new Error('sin medidas')
+    expect(progressOf(probe, { text: bars, number: null })?.bars?.values).toHaveLength(3)
+    expect(progressOf(probe, { text: grid, number: null })?.grid?.says).toBe('el tablero')
+  })
+
+  it('las barras: una tira por momento, encendidas las que ya están como al final', () => {
+    const [bars] = measuredOf(probe, watches)
+    if (!bars) throw new Error('sin medidas')
+    const viewer = progressViewer(progressOf(probe, { text: bars, number: null }) as never)
+    expect(viewer?.subtitle).toBe('la lista')
+    expect(viewer?.strips?.map((strip) => strip.label)).toEqual(['0', '1', '2'])
+    expect(viewer?.strips?.[0]?.lit).toEqual([false, false, false])
+    expect(viewer?.strips?.[1]?.lit).toEqual([true, false, false])
+    expect(viewer?.strips?.[2]?.lit).toEqual([true, true, true])
+    expect(viewer?.steps).toBeUndefined()
+  })
+
+  it('la rejilla: un tablero por momento, con un tono por clase de casilla y lo vacío sin él', () => {
+    const grid = measuredOf(probe, watches)[1]
+    if (!grid) throw new Error('sin medidas')
+    const viewer = progressViewer(progressOf(probe, { text: grid, number: null }) as never)
+    expect(viewer?.grids?.map((one) => one.label)).toEqual(['0', '1', '2'])
+    expect(viewer?.grids?.[0]?.cells).toEqual([
+      [0, 1],
+      [0, 0],
+    ])
+    expect(viewer?.grids?.[2]?.cells).toEqual([
+      [0, 0],
+      [0, 1],
+    ])
   })
 })

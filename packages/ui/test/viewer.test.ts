@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { VIEWER, viewerHeight, viewerImageSize, viewerSize, viewerWidth } from '../src/viewer.ts'
+import {
+  VIEWER,
+  gridLayout,
+  viewerHeight,
+  viewerImageSize,
+  viewerSize,
+  viewerWidth,
+} from '../src/viewer.ts'
 
 /**
  * Cuánto mide un visor: crece con lo que enseña hasta un tope, y una imagen se ajusta sin ampliarse.
@@ -72,6 +79,27 @@ describe('el alto de un visor', () => {
       (viewerWidth({ title: 'x', text: ['a'] }) - 2 * VIEWER.pad) / VIEWER.char,
     )
     expect(viewerHeight({ title: 'x', text: ['a'.repeat(perRow)] })).toBe(short)
+  })
+
+  it('crece con sus tiras de barras y con las filas de rejillas que hagan falta', () => {
+    const strip = { label: '0', values: [3, 1, 2] }
+    expect(viewerHeight({ title: 'x', strips: [strip, strip, strip] })).toBe(
+      viewerHeight({ title: 'x', strips: [strip] }) + 2 * VIEWER.strip,
+    )
+    const grid = (size: number) => ({
+      label: '0',
+      cells: Array.from({ length: size }, () => Array.from({ length: size }, () => 0)),
+    })
+    // Tres tableros pequeños caben en una fila; seis grandes, no: el visor crece hacia abajo.
+    const small = { title: 'x', grids: [grid(4), grid(4), grid(4)] }
+    const big = { title: 'x', grids: Array.from({ length: 6 }, () => grid(20)) }
+    expect(gridLayout(small.grids, viewerWidth(small)).rows).toBe(1)
+    expect(gridLayout(big.grids, viewerWidth(big)).rows).toBeGreaterThan(1)
+    expect(viewerHeight(big)).toBeGreaterThan(viewerHeight(small))
+    expect(viewerWidth(big)).toBeLessThanOrEqual(VIEWER.maxW)
+    // Una casilla nunca es tan pequeña que no se vea, ni tan grande que el tablero no quepa.
+    expect(gridLayout(big.grids, 400).cell).toBeGreaterThanOrEqual(3)
+    expect(gridLayout(small.grids, 320).w).toBeLessThan(320)
   })
 
   it('siempre cabe su cabecera y una línea', () => {

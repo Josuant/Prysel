@@ -33,6 +33,10 @@ export interface Progress {
   total: number
   /** Algo que se lee, y cómo fue cambiando: lo que valía al empezar esas vueltas. */
   text?: { says: string; expr: string; laps: number[]; values: string[] }
+  /** O una lista corta de números (se dibuja como barras), en esas vueltas. */
+  bars?: { says: string; expr: string; laps: number[]; values: number[][] }
+  /** O un tablero (se dibuja como rejilla): sus filas de casillas, en esas vueltas. */
+  grid?: { says: string; expr: string; laps: number[]; values: (string | number)[][][] }
   /** Un número que mide cómo va. */
   number?: { says: string; expr: string; laps: number[]; values: number[] }
 }
@@ -56,7 +60,7 @@ export function watchSystem(): string {
   return [
     'Eres parte de una herramienta que enseña cómo funciona un programa en Python mientras se ejecuta.',
     'Te doy un programa y su bucle principal. Propón hasta 4 expresiones de Python que, evaluadas AL EMPEZAR CADA VUELTA de ese bucle, enseñen cómo va avanzando hacia su resultado:',
-    '- lo mejor que lleva encontrado, o lo que va construyendo, como un valor que se pueda LEER (un texto, una lista corta);',
+    '- lo mejor que lleva encontrado, o lo que va construyendo, como un valor que se pueda VER: un texto, una lista corta de números (la que se ordena), o un tablero como lista de filas (el que va cambiando);',
     '- un NÚMERO que mida cómo de bien va (una puntuación, un error, un total). Un contador de vueltas no vale.',
     'Reglas: son expresiones, no sentencias (nada de asignar). Pueden usar las variables que existen en ese punto del programa, sus propias funciones si solo calculan (ni imprimen, ni cambian nada, ni usan el azar), y max, min, sum, len, sorted, round, abs. Nada de print, input ni import.',
     'Una por línea, con este formato exacto: expresión ## nombre',
@@ -132,10 +136,18 @@ export async function proposeWatches(
 /** Lo que se midió de una expresión: sus valores (sin las vueltas en las que aún no se podía mirar). */
 export interface Measured {
   watch: Watch
-  kind: 'text' | 'number'
+  /**
+   * Qué forma tiene lo medido: un texto (o algo que se lee escrito), un número, una lista corta de números
+   * (se dibuja como barras) o un tablero (como rejilla).
+   */
+  kind: 'text' | 'number' | 'bars' | 'grid'
   laps: number[]
+  /** Lo que valía, escrito: para leerlo, y para decirle al JEV de qué a qué fue. */
   texts: string[]
   numbers: number[]
+  /** Con `bars`: la lista, en cada vuelta. Con `grid`: el tablero. */
+  bars?: number[][]
+  grids?: (string | number)[][][]
 }
 
 const textOf = (value: ProbeValue): string | null =>
@@ -160,25 +172,54 @@ export function measuredOf(probe: Probe, watches: readonly Watch[]): Measured[] 
     const laps: number[] = []
     const texts: string[] = []
     const numbers: number[] = []
-    let numeric = true
+    const bars: number[][] = []
+    const grids: (string | number)[][][] = []
     for (const [k, value] of column.entries()) {
       const text = textOf(value)
       const lap = probe.laps[k]
-      if (text === null || lap === undefined) continue
+      if (value === null || text === null || lap === undefined) continue
       laps.push(lap)
       texts.push(text)
       if (typeof value === 'number') numbers.push(value)
-      else numeric = false
+      else if ('n' in value) bars.push(value.n)
+      else if ('g' in value) grids.push(value.g)
     }
-    if (laps.length < 2 || new Set(texts).size < 2) continue
-    if (numeric) {
+    if (laps.length < 2) continue
+    // La forma vale si todas las muestras la tienen, y del mismo tamaño: si no, se lee como texto.
+    const same = <T>(list: readonly T[], size: (one: T) => string) =>
+      list.length === laps.length && new Set(list.map(size)).size === 1
+    const kind: Measured['kind'] =
+      numbers.length === laps.length
+        ? 'number'
+        : same(bars, (one) => String(one.length))
+          ? 'bars'
+          : same(grids, (one) => `${one.length}x${one[0]?.length ?? 0}`)
+            ? 'grid'
+            : 'text'
+    // ¿Cambió? De una lista o un tablero se mira lo que llevan, no cómo se escriben (que puede ir recortado).
+    const marks =
+      kind === 'bars'
+        ? bars.map((one) => one.join(','))
+        : kind === 'grid'
+          ? grids.map((one) => JSON.stringify(one))
+          : texts
+    if (new Set(marks).size < 2) continue
+    if (kind === 'number') {
       const counts = numbers.every(
         (value, k) =>
           k === 0 || value - (numbers[k - 1] ?? 0) === (laps[k] ?? 0) - (laps[k - 1] ?? 0),
       )
       if (counts) continue
     }
-    found.push({ watch, kind: numeric ? 'number' : 'text', laps, texts, numbers })
+    found.push({
+      watch,
+      kind,
+      laps,
+      texts,
+      numbers,
+      ...(kind === 'bars' ? { bars } : {}),
+      ...(kind === 'grid' ? { grids } : {}),
+    })
   }
   return found
 }
@@ -199,7 +240,8 @@ export async function pickWatches(
   head: string,
   measured: readonly Measured[],
 ): Promise<{ text: Measured | null; number: Measured | null }> {
-  const texts = measured.filter((one) => one.kind === 'text')
+  // Lo que se ve (un texto, una lista, un tablero) compite entre sí; los números, entre ellos.
+  const texts = measured.filter((one) => one.kind !== 'number')
   const numbers = measured.filter((one) => one.kind === 'number')
   const fallback = {
     text: texts.find((one) => one.watch.proposed) ?? null,
@@ -221,7 +263,7 @@ export async function pickWatches(
               texto: {
                 type: 'choice' as const,
                 instructions:
-                  'Un programa repite el `bucle`. De cada candidato se sabe lo que valía en la primera vuelta y en la última. ¿Cuál enseña mejor, LEYÉNDOLO vuelta a vuelta, cómo el programa se va acercando a su resultado (lo mejor que lleva encontrado, lo que va construyendo)?',
+                  'Un programa repite el `bucle`. De cada candidato se sabe lo que valía en la primera vuelta y en la última. ¿Cuál enseña mejor, VIÉNDOLO vuelta a vuelta, cómo el programa se va acercando a su resultado (lo mejor que lleva encontrado, lo que va construyendo, la lista que se ordena, el tablero que cambia)?',
                 criteria: options(
                   texts,
                   'Ninguno deja ver un avance: son datos de paso, o colecciones enteras que no se leen.',
@@ -266,18 +308,18 @@ export function progressOf(
   picked: { text: Measured | null; number: Measured | null },
 ): Progress | null {
   if (!picked.text && !picked.number) return null
+  const seen = picked.text
+  const head = seen ? { says: seen.watch.says, expr: seen.watch.expr, laps: seen.laps } : null
   return {
     line: probe.line,
     total: probe.total,
-    ...(picked.text
-      ? {
-          text: {
-            says: picked.text.watch.says,
-            expr: picked.text.watch.expr,
-            laps: picked.text.laps,
-            values: picked.text.texts,
-          },
-        }
+    // Lo que se ve, con su forma: barras, rejilla, o lo que se lee.
+    ...(seen && head
+      ? seen.kind === 'bars' && seen.bars
+        ? { bars: { ...head, values: seen.bars } }
+        : seen.kind === 'grid' && seen.grids
+          ? { grid: { ...head, values: seen.grids } }
+          : { text: { ...head, values: seen.texts } }
       : {}),
     ...(picked.number
       ? {

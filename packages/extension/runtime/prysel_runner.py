@@ -716,8 +716,63 @@ class _Probe:
         }
 
 
+# Hasta cuántos números lleva una lista que se dibuja como barras, y cuánto mide un tablero que se dibuja como
+# rejilla (con pocas clases de casilla: es un tablero, no una tabla de datos).
+_PROBE_BARS = 48
+_PROBE_ROWS = 24
+_PROBE_COLS = 48
+_PROBE_TONES = 6
+
+
+def _probe_plain(value):
+    """¿Es un número de los que se dibujan (ni un sí/no, ni infinito)?"""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _probe_grid(value):
+    """Un tablero: filas del mismo largo hechas de casillas sueltas, de pocas clases. `None` si no lo es."""
+    rows = None
+    if isinstance(value, str):
+        lines = [line for line in value.split("\n")]
+        while lines and lines[-1] == "":
+            lines.pop()
+        if len(lines) >= 2:
+            rows = [list(line) for line in lines]
+    elif isinstance(value, (list, tuple)) and 2 <= len(value) <= _PROBE_ROWS:
+        if all(isinstance(row, str) for row in value):
+            rows = [list(row) for row in value]
+        elif all(isinstance(row, (list, tuple)) for row in value):
+            rows = [list(row) for row in value]
+    if not rows or not (2 <= len(rows) <= _PROBE_ROWS):
+        return None
+    width = len(rows[0])
+    if not (2 <= width <= _PROBE_COLS) or any(len(row) != width for row in rows):
+        return None
+    cells = []
+    seen = set()
+    for row in rows:
+        line = []
+        for cell in row:
+            if cell is None:
+                cell = ""
+            elif isinstance(cell, bool):
+                cell = 1 if cell else 0
+            elif isinstance(cell, str):
+                if len(cell) > 2:
+                    return None
+            elif not (_probe_plain(cell) and abs(cell) < 1e9):
+                return None
+            seen.add(cell)
+            if len(seen) > _PROBE_TONES:
+                return None
+            line.append(cell)
+        cells.append(line)
+    return cells
+
+
 def _probe_value(value):
-    """Lo que se guarda de una muestra: un número tal cual, un texto recortado, y de lo demás su forma escrita."""
+    """Lo que se guarda de una muestra: un número tal cual, un texto recortado, una lista corta de números o un
+    tablero con su forma (para dibujarlos), y de lo demás su forma escrita."""
     if isinstance(value, bool):
         return str(value)
     if isinstance(value, (int, float)):
@@ -725,7 +780,16 @@ def _probe_value(value):
             return str(value)
         return value if abs(value) < 1e15 else str(value)
     if isinstance(value, str):
-        return {"s": value if len(value) <= _PROBE_TEXT else value[: _PROBE_TEXT - 1] + "…"}
+        text = value if len(value) <= _PROBE_TEXT else value[: _PROBE_TEXT - 1] + "…"
+        grid = _probe_grid(value) if "\n" in value else None
+        return {"g": grid, "o": text.split("\n")[0]} if grid is not None else {"s": text}
+    # Una matriz de numpy (pequeña) se mira como las listas que es.
+    if hasattr(value, "tolist") and hasattr(value, "shape"):
+        try:
+            if value.size <= 2500:
+                value = value.tolist()
+        except Exception:  # no era lo que parecía: se queda como está
+            pass
     # Una colección corta se enseña entera (es lo que se quiere leer: la lista que se va ordenando); una
     # larga, resumida.
     try:
@@ -735,7 +799,14 @@ def _probe_value(value):
     text = repr(value) if small else reprlib.repr(value)
     if len(text) > _PROBE_TEXT:
         text = reprlib.repr(value)
-    return {"o": _short(text, _PROBE_TEXT)}
+    text = _short(text, _PROBE_TEXT)
+    if isinstance(value, (list, tuple)):
+        if 2 <= len(value) <= _PROBE_BARS and all(_probe_plain(item) for item in value):
+            return {"n": [item if abs(item) < 1e15 else 0 for item in value], "o": text}
+        grid = _probe_grid(value)
+        if grid is not None:
+            return {"g": grid, "o": text}
+    return {"o": text}
 
 
 class _TraceLimit(BaseException):

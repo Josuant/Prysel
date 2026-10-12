@@ -162,8 +162,17 @@ export interface TraceExtra {
   watch?: { line: number; exprs: readonly string[] }
 }
 
-/** Lo que valió una sonda en una vuelta: un número, un texto, o la forma escrita de otra cosa. */
-export type ProbeValue = number | { s: string } | { o: string } | null
+/**
+ * Lo que valió una sonda en una vuelta: un número, un texto, una lista corta de números (`n`), un tablero
+ * (`g`: sus filas de casillas), o la forma escrita de otra cosa (`o`, que también llevan la lista y el tablero).
+ */
+export type ProbeValue =
+  | number
+  | { s: string }
+  | { o: string }
+  | { n: number[]; o: string }
+  | { g: (string | number)[][]; o: string }
+  | null
 
 /**
  * Lo que midieron las sondas de un bucle: de cada expresión (`names`), lo que valió al empezar cada vuelta
@@ -191,10 +200,20 @@ export function probeOf(raw: unknown): { probe: Probe } | Record<string, never> 
   const value = (item: unknown): ProbeValue => {
     if (typeof item === 'number') return Number.isFinite(item) ? item : null
     if (typeof item === 'string') return { o: item }
-    const boxed = item as { s?: unknown; o?: unknown } | null
+    const boxed = item as { s?: unknown; o?: unknown; n?: unknown; g?: unknown } | null
     if (boxed && typeof boxed.s === 'string') return { s: boxed.s }
-    if (boxed && typeof boxed.o === 'string') return { o: boxed.o }
-    return null
+    if (!boxed || typeof boxed.o !== 'string') return null
+    if (Array.isArray(boxed.n) && boxed.n.every((one) => typeof one === 'number')) {
+      return { n: boxed.n as number[], o: boxed.o }
+    }
+    const cell = (one: unknown) => typeof one === 'number' || typeof one === 'string'
+    if (
+      Array.isArray(boxed.g) &&
+      boxed.g.every((row) => Array.isArray(row) && (row as unknown[]).every(cell))
+    ) {
+      return { g: boxed.g as (string | number)[][], o: boxed.o }
+    }
+    return { o: boxed.o }
   }
   const values = names.map((_, at) => {
     const column = (found.values as unknown[])[at]

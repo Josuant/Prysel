@@ -112,6 +112,9 @@ export function outcomeOf(
 /** Cuántos momentos se enseñan de algo que va cambiando, y cuánto cabe de cada uno en una fila. */
 export const PROGRESS_ROWS = 7
 const PROGRESS_TEXT = 48
+/** Cuántos tableros se enseñan, y lo que en un tablero es una casilla vacía. */
+export const PROGRESS_GRIDS = 6
+const EMPTY_CELLS: ReadonlySet<string | number> = new Set([0, '', ' ', '.', '-', '_', '0', '·'])
 
 /**
  * El visor de **cómo avanza** el programa vuelta a vuelta: lo que se eligió mirar para este programa (ver
@@ -119,31 +122,61 @@ const PROGRESS_TEXT = 48
  * letras que ya son las del final encendidas (se ve cómo se va acercando); del número, su curva.
  */
 export function progressViewer(progress: Progress): ViewerContent | null {
-  const { text, number } = progress
-  if (!text && !number) return null
-  // Los momentos en los que lo que se lee cambió: de ahí, unos pocos repartidos, con el primero y el último.
-  const moments = (text?.values ?? []).flatMap((value, at) =>
-    at === 0 || value !== text?.values[at - 1] ? [{ lap: text?.laps[at] ?? at, value }] : [],
-  )
-  const picked =
-    moments.length <= PROGRESS_ROWS
-      ? moments
+  const { text, bars, grid, number } = progress
+  if (!text && !bars && !grid && !number) return null
+  /** Los momentos en los que algo cambió: de ahí, unos pocos repartidos, con el primero y el último. */
+  const momentsOf = <T>(
+    seen: { laps: number[]; values: T[] } | undefined,
+    mark: (value: T) => string,
+    most: number,
+  ): { lap: number; value: T }[] => {
+    const values = seen?.values ?? []
+    const all = values.flatMap((value, at) =>
+      at === 0 || mark(value) !== mark(values[at - 1] as T)
+        ? [{ lap: seen?.laps[at] ?? at, value }]
+        : [],
+    )
+    return all.length <= most
+      ? all
       : Array.from(
-          { length: PROGRESS_ROWS },
-          (_, k) =>
-            moments[
-              Math.round((k * (moments.length - 1)) / (PROGRESS_ROWS - 1))
-            ] as (typeof moments)[0],
+          { length: most },
+          (_, k) => all[Math.round((k * (all.length - 1)) / (most - 1))] as (typeof all)[0],
         )
-  const final = picked[picked.length - 1]?.value ?? ''
+  }
+  // Lo que se lee: unas filas, con las letras que ya son las del final encendidas.
+  const read = momentsOf(text, (value) => value, PROGRESS_ROWS)
+  const final = read[read.length - 1]?.value ?? ''
   // Letra a letra solo se compara lo que mide lo mismo: una frase que se va pareciendo a otra.
-  const comparable = picked.length > 1 && picked.every((one) => one.value.length === final.length)
-  const steps = picked.map((one) => ({
+  const comparable = read.length > 1 && read.every((one) => one.value.length === final.length)
+  const steps = read.map((one) => ({
     label: String(one.lap),
     text: clip(one.value, PROGRESS_TEXT),
     ...(comparable
       ? { lit: [...clip(one.value, PROGRESS_TEXT)].map((letter, k) => letter === final[k]) }
       : {}),
+  }))
+  // Una lista de números: una tira de barras por momento; encendidas, las que ya están como al final.
+  const lists = momentsOf(bars, (value) => value.join(','), PROGRESS_ROWS)
+  const settled = lists[lists.length - 1]?.value ?? []
+  const strips = lists.map((one) => ({
+    label: String(one.lap),
+    values: one.value,
+    lit: one.value.map((value, k) => value === settled[k]),
+  }))
+  // Un tablero: una rejilla por momento. Cada clase de casilla, un tono; lo vacío, sin él.
+  const boards = momentsOf(grid, (value) => JSON.stringify(value), PROGRESS_GRIDS)
+  const tones = new Map<string | number, number>()
+  const toneOf = (cell: string | number): number => {
+    if (EMPTY_CELLS.has(cell)) return 0
+    const known = tones.get(cell)
+    if (known !== undefined) return known
+    const tone = Math.min(4, tones.size + 1)
+    tones.set(cell, tone)
+    return tone
+  }
+  const grids = boards.map((one) => ({
+    label: String(one.lap),
+    cells: one.value.map((row) => row.map(toneOf)),
   }))
   const first = number?.values[0]
   const last = number?.values[number.values.length - 1]
@@ -151,8 +184,10 @@ export function progressViewer(progress: Progress): ViewerContent | null {
     value === undefined ? '' : Number.isInteger(value) ? String(value) : value.toFixed(2)
   return {
     title: 'Cómo avanza',
-    subtitle: [text?.says, number?.says].filter(Boolean).join(' · '),
+    subtitle: [(text ?? bars ?? grid)?.says, number?.says].filter(Boolean).join(' · '),
     ...(steps.length > 0 ? { steps } : {}),
+    ...(strips.length > 0 ? { strips } : {}),
+    ...(grids.length > 0 ? { grids } : {}),
     ...(number
       ? {
           series: { at: number.laps, values: number.values, n: Math.max(2, progress.total) },

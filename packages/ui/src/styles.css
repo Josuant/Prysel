@@ -3689,6 +3689,68 @@ button.fn-menu__crumb:hover {
 .viewer__step:last-child .viewer__step-text {
   color: var(--ink);
 }
+/* Una lista de números en varios momentos: una tira de barras por momento; las que ya están en su sitio, encendidas. */
+.viewer__strips {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+.viewer__strip {
+  display: flex;
+  height: 24px;
+  align-items: center;
+  gap: 8px;
+}
+.viewer__strip rect {
+  fill: color-mix(in srgb, var(--ink-muted) 55%, transparent);
+}
+.viewer__strip rect[data-lit] {
+  fill: var(--accent);
+}
+/* Un tablero en varios momentos: una rejilla pequeña por momento, con su rótulo debajo. */
+.viewer__grids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 0 4px;
+  padding: 0;
+  list-style: none;
+}
+.viewer__grid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.viewer__grid svg {
+  display: block;
+  border-radius: 3px;
+  background: var(--field);
+}
+.viewer__grid rect {
+  fill: color-mix(in srgb, var(--ink-muted) 14%, transparent);
+}
+.viewer__grid rect[data-tone='1'] {
+  fill: var(--accent);
+}
+.viewer__grid rect[data-tone='2'] {
+  fill: var(--state-warning);
+}
+.viewer__grid rect[data-tone='3'] {
+  fill: var(--state-success);
+}
+.viewer__grid rect[data-tone='4'] {
+  fill: var(--state-error);
+}
+.viewer__grid-label {
+  height: 12px;
+  color: var(--ink-faint);
+  font-family: var(--font-code, ui-monospace, monospace);
+  font-size: 10px;
+  line-height: 12px;
+}
 .viewer__table {
   width: 100%;
   border-collapse: collapse;
