@@ -3785,6 +3785,41 @@ button.fn-menu__crumb:hover {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+/* Al reproducirse: lo que aún no ha pasado queda apuntado, tenue; el punto dice por dónde va. */
+.viewer__curve polyline.viewer__curve-ghost {
+  stroke: color-mix(in srgb, var(--ink-muted) 26%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+.viewer__curve circle {
+  fill: var(--accent);
+}
+.viewer__step,
+.viewer__strip,
+.viewer__grid {
+  transition: opacity 160ms ease-out;
+}
+.viewer [data-wait] {
+  opacity: 0.13;
+}
+.viewer [data-now] > .viewer__step-label,
+.viewer [data-now] > .viewer__grid-label {
+  color: var(--accent);
+  font-weight: 700;
+}
+.viewer [data-now] > .viewer__step-text {
+  color: var(--ink);
+}
+.viewer[data-playing] {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+}
+@media (prefers-reduced-motion: reduce) {
+  .viewer__step,
+  .viewer__strip,
+  .viewer__grid {
+    transition: none;
+  }
+}
 .viewer__curve {
   display: block;
   border-radius: 4px;

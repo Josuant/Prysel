@@ -57,6 +57,51 @@ export interface ViewerContent {
   grids?: { label: string; cells: number[][] }[]
 }
 
+/**
+ * Un visor que cuenta cómo cambia algo, **reproducido**: al empezar (`start`) enseña el punto de partida; al
+ * correr (`run`) va avanzando momento a momento durante `ms`; al acabar (`end`) queda entero. `serial` cambia
+ * con cada paso de la reproducción.
+ */
+export interface ViewerPlay {
+  phase: 'start' | 'run' | 'end'
+  ms: number
+  serial: number
+}
+
+/** Cuántos pasos da la curva de un visor que solo tiene curva, al reproducirse. */
+const CURVE_MOMENTS = 8
+
+/**
+ * Los **momentos** de un visor que cuenta cómo cambia algo: la vuelta de cada uno, en orden. Son sus filas,
+ * sus tiras o sus rejillas; si solo tiene una curva, unos cuantos puntos repartidos por ella.
+ */
+export function momentLaps(content: ViewerContent): number[] {
+  const told = content.steps ?? content.strips ?? content.grids
+  if (told && told.length > 0) return told.map((one) => Number(one.label))
+  const laps = content.series?.at ?? []
+  if (laps.length < 2) return []
+  const last = laps[laps.length - 1] ?? 0
+  const first = laps[0] ?? 0
+  return Array.from({ length: CURVE_MOMENTS }, (_, k) =>
+    Math.round(first + ((last - first) * k) / (CURVE_MOMENTS - 1)),
+  )
+}
+
+/**
+ * Por qué momento va un visor que se reproduce (`null`: no se reproduce, se ve entero). `step`: los que
+ * lleva avanzados desde que empezó a correr.
+ */
+export function playCursor(
+  play: ViewerPlay | undefined,
+  count: number,
+  step: number,
+): number | null {
+  if (!play || count === 0) return null
+  if (play.phase === 'start') return 0
+  if (play.phase === 'end') return count - 1
+  return Math.max(0, Math.min(count - 1, step))
+}
+
 /** Lo que mide un visor: crece con su contenido hasta un tope, y no más. */
 export const VIEWER = {
   minW: 240,

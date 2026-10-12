@@ -18,6 +18,11 @@ const SLOW_MS = 2000
 const GUIDE_MS = 3600
 /** Lo que se queda en el último paso antes de soltar el foco. */
 const REST_MS = 1400
+/**
+ * Lo que dura, como poco, el paso en el que el resto de las vueltas pasan de corrido, cuando hay un visor
+ * que las va enseñando: da tiempo a ver cómo avanza.
+ */
+const RUN_MS = 3200
 
 export interface Playback {
   /** El paso en el que se está, o `null` si no se reproduce. */
@@ -35,8 +40,11 @@ export interface Playback {
   stop: () => void
 }
 
-/** El mando de la reproducción de `count` pasos. Con otro número de pasos (otro programa), se suelta. */
-export function usePlayback(count: number): Playback {
+/**
+ * El mando de la reproducción de `count` pasos. Con otro número de pasos (otro programa), se suelta.
+ * `runAt`: el paso en el que las demás vueltas pasan de corrido y hay algo que verlas hacer: dura más.
+ */
+export function usePlayback(count: number, runAt = -1): Playback {
   const [state, setState] = useState({
     at: null as number | null,
     of: 0,
@@ -45,9 +53,10 @@ export function usePlayback(count: number): Playback {
   })
   const [slow, setSlow] = useState(false)
   const [guided, setGuided] = useState(false)
-  const ms = guided ? GUIDE_MS : slow ? SLOW_MS : BEAT_MS
+  const pace = guided ? GUIDE_MS : slow ? SLOW_MS : BEAT_MS
   // Lo que se reproducía era de otra historia: ya no vale.
   const at = state.at !== null && state.of === count && state.at < count ? state.at : null
+  const ms = at !== null && at === runAt ? Math.max(pace, RUN_MS) : pace
   const playing = state.playing && at !== null
   useEffect(() => {
     if (!playing || at === null) return

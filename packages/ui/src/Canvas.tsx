@@ -299,7 +299,17 @@ export interface CanvasProps {
    * Al **reproducir** la historia: el módulo en el que se está (o `RESULT_BEAT`, el resultado), las flechas
    * por las que le llega algo (`desde>hasta`), y lo que dura el paso. `serial` cambia en cada paso.
    */
-  beat?: { at: string; links: readonly string[]; serial: number; ms: number } | null
+  beat?: {
+    at: string
+    links: readonly string[]
+    serial: number
+    ms: number
+    /**
+     * En qué parte de la historia se está: lo de antes y la primera vuelta, el «y otra vez» (las demás
+     * vueltas, de corrido) o el resultado. Con ello, el visor de cómo avanza va al paso.
+     */
+    phase?: 'before' | 'lap' | 'again' | 'result'
+  } | null
   /**
    * Lo que ocupan, arriba y abajo, las barras que flotan sobre el lienzo (las migas, la de ver una vuelta, la
    * leyenda): el encuadre deja esas franjas libres, y la arquitectura se coloca para lo que queda. `left`: un
@@ -2440,7 +2450,27 @@ function CanvasInner({
             ...viewerNode(node, content, at, size),
             draggable: false,
             selectable: false,
-            data: { node, content, size },
+            // Al reproducir la historia, el visor de cómo avanza va al paso: el punto de partida durante la
+            // primera vuelta, corriendo en el «y otra vez», y entero al llegar al resultado.
+            data: {
+              node,
+              content,
+              size,
+              ...(node === PROGRESS_NODE && beat?.phase
+                ? {
+                    play: {
+                      phase:
+                        beat.phase === 'again'
+                          ? ('run' as const)
+                          : beat.phase === 'result'
+                            ? ('end' as const)
+                            : ('start' as const),
+                      ms: beat.ms,
+                      serial: beat.serial,
+                    },
+                  }
+                : {}),
+            },
           })),
         ]
       : []

@@ -88,6 +88,7 @@ export {
 } from './AskBox.tsx'
 export type { AskWhere, CanvasAsk } from './Canvas.tsx'
 export type { KnobItem, KnobsPanel } from './flow/KnobsNode.tsx'
+export { momentLaps, playCursor, type ViewerPlay } from './viewer.ts'
 export { viewerSize, type ViewerContent } from './viewer.ts'
 export {
   gistSize,

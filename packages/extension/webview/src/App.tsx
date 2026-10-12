@@ -1698,7 +1698,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         : beatsOf(architecture, outcome?.result?.planned ? null : (outcome?.result?.from ?? null)),
     [architecture, outcome],
   )
-  const playback = usePlayback(beats.length)
+  // Si hay un visor de cómo avanza, el paso en el que el resto de las vueltas pasan de corrido dura más: es
+  // cuando el visor las va enseñando.
+  const runBeat = useMemo(
+    () => (ran?.progress ? beats.findIndex((one) => one.phase === 'again') : -1),
+    [ran, beats],
+  )
+  const playback = usePlayback(beats.length, runBeat)
   // La idea del programa: sus partes en unas líneas (ver `IdeaView`). Solo donde hay arquitectura que contar.
   const idea = useMemo(
     () => (architecture ? ideaOf(architecture, view.moduleFacts) : null),
@@ -1802,6 +1808,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         ? {
             at: playingBeat.at,
             links: playingBeat.links,
+            phase: playingBeat.phase,
             serial: playback.serial,
             ms: Math.round(playback.ms * 0.72),
           }

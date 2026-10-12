@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   VIEWER,
   gridLayout,
+  momentLaps,
+  playCursor,
   viewerHeight,
   viewerImageSize,
   viewerSize,
@@ -114,5 +116,39 @@ describe('el alto de un visor', () => {
   it('el tamaño junta ancho y alto', () => {
     const content = table(3, 4)
     expect(viewerSize(content)).toEqual({ w: viewerWidth(content), h: viewerHeight(content) })
+  })
+})
+
+describe('un visor que se reproduce', () => {
+  const steps = [
+    { label: '0', text: 'xkzq' },
+    { label: '12', text: 'hkzq' },
+    { label: '40', text: 'hola' },
+  ]
+
+  it('sus momentos son sus filas, sus tiras o sus rejillas: la vuelta de cada uno', () => {
+    expect(momentLaps({ title: 'x', steps })).toEqual([0, 12, 40])
+    expect(momentLaps({ title: 'x', strips: [{ label: '3', values: [1, 2] }] })).toEqual([3])
+    expect(momentLaps({ title: 'x' })).toEqual([])
+  })
+
+  it('con solo una curva, unos puntos repartidos de su primera vuelta a la última', () => {
+    const laps = momentLaps({
+      title: 'x',
+      series: { at: [0, 10, 20, 70], values: [1, 2, 3, 4], n: 71 },
+    })
+    expect(laps[0]).toBe(0)
+    expect(laps[laps.length - 1]).toBe(70)
+    expect(laps.every((lap, at) => at === 0 || lap >= (laps[at - 1] ?? 0))).toBe(true)
+  })
+
+  it('empieza en el punto de partida, corre paso a paso hasta el último y acaba entero', () => {
+    const play = (phase: 'start' | 'run' | 'end') => ({ phase, ms: 1000, serial: 1 })
+    // Sin reproducir, no va por ninguno: se ve entero.
+    expect(playCursor(undefined, 3, 0)).toBeNull()
+    expect(playCursor(play('start'), 3, 2)).toBe(0)
+    expect([0, 1, 2, 9].map((step) => playCursor(play('run'), 3, step))).toEqual([0, 1, 2, 2])
+    expect(playCursor(play('end'), 3, 0)).toBe(2)
+    expect(playCursor(play('run'), 0, 0)).toBeNull()
   })
 })
