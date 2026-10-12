@@ -150,6 +150,24 @@ export function ViewerNode({ id, data, selected }: NodeProps<ViewerFlowNode>) {
             </tbody>
           </table>
         )}
+        {content.steps && content.steps.length > 0 && (
+          <ol className="viewer__steps">
+            {content.steps.map((step, at) => (
+              <li key={at} className="viewer__step">
+                <span className="viewer__step-label">{step.label}</span>
+                <span className="viewer__step-text">
+                  {step.lit
+                    ? [...step.text].map((letter, k) => (
+                        <span key={k} data-lit={step.lit?.[k] ? '' : undefined}>
+                          {letter}
+                        </span>
+                      ))
+                    : step.text}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
         {content.series && <Curve series={content.series} width={size.w - 2 * VIEWER.pad - 2} />}
         {content.image && (
           <img

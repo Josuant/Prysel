@@ -9,6 +9,7 @@ import type { Engine } from '../../../packages/extension/src/session.ts'
 import {
   coastOf,
   laterOf,
+  probeOf,
   type Trace,
   type TraceExtra,
 } from '../../../packages/extension/src/trace.ts'
@@ -183,6 +184,7 @@ export class WebKernel implements Engine {
           ...(event['finished'] === true ? { finished: true } : {}),
           ...coastOf(event['coast']),
           ...laterOf(event['later']),
+          ...probeOf(event['probe']),
           error: (event['error'] as Trace['error']) ?? null,
           output: String(event['output'] ?? ''),
         })

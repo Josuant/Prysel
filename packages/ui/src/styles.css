@@ -3652,6 +3652,43 @@ button.fn-menu__crumb:hover {
   line-height: 17px;
   overflow-wrap: anywhere;
 }
+/* Cómo va cambiando algo: una fila por momento; las letras que ya son las del final, encendidas. */
+.viewer__steps {
+  display: flex;
+  flex-direction: column;
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+  font-family: var(--font-code, ui-monospace, monospace);
+}
+.viewer__step {
+  display: flex;
+  height: 17px;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 17px;
+  white-space: pre;
+}
+.viewer__step-label {
+  width: 34px;
+  flex: none;
+  color: var(--ink-faint);
+  font-size: 10px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.viewer__step-text {
+  overflow: hidden;
+  color: var(--ink-muted);
+  text-overflow: ellipsis;
+}
+.viewer__step-text > span[data-lit] {
+  color: var(--accent);
+  font-weight: 700;
+}
+.viewer__step:last-child .viewer__step-text {
+  color: var(--ink);
+}
 .viewer__table {
   width: 100%;
   border-collapse: collapse;

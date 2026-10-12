@@ -27,7 +27,17 @@ import {
   type RunSummary,
   mixTracer,
 } from '../../../packages/extension/src/gist/gist.ts'
-import { loopsIn } from '../../../packages/extension/src/gist/laps.ts'
+import { loopsIn, type LoopFacts } from '../../../packages/extension/src/gist/laps.ts'
+import {
+  MAX_WATCHES,
+  autoWatches,
+  measuredOf,
+  pickWatches,
+  progressOf,
+  proposeWatches,
+  type Progress,
+  type Watch,
+} from '../../../packages/extension/src/gist/progress.ts'
 import { triesIn } from '../../../packages/extension/src/gist/net.ts'
 import { classesIn } from '../../../packages/extension/src/gist/blueprint.ts'
 import { conditionsIn } from '../../../packages/extension/src/gist/branch.ts'
@@ -52,7 +62,13 @@ export interface GistsPort {
    * Ejecuta un programa entero grabando su traza; `null` si no se pudo. `inputs`: las respuestas de teclado
    * de ejemplo, si el programa pide datos.
    */
-  trace(code: string, inputs?: readonly string[], seed?: number): Promise<Trace | null>
+  trace(
+    code: string,
+    inputs?: readonly string[],
+    seed?: number,
+    /** Sondas: unas expresiones que mirar en cada vuelta del bucle de esa línea. */
+    watch?: { line: number; exprs: readonly string[] },
+  ): Promise<Trace | null>
   provider(): AiProvider | null
   /** Quien elige entre varias reglas que la muestra confirma por igual. */
   decider(): Decider
@@ -93,6 +109,19 @@ export class Gists {
   private rolled: number | null = null
   /** Las mezclas vueltas a ver con datos trazadores, por el texto de su función (`null`: no hizo falta o no se pudo). */
   private readonly tracers = new Map<string, MixRule | null>()
+  /**
+   * Qué mirar en cada vuelta de un bucle para contar cómo avanza el programa, por el texto de ese bucle
+   * (`null`: se miró y no hay nada que contar). Se decide una vez; después solo se mide.
+   */
+  private readonly watching = new Map<string, { text: Watch | null; number: Watch | null } | null>()
+  /** Lo que hace falta para decidirlo, de la última ejecución: se hace después de enseñar lo demás. */
+  private toWatch: {
+    text: string
+    loop: LoopFacts
+    output: string
+    inputs: string[] | undefined
+    seed: number
+  } | null = null
 
   constructor(private readonly port: GistsPort) {}
 
@@ -266,6 +295,60 @@ export class Gists {
     }
   }
 
+  /** Lo que se decidió mirar en un bucle vale mientras su texto no cambie (y haya, o no, IA que proponga). */
+  private watchKey(loop: LoopFacts): string {
+    return `${this.port.provider() ? 'ia' : 'solo'}:${loop.hash}`
+  }
+
+  /**
+   * Decide qué mirar en el bucle principal para contar cómo avanza el programa, y lo mide. La IA propone
+   * expresiones (además se prueban las variables que el bucle cambia); el programa se ejecuta otra vez, igual
+   * que antes, midiéndolas; y el JEV elige entre las que dejan ver un avance. Si al mirar el programa diera
+   * otra cosa, no se enseña nada: mirar no puede cambiar lo que pasa.
+   */
+  private async decideWatch(pending: NonNullable<Gists['toWatch']>): Promise<Progress | null> {
+    const { text, loop, output, inputs, seed } = pending
+    const key = this.watchKey(loop)
+    const provider = this.port.provider()
+    const auto = autoWatches(text, loop)
+    const proposed = provider
+      ? await proposeWatches(
+          provider,
+          text,
+          loop,
+          auto.map((one) => one.expr),
+        )
+      : []
+    const watches = [
+      ...proposed,
+      ...auto.filter((one) => !proposed.some((other) => other.expr === one.expr)),
+    ].slice(0, MAX_WATCHES)
+    if (watches.length === 0) {
+      this.watching.set(key, null)
+      return null
+    }
+    const again = await this.port.trace(text, inputs, seed, {
+      line: loop.line,
+      exprs: watches.map((one) => one.expr),
+    })
+    if (!again?.probe || again.output !== output) {
+      this.watching.set(key, null)
+      return null
+    }
+    const picked = await pickWatches(
+      this.port.decider(),
+      loop.head,
+      measuredOf(again.probe, watches),
+    )
+    this.watching.set(
+      key,
+      picked.text || picked.number
+        ? { text: picked.text?.watch ?? null, number: picked.number?.watch ?? null }
+        : null,
+    )
+    return progressOf(again.probe, picked)
+  }
+
   private async pass() {
     if (this.running || this.port.busy()) return this.touch()
     const text = this.port.text()
@@ -279,6 +362,17 @@ export class Gists {
       this.done = text
       this.last = gists
       this.port.post(gists, version, this.ran)
+      // Cómo avanza vuelta a vuelta: la primera vez hay que decidir qué mirar (lo propone la IA, se mide,
+      // elige el JEV). Tarda un poco, así que llega después de lo demás.
+      const pending = this.toWatch
+      this.toWatch = null
+      if (pending && this.ran) {
+        const progress = await this.decideWatch(pending).catch(() => null)
+        if (progress && this.port.version() === version && this.done === text) {
+          this.ran = { ...this.ran, progress }
+          this.port.post(gists, version, this.ran)
+        }
+      }
     } catch {
       // Sin «qué hace» el lienzo sigue como siempre: no es motivo para molestar.
     } finally {
@@ -328,7 +422,17 @@ export class Gists {
       }
       return gistsOf(program, null)
     }
-    let raw = await this.port.trace(text, inputs, seed)
+    // Si ya se sabe qué mirar en su bucle principal para contar cómo avanza, se mide en esta misma ejecución.
+    const watched = loopsIn(program).flatMap((loop) => {
+      const known = this.watching.get(this.watchKey(loop))
+      const exprs = known ? [known.text, known.number].flatMap((one) => (one ? [one] : [])) : []
+      return known && exprs.length > 0 ? [{ loop, known, exprs }] : []
+    })[0]
+    const watch = watched
+      ? { line: watched.loop.line, exprs: watched.exprs.map((one) => one.expr) }
+      : undefined
+    this.toWatch = null
+    let raw = await this.port.trace(text, inputs, seed, watch)
     // La sesión de ejemplo se quedó esperando otra respuesta: la IA ve lo que ha salido y la continúa, hasta
     // que el programa acabe (o unas pocas rondas). Las respuestas que la llevan al final se guardan.
     if (inputs && provider && !mine) {
@@ -339,12 +443,30 @@ export class Gists {
         if (!more) break
         inputs = [...inputs, ...more].slice(0, MAX_ANSWERS)
         this.answers.set(key, inputs)
-        raw = await this.port.trace(text, inputs, seed)
+        raw = await this.port.trace(text, inputs, seed, watch)
       }
     }
     if (raw) {
       const story = storyOf(program, raw)
-      this.ran = { ...runSummary(raw, inputs, mine !== null), ...(story ? { story } : {}) }
+      // El avance: medido ya (si se sabía qué mirar en ese bucle), o por decidir tras enseñar lo demás.
+      const loop = story ? loopsIn(program).find((one) => one.line === story.loop.line) : undefined
+      let progress: Progress | null = null
+      if (loop && watched?.loop.line === loop.line && raw.probe) {
+        const measured = measuredOf(raw.probe, watched.exprs)
+        const of = (one: Watch | null) =>
+          (one && measured.find((item) => item.watch.expr === one.expr)) ?? null
+        progress = progressOf(raw.probe, {
+          text: of(watched.known.text),
+          number: of(watched.known.number),
+        })
+      } else if (loop && !raw.error && !this.watching.has(this.watchKey(loop))) {
+        this.toWatch = { text, loop, output: raw.output, inputs, seed }
+      }
+      this.ran = {
+        ...runSummary(raw, inputs, mine !== null),
+        ...(story ? { story } : {}),
+        ...(progress ? { progress } : {}),
+      }
     }
     // ¿Hizo algo que se vea? Si no, se dice por qué; y si es que nadie lo arranca, quién lo arrancaría.
     this.entry = null

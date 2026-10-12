@@ -1,6 +1,7 @@
 import type { ModuleFacts, ModuleState, ModuleStory, ViewerContent } from '@prysel/ui'
 import type { RunSummary } from '../../src/gist/gist.ts'
 import type { Story } from '../../src/gist/story.ts'
+import type { Progress } from '../../src/gist/progress.ts'
 
 /**
  * Los dos extremos de la arquitectura, sacados de cómo le fue al programa al ejecutarlo: **dónde empieza** el
@@ -108,6 +109,59 @@ export function outcomeOf(
 }
 
 /** Cómo quedó el programa tras un cambio, dicho en una frase. `undo`: merece ofrecer deshacerlo. */
+/** Cuántos momentos se enseñan de algo que va cambiando, y cuánto cabe de cada uno en una fila. */
+export const PROGRESS_ROWS = 7
+const PROGRESS_TEXT = 36
+
+/**
+ * El visor de **cómo avanza** el programa vuelta a vuelta: lo que se eligió mirar para este programa (ver
+ * `progress.ts`), tal como se midió. De lo que se lee, unos cuantos momentos, del primero al último, con las
+ * letras que ya son las del final encendidas (se ve cómo se va acercando); del número, su curva.
+ */
+export function progressViewer(progress: Progress): ViewerContent | null {
+  const { text, number } = progress
+  if (!text && !number) return null
+  // Los momentos en los que lo que se lee cambió: de ahí, unos pocos repartidos, con el primero y el último.
+  const moments = (text?.values ?? []).flatMap((value, at) =>
+    at === 0 || value !== text?.values[at - 1] ? [{ lap: text?.laps[at] ?? at, value }] : [],
+  )
+  const picked =
+    moments.length <= PROGRESS_ROWS
+      ? moments
+      : Array.from(
+          { length: PROGRESS_ROWS },
+          (_, k) =>
+            moments[
+              Math.round((k * (moments.length - 1)) / (PROGRESS_ROWS - 1))
+            ] as (typeof moments)[0],
+        )
+  const final = picked[picked.length - 1]?.value ?? ''
+  // Letra a letra solo se compara lo que mide lo mismo: una frase que se va pareciendo a otra.
+  const comparable = picked.length > 1 && picked.every((one) => one.value.length === final.length)
+  const steps = picked.map((one) => ({
+    label: String(one.lap),
+    text: clip(one.value, PROGRESS_TEXT),
+    ...(comparable
+      ? { lit: [...clip(one.value, PROGRESS_TEXT)].map((letter, k) => letter === final[k]) }
+      : {}),
+  }))
+  const first = number?.values[0]
+  const last = number?.values[number.values.length - 1]
+  const figure = (value: number | undefined) =>
+    value === undefined ? '' : Number.isInteger(value) ? String(value) : value.toFixed(2)
+  return {
+    title: 'Cómo avanza',
+    subtitle: [text?.says, number?.says].filter(Boolean).join(' · '),
+    ...(steps.length > 0 ? { steps } : {}),
+    ...(number
+      ? {
+          series: { at: number.laps, values: number.values, n: Math.max(2, progress.total) },
+          text: [`${number.says}: de ${figure(first)} a ${figure(last)}`],
+        }
+      : {}),
+  }
+}
+
 /** Una ejecución del programa, para su historia: qué la provocó y qué dio. */
 export interface RunEntry {
   /** Cuál es, contando desde la primera. */

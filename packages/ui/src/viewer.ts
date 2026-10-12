@@ -40,6 +40,11 @@ export interface ViewerContent {
   series?: { at: number[]; values: number[]; n: number }
   /** Líneas de texto: una muestra, los elementos de una lista, la representación de un valor. */
   text?: string[]
+  /**
+   * **Cómo va cambiando** algo: una fila por momento (su rótulo y lo que valía entonces). `lit`: qué letras
+   * de esa fila ya son las del final: se encienden, y se ve cómo se va acercando.
+   */
+  steps?: { label: string; text: string; lit?: boolean[] }[]
 }
 
 /** Lo que mide un visor: crece con su contenido hasta un tope, y no más. */
@@ -66,7 +71,7 @@ export function viewerWidth(content: ViewerContent): number {
     return clamp(content.table.columns.length * 92 + 2 * VIEWER.pad, VIEWER.minW, VIEWER.tableMaxW)
   }
   if (content.image) return clamp(content.image.w + 2 * VIEWER.pad, VIEWER.minW, VIEWER.maxW)
-  if (content.series) return 320
+  if (content.series || content.steps) return 320
   return 300
 }
 
@@ -87,6 +92,7 @@ export function viewerHeight(content: ViewerContent): number {
   if (content.table) body += VIEWER.headRow + content.table.rows.length * VIEWER.row + 4
   if (content.image) body += viewerImageSize(content).h + 4
   if (content.series) body += VIEWER.chart + 4
+  if (content.steps?.length) body += content.steps.length * VIEWER.line + 6
   if (content.text?.length) {
     // Una línea más larga que el visor se parte: cuenta por las filas que ocupa, no por una.
     const perRow = Math.max(8, Math.floor((viewerWidth(content) - 2 * VIEWER.pad) / VIEWER.char))

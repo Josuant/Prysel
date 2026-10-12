@@ -135,6 +135,8 @@ export interface Trace {
    * es todo lo que se usó.
    */
   later?: { calls: Record<number, number>; lines: number[] }
+  /** Lo que midieron las sondas, si se pidieron (ver `TraceExtra.watch`). */
+  probe?: Probe
   error: { name: string; message: string; line: number | null } | null
   /** Todo lo que imprimió el programa (el final, si es muy largo). */
   output: string
@@ -153,6 +155,66 @@ export interface TraceExtra {
    * segundos), para saber qué da. `true`, o los segundos que se le dan.
    */
   finish?: boolean | number
+  /**
+   * **Sondas**: unas expresiones que mirar en cada vuelta de un bucle (el de esa línea). Solo leen: el motor
+   * las revisa antes, y lo que impriman o el azar que gasten no llega al programa.
+   */
+  watch?: { line: number; exprs: readonly string[] }
+}
+
+/** Lo que valió una sonda en una vuelta: un número, un texto, o la forma escrita de otra cosa. */
+export type ProbeValue = number | { s: string } | { o: string } | null
+
+/**
+ * Lo que midieron las sondas de un bucle: de cada expresión (`names`), lo que valió al empezar cada vuelta
+ * guardada (`laps`, base 0; con muchas vueltas se guarda una de cada tantas) y al salir. `errors`: por qué
+ * no se pudo mirar una. `total`: las veces que se pasó por la cabecera.
+ */
+export interface Probe {
+  line: number
+  names: string[]
+  laps: number[]
+  values: ProbeValue[][]
+  errors: (string | null)[]
+  total: number
+  cut: boolean
+}
+
+/** Lee `probe` de un evento del motor: lo que no tenga su forma, fuera. */
+export function probeOf(raw: unknown): { probe: Probe } | Record<string, never> {
+  const found = raw as Partial<Record<keyof Probe, unknown>> | null
+  if (!found || typeof found !== 'object') return {}
+  if (typeof found.line !== 'number' || !Array.isArray(found.names)) return {}
+  if (!Array.isArray(found.laps) || !Array.isArray(found.values)) return {}
+  const names = found.names.filter((name): name is string => typeof name === 'string')
+  const laps = found.laps.filter((lap): lap is number => typeof lap === 'number')
+  const value = (item: unknown): ProbeValue => {
+    if (typeof item === 'number') return Number.isFinite(item) ? item : null
+    if (typeof item === 'string') return { o: item }
+    const boxed = item as { s?: unknown; o?: unknown } | null
+    if (boxed && typeof boxed.s === 'string') return { s: boxed.s }
+    if (boxed && typeof boxed.o === 'string') return { o: boxed.o }
+    return null
+  }
+  const values = names.map((_, at) => {
+    const column = (found.values as unknown[])[at]
+    return Array.isArray(column) ? column.slice(0, laps.length).map(value) : []
+  })
+  const errors = names.map((_, at) => {
+    const problem = Array.isArray(found.errors) ? (found.errors as unknown[])[at] : null
+    return typeof problem === 'string' ? problem : null
+  })
+  return {
+    probe: {
+      line: found.line,
+      names,
+      laps,
+      values,
+      errors,
+      total: typeof found.total === 'number' ? found.total : laps.length,
+      cut: found.cut === true,
+    },
+  }
 }
 
 export interface FrameState {

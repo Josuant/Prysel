@@ -546,6 +546,189 @@ def instrument_chains(tree, frag):
         return tree
 
 
+# ── las sondas: lo que vale algo en cada vuelta de un bucle ──────────────────────
+
+# Lo que una expresión de sonda puede llamar por su nombre, además de las funciones del propio programa.
+_PROBE_CALLS = frozenset(
+    "abs all any bool dict enumerate float int len list max min range reversed round set sorted str sum "
+    "tuple zip map filter".split()
+)
+# Y los métodos: los que solo leen (ni cambian el objeto ni tocan nada de fuera).
+_PROBE_METHODS = frozenset(
+    "count endswith find format get index items join keys lower lstrip replace rstrip split startswith "
+    "strip title upper values copy".split()
+)
+_PROBE_BANNED = frozenset(
+    "eval exec open input print compile globals locals vars setattr delattr getattr exit quit breakpoint "
+    "help memoryview".split()
+)
+_PROBE_NODES = (
+    ast.Expression, ast.Name, ast.Load, ast.Store, ast.Constant, ast.BinOp, ast.UnaryOp, ast.BoolOp,
+    ast.Compare, ast.IfExp, ast.Subscript, ast.Slice, ast.Tuple, ast.List, ast.Call, ast.Attribute,
+    ast.keyword, ast.GeneratorExp, ast.ListComp, ast.comprehension, ast.Lambda, ast.arguments, ast.arg,
+    ast.operator, ast.unaryop, ast.boolop, ast.cmpop, ast.Starred,
+)
+# Cuántas muestras se guardan de un bucle (con más vueltas, se va guardando una de cada tantas), cuánto
+# puede medir el texto de una, y cuánto tiempo se le da en total a las sondas.
+_PROBE_SAMPLES = 160
+_PROBE_TEXT = 96
+_PROBE_SECONDS = 1.5
+
+
+def _probe_code(text, own):
+    """Una expresión de sonda, compilada; o por qué no vale. Solo puede leer: nombres, cuentas, llamadas a
+    funciones del programa (`own`) o a unas pocas de Python que no cambian nada."""
+    if not isinstance(text, str) or not text.strip() or len(text) > 160:
+        raise ValueError("no es una expresión")
+    tree = ast.parse(text.strip(), mode="eval")
+    for node in ast.walk(tree):
+        if not isinstance(node, _PROBE_NODES):
+            raise ValueError(f"no se admite {type(node).__name__}")
+        if isinstance(node, ast.Name) and (node.id.startswith("__") or node.id in _PROBE_BANNED):
+            raise ValueError(f"no se admite {node.id}")
+        if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+            raise ValueError(f"no se admite .{node.attr}")
+        if isinstance(node, ast.Call):
+            target = node.func
+            if isinstance(target, ast.Name):
+                if target.id not in _PROBE_CALLS and target.id not in own:
+                    raise ValueError(f"no se admite llamar a {target.id}")
+            elif isinstance(target, ast.Attribute):
+                if target.attr not in _PROBE_METHODS:
+                    raise ValueError(f"no se admite llamar a .{target.attr}")
+            else:
+                raise ValueError("no se admite esa llamada")
+    return compile(tree, "<prysel-probe>", "eval")
+
+
+class _Probe:
+    """Las sondas de un bucle: unas expresiones que se evalúan cada vez que se pasa por su cabecera (al
+    empezar cada vuelta) y al salir de él. Solo miran: lo que impriman no sale, el azar que gasten se
+    devuelve, y lo que se llame desde ellas no se graba."""
+
+    def __init__(self, line, end, texts, own):
+        self.line = line
+        self.end = end
+        self.names = list(texts)
+        self.codes = []
+        self.errors = []
+        for text in texts:
+            try:
+                self.codes.append(_probe_code(text, own))
+                self.errors.append(None)
+            except (SyntaxError, ValueError) as problem:
+                self.codes.append(None)
+                self.errors.append(_short(str(problem), 120))
+        self.laps = []
+        self.values = [[] for _ in texts]
+        # Las veces seguidas que ha fallado cada una sin haber valido nunca: con unas cuantas, se deja.
+        self.failed = [0 for _ in texts]
+        self.worked = [False for _ in texts]
+        # Cada cuántas vueltas se guarda una: se dobla cuando las muestras llenan su cupo.
+        self.stride = 1
+        self.seen = 0
+        self.spent = 0.0
+        self.inside = set()
+        self.at_head = False
+        self.cut = False
+
+    def line_event(self, tracer, frame):
+        """Una línea del marco donde vive el bucle: su cabecera abre una vuelta; fuera de él, se salió."""
+        line = frame.f_lineno
+        key = id(frame)
+        if line == self.line:
+            self.inside.add(key)
+            self.at_head = True
+            self.seen += 1
+            if (self.seen - 1) % self.stride == 0:
+                self.sample(tracer, frame, self.seen - 1)
+        elif key in self.inside:
+            if self.line < line <= self.end:
+                self.at_head = False
+            else:
+                self.leave(tracer, frame)
+
+    def leave(self, tracer, frame):
+        """Se salió del bucle (o de su función): lo que valía todo al acabar la última vuelta."""
+        if id(frame) not in self.inside:
+            return
+        self.inside.discard(id(frame))
+        # Si se salió desde la cabecera y esa pasada ya se guardó, es lo último: no hay nada nuevo que mirar.
+        # Desde dentro (un `break`, un `return`), o si esa pasada no tocaba guardarla, se mira ahora.
+        if not self.at_head or not self.laps or self.laps[-1] != self.seen - 1:
+            self.sample(tracer, frame, self.seen)
+
+    def sample(self, tracer, frame, lap):
+        if self.cut:
+            return
+        started = time.perf_counter()
+        scope = dict(frame.f_globals)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            scope.update(frame.f_locals)
+        random = sys.modules.get("random")
+        luck = random.getstate() if random is not None else None
+        saved = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = io.StringIO()
+        sys.settrace(None)
+        try:
+            row = []
+            for at, code in enumerate(self.codes):
+                if code is None:
+                    row.append(None)
+                    continue
+                try:
+                    row.append(_probe_value(eval(code, scope)))  # noqa: S307 — expresión ya revisada
+                    self.worked[at] = True
+                except Exception as problem:  # la sonda falla, no el programa
+                    # En la primera vuelta puede que aún no exista lo que mira: se vuelve a intentar.
+                    self.failed[at] += 1
+                    if not self.worked[at] and self.failed[at] >= 6:
+                        self.codes[at] = None
+                    self.errors[at] = _short(f"{type(problem).__name__}: {problem}", 120)
+                    row.append(None)
+        finally:
+            sys.stdout, sys.stderr = saved
+            if luck is not None:
+                random.setstate(luck)
+            sys.settrace(tracer.global_trace)
+        self.laps.append(lap)
+        for at, value in enumerate(row):
+            self.values[at].append(value)
+        if len(self.laps) >= _PROBE_SAMPLES:
+            # Demasiadas: se queda una de cada dos, y a partir de ahora se guarda la mitad de veces.
+            self.laps = self.laps[::2]
+            self.values = [column[::2] for column in self.values]
+            self.stride *= 2
+        self.spent += time.perf_counter() - started
+        if self.spent > _PROBE_SECONDS:
+            self.cut = True
+
+    def result(self):
+        return {
+            "line": self.line,
+            "names": self.names,
+            "laps": self.laps,
+            "values": self.values,
+            "errors": self.errors,
+            "total": self.seen,
+            "cut": self.cut,
+        }
+
+
+def _probe_value(value):
+    """Lo que se guarda de una muestra: un número tal cual, un texto recortado, y de lo demás su forma escrita."""
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return str(value)
+        return value if abs(value) < 1e15 else str(value)
+    if isinstance(value, str):
+        return {"s": value if len(value) <= _PROBE_TEXT else value[: _PROBE_TEXT - 1] + "…"}
+    return {"o": _short(reprlib.repr(value), _PROBE_TEXT)}
+
+
 class _TraceLimit(BaseException):
     """Se llegó al tope de pasos de una traza: se corta la ejecución."""
 
@@ -878,9 +1061,11 @@ class _Tracer:
     en las variables del marco (`ch`), y lo que se imprimió desde el evento anterior (`o`).
     """
 
-    def __init__(self, filename, limit, out, hidden=frozenset(), finish=0.0, loops=()):
+    def __init__(self, filename, limit, out, hidden=frozenset(), finish=0.0, loops=(), probe=None):
         self.filename = filename
         self.hidden = hidden
+        # Las sondas de un bucle (ver `_Probe`), si se pidieron: se miran se esté grabando o no.
+        self.probe = probe
         # Los bucles del programa (ver `_loops`), y los que estaban dando vueltas al dejar de grabar: a esos
         # se les siguen contando las vueltas, y se apunta cómo salen. Es barato (un marco, una línea) y es lo
         # que permite decir «dio 40 vueltas» de un programa del que solo se grabaron las 23 primeras.
@@ -959,6 +1144,7 @@ class _Tracer:
         self.ticks += 1
         if self.ticks & 255 == 0 and time.perf_counter() > self.deadline:
             raise _TraceLimit()
+        self.probed(frame, event)
         code = frame.f_code
         if event == "call":
             if code.co_filename == self.filename and code.co_name not in _COMPREHENSIONS:
@@ -1053,9 +1239,19 @@ class _Tracer:
             self.record(entry)
         return self.local_trace
 
+    def probed(self, frame, event):
+        """Las sondas miran en cada línea del programa: la cabecera de su bucle, y la salida de él."""
+        probe = self.probe
+        if probe is not None and frame.f_code.co_filename == self.filename:
+            if event == "line":
+                probe.line_event(self, frame)
+            elif event == "return":
+                probe.leave(self, frame)
+
     def local_trace(self, frame, event, arg):
         if self.coasting:
             return self.coast(frame, event, arg)
+        self.probed(frame, event)
         record = self.by_frame.get(id(frame))
         if record is None:
             return None
@@ -1211,7 +1407,21 @@ class Runner:
         # segundos), para no quedarse sin saber qué da.
         finish = request.get("finish")
         budget = 0.0 if not finish else (2.5 if finish is True else float(finish))
-        tracer = _Tracer(filename, limit, out, hidden, budget, loops)
+        # `watch`: unas expresiones que mirar en cada vuelta de un bucle (el de esa línea).
+        probe = None
+        watch = request.get("watch")
+        if isinstance(watch, dict) and error is None:
+            head = watch.get("line")
+            texts = [text for text in (watch.get("exprs") or []) if isinstance(text, str)][:6]
+            end = next((last for first, last, _ in loops if first == head), None)
+            if end is not None and texts:
+                own = {
+                    node.name
+                    for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+                }
+                probe = _Probe(head, end, texts, own)
+        tracer = _Tracer(filename, limit, out, hidden, budget, loops, probe)
         finished = False
         namespace = {"__name__": "__main__"}
         if isinstance(inputs, list):
@@ -1271,6 +1481,7 @@ class Runner:
                     "calls": {str(line): count for line, count in tracer.later_calls.items()},
                     "lines": sorted(tracer.later_lines),
                 },
+                **({"probe": probe.result()} if probe is not None else {}),
                 "error": error,
                 "output": out.getvalue()[-MAX_TEXT:],
             }

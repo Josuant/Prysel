@@ -100,6 +100,7 @@ import {
   moduleStates,
   moduleStory,
   outcomeOf,
+  progressViewer,
   runEntry,
   runsViewer,
   type RunEntry,
@@ -1789,6 +1790,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   )
   // Las ejecuciones: lo que fue dando el programa cada vez, junto al resultado.
   const runsShown = useMemo(() => runsViewer(pastRuns), [pastRuns])
+  // Y cómo avanza por dentro, vuelta a vuelta: lo que se eligió mirar para este programa.
+  const progressShown = useMemo(
+    () => (ran?.progress && !constructing ? progressViewer(ran.progress) : null),
+    [ran, constructing],
+  )
   const playingBeat = playback.at === null ? undefined : beats[playback.at]
   const beat = useMemo(
     () =>
@@ -2785,6 +2791,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 avoid={consoleBox}
                 result={outcome?.result ?? null}
                 runs={outcome?.result ? runsShown : null}
+                progress={outcome?.result ? progressShown : null}
                 knobs={knobsPanel}
                 start={outcome?.start ?? null}
                 exit={

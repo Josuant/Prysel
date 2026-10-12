@@ -12,6 +12,7 @@ import { bestSample, rankSamples, samplesIn, withRolls, type Sample } from './sa
 import { parseCall } from './value.ts'
 import type { Idleness } from './entry.ts'
 import type { Story } from './story.ts'
+import type { Progress } from './progress.ts'
 
 /**
  * «Qué hace» una función, comprobado: su nombre, y una vez que se ejecutó de verdad (con qué entró y qué
@@ -292,6 +293,11 @@ export interface RunSummary {
    * otro. Sale de la traza (ver `story.ts`); es lo que hace que el diagrama cuente cómo funciona.
    */
   story?: Story
+  /**
+   * **Cómo avanza** vuelta a vuelta: lo mejor que lleva encontrado y un número que mide cómo va, medidos al
+   * ejecutarlo (ver `progress.ts`). Qué mirar se elige para cada programa.
+   */
+  progress?: Progress
   /**
    * La línea del programa donde empieza el trabajo: la primera, a la altura del archivo, que llama a una
    * función propia. Es donde el diagrama marca «empieza aquí».

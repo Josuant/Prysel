@@ -98,12 +98,13 @@ export class WebHost {
       analyse: () => this.analyse(),
       // Ancha: las rejillas pequeñas llegan enteras, para dibujarlas como rejillas.
       // Con azar repetible (la misma partida de ejemplo cada vez) y, si pide datos, sus respuestas.
-      trace: (code, inputs, seed = 7) =>
+      trace: (code, inputs, seed = 7, watch) =>
         // Un programa largo no se corta al llegar al tope: deja de grabarse y acaba, para ver qué da.
         this.session.trace(code, 20_000, false, true, {
           seed,
           finish: true,
           ...(inputs ? { inputs } : {}),
+          ...(watch ? { watch } : {}),
         }),
       provider: () => {
         const provider = providerFrom(this.settings)

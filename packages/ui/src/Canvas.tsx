@@ -278,6 +278,11 @@ export interface CanvasProps {
    */
   runs?: ViewerContent | null
   /**
+   * **Cómo avanza** el programa vuelta a vuelta (lo mejor que lleva encontrado, un número que mide cómo va):
+   * otro visor junto al resultado, entre él y las ejecuciones.
+   */
+  progress?: ViewerContent | null
+  /**
    * Las **perillas**, como un nodo del diagrama: los números con los que se puede jugar y el dado. En la
    * arquitectura va a la entrada (a la izquierda, o encima si el dibujo es estrecho), con una flecha a cada
    * parte donde están escritos; en el diagrama abierto, bajo la cajita del programa.
@@ -494,15 +499,28 @@ const RESULT_NODE: CanvasNode = { id: RESULT_ID, kind: 'output.display', label: 
 /** Las ejecuciones (la historia del resultado) y las perillas: dos nodos más del dibujo, que no son código. */
 const RUNS_ID = 'prysel:runs'
 const RUNS_NODE: CanvasNode = { id: RUNS_ID, kind: 'output.display', label: 'Ejecuciones' }
+const PROGRESS_NODE: CanvasNode = {
+  id: 'prysel:progress',
+  kind: 'output.display',
+  label: 'Cómo avanza',
+}
 const KNOBS_ID = 'prysel:knobs'
 /** Lo que separa el resultado de sus ejecuciones. */
 const RUNS_GAP = 18
+type Size2 = { w: number; h: number }
 /** La cola de la arquitectura: el resultado y, debajo, sus ejecuciones si las hay. */
-const tailOf = (result: ViewerContent, runs: ViewerContent | null): { w: number; h: number } => {
-  const size = viewerSize(result)
-  if (!runs) return size
-  const more = viewerSize(runs)
-  return { w: Math.max(size.w, more.w), h: size.h + RUNS_GAP + more.h }
+const tailOf = (
+  result: ViewerContent,
+  more: readonly (ViewerContent | null)[],
+): { w: number; h: number } => {
+  let { w, h } = viewerSize(result)
+  for (const content of more) {
+    if (!content) continue
+    const size = viewerSize(content)
+    w = Math.max(w, size.w)
+    h += RUNS_GAP + size.h
+  }
+  return { w, h }
 }
 /** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
 const SHARED_FROM = 3
@@ -547,6 +565,7 @@ function CanvasInner({
   avoid = null,
   result = null,
   runs = null,
+  progress = null,
   knobs = null,
   start = null,
   exit = null,
@@ -759,8 +778,8 @@ function CanvasInner({
   // El resultado, si lo hay, va a la cola de la arquitectura: cuenta para saber cuánto cabe.
   // (Y bajo él, si las hay, las ejecuciones: los dos son la cola.)
   const tailSize = useMemo(
-    () => (result && flow && architecture ? tailOf(result.content, runs) : undefined),
-    [result, runs, flow, architecture],
+    () => (result && flow && architecture ? tailOf(result.content, [progress, runs]) : undefined),
+    [result, progress, runs, flow, architecture],
   )
   const nodes = useMemo(
     () => allNodes.filter((node) => !node.handwritten && !(aside && node.viewer)),
@@ -1221,13 +1240,9 @@ function CanvasInner({
     [result, figures],
   )
   // Con las ejecuciones debajo, la cola son los dos visores, uno sobre otro.
-  const runsSize = useMemo(
-    () => (runs && result && figures !== undefined ? viewerSize(runs) : null),
-    [runs, result, figures],
-  )
   const tailBox = useMemo(
-    () => (result && figures !== undefined ? tailOf(result.content, runs) : null),
-    [result, runs, figures],
+    () => (result && figures !== undefined ? tailOf(result.content, [progress, runs]) : null),
+    [result, progress, runs, figures],
   )
   // En la arquitectura las perillas van a la entrada y el resultado a la salida: de izquierda a derecha,
   // salvo que de otro modo (alguno encima o debajo) el conjunto se vea claramente más grande en este lienzo.
@@ -2303,10 +2318,19 @@ function CanvasInner({
           }
       : null
   // Las ejecuciones, bajo el resultado: es su historia.
-  const runsAt =
-    resultAt && runsSize
-      ? { x: resultAt.x, y: resultAt.y + resultAt.h + RUNS_GAP, ...runsSize }
-      : null
+  const tailViewers: { node: CanvasNode; content: ViewerContent; at: Point; size: Size2 }[] = []
+  if (resultAt) {
+    let y = resultAt.y + resultAt.h + RUNS_GAP
+    for (const [node, content] of [
+      [PROGRESS_NODE, progress],
+      [RUNS_NODE, runs],
+    ] as const) {
+      if (!content) continue
+      const size = viewerSize(content)
+      tailViewers.push({ node, content, at: { x: resultAt.x, y }, size })
+      y += size.h + RUNS_GAP
+    }
+  }
   // Las perillas, a la entrada del dibujo (o, en el diagrama abierto, bajo la cajita del programa).
   const knobInto = (knobs?.into ?? []).filter((id) => archModules.has(id))
   const knobTarget = knobInto.length === 1 ? boxOf.get(knobInto[0] ?? '') : undefined
@@ -2412,21 +2436,12 @@ function CanvasInner({
             // No es un visor que se haya fijado: no se quita.
             data: { node: RESULT_NODE, content: result.content, size: resultAt },
           },
-          ...(runs && runsAt
-            ? [
-                {
-                  ...viewerNode(
-                    RUNS_NODE,
-                    runs,
-                    { x: runsAt.x, y: runsAt.y },
-                    { w: runsAt.w, h: runsAt.h },
-                  ),
-                  draggable: false,
-                  selectable: false,
-                  data: { node: RUNS_NODE, content: runs, size: runsAt },
-                },
-              ]
-            : []),
+          ...tailViewers.map(({ node, content, at, size }) => ({
+            ...viewerNode(node, content, at, size),
+            draggable: false,
+            selectable: false,
+            data: { node, content, size },
+          })),
         ]
       : []
   // Quién escribe el resultado le tiende una flecha… salvo en un ciclo con su compuerta de salida: ahí el
