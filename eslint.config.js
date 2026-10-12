@@ -42,4 +42,10 @@ export default tseslint.config(
     plugins: { 'jsx-a11y': jsxA11y },
     rules: jsxA11y.flatConfigs.recommended.rules,
   },
+  {
+    // `rules-of-hooks` recorre todos los caminos de un componente, y con el del lienzo (miles de líneas en
+    // una sola función) no termina: el lint se quedaba colgado ahí. Las demás reglas sí se le pasan.
+    files: ['packages/ui/src/Canvas.tsx'],
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
+  },
 )
