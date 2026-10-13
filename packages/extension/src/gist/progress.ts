@@ -241,7 +241,8 @@ const PICK_THRESHOLD = 0.5
 /**
  * Entre lo medido, qué cuenta mejor el avance: algo que leer y un número. Lo decide el JEV viendo de cada
  * candidato su nombre, su expresión y de qué valor a qué valor fue. Si no contesta (o duda), queda lo
- * primero que propuso la IA; de lo que nadie propuso (una variable suelta del bucle), solo los números.
+ * primero que propuso la IA; de lo que nadie propuso (una variable suelta del bucle), solo lo que se dibuja
+ * solo: un número, una lista de números o un tablero.
  */
 export async function pickWatches(
   decider: Decider,
@@ -252,7 +253,11 @@ export async function pickWatches(
   const texts = measured.filter((one) => one.kind !== 'number')
   const numbers = measured.filter((one) => one.kind === 'number')
   const fallback = {
-    text: texts.find((one) => one.watch.proposed) ?? null,
+    // (Una lista o un tablero se dibujan: se ven aunque nadie los haya propuesto. Un texto suelto, no.)
+    text:
+      texts.find((one) => one.watch.proposed) ??
+      texts.find((one) => one.kind === 'bars' || one.kind === 'grid') ??
+      null,
     number: numbers.find((one) => one.watch.proposed) ?? numbers[0] ?? null,
   }
   if (texts.length + numbers.length === 0) return fallback

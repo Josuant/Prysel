@@ -403,6 +403,17 @@ describe('las formas de lo medido: barras y rejilla', () => {
     expect(progressOf(probe, { text: grid, number: null })?.grid?.says).toBe('el tablero')
   })
 
+  it('sin IA ni JEV, una lista o un tablero que el bucle cambia se enseñan igual: se dibujan solos', async () => {
+    const plain: Watch[] = [
+      { expr: 'numeros', says: 'numeros' },
+      { expr: 'mezcla', says: 'mezcla' },
+    ]
+    const failing: Decider = { id: 'roto', decide: () => Promise.reject(new Error('sin red')) }
+    const picked = await pickWatches(failing, 'while True', measuredOf(probe, plain))
+    expect(picked.text?.watch.expr).toBe('numeros')
+    expect(picked.text?.kind).toBe('bars')
+  })
+
   it('las barras: una tira por momento, encendidas las que ya están como al final', () => {
     const [bars] = measuredOf(probe, watches)
     if (!bars) throw new Error('sin medidas')
