@@ -1772,6 +1772,57 @@ button.fn-menu__crumb:hover {
     font-size: 13px;
   }
 }
+/* Lo que se contestó sobre una pieza: bajo ella, a tamaño de lectura. */
+.ask-answer {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(340px, 86vw);
+  align-items: flex-start;
+  gap: 6px;
+  padding: 9px 8px 9px 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-card));
+  border-radius: 4px 14px 14px 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  animation: ask-pop 160ms ease-out;
+}
+.ask-answer[data-tone='error'] {
+  border-color: color-mix(in srgb, var(--state-error) 55%, transparent);
+}
+.ask-answer__text {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.42;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 8;
+}
+.ask-answer[data-busy] .ask-answer__text {
+  color: var(--ink-muted);
+}
+.ask-answer__close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ask-answer__close:hover {
+  background: var(--field);
+  color: var(--ink);
+}
 .ask-bubble {
   position: absolute;
   z-index: 40;

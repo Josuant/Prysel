@@ -34,6 +34,8 @@ export interface AiHubProps {
   voice: boolean
   /** La IA que redacta (`null`: falta su clave). */
   ai: string | null
+  /** La respuesta (por el número de su orden) que ya se está diciendo en otro sitio: aquí no se repite. */
+  elsewhere?: number | undefined
   /** Dónde va respecto a las demás barras del lienzo (`--lift`, `--above`). */
   style?: React.CSSProperties | undefined
   /** Pedir algo sin señalar nada: se abre la caja en medio del lienzo. */
@@ -111,6 +113,7 @@ export function AiHub({
   building,
   voice,
   ai,
+  elsewhere,
   style,
   onAsk,
   onSubmit,
@@ -317,7 +320,12 @@ export function AiHub({
       clearTimeout(timer)
     }
   }, [key, stays])
-  const shown = !open && lastAi !== undefined && preview !== '' && key !== gone
+  const shown =
+    !open &&
+    lastAi !== undefined &&
+    preview !== '' &&
+    key !== gone &&
+    !(elsewhere !== undefined && lastAi.id === elsewhere)
   /** Se puede quitar a mano lo que no está en marcha ni espera una respuesta. */
   const dismissible = lastAi?.busy !== true && asks.length === 0 && lastAi?.needsKey !== true
 

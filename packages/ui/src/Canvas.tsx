@@ -343,6 +343,17 @@ export interface CanvasProps {
   extraMenu?: (id: string) => NodeMenuItem[]
   /** Pedir con palabras desde el lienzo (ver `CanvasAsk`). */
   ask?: CanvasAsk | undefined
+  /**
+   * Lo que se contestó a algo que se pidió **sobre una pieza**: se dice ahí, a su lado, y no en una esquina.
+   * `busy`: aún se está en ello.
+   */
+  said?: {
+    id: string
+    text: string
+    tone?: 'ok' | 'muted' | 'error' | undefined
+    busy?: boolean | undefined
+    onClose: () => void
+  } | null
   /** Quitar un visor del lienzo. */
   onUnpin?: (id: string) => void
   onEnter?: (id: string) => void
@@ -604,6 +615,7 @@ function CanvasInner({
   onRun,
   extraMenu,
   ask,
+  said = null,
   onUnpin,
   showStatus = true,
   animate = true,
@@ -3488,6 +3500,28 @@ function CanvasInner({
               </button>
             </NodeToolbar>
           )}
+        {said && byId.has(said.id) && (
+          <NodeToolbar nodeId={said.id} isVisible position={Position.Bottom} offset={10}>
+            <div
+              className="ask-answer nodrag nopan nowheel"
+              role="status"
+              data-tone={said.tone}
+              data-busy={said.busy ? '' : undefined}
+            >
+              <p className="ask-answer__text">{said.text}</p>
+              {!said.busy && (
+                <button
+                  type="button"
+                  className="ask-answer__close"
+                  aria-label="Quitar la respuesta"
+                  onClick={said.onClose}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </NodeToolbar>
+        )}
         {interactive && controls && (
           <Panel position="bottom-right" className="canvas-controls">
             <IconButton

@@ -69,6 +69,11 @@ export interface RunPanelProps {
    */
   onWake?: ((idle: 'inert' | 'mute') => void) | undefined
   /**
+   * Hay a quién pedírselo: si el programa **falla**, que lo arregle (`fix`, con lo que dijo el error); si se
+   * **cortó por largo**, que diga por qué no acaba (`why`).
+   */
+  onHelp?: ((what: 'fix' | 'why', problem: string) => void) | undefined
+  /**
    * El resultado ya se ve en otro sitio (su nodo en el diagrama): la consola empieza plegada, para no
    * decirlo dos veces ni tapar nada. Se abre con su botón.
    */
@@ -88,7 +93,7 @@ function idleOf(run: RunSummary): { why: string; fix: string } {
   }
 }
 
-export function RunPanel({ run, onPick, lit, onPlay, onWake, quiet }: RunPanelProps) {
+export function RunPanel({ run, onPick, lit, onPlay, onWake, onHelp, quiet }: RunPanelProps) {
   // Abierta o plegada lo decide quien la usa en cuanto toca el botón; hasta entonces, según haga falta.
   const [toggled, setToggled] = useState<boolean | null>(null)
   const open = toggled ?? quiet !== true
@@ -263,6 +268,24 @@ export function RunPanel({ run, onPick, lit, onPlay, onWake, quiet }: RunPanelPr
               {run.problem ? `: ${run.problem}` : ''}
               {run.line !== undefined ? ` (línea ${run.line})` : ''}
             </p>
+          )}
+          {onHelp && (run.ended === 'error' || run.ended === 'cut') && (
+            <div className="run-panel__actions">
+              <button
+                type="button"
+                className="run-panel__play"
+                disabled={sending}
+                onClick={() => {
+                  setSentFrom(run)
+                  onHelp(
+                    run.ended === 'error' ? 'fix' : 'why',
+                    `${run.problem ?? ''}${run.line !== undefined ? ` (línea ${run.line})` : ''}`,
+                  )
+                }}
+              >
+                ✦ {run.ended === 'error' ? 'Arréglalo' : '¿Por qué no acaba?'}
+              </button>
+            </div>
           )}
           {run.ended === 'idle' && run.idle && onWake && (
             <div className="run-panel__actions">

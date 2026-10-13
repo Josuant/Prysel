@@ -381,6 +381,15 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * orden) y qué dio. Es lo que enseña el visor que va junto al resultado.
    */
   const [pastRuns, setPastRuns] = useState<RunEntry[]>([])
+  /**
+   * La última orden que se dio **sobre una pieza** (en su menú, o con un cable): cuál, y sobre qué. Lo que se
+   * conteste a esa orden se dice junto a la pieza. `closed`: ya se quitó de ahí.
+   */
+  const [askedAbout, setAskedAbout] = useState<{
+    order: number
+    node: string
+    closed?: boolean
+  } | null>(null)
   /** Se pidió ver algo en «Cómo avanza» y aún no ha llegado medido. */
   const watchWait = useRef<{ wish: string; at: number } | null>(null)
   /** Lo que va a provocar la próxima ejecución (`again`: sin cambiar el texto, solo otra tirada). */
@@ -1826,9 +1835,40 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             top: 40,
             bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
           }
-        : null,
-    [architecture, hasStory, consoleBox, cramped],
+        : hub
+          ? // En el diagrama abierto, abajo solo flota el botón de la IA: si todo cabe, que quepa sin él encima.
+            { top: 0, bottom: 60 }
+          : null,
+    [architecture, hasStory, consoleBox, cramped, hub],
   )
+  // Lo que se contestó a una orden dada sobre una pieza, para decirlo a su lado (si la pieza está a la vista).
+  const replied = askedAbout
+    ? chat.find((entry) => entry.role === 'ai' && entry.id === askedAbout.order)
+    : undefined
+  const repliedText = replied
+    ? replied.busy && replied.note
+      ? replied.note
+      : (replied.lines?.[replied.lines.length - 1] ?? replied.text)
+    : ''
+  const saidAt =
+    askedAbout &&
+    !askedAbout.closed &&
+    replied &&
+    repliedText !== '' &&
+    // Si pregunta algo o pide la clave, se contesta en la conversación, donde están sus botones.
+    (replied.options?.length ?? 0) === 0 &&
+    replied.needsKey !== true &&
+    view.nodes.some((node) => node.id === askedAbout.node)
+      ? {
+          id: askedAbout.node,
+          text: repliedText,
+          tone: replied.tone,
+          busy: replied.busy,
+          onClose: () => {
+            setAskedAbout({ ...askedAbout, closed: true })
+          },
+        }
+      : null
   // Las ejecuciones: lo que fue dando el programa cada vez, junto al resultado.
   const runsShown = useMemo(() => runsViewer(pastRuns), [pastRuns])
   // Y cómo avanza por dentro, vuelta a vuelta: lo que se eligió mirar para este programa.
@@ -2173,6 +2213,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       ...(flavour ? { flavour } : {}),
       ...(pointed && !flavour && about ? { pointed } : {}),
     })
+    // Dada sobre una pieza: lo que se conteste se dirá a su lado.
+    setAskedAbout(pointed && !flavour && about ? { order: id, node: about } : null)
   }
   /**
    * Lo que se dice o se escribe en el chat. Antes que una orden puede ser la respuesta a una pregunta
@@ -2919,6 +2961,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     }
                   : {})}
                 extraMenu={viewerMenu}
+                said={saidAt}
                 ask={
                   features.orders && lesson === null && !constructing
                     ? { onAsk: askHere, chips: askChips, onDraft: draft }
@@ -3286,6 +3329,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                     onPlay={(answers, fresh) => {
                       post({ type: 'play', answers, ...(fresh ? { fresh: true } : {}) })
                     }}
+                    onHelp={
+                      features.orders && !constructing
+                        ? (what, problem) => {
+                            if (what === 'fix') sendOrder(`Arregla este error: ${problem}`)
+                            else
+                              sendOrder(
+                                '¿Por qué este programa no termina, o tarda tanto en acabar?',
+                              )
+                          }
+                        : undefined
+                    }
                     onWake={(idle) => {
                       // Nadie lo arranca: se le añade su arranque. Trabaja sin enseñar: se le pide a la IA.
                       if (idle === 'inert') post({ type: 'launch' })
@@ -3352,6 +3406,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               building={order.phase === 'done' && order.building === true}
               voice={voice}
               ai={models ? models.ai : ''}
+              // Lo que ya se dice junto a su pieza no se repite en la esquina.
+              elsewhere={saidAt ? askedAbout?.order : undefined}
               style={
                 {
                   ...dock,
