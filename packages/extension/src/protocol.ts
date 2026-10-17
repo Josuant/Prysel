@@ -557,7 +557,7 @@ const MAX_EDITS = 64
 const MAX_TEXT = 200_000
 const MAX_RUN_IDS = 500
 /** Una orden es una frase: lo que pase de aquí no lo es. */
-export const MAX_COMMAND = 400
+export const MAX_COMMAND = 2000
 const MAX_ID = 200
 
 /** Lo que puede medir la llamada con la que se prueba una función (sus datos caben de sobra). */

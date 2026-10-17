@@ -70,6 +70,8 @@ export interface OrderPort {
   /** A qué ritmo se construye: al de la IA (`stream`) o esperando a la voz (`voice`). */
   flow(): 'voice' | 'stream'
   trace(): Promise<Trace | null>
+  /** Ejecuta el programa de ahora, aparte y sin nadie delante, hasta el final (para ver qué hace). */
+  run(): Promise<Trace | null>
   setLesson(lesson: Lesson): void
 }
 
@@ -617,6 +619,7 @@ export class Orders {
     const host: Stagehand = {
       signal,
       program: () => port.analyse(),
+      run: () => port.run(),
       parses: (code) => !parser.parse(code).rootNode.hasError,
       async write(change) {
         const before = port.text()

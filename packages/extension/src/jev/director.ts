@@ -25,6 +25,7 @@ import {
   type Stage,
 } from './build.ts'
 import type { Decider } from './client.ts'
+import type { Trace } from '../trace.ts'
 import { COMPOSE_THRESHOLDS, judgeCode } from './compose.ts'
 import { WHOLE_BUDGET, contextFor } from './context.ts'
 import { reachesOutside, safeEnough } from './safety.ts'
@@ -128,6 +129,11 @@ export interface Stagehand {
    * usuario interrumpe, con esto se decide si lo preparado sigue valiendo.
    */
   buffer?(pending: readonly string[]): void
+  /**
+   * Ejecuta el programa de ahora, aparte y sin nadie delante (con azar repetible y, donde haga falta, en modo
+   * seguro), para ver qué hace de verdad. `null`: aquí no se puede ejecutar.
+   */
+  run?(): Promise<Trace | null>
 }
 
 export type Shown =
@@ -200,7 +206,14 @@ export interface Outcome {
    * La revisión automática, si el JEV dudó: lo que la IA echó en falta de lo pedido (y el JEV confirmó), y si
    * quedó completado. `missing` vacío: se revisó y no falta nada.
    */
-  review?: { missing: string[]; done: boolean }
+  review?: {
+    missing: string[]
+    done: boolean
+    /** Lo completado rompió el programa (que antes funcionaba) y se arregló. */
+    repaired?: boolean
+    /** Y si no se pudo arreglar: el fallo con el que se quedó. */
+    broken?: string
+  }
   jevMs: number
   /**
    * Lo que se construyó es una sola cosa con interior (una función, una clase): la línea de su cabecera. Al
@@ -218,8 +231,12 @@ export function summaryOf(outcome: Outcome, noun: [string, string] = ['paso', 'p
   const { review } = outcome
   if (review && review.missing.length > 0) {
     const what = review.missing.map((item) => `«${lowerFirst(item)}»`).join(', ')
+    if (review.broken !== undefined) {
+      return `Hecho en ${count}. Al revisarlo faltaba ${what}; al añadirlo dejó de funcionar (${review.broken}) y no lo he podido arreglar: revísalo.`
+    }
+    const mended = review.repaired ? ' (y arreglado un fallo que causó al añadirlo)' : ''
     return review.done && !outcome.doubt
-      ? `Hecho, en ${count}. Al revisarlo faltaba ${what}: ya está añadido.`
+      ? `Hecho, en ${count}. Al revisarlo faltaba ${what}: ya está añadido${mended}.`
       : `Hecho en ${count}, pero puede que aún falte ${what}: revísalo.`
   }
   if (outcome.doubt) {
@@ -1247,12 +1264,15 @@ async function review(
       : 'Reviso con la IA que esté todo lo pedido…',
   })
   const program = await host.program()
+  // Lo que hace de verdad al ejecutarlo: quien revisa lo ve (lo que se pidió ver tiene que salir ahí), y sirve
+  // para saber si lo que se complete rompe algo que funcionaba.
+  const before = await ranOf(host)
   let missing: string[] | null
   try {
     missing = missingOf(
       await players.provider.generate({
         system: reviewSystem(),
-        prompt: reviewPrompt(asked, program.source.slice(0, REVIEW_BUDGET)),
+        prompt: reviewPrompt(asked, program.source.slice(0, REVIEW_BUDGET), before?.said),
         maxTokens: 300,
       }),
     )
@@ -1278,19 +1298,64 @@ async function review(
     command: `Completa lo que falta de lo que se pidió («${asked}»): ${judged.asked.join('; ')}.`,
     whole: true,
   })
+  const done = !fixed.stopped && fixed.trouble === null && fixed.written > 0
+  let written = outcome.written + fixed.written
+  let jevTotal = jevMs + fixed.jevMs
+  let mend: { repaired?: boolean; broken?: string } = {}
+  // Si al completarlo dejó de funcionar lo que funcionaba, se arregla una vez, sin esperar a nadie.
+  if (done && before !== null && before.broken === null && !host.signal.aborted) {
+    const after = await ranOf(host)
+    if (after?.broken) {
+      await host.show({
+        type: 'progress',
+        text: `Al añadirlo dejó de funcionar (${after.broken}): lo arreglo…`,
+      })
+      const repair = await modifyOnce(host, players, {
+        command: `Al ejecutar el programa falla: ${after.broken}. Arréglalo sin quitar nada de lo que hace (lo que se pidió: «${asked}»).`,
+        whole: true,
+      })
+      written += repair.written
+      jevTotal += repair.jevMs
+      const still = await ranOf(host)
+      mend = still?.broken ? { broken: still.broken } : { repaired: true }
+    }
+  }
   return {
     ...fixed,
-    written: outcome.written + fixed.written,
+    written,
     asked,
     // (El programa ya no es el de antes: lo que dice el JEV es de cómo quedó.)
     evidence: fixed.evidence.length > 0 ? fixed.evidence : outcome.evidence,
-    jevMs: jevMs + fixed.jevMs,
-    review: {
-      missing: judged.asked,
-      done: !fixed.stopped && fixed.trouble === null && fixed.written > 0,
-    },
+    jevMs: jevTotal,
+    review: { missing: judged.asked, done, ...mend },
     ...(outcome.enter === undefined ? {} : { enter: outcome.enter }),
   }
+}
+
+/**
+ * Lo que hace el programa de ahora al ejecutarlo, si quien lo aloja sabe ejecutarlo: con qué falla (`null` si
+ * no falla) y, dicho para quien revisa, lo que imprime y cómo acaba.
+ */
+async function ranOf(host: Stagehand): Promise<{ broken: string | null; said: string } | null> {
+  if (!host.run) return null
+  const trace = await host.run().catch(() => null)
+  // (Lo que el modo seguro no deja ejecutar no es un fallo del programa: simplemente, aquí no se ve.)
+  if (!trace || trace.error?.name === 'UnsafeCode') return null
+  const waiting = trace.error?.name === 'NoMoreInput'
+  const broken =
+    trace.error && !waiting
+      ? `${trace.error.name}: ${trace.error.message}${trace.error.line === null ? '' : ` (línea ${trace.error.line})`}`
+      : null
+  const output = trace.output.length > 1800 ? `…${trace.output.slice(-1800)}` : trace.output
+  const said = [
+    output.trim() === ''
+      ? 'Al ejecutarlo (sin nadie delante) no imprime nada.'
+      : `Al ejecutarlo (sin nadie delante) imprime:\n${output.replace(/\s+$/, '')}`,
+    ...(waiting ? ['Y se queda esperando a que se teclee algo.'] : []),
+    ...(broken ? [`Y falla: ${broken}`] : []),
+    ...(trace.truncated && trace.finished !== true ? ['No llegó a acabar: era muy largo.'] : []),
+  ].join('\n')
+  return { broken, said }
 }
 
 /** Por debajo de esta certeza del JEV en que se cumplió la orden, lo hecho se revisa con la IA. */

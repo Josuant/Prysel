@@ -7,6 +7,7 @@ import type { AiProvider } from '../src/ai/provider.ts'
 import type { Decider } from '../src/jev/client.ts'
 import { modify, summaryOf, type Shown, type Stagehand } from '../src/jev/director.ts'
 import { localDecider } from '../src/jev/local.ts'
+import type { Trace } from '../src/trace.ts'
 import { missingOf } from '../src/jev/plain.ts'
 
 /**
@@ -41,11 +42,26 @@ const ENTERO = lines(
   'print("Total:", total(precios))',
 )
 
-function stage(source: string) {
+/**
+ * Lo que daría ejecutar el programa (de mentira): falla si llama a `totl` (un nombre mal escrito); si imprime
+ * el total, sale «Total: 12».
+ */
+function runOf(text: string): Trace {
+  const broken = text.includes('totl(')
+  return {
+    events: [],
+    truncated: false,
+    error: broken ? { name: 'NameError', message: "name 'totl' is not defined", line: 5 } : null,
+    output: !broken && text.includes('print(') ? 'Total: 12\n' : '',
+  }
+}
+
+function stage(source: string, runs = false) {
   const state = { text: source, shown: [] as Shown[] }
   const host: Stagehand = {
     signal: new AbortController().signal,
     program: () => Promise.resolve(parse(state.text)),
+    ...(runs ? { run: () => Promise.resolve(runOf(state.text)) } : {}),
     parses: (code) => !hasError(code),
     write(change) {
       if (change.edits.length > 0) state.text = applyEdits(state.text, change.edits)
@@ -68,15 +84,17 @@ function stage(source: string) {
 function ai(
   programs: string[],
   review: string,
-): AiProvider & { reviews: number; rewrites: string[] } {
+): AiProvider & { reviews: number; rewrites: string[]; reviewed: string[] } {
   const queue = [...programs]
   const self = {
     id: 'mentira',
     reviews: 0,
     rewrites: [] as string[],
+    reviewed: [] as string[],
     generate(request: { system: string; prompt: string }) {
       if (request.system.includes('revisa un programa')) {
         self.reviews++
+        self.reviewed.push(request.prompt)
         return Promise.resolve(review)
       }
       if (request.system.includes('programa ENTERO')) {
@@ -86,7 +104,7 @@ function ai(
       return Promise.resolve('Ahora suma los precios.')
     },
   }
-  return self as unknown as AiProvider & { reviews: number; rewrites: string[] }
+  return self as unknown as AiProvider & { reviews: number; rewrites: string[]; reviewed: string[] }
 }
 
 /**
@@ -198,6 +216,53 @@ describe('si el JEV duda de que esté todo lo pedido, se revisa con la IA', () =
     expect(outcome.doubt).toBe(false)
     expect(provider.reviews).toBe(0)
     expect(outcome.review).toBeUndefined()
+  })
+})
+
+const ROTO = lines(
+  'def total(precios):',
+  '    return sum(precios)',
+  '',
+  'precios = [3, 4, 5]',
+  'print("Total:", totl(precios))',
+)
+
+describe('la revisión ve el programa funcionar', () => {
+  it('quien revisa lee lo que sale al ejecutarlo', async () => {
+    const provider = ai([MEDIO, ENTERO], 'FALTA: Imprimir el total')
+    await modify(
+      stage(ANTES, true).host,
+      { provider, decider: jev(true) },
+      { command: 'calcula el total de unos precios y enséñalo', whole: true },
+    )
+    expect(provider.reviewed[0]).toContain('Al ejecutarlo (sin nadie delante) no imprime nada.')
+  })
+
+  it('si lo que se completa rompe lo que funcionaba, se arregla una vez, sin esperar a nadie', async () => {
+    const { host, state } = stage(ANTES, true)
+    const provider = ai([MEDIO, ROTO, ENTERO], 'FALTA: Imprimir el total')
+    const outcome = await modify(
+      host,
+      { provider, decider: jev(true) },
+      { command: 'calcula el total de unos precios y enséñalo', whole: true },
+    )
+    expect(provider.rewrites).toHaveLength(3)
+    // El arreglo se pide con el fallo de verdad.
+    expect(provider.rewrites[2]).toContain("NameError: name 'totl' is not defined")
+    expect(state.text).toBe(ENTERO)
+    expect(outcome.review).toMatchObject({ done: true, repaired: true })
+    expect(summaryOf(outcome, ['cambio', 'cambios'])).toContain('arreglado un fallo')
+  })
+
+  it('si no se puede arreglar, se dice con qué falla', async () => {
+    const provider = ai([MEDIO, ROTO, ROTO], 'FALTA: Imprimir el total')
+    const outcome = await modify(
+      stage(ANTES, true).host,
+      { provider, decider: jev(true) },
+      { command: 'calcula el total de unos precios y enséñalo', whole: true },
+    )
+    expect(outcome.review?.broken).toContain('NameError')
+    expect(summaryOf(outcome, ['cambio', 'cambios'])).toContain('dejó de funcionar')
   })
 })
 

@@ -670,7 +670,7 @@ describe('los mensajes de las órdenes se validan', () => {
     expect(parseHostMessage({ ...message, pointed: {} })).toMatchObject({ pointed: {} })
     expect(parseHostMessage({ ...message, pointed: { place: 'en la luna' } })).toBeNull()
     expect(parseHostMessage({ ...message, text: '   ' })).toBeNull()
-    expect(parseHostMessage({ ...message, text: 'x'.repeat(401) })).toBeNull()
+    expect(parseHostMessage({ ...message, text: 'x'.repeat(2001) })).toBeNull()
     expect(parseHostMessage({ ...message, force: { intent: 'formatear el disco' } })).toBeNull()
     expect(parseHostMessage({ ...message, selected: 7 })).toBeNull()
     expect(parseHostMessage({ type: 'jevKey' })).toEqual({ type: 'jevKey' })

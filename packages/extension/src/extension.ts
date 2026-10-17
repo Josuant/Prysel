@@ -1318,6 +1318,11 @@ async function runDirected(
   const host: Stagehand = {
     signal,
     program: () => analyse(doc),
+    // Aquí el programa corre en el equipo: solo en un espacio de trabajo de confianza y en modo seguro.
+    run: () =>
+      vscode.workspace.isTrusted
+        ? sessionFor(doc).trace(doc.getText(), 20_000, true, true, { seed: 7, finish: true })
+        : Promise.resolve(null),
     parses: (code) => !parser.parse(code).rootNode.hasError,
     async write(change) {
       const before = doc.getText()
@@ -1753,6 +1758,44 @@ async function runFill(doc: vscode.TextDocument, gen: string) {
 }
 
 /**
+ * Un programa nuevo donde construir lo que se pide cuando no hay ninguno de Python abierto: `programa.py` (o
+ * `programa-2.py`…) en la carpeta del espacio de trabajo; sin carpeta, uno sin guardar. Se abre a la vista y
+ * pasa a ser el que enseña el lienzo.
+ */
+async function newProgramDoc(): Promise<vscode.TextDocument | null> {
+  try {
+    let doc: vscode.TextDocument | null = null
+    const folder = vscode.workspace.workspaceFolders?.[0]
+    if (folder) {
+      for (let n = 1; n < 100 && !doc; n++) {
+        const uri = vscode.Uri.joinPath(folder.uri, n === 1 ? 'programa.py' : `programa-${n}.py`)
+        const taken = await vscode.workspace.fs.stat(uri).then(
+          () => true,
+          () => false,
+        )
+        if (taken) continue
+        await vscode.workspace.fs.writeFile(uri, new Uint8Array())
+        doc = await vscode.workspace.openTextDocument(uri)
+      }
+    }
+    doc ??= await vscode.workspace.openTextDocument({ language: 'python', content: '' })
+    await vscode.window.showTextDocument(doc, {
+      viewColumn: vscode.ViewColumn.One,
+      preserveFocus: true,
+      preview: false,
+    })
+    currentDoc = doc
+    await refresh()
+    return doc
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Prysel: no pude crear un programa donde construirlo. ${messageOf(error)}`,
+    )
+    return null
+  }
+}
+
+/**
  * Arrancar un programa que no hace nada: se le añade su etapa de arranque (y se puede deshacer). Si no se
  * sabe con qué valores, se dice.
  */
@@ -1850,21 +1893,29 @@ function wireWebview(webview: vscode.Webview) {
       return
     }
     if (parsed.type === 'command') {
-      const doc = currentDoc
-      // Dónde estaba la historia al empezar esta orden: «no, eso no» vuelve justo hasta aquí.
-      if (doc) {
+      void (async () => {
+        // Se pide algo sin un programa de Python abierto: se le crea uno, y se construye ahí. (Antes la
+        // orden se perdía sin decir nada.)
+        let doc = currentDoc
+        let message = parsed
+        if (!doc || doc.languageId !== 'python') {
+          doc = await newProgramDoc()
+          if (!doc) return
+          message = { ...parsed, version: doc.version }
+        }
+        // Dónde estaba la historia al empezar esta orden: «no, eso no» vuelve justo hasta aquí.
         const marks = orderMarks.get(doc.uri.toString()) ?? []
         marks.push(historyOf(doc).sizes.undo)
         orderMarks.set(doc.uri.toString(), marks.slice(-40))
-      }
-      // Rehacerlo con otra de las versiones que se propusieron: se empieza de cero (se puede deshacer).
-      if (parsed.flavour && extensionContext) {
-        void remake(extensionContext, parsed, parsed.flavour)
-        return
-      }
-      // Mientras se construye algo, lo que diga el usuario lo interrumpe: el JEV decide si lo que estaba
-      // preparado sigue valiendo, si hay que rehacer lo que faltaba, o si es otra cosa.
-      if (extensionContext) void interrupt(extensionContext, parsed)
+        // Rehacerlo con otra de las versiones que se propusieron: se empieza de cero (se puede deshacer).
+        if (message.flavour && extensionContext) {
+          await remake(extensionContext, message, message.flavour)
+          return
+        }
+        // Mientras se construye algo, lo que diga el usuario lo interrumpe: el JEV decide si lo que estaba
+        // preparado sigue valiendo, si hay que rehacer lo que faltaba, o si es otra cosa.
+        if (extensionContext) await interrupt(extensionContext, message)
+      })()
       return
     }
     // Lo que mira el motor de «qué hace»: probar una función, jugar el programa, otra tirada, qué mirar.

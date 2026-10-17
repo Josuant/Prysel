@@ -2380,7 +2380,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     /** Se pidió **sobre** esa pieza, en el lienzo: y, si el gesto lo dice, dónde va lo nuevo. */
     pointed?: { place?: Place },
   ) => {
-    if (version === null) return
+    // (Sin programa abierto también se pide: en VS Code, quien lo recibe le crea uno.)
     hush()
     const id = ++orderSeq.current
     lastOrder.current = text
@@ -2420,7 +2420,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       type: 'command',
       id,
       text,
-      version,
+      version: version ?? NO_VERSION,
       selected: flavour ? null : about === undefined ? selected : about,
       focus: flavour ? null : (view.focus?.id ?? null),
       ...(force ? { force } : {}),
@@ -4029,6 +4029,9 @@ interface ArchVerdict {
 }
 const asRole = (role: string | null | undefined): ModuleRole | null =>
   MODULE_ROLES.find((known) => known === role) ?? null
+/** La versión con la que se pide algo sin programa abierto: quien lo recibe le crea uno y usa la suya. */
+const NO_VERSION = -1
+
 /** Cuánto se espera a que el programa deje de cambiar antes de preguntarle al JEV por su arquitectura. */
 const ARCH_WAIT_MS = 500
 

@@ -1131,13 +1131,14 @@ export function reviewSystem(): string {
     'Eres quien revisa un programa en Python antes de entregarlo. Te doy lo que se pidió y el programa tal como ha quedado.',
     'Di qué partes de lo pedido NO hace el programa (o hace a medias: con pass, puntos suspensivos, «por hacer», o sin enseñar lo que se pidió ver).',
     'Responde solo con líneas que empiecen por «FALTA: », cada una con una frase corta e imperativa que diga qué hay que añadir o cambiar (por ejemplo: «FALTA: Mostrar la puntuación de cada generación»). Como mucho tres.',
+    'Si te digo lo que sale al ejecutarlo, úsalo: lo que se pidió ver tiene que verse ahí, y un fallo al ejecutarlo es algo que falta (arreglarlo).',
     'Si el programa hace todo lo pedido, responde solo «COMPLETO».',
     'No pidas mejoras, pruebas, comentarios ni estilo que la orden no pida: solo lo que falta de lo pedido.',
   ].join('\n')
 }
 
-export function reviewPrompt(command: string, source: string): string {
-  return `Lo que se pidió: ${command}\n\nEl programa:\n${source}`
+export function reviewPrompt(command: string, source: string, ran?: string): string {
+  return `Lo que se pidió: ${command}\n\nEl programa:\n${source}${ran ? `\n\n${ran}` : ''}`
 }
 
 /**

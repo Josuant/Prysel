@@ -141,6 +141,8 @@ export class WebHost {
           ),
         ),
       trace: () => this.session.trace(this.doc.text),
+      // Con el azar repetible y hasta el final, como lo ve «Al ejecutarlo».
+      run: () => this.session.trace(this.doc.text, 20_000, false, true, { seed: 7, finish: true }),
       setLesson: (lesson: Lesson) => {
         this.doc = { ...this.doc, lesson: JSON.stringify(lesson, null, 2) }
         this.notify()

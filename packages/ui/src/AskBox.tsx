@@ -39,7 +39,7 @@ export function AskBox({
   placeholder,
   initial = '',
   chips: offered = [],
-  maxLength = 400,
+  maxLength = 2000,
   focus = true,
   onSubmit,
   onDraft,
