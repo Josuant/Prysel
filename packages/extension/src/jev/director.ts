@@ -48,6 +48,10 @@ import {
   tellPrompt,
   tellSystem,
   judgeRemoval,
+  judgeMissing,
+  missingOf,
+  reviewPrompt,
+  reviewSystem,
   flavourSystem,
   flavoursOf,
   judgeFlavour,
@@ -188,6 +192,13 @@ export interface Outcome {
   /** El JEV duda de que el conjunto cumpla la orden. */
   doubt: boolean
   evidence: Evidence[]
+  /** La orden tal como se entendió al final (con la versión elegida, si se eligió una). */
+  asked?: string
+  /**
+   * La revisión automática, si el JEV dudó: lo que la IA echó en falta de lo pedido (y el JEV confirmó), y si
+   * quedó completado. `missing` vacío: se revisó y no falta nada.
+   */
+  review?: { missing: string[]; done: boolean }
   jevMs: number
   /**
    * Lo que se construyó es una sola cosa con interior (una función, una clase): la línea de su cabecera. Al
@@ -202,9 +213,17 @@ export function summaryOf(outcome: Outcome, noun: [string, string] = ['paso', 'p
   if (outcome.stopped) return `Detenido: quedan hechos ${count}.`
   if (outcome.written === 0) return outcome.trouble ?? 'No se hizo nada.'
   if (outcome.trouble !== null) return `${outcome.trouble} Quedan hechos ${count}.`
+  const { review } = outcome
+  if (review && review.missing.length > 0) {
+    const what = review.missing.map((item) => `«${lowerFirst(item)}»`).join(', ')
+    return review.done && !outcome.doubt
+      ? `Hecho, en ${count}. Al revisarlo faltaba ${what}: ya está añadido.`
+      : `Hecho en ${count}, pero puede que aún falte ${what}: revísalo.`
+  }
   if (outcome.doubt) {
     return `Hecho en ${count}, pero el JEV duda de que cumpla todo lo pedido: revísalo.`
   }
+  if (review) return `Hecho, en ${count}. Lo revisé con la IA y no falta nada de lo pedido.`
   return `Hecho, en ${count}.`
 }
 
@@ -322,6 +341,7 @@ async function conclude(
     trouble: tally.trouble,
     doubt,
     evidence,
+    asked: command,
     jevMs: tally.jevMs,
     ...(tally.chunks === 1 && tally.heads.length === 1 && tally.heads[0] !== undefined
       ? { enter: tally.heads[0] }
@@ -449,6 +469,14 @@ const KEY_PAUSE_MS = 500
  * mientras la IA sigue escribiendo, y la explicación de cada trozo llega detrás.
  */
 export async function build(
+  host: Stagehand,
+  players: Players,
+  request: BuildRequest,
+): Promise<Outcome> {
+  return review(host, players, request.command, await buildOnce(host, players, request))
+}
+
+async function buildOnce(
   host: Stagehand,
   players: Players,
   request: BuildRequest,
@@ -1170,6 +1198,7 @@ async function rewrite(
     trouble: null,
     doubt: verdict.fulfils < COMPOSE_THRESHOLDS.fulfils,
     evidence: verdict.evidence,
+    asked: command,
     jevMs: verdict.ms,
   }
 }
@@ -1178,6 +1207,84 @@ const lineAt = (source: string, offset: number) => source.slice(0, offset).split
 
 /** Cambiar lo que ya está escrito: la IA dicta los cambios, uno a uno, y cada uno se juzga, se escribe y se ve. */
 export async function modify(
+  host: Stagehand,
+  players: Players,
+  request: ModifyRequest,
+): Promise<Outcome> {
+  return review(host, players, request.command, await modifyOnce(host, players, request))
+}
+
+/**
+ * **La revisión**: si al acabar el JEV duda de que se haya hecho todo lo pedido, no se deja en «revísalo».
+ * La IA lee el programa entero contra la orden y dice qué falta; el JEV decide qué de eso pedía de verdad la
+ * orden (para no añadir lo que nadie pidió); y lo que falte se completa una vez, como un cambio más (se ve
+ * hacerse, y se puede deshacer). Si la revisión no ve nada que falte, eso es lo que se dice.
+ */
+async function review(
+  host: Stagehand,
+  players: Players,
+  command: string,
+  outcome: Outcome,
+): Promise<Outcome> {
+  if (!outcome.doubt || outcome.stopped || outcome.trouble !== null || outcome.written === 0) {
+    return outcome
+  }
+  if (host.signal.aborted) return outcome
+  const asked = outcome.asked ?? command
+  await host.show({ type: 'progress', text: 'El JEV duda de que esté todo: lo reviso con la IA…' })
+  const program = await host.program()
+  let missing: string[] | null
+  try {
+    missing = missingOf(
+      await players.provider.generate({
+        system: reviewSystem(),
+        prompt: reviewPrompt(asked, program.source.slice(0, REVIEW_BUDGET)),
+        maxTokens: 300,
+      }),
+    )
+  } catch {
+    missing = null
+  }
+  // Sin respuesta que se entienda, se queda la duda, como estaba.
+  if (missing === null || host.signal.aborted) return outcome
+  const judged = await judgeMissing(players.decider, asked, missing).catch(() => null)
+  if (judged === null) return outcome
+  const jevMs = outcome.jevMs + judged.ms
+  if (judged.asked.length === 0) {
+    // La IA no ve nada que falte (o lo que ve no lo pedía la orden): la duda queda resuelta.
+    return { ...outcome, doubt: false, jevMs, review: { missing: [], done: true } }
+  }
+  await host.show({
+    type: 'say',
+    say: `Al revisarlo falta: ${judged.asked.map(lowerFirst).join('; ')}. Lo completo.`,
+    aside: true,
+  })
+  if (host.signal.aborted) return { ...outcome, jevMs }
+  const fixed = await modifyOnce(host, players, {
+    command: `Completa lo que falta de lo que se pidió («${asked}»): ${judged.asked.join('; ')}.`,
+    whole: true,
+  })
+  return {
+    ...fixed,
+    written: outcome.written + fixed.written,
+    asked,
+    // (El programa ya no es el de antes: lo que dice el JEV es de cómo quedó.)
+    evidence: fixed.evidence.length > 0 ? fixed.evidence : outcome.evidence,
+    jevMs: jevMs + fixed.jevMs,
+    review: {
+      missing: judged.asked,
+      done: !fixed.stopped && fixed.trouble === null && fixed.written > 0,
+    },
+    ...(outcome.enter === undefined ? {} : { enter: outcome.enter }),
+  }
+}
+
+/** Hasta cuánto programa lee la revisión (un programa enorme se revisa por su principio). */
+const REVIEW_BUDGET = 24_000
+
+const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1)
+
+async function modifyOnce(
   host: Stagehand,
   players: Players,
   request: ModifyRequest,

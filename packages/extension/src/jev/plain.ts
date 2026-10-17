@@ -1117,6 +1117,86 @@ export async function judgeConfig(
   })
 }
 
+// ───────────────────────── la revisión: ¿falta algo de lo pedido? ─────────────────────────
+
+/** Cuántas cosas que falten se completan de una vez, como mucho. */
+export const MAX_MISSING = 3
+
+/**
+ * Cuando el JEV duda de que lo construido cumpla todo lo pedido, la IA **revisa** el programa entero contra
+ * la orden y dice qué falta, una cosa por línea. No propone mejoras: solo lo que la orden pedía y no está.
+ */
+export function reviewSystem(): string {
+  return [
+    'Eres quien revisa un programa en Python antes de entregarlo. Te doy lo que se pidió y el programa tal como ha quedado.',
+    'Di qué partes de lo pedido NO hace el programa (o hace a medias: con pass, puntos suspensivos, «por hacer», o sin enseñar lo que se pidió ver).',
+    'Responde solo con líneas que empiecen por «FALTA: », cada una con una frase corta e imperativa que diga qué hay que añadir o cambiar (por ejemplo: «FALTA: Mostrar la puntuación de cada generación»). Como mucho tres.',
+    'Si el programa hace todo lo pedido, responde solo «COMPLETO».',
+    'No pidas mejoras, pruebas, comentarios ni estilo que la orden no pida: solo lo que falta de lo pedido.',
+  ].join('\n')
+}
+
+export function reviewPrompt(command: string, source: string): string {
+  return `Lo que se pidió: ${command}\n\nEl programa:\n${source}`
+}
+
+/**
+ * Lo que dijo quien revisa: lo que falta (cada cosa en una frase), o nada si dice que está completo. Una
+ * respuesta que no se entiende no dice que falte nada (`null`: no se sabe).
+ */
+export function missingOf(text: string): string[] | null {
+  const missing = text
+    .split('\n')
+    .map((line) => /^\s*(?:[-*•]\s*)?FALTA\s*:\s*(.+?)\s*$/i.exec(line)?.[1] ?? '')
+    .map((line) =>
+      line
+        .replace(/^[«"]|[»"]$/g, '')
+        .replace(/[.]$/, '')
+        .trim(),
+    )
+    .filter((line) => line !== '')
+  if (missing.length > 0) return [...new Set(missing)].slice(0, MAX_MISSING)
+  return /\bCOMPLETO\b/i.test(text) ? [] : null
+}
+
+/**
+ * De lo que la revisión dice que falta, **qué pedía de verdad la orden**: el JEV lo decide cosa a cosa, para
+ * que una revisión celosa no añada lo que nadie pidió. Devuelve lo que sí era parte de lo pedido.
+ */
+export async function judgeMissing(
+  decider: Decider,
+  command: string,
+  missing: readonly string[],
+): Promise<{ asked: string[]; ms: number }> {
+  if (missing.length === 0) return { asked: [], ms: 0 }
+  const { answers, ms } = await decider.decide({
+    state: { orden: command, falta: [...missing] },
+    questions: Object.fromEntries(
+      missing.map((item, at) => [
+        `pedia${at}`,
+        {
+          type: 'noul' as const,
+          instructions: `Se pidió un programa en Python con la \`orden\`. Al revisarlo, alguien dice que le falta: «${item}». ¿Es eso parte de lo que la orden pide (no una mejora o un añadido que nadie pidió)?`,
+          criteria: {
+            true: 'Sí: la orden lo pide (dicho o claramente implícito) y el programa debería hacerlo.',
+            false: 'No: es una mejora, un detalle o algo que la orden no pide.',
+          },
+        },
+      ]),
+    ),
+  })
+  return {
+    asked: missing.filter((_, at) => {
+      const answer = answers[`pedia${at}`]
+      return answer?.type === 'noul' && answer.noul >= MISSING_THRESHOLD
+    }),
+    ms,
+  }
+}
+
+/** Con cuánta certeza del JEV algo que la revisión echa en falta se da por pedido (y se completa). */
+export const MISSING_THRESHOLD = 0.5
+
 // ───────────────────────── al reescribir, ¿se quería quitar eso? ─────────────────────────
 
 /**
