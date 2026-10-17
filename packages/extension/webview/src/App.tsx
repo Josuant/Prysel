@@ -2000,6 +2000,48 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           },
         }
       : null
+  // Una parte del programa que solo define la configuración ya está entera en su nodo: no se dibuja dos
+  // veces (sus flechas, a quien usa cada valor, salen del nodo).
+  const configLines =
+    // (Las mismas que van al nodo: las que el JEV no dice que no sean ajustes.)
+    panelsOn
+      ? constants
+          .filter(({ ask }) => configKinds[ask] !== 'no')
+          .map(({ knob }) => knob.line)
+          .join(',')
+      : ''
+  const drawn = useMemo(() => {
+    const lines = new Set(configLines === '' ? [] : configLines.split(',').map(Number))
+    const gone = new Set(
+      architecture && lines.size > 0
+        ? view.moduleFacts
+            .filter((fact) => {
+              if (fact.id === architecture.anchor) return false
+              if (!architecture.modules.some((module) => module.id === fact.id)) return false
+              const rows = sourceRows.slice(fact.line - 1, fact.lineEnd)
+              return (
+                rows.some((_, at) => lines.has(fact.line + at)) &&
+                rows.every((row, at) => lines.has(fact.line + at) || /^\s*(#.*)?$/.test(row))
+              )
+            })
+            .map((fact) => fact.id)
+        : [],
+    )
+    if (gone.size === 0 || !architecture) {
+      return { architecture, nodes: canvasNodes, edges: canvasEdges }
+    }
+    const keeps = (id: string) => !gone.has(id)
+    return {
+      architecture: {
+        ...architecture,
+        modules: architecture.modules.filter((module) => keeps(module.id)),
+        links: architecture.links.filter((link) => keeps(link.from) && keeps(link.to)),
+        ...(architecture.order ? { order: architecture.order.filter(keeps) } : {}),
+      },
+      nodes: canvasNodes.filter((node) => keeps(node.id)),
+      edges: canvasEdges.filter((edge) => keeps(edge.from) && keeps(edge.to)),
+    }
+  }, [configLines, architecture, view.moduleFacts, sourceRows, canvasNodes, canvasEdges])
   const reserve = useMemo(
     () =>
       architecture
@@ -3094,13 +3136,13 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           {program && program.nodes.length > 0 ? (
             <ErrorBoundary label="No se pudo dibujar el lienzo" resetKey={program}>
               <Canvas
-                nodes={canvasNodes}
-                edges={canvasEdges}
+                nodes={drawn.nodes}
+                edges={drawn.edges}
                 density={density}
                 onEnter={view.enter}
                 onOpen={view.descend}
                 onGistEdit={setTrying}
-                architecture={architecture}
+                architecture={drawn.architecture}
                 avoid={consoleBox}
                 result={outcome?.result ?? null}
                 runs={outcome?.result ? runsShown : null}
