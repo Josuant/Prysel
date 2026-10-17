@@ -537,6 +537,9 @@ const PROGRESS_NODE: CanvasNode = {
   label: 'Cómo avanza',
 }
 const KNOBS_ID = 'prysel:knobs'
+/** El punto, si sus dos coordenadas son números de verdad (ni `NaN` ni infinitos). */
+const finitePoint = (point: Point | undefined): Point | undefined =>
+  point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined
 const CONFIG_ID = 'prysel:config'
 /** Lo que separa un nodo de mandos del otro. */
 const HEAD_STACK = 16
@@ -743,7 +746,29 @@ function CanvasInner({
   }>({ key: fitKey, sizes: {} })
   const resized = resizedState.key === fitKey ? resizedState.sizes : NO_SIZES
 
-  const { setViewport, getViewport, setCenter, zoomIn, zoomOut } = useReactFlow()
+  const {
+    setViewport: moveCamera,
+    getViewport,
+    setCenter: centerCamera,
+    zoomIn,
+    zoomOut,
+  } = useReactFlow()
+  // La cámara nunca va a un sitio que no es un número: con un NaN se queda clavada (ni arrastrar el fondo
+  // ni la rueda la mueven ya), así que esa orden se ignora.
+  const setViewport = useCallback(
+    (...args: Parameters<typeof moveCamera>) =>
+      [args[0].x, args[0].y, args[0].zoom].every(Number.isFinite)
+        ? moveCamera(...args)
+        : Promise.resolve(false),
+    [moveCamera],
+  )
+  const setCenter = useCallback(
+    (...args: Parameters<typeof centerCamera>) =>
+      [args[0], args[1], args[2]?.zoom ?? 1].every(Number.isFinite)
+        ? centerCamera(...args)
+        : Promise.resolve(false),
+    [centerCamera],
+  )
   /** Sube cada vez que se pide encuadrar todo otra vez (el botón del lienzo): rehace el encuadre. */
   const [refits, setRefits] = useState(0)
   /**
@@ -1371,7 +1396,11 @@ function CanvasInner({
       placements.map((placement) => ({
         id: placement.id,
         value: placement,
-        position: moved[placement.id] ?? { x: placement.x + shiftX, y: placement.y + shiftY },
+        // (Un sitio movido a mano que no es un número no vale: el nodo vuelve al suyo.)
+        position: finitePoint(moved[placement.id]) ?? {
+          x: placement.x + shiftX,
+          y: placement.y + shiftY,
+        },
       })),
     [placements, moved, shiftX, shiftY],
   )
@@ -3048,8 +3077,10 @@ function CanvasInner({
   const onNodesChange = useCallback(
     (changes: NodeChange<AnyFlowNode>[]) => {
       for (const change of changes) {
-        if (change.type !== 'position' || !change.position) continue
-        const { id, position } = change
+        if (change.type !== 'position') continue
+        const position = finitePoint(change.position)
+        if (!position) continue
+        const { id } = change
         // Una nota no entra en el reparto: se lleva a mano, y lo que se aparta se guarda en el guion al soltarla.
         if (noteIds.has(id)) {
           setNoteMoves((previous) => ({ ...previous, [id]: position }))
@@ -3579,7 +3610,12 @@ function CanvasInner({
           </NodeToolbar>
         )}
         {interactive && controls && (
-          <Panel position="bottom-right" className="canvas-controls">
+          <Panel
+            position="bottom-right"
+            className="canvas-controls"
+            // La consola va en esa esquina: los mandos del mapa se ponen encima de ella, no debajo.
+            style={avoidH > 0 ? { marginBottom: avoidH + 8 } : undefined}
+          >
             <IconButton
               icon="plus"
               label="Acercar"

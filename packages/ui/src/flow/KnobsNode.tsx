@@ -93,7 +93,7 @@ export function KnobsNode({ data }: NodeProps<KnobsFlowNode>) {
   const dials = panel.items.filter((item) => item.control.type === 'dial')
   const rows = panel.items.filter((item) => item.control.type !== 'dial')
   return (
-    <div className="knobs-node nodrag nopan nowheel" style={{ width: size.w, height: size.h }}>
+    <div className="knobs-node nodrag nopan" style={{ width: size.w, height: size.h }}>
       <Handle
         type="source"
         id="out"
@@ -237,7 +237,7 @@ function Dial({
   return (
     <div className="knob" title={item.hint}>
       <div
-        className="knob__dial"
+        className="knob__dial nowheel"
         role="slider"
         tabIndex={0}
         aria-label={item.name}
