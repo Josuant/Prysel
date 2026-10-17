@@ -93,7 +93,7 @@ function ai(
  * Un JEV que duda de que esté todo mientras el programa no imprime el total, y que dice si lo que la revisión
  * echa en falta lo pedía la orden (`asked`).
  */
-function jev(asked: boolean): Decider & { missingAsked: number } {
+function jev(asked: boolean, unsure = 0.2): Decider & { missingAsked: number } {
   const local = localDecider()
   const self = {
     id: 'prueba',
@@ -103,7 +103,7 @@ function jev(asked: boolean): Decider & { missingAsked: number } {
       const code = (request.state as { codigo?: unknown }).codigo
       if ('cumple' in request.questions) {
         const done = typeof code === 'string' && code.includes('print(')
-        result.answers['cumple'] = { type: 'noul', noul: done ? 0.9 : 0.2 }
+        result.answers['cumple'] = { type: 'noul', noul: done ? 0.9 : unsure }
       }
       for (const id of Object.keys(request.questions)) {
         if (/^pedia\d+$/.test(id)) {
@@ -172,6 +172,20 @@ describe('si el JEV duda de que esté todo lo pedido, se revisa con la IA', () =
     )
     expect(unclear.doubt).toBe(true)
     expect(unclear.review).toBeUndefined()
+  })
+
+  it('también se revisa si el JEV no duda pero tampoco está claramente seguro', async () => {
+    const { host, state } = stage(ANTES)
+    const provider = ai([MEDIO, ENTERO], 'FALTA: Imprimir el total')
+    const outcome = await modify(
+      host,
+      // (0,7: por encima de la duda, por debajo de «claramente».)
+      { provider, decider: jev(true, 0.7) },
+      { command: 'calcula el total de unos precios y enséñalo', whole: true },
+    )
+    expect(provider.reviews).toBe(1)
+    expect(state.text).toBe(ENTERO)
+    expect(outcome.review?.done).toBe(true)
   })
 
   it('sin duda no se revisa nada', async () => {

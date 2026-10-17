@@ -194,6 +194,8 @@ export interface Outcome {
   evidence: Evidence[]
   /** La orden tal como se entendió al final (con la versión elegida, si se eligió una). */
   asked?: string
+  /** Con cuánta certeza dice el JEV que lo hecho cumple la orden (si llegó a juzgarlo). */
+  fulfils?: number
   /**
    * La revisión automática, si el JEV dudó: lo que la IA echó en falta de lo pedido (y el JEV confirmó), y si
    * quedó completado. `missing` vacío: se revisó y no falta nada.
@@ -325,12 +327,14 @@ async function conclude(
   const stopped = host.signal.aborted
   let evidence: Evidence[] = []
   let doubt = false
+  let fulfils: number | undefined
   if (tally.written > 0 && !stopped && tally.trouble === null) {
     try {
       const whole = await judgeCode(players.decider, command, tally.code.join('\n'))
       evidence = whole.evidence
       tally.jevMs += whole.ms
       doubt = whole.fulfils < COMPOSE_THRESHOLDS.fulfils
+      fulfils = whole.fulfils
     } catch {
       // Sin juicio final, lo hecho se queda como está.
     }
@@ -342,6 +346,7 @@ async function conclude(
     doubt,
     evidence,
     asked: command,
+    ...(fulfils === undefined ? {} : { fulfils }),
     jevMs: tally.jevMs,
     ...(tally.chunks === 1 && tally.heads.length === 1 && tally.heads[0] !== undefined
       ? { enter: tally.heads[0] }
@@ -1199,6 +1204,7 @@ async function rewrite(
     doubt: verdict.fulfils < COMPOSE_THRESHOLDS.fulfils,
     evidence: verdict.evidence,
     asked: command,
+    fulfils: verdict.fulfils,
     jevMs: verdict.ms,
   }
 }
@@ -1226,12 +1232,20 @@ async function review(
   command: string,
   outcome: Outcome,
 ): Promise<Outcome> {
-  if (!outcome.doubt || outcome.stopped || outcome.trouble !== null || outcome.written === 0) {
+  // Se revisa si el JEV duda, y también si no está claramente seguro: visto de verdad, dio por cumplida una
+  // orden de varias partes a la que le faltaba una entera.
+  const unsure = outcome.doubt || (outcome.fulfils !== undefined && outcome.fulfils < REVIEW_BELOW)
+  if (!unsure || outcome.stopped || outcome.trouble !== null || outcome.written === 0) {
     return outcome
   }
   if (host.signal.aborted) return outcome
   const asked = outcome.asked ?? command
-  await host.show({ type: 'progress', text: 'El JEV duda de que esté todo: lo reviso con la IA…' })
+  await host.show({
+    type: 'progress',
+    text: outcome.doubt
+      ? 'El JEV duda de que esté todo: lo reviso con la IA…'
+      : 'Reviso con la IA que esté todo lo pedido…',
+  })
   const program = await host.program()
   let missing: string[] | null
   try {
@@ -1278,6 +1292,9 @@ async function review(
     ...(outcome.enter === undefined ? {} : { enter: outcome.enter }),
   }
 }
+
+/** Por debajo de esta certeza del JEV en que se cumplió la orden, lo hecho se revisa con la IA. */
+export const REVIEW_BELOW = 0.85
 
 /** Hasta cuánto programa lee la revisión (un programa enorme se revisa por su principio). */
 const REVIEW_BUDGET = 24_000
