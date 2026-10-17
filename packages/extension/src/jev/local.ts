@@ -314,6 +314,16 @@ export function localDecider(): Decider {
         } else if (/^papel\d+$/.test(id) || id === 'forma') {
           // Sin un modelo que lea, el papel y la forma se quedan en lo que el código deja ver.
           answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'logica', UNSURE)
+        } else if (id === 'pantalla') {
+          // Sin un modelo que lea: lo que se toca, suena o se juega se nota en las palabras.
+          answers[id] = {
+            type: 'noul',
+            noul: /\b(piano|instrumento|tocar|toque|suene|sonido|musica|melodia|notas? musical|juego|jugar|boton|botones|tecla|teclas|calculadora|dibuj|pinta|animaci|reloj|bateria|guitarra)/.test(
+              text,
+            )
+              ? SURE
+              : 0.1,
+          }
         } else if (/^pedia\d+$/.test(id)) {
           // Sin un modelo que lea, lo que la revisión echa en falta se da por pedido: la revisión ya leyó.
           answers[id] = { type: 'noul', noul: SURE }

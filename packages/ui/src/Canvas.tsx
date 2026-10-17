@@ -84,6 +84,12 @@ import { Icon } from './Icon.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
 import { KnobsNode, knobsSize, type KnobsFlowNode, type KnobsPanel } from './flow/KnobsNode.tsx'
+import {
+  ScreenNode,
+  screenSize,
+  type ScreenFlowNode,
+  type ScreenPanel,
+} from './flow/ScreenNode.tsx'
 import { gistSize, titledScene, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
@@ -299,6 +305,12 @@ export interface CanvasProps {
    * encima del dibujo), con una flecha a cada parte que los usa.
    */
   config?: KnobsPanel | null
+  /**
+   * La **pantalla** del programa en marcha (su módulo `pantalla`): lo que se usa de verdad, con sus botones,
+   * sus teclas y lo que dibuja. En la arquitectura va a la salida, antes que el resultado; en el diagrama
+   * abierto, en la columna de la izquierda.
+   */
+  screen?: ScreenPanel | null
   /** Dónde **empieza** el trabajo: el módulo que lo arranca y lo que se dice de ello. */
   start?: { at: string; label: string } | null
   /**
@@ -488,6 +500,7 @@ const NODE_TYPES = {
   tray: TrayNode,
   viewer: ViewerNode,
   knobs: KnobsNode,
+  screen: ScreenNode,
   note: NoteNode,
   figure: FigureNode,
 }
@@ -499,6 +512,7 @@ type AnyFlowNode =
   | TrayFlowNode
   | ViewerFlowNode
   | KnobsFlowNode
+  | ScreenFlowNode
   | NoteFlowNode
   | FigureFlowNode
 
@@ -545,13 +559,15 @@ const CONFIG_ID = 'prysel:config'
 const HEAD_STACK = 16
 /** Lo que separa el resultado de sus ejecuciones. */
 const RUNS_GAP = 18
+const SCREEN_ID = 'prysel:screen'
 type Size2 = { w: number; h: number }
-/** La cola de la arquitectura: el resultado y, debajo, sus ejecuciones si las hay. */
+/** La cola de la arquitectura: la pantalla (si la hay), el resultado y, debajo, sus ejecuciones si las hay. */
 const tailOf = (
   contents: readonly (ViewerContent | null | undefined)[],
+  lead: Size2 | null = null,
 ): { w: number; h: number } | null => {
-  let w = 0
-  let h = 0
+  let w = lead?.w ?? 0
+  let h = lead?.h ?? 0
   for (const content of contents) {
     if (!content) continue
     const size = viewerSize(content)
@@ -606,6 +622,7 @@ function CanvasInner({
   progress = null,
   knobs = null,
   config = null,
+  screen = null,
   start = null,
   exit = null,
   beat = null,
@@ -868,10 +885,20 @@ function CanvasInner({
   )
   // El resultado, si lo hay, va a la cola de la arquitectura: cuenta para saber cuánto cabe.
   // (Y bajo él, si las hay, las ejecuciones: los dos son la cola.)
+  // Lo que mide la pantalla (por su contenido, no por quién la trae: así no se recoloca nada en cada dibujo).
+  const screenDims = screen ? screenSize(screen.view) : null
+  const screenKey = screenDims ? `${screenDims.w}x${screenDims.h}` : ''
+  const screenBox = useMemo(() => {
+    if (screenKey === '') return null
+    const [w = 0, h = 0] = screenKey.split('x').map(Number)
+    return { w, h }
+  }, [screenKey])
   const tailSize = useMemo(
     () =>
-      flow && architecture ? (tailOf([result?.content, progress, runs]) ?? undefined) : undefined,
-    [result, progress, runs, flow, architecture],
+      flow && architecture
+        ? (tailOf([result?.content, progress, runs], screenBox) ?? undefined)
+        : undefined,
+    [result, progress, runs, flow, architecture, screenBox],
   )
   const nodes = useMemo(
     () => allNodes.filter((node) => !node.handwritten && !(aside && node.viewer)),
@@ -1321,12 +1348,17 @@ function CanvasInner({
     () => (progress && aside && !asArchitecture ? viewerSize(progress) : null),
     [progress, aside, asArchitecture],
   )
+  // La pantalla, ahí también: bajo las perillas y antes que el visor.
+  const sideScreen = screenBox && aside && !asArchitecture ? screenBox : null
   const sideExtra =
-    (headAside && asideHead ? asideHead.h + 16 : 0) + (sideProgress ? sideProgress.h + 16 : 0)
+    (headAside && asideHead ? asideHead.h + 16 : 0) +
+    (sideScreen ? sideScreen.h + 16 : 0) +
+    (sideProgress ? sideProgress.h + 16 : 0)
   const sideW = aside
     ? Math.max(
         moduleTray?.w ?? 0,
         headAside && asideHead ? asideHead.w : 0,
+        sideScreen?.w ?? 0,
         sideProgress?.w ?? 0,
         ...sideViewers.map((node) => (node.viewer ? viewerSize(node.viewer).w : 0)),
       )
@@ -1343,8 +1375,8 @@ function CanvasInner({
   // Con las ejecuciones debajo, la cola son los dos visores, uno sobre otro.
   const tailBox = useMemo(
     // (Puede no haber resultado —el programa se cortó sin enseñar nada— y sí algo que contar de cómo iba.)
-    () => (figures !== undefined ? tailOf([result?.content, progress, runs]) : null),
-    [result, progress, runs, figures],
+    () => (figures !== undefined ? tailOf([result?.content, progress, runs], screenBox) : null),
+    [result, progress, runs, figures, screenBox],
   )
   // En la arquitectura las perillas van a la entrada y el resultado a la salida: de izquierda a derecha,
   // salvo que de otro modo (alguno encima o debajo) el conjunto se vea claramente más grande en este lienzo.
@@ -2421,11 +2453,17 @@ function CanvasInner({
             y: shiftY + Math.max(28, (layoutBounds.h - tailBox.h) / 2),
           }
       : null
-  const resultAt = resultSize && tailAt ? { ...tailAt, ...resultSize } : null
+  // Lo primero de la cola es la pantalla (lo que se usa); debajo, el resultado y sus ejecuciones.
+  const screenAt = screenBox && tailAt ? { ...tailAt, ...screenBox } : null
+  const resultAt =
+    resultSize && tailAt
+      ? { x: tailAt.x, y: tailAt.y + (screenAt ? screenAt.h + RUNS_GAP : 0), ...resultSize }
+      : null
   // Las ejecuciones, bajo el resultado: es su historia.
   const tailViewers: { node: CanvasNode; content: ViewerContent; at: Point; size: Size2 }[] = []
   if (tailAt) {
-    let y = tailAt.y + (resultAt ? resultAt.h + RUNS_GAP : 0)
+    let y =
+      tailAt.y + (screenAt ? screenAt.h + RUNS_GAP : 0) + (resultAt ? resultAt.h + RUNS_GAP : 0)
     for (const [node, content] of [
       [PROGRESS_NODE, progress],
       [RUNS_NODE, runs],
@@ -2480,21 +2518,36 @@ function CanvasInner({
             ...headSize,
           }
         : null
-  // En el diagrama abierto, el visor de cómo avanza va bajo las perillas.
+  // En el diagrama abierto, la pantalla y el visor de cómo avanza van bajo las perillas.
+  const sideTop =
+    MODULE_TRAY_AT.y +
+    (moduleTray ? moduleTray.h + 16 : 0) +
+    (headAside && headSize ? headSize.h + 16 : 0)
+  const sideScreenAt = sideScreen ? { x: MODULE_TRAY_AT.x, y: sideTop, ...sideScreen } : null
   if (sideProgress && progress) {
     tailViewers.push({
       node: PROGRESS_NODE,
       content: progress,
-      at: {
-        x: MODULE_TRAY_AT.x,
-        y:
-          MODULE_TRAY_AT.y +
-          (moduleTray ? moduleTray.h + 16 : 0) +
-          (headAside && headSize ? headSize.h + 16 : 0),
-      },
+      at: { x: MODULE_TRAY_AT.x, y: sideTop + (sideScreen ? sideScreen.h + 16 : 0) },
       size: sideProgress,
     })
   }
+  const screenFrame = screenAt ?? sideScreenAt
+  const screenNodes: ScreenFlowNode[] =
+    screen && screenFrame
+      ? [
+          {
+            id: SCREEN_ID,
+            type: 'screen' as const,
+            position: { x: screenFrame.x, y: screenFrame.y },
+            ...nodeFrame(screenFrame),
+            zIndex: 4,
+            draggable: false,
+            selectable: false,
+            data: { panel: screen, size: screenFrame },
+          },
+        ]
+      : []
   // Cada nodo de mandos, en su sitio dentro de ese hueco: uno bajo otro, o (encima del dibujo) uno junto a otro.
   const across = headArch && headSide === 'top'
   const headBoxes: { id: string; panel: KnobsPanel; box: Size2 & { x: number; y: number } }[] = []
@@ -3327,6 +3380,7 @@ function CanvasInner({
           ...flowNodes,
           ...resultNodes,
           ...knobsNodes,
+          ...screenNodes,
           ...dockedNodes,
           ...sideFlow.nodes,
           ...noteFlow.nodes,

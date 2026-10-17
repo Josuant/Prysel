@@ -7731,6 +7731,152 @@ button.run-panel__line:hover {
 .knobs__chips:hover .knobs__chip {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-card));
 }
+/*
+ * La pantalla del programa en marcha: lo que se usa de verdad (botones que se pulsan, lo que dibuja, lo que
+ * escribe). Como una ventanita de aplicación a la salida del diagrama.
+ */
+.screen-node {
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--border-card));
+  border-radius: 14px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  cursor: default;
+}
+.screen-node[data-phase='failed'] {
+  border-color: color-mix(in srgb, var(--state-error) 60%, var(--border-card));
+}
+.screen-node__head {
+  display: flex;
+  height: 34px;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--border-card);
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-raised));
+}
+.screen-node__title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.screen-node__state {
+  flex: 1;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.screen-node__restart {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 14px;
+  cursor: pointer;
+  place-items: center;
+}
+.screen-node__restart:hover {
+  background: var(--field);
+  color: var(--ink);
+}
+.screen-node__body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+}
+.screen-node__canvas {
+  align-self: center;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--border-card);
+}
+.screen-node__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.screen-node__button {
+  min-width: 44px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-card);
+  border-bottom-width: 3px;
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    transform 0.05s,
+    border-color 0.1s;
+}
+.screen-node__button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-card));
+}
+.screen-node__button:active:not(:disabled) {
+  border-bottom-width: 1px;
+  transform: translateY(2px);
+}
+.screen-node__button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.screen-node__lines {
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+}
+.screen-node__lines p {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.screen-node__keys {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.screen-node__keys kbd {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-card);
+  border-radius: 5px;
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.screen-node__error {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--state-error) 12%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+}
+.screen-node__hint {
+  margin: auto 0;
+  color: var(--ink-faint);
+  font-size: 12px;
+  text-align: center;
+}
 /* Desde dónde se mira el programa: Idea · Partes · Detalle. Arriba, en el centro. */
 .distance {
   top: 10px;

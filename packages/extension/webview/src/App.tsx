@@ -23,6 +23,7 @@ import {
   type KnobControl,
   type KnobsPanel,
   type KnobValue,
+  type ScreenPanel,
   FunctionMenu,
   Icon,
   IconButton,
@@ -108,6 +109,17 @@ import {
   runsViewer,
   type RunEntry,
 } from './outcome.ts'
+import {
+  EMPTY_SCREEN,
+  applyScreen,
+  keyLabel,
+  keyMatches,
+  playNote,
+  restartScreen,
+  usesScreen,
+  withOutput,
+  type ScreenState,
+} from './screen.ts'
 import {
   dialRange,
   kindGuess,
@@ -256,6 +268,11 @@ export interface HostFeatures {
   hub?: boolean
   /** Los números con los que se puede jugar y el dado, como un nodo del diagrama. */
   knobs?: boolean
+  /**
+   * El programa se puede **usar de verdad** en su nodo «Pantalla» (suena, tiene botones, dibuja): quien lo
+   * aloja lo tiene en marcha aparte (mensajes `screen`/`screened`). De momento, la web.
+   */
+  screen?: boolean
 }
 
 const ALL_FEATURES: HostFeatures = {
@@ -549,6 +566,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * se maneja, `no` si no es un ajuste, `null` si no lo sabe. Las preguntas ya hechas, para no repetirlas.
    */
   const [configKinds, setConfigKinds] = useState<Readonly<Record<string, string | null>>>({})
+  /** La pantalla del programa en marcha (ver `screen.ts`). */
+  const [screen, setScreen] = useState<ScreenState>(EMPTY_SCREEN)
   const configAsked = useRef(new Set<string>())
   const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
   /**
@@ -766,6 +785,36 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           setArchLast(verdict)
         } catch {
           // Una clave que no es la nuestra: no hay a quién aplicarla.
+        }
+      } else if (message.type === 'screened') {
+        if (message.ev === 'loading') setScreen(restartScreen)
+        else if (message.ev === 'screen') {
+          const { command } = message
+          // Lo que suena no se dibuja: suena.
+          if (command['op'] === 'sound') {
+            playNote(Number(command['hz']), Number(command['secs']), Number(command['delay']))
+          } else if (command['op'] === 'ready') {
+            setScreen((known) => ({
+              ...known,
+              phase: known.phase === 'failed' ? 'failed' : 'running',
+            }))
+          } else setScreen((known) => applyScreen(known, command))
+        } else if (message.ev === 'out') setScreen((known) => withOutput(known, message.text))
+        else if (message.ev === 'idle') {
+          setScreen((known) => (known.phase === 'loading' ? { ...known, phase: 'running' } : known))
+        } else {
+          const error =
+            message.ev === 'error'
+              ? { name: message.name, message: message.message, line: message.line }
+              : { name: 'Motor', message: message.message, line: null }
+          // Un fallo al arrancar lo para; uno al pulsar algo se dice, y lo demás se puede seguir usando.
+          const stops = message.ev === 'fatal' || error.name === 'Colgado'
+          setScreen((known) => ({
+            ...known,
+            phase: stops || known.phase === 'loading' ? 'failed' : known.phase,
+            error,
+            timers: [],
+          }))
         }
       } else if (message.type === 'configured') {
         try {
@@ -2000,6 +2049,90 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           },
         }
       : null
+  // ── La pantalla: el programa en marcha, para usarlo de verdad (ver `screen.ts`) ──
+  // Si el programa usa la pantalla de Prysel, se pone en marcha solo (aparte) cada vez que su código se asienta.
+  const screenSource =
+    features.screen === true &&
+    program &&
+    lesson === null &&
+    !constructing &&
+    usesScreen(program.source)
+      ? program.source
+      : null
+  useEffect(() => {
+    // (Lo que quedó en la pantalla no se borra aquí: al arrancar otra vez empieza en blanco.)
+    if (screenSource === null) {
+      post({ type: 'screen', action: 'stop' })
+      return
+    }
+    const timer = window.setTimeout(() => {
+      post({ type: 'screen', action: 'start' })
+    }, SCREEN_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [screenSource])
+  // Lo que se repite (`pantalla.cada`): se pulsa solo, a su ritmo, mientras está en marcha.
+  const screenTimers = screen.phase === 'running' ? screen.timers : null
+  useEffect(() => {
+    if (!screenTimers || screenTimers.length === 0) return
+    const intervals = screenTimers.map(({ id, secs }) =>
+      window.setInterval(() => {
+        post({ type: 'screen', action: 'press', id, tick: true })
+      }, secs * 1000),
+    )
+    return () => {
+      for (const interval of intervals) window.clearInterval(interval)
+    }
+  }, [screenTimers])
+  // Sus teclas: se oyen en toda la página, salvo mientras se escribe en otro sitio (el código, una caja).
+  const screenKeys = screen.phase === 'running' && screen.keys.length > 0 ? screen.keys : null
+  useEffect(() => {
+    if (!screenKeys) return
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (
+        event.repeat ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        target?.closest('input, textarea, select, [contenteditable="true"], .cm-editor')
+      ) {
+        return
+      }
+      const hit = screenKeys.filter((one) => keyMatches(one.key, event.key))
+      if (hit.length === 0) return
+      event.preventDefault()
+      for (const one of hit) post({ type: 'screen', action: 'press', id: one.id })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [screenKeys])
+  const printed = screen.output.split('\n').filter((line) => line.trim() !== '')
+  const screenPanel: ScreenPanel | null =
+    screenSource !== null && screen.phase !== 'idle'
+      ? {
+          view: {
+            phase: screen.phase,
+            title: screen.title,
+            // Lo que escribe en la pantalla; si no escribe nada en ella, lo último que imprime.
+            lines: screen.lines.length > 0 ? screen.lines : printed.slice(-4),
+            buttons: screen.buttons,
+            keys: screen.keys.map((one) => keyLabel(one.key)),
+            canvas: screen.canvas,
+            error: screen.error,
+          },
+          onPress: (id: number) => {
+            setScreen((known) => (known.error ? { ...known, error: null } : known))
+            post({ type: 'screen', action: 'press', id })
+          },
+          onRestart: () => {
+            post({ type: 'screen', action: 'start' })
+          },
+        }
+      : null
   // Una parte del programa que solo define la configuración ya está entera en su nodo: no se dibuja dos
   // veces (sus flechas, a quien usa cada valor, salen del nodo).
   const configLines =
@@ -3149,6 +3282,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 progress={progressShown}
                 knobs={knobsPanel}
                 config={configPanel}
+                screen={screenPanel}
                 start={outcome?.start ?? null}
                 exit={
                   architecture?.order !== undefined && told?.exit !== undefined
@@ -4029,6 +4163,9 @@ interface ArchVerdict {
 }
 const asRole = (role: string | null | undefined): ModuleRole | null =>
   MODULE_ROLES.find((known) => known === role) ?? null
+/** Cuánto se espera a que el código se asiente antes de volver a poner en marcha su pantalla. */
+const SCREEN_WAIT_MS = 700
+
 /** La versión con la que se pide algo sin programa abierto: quien lo recibe le crea uno y usa la suya. */
 const NO_VERSION = -1
 

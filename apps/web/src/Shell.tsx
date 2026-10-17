@@ -28,7 +28,9 @@ const WEB_FEATURES: HostFeatures = {
   editLesson: false,
   chat: true,
   foldInsights: true,
+  screen: true,
   starters: [
+    'Un piano que suene y se pueda tocar',
     'Hazme un juego de adivinar un número',
     'Quiero llevar la cuenta de mis gastos',
     'Haz el juego de la vida y enseña tres generaciones',

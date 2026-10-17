@@ -50,7 +50,11 @@ import {
   tellSystem,
   judgeRemoval,
   judgeMissing,
+  judgeScreen,
   missingOf,
+  SCREEN_GUIDE,
+  SCREEN_THRESHOLD,
+  usesScreenModule,
   reviewPrompt,
   reviewSystem,
   flavourSystem,
@@ -134,6 +138,11 @@ export interface Stagehand {
    * seguro), para ver qué hace de verdad. `null`: aquí no se puede ejecutar.
    */
   run?(): Promise<Trace | null>
+  /**
+   * Aquí el programa se puede **usar de verdad** con la pantalla de Prysel (suena, se pulsa, dibuja): lo que
+   * se pide para usarlo se construye con ella.
+   */
+  screen?: boolean
 }
 
 export type Shown =
@@ -557,6 +566,9 @@ async function buildOnce(
     }
   }
 
+  // ── ¿Algo que se usa de verdad (suena, se toca, se juega)? Entonces se hace con la pantalla, donde la hay. ──
+  const screen = !host.signal.aborted && (await screenFor(host, players, command, start))
+
   // ── El plan: una lista de partes. Cada una aparece en el diagrama en cuanto llega su línea. ──
   const stages: Stage[] = []
   if (request.outline && !host.signal.aborted) {
@@ -572,7 +584,7 @@ async function buildOnce(
     const source = listen(
       players.provider,
       {
-        system: planSystem(teach),
+        system: planSystem(teach, screen),
         prompt: outlinePrompt({ command, where: request.where, context: context.text }),
         maxTokens: 700,
       },
@@ -668,7 +680,7 @@ async function buildOnce(
     const source = listen(
       players.provider,
       {
-        system: codeSystem(teach),
+        system: codeSystem(teach, screen),
         prompt: codePrompt({
           command,
           where: request.where,
@@ -1087,7 +1099,7 @@ async function rewrite(
   let answer = ''
   try {
     answer = await players.provider.generate({
-      system: rewriteSystem(),
+      system: withScreen(rewriteSystem(), await screenFor(host, players, request.command, start)),
       prompt: rewritePrompt({
         command,
         source: before.replace(/\r\n/g, '\n'),
@@ -1361,6 +1373,25 @@ async function ranOf(host: Stagehand): Promise<{ broken: string | null; said: st
 /** Por debajo de esta certeza del JEV en que se cumplió la orden, lo hecho se revisa con la IA. */
 export const REVIEW_BELOW = 0.85
 
+/**
+ * ¿Se hace con la pantalla (para usarlo de verdad)? Solo donde la hay: si el programa ya la usa, sí; si no, lo
+ * dice el JEV de lo pedido.
+ */
+async function screenFor(
+  host: Stagehand,
+  players: Players,
+  command: string,
+  program: Program,
+): Promise<boolean> {
+  if (host.screen !== true) return false
+  if (usesScreenModule(program.source)) return true
+  const judged = await judgeScreen(players.decider, command).catch(() => null)
+  return judged !== null && judged.uses >= SCREEN_THRESHOLD
+}
+
+const withScreen = (system: string, screen: boolean) =>
+  screen ? `${system}\n\n${SCREEN_GUIDE}` : system
+
 /** Hasta cuánto programa lee la revisión (un programa enorme se revisa por su principio). */
 const REVIEW_BUDGET = 24_000
 
@@ -1399,7 +1430,7 @@ async function modifyOnce(
   const source = listen(
     players.provider,
     {
-      system: modifySystem(),
+      system: withScreen(modifySystem(), await screenFor(host, players, command, start)),
       prompt: modifyPrompt({
         command,
         scope: request.lines

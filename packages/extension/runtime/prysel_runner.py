@@ -1077,6 +1077,8 @@ SAFE_MODULES = frozenset(
         "copy",
         "operator",
         "textwrap",
+        # La pantalla de Prysel: suena, dibuja y tiene botones, pero solo hablando con el lienzo.
+        "pantalla",
     }
 )
 # Nombres que abren una puerta fuera del sandbox (archivos, otro código, otros módulos) aunque el módulo
@@ -1514,6 +1516,10 @@ class Runner:
             saved = sys.stdout, sys.stderr
             sys.stdout = sys.stderr = out
             self.running.set()
+            # La pantalla empieza de cero en cada ejecución, y sin nadie delante: pulsa cada botón una vez.
+            sys.modules.pop("pantalla", None)
+            simulating = os.environ.get("PRYSEL_SIMULAR")
+            os.environ["PRYSEL_SIMULAR"] = "1"
             try:
                 code = compile(source, filename, "exec")
                 _WIDE = wide
@@ -1547,6 +1553,10 @@ class Runner:
             finally:
                 self.running.clear()
                 sys.stdout, sys.stderr = saved
+                if simulating is None:
+                    os.environ.pop("PRYSEL_SIMULAR", None)
+                else:
+                    os.environ["PRYSEL_SIMULAR"] = simulating
         emit(
             {
                 "ev": "trace",

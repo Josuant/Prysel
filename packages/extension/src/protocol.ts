@@ -285,7 +285,22 @@ export interface ConfiguredMessage {
   kinds: (string | null)[]
 }
 
+/**
+ * Anfitrión → webview: lo que hace el programa **en marcha para usarlo** (su `pantalla`): una orden de la
+ * pantalla (`screen`: sonar, un botón, dibujar…), lo que imprime (`out`), un fallo, que terminó de atender lo
+ * último (`idle`), que está arrancando (`loading`) o que el motor se paró (`fatal`).
+ */
+export type ScreenedMessage = { type: 'screened' } & (
+  | { ev: 'screen'; command: Record<string, unknown> }
+  | { ev: 'out'; text: string }
+  | { ev: 'error'; name: string; message: string; line: number | null }
+  | { ev: 'idle' }
+  | { ev: 'loading' }
+  | { ev: 'fatal'; message: string }
+)
+
 export type WebviewMessage =
+  | ScreenedMessage
   | ConfiguredMessage
   | GistsMessage
   | CoveredMessage
@@ -493,6 +508,19 @@ export interface ConfigMessage {
 }
 
 /**
+ * El programa **en marcha para usarlo** (su `pantalla`): arrancarlo de cero con el código de ahora, una
+ * pulsación (de un botón, una tecla o lo que se repite con `cada`; `id` es el de su función), o pararlo.
+ */
+export interface ScreenMessage {
+  type: 'screen'
+  action: 'start' | 'press' | 'stop'
+  id?: number
+  args?: (string | number)[]
+  /** Es lo que se repite solo (`cada`): si aún está con lo anterior, este se salta (no se amontonan). */
+  tick?: boolean
+}
+
+/**
  * Quien lo usa juega el programa: `answers` son todas las respuestas de teclado que lleva dadas, en orden (el
  * programa se vuelve a ejecutar con ellas y se para en la siguiente pregunta). `null`: volver a la sesión de
  * ejemplo. `fresh`: una partida nueva (si el programa tira de azar, con otra suerte).
@@ -535,6 +563,7 @@ export type HostMessage =
   | CoverMessage
   | ArchMessage
   | ConfigMessage
+  | ScreenMessage
   | LaunchMessage
   | PlayMessage
   | TryCallMessage
@@ -803,6 +832,32 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (shape !== null && typeof shape !== 'string') return null
     return { type: 'arched', key, roles: roles as (string | null)[], shape }
   }
+  if (type === 'screened') {
+    const event = value as Record<string, unknown>
+    const { ev } = event
+    if (ev === 'screen') {
+      const { command } = event
+      return command !== null && typeof command === 'object' && !Array.isArray(command)
+        ? { type: 'screened', ev, command: command as Record<string, unknown> }
+        : null
+    }
+    if (ev === 'out')
+      return typeof event['text'] === 'string'
+        ? { type: 'screened', ev, text: event['text'] }
+        : null
+    if (ev === 'error') {
+      const { name, message, line } = event
+      if (typeof name !== 'string' || typeof message !== 'string') return null
+      return { type: 'screened', ev, name, message, line: typeof line === 'number' ? line : null }
+    }
+    if (ev === 'fatal') {
+      return typeof event['message'] === 'string'
+        ? { type: 'screened', ev, message: event['message'] }
+        : null
+    }
+    if (ev === 'idle' || ev === 'loading') return { type: 'screened', ev }
+    return null
+  }
   if (type === 'configured') {
     const { key, kinds } = value as { key?: unknown; kinds?: unknown }
     if (typeof key !== 'string' || !Array.isArray(kinds)) return null
@@ -940,6 +995,24 @@ export function parseHostMessage(value: unknown): HostMessage | null {
         : []
     })
     return read.length === modules.length ? { type: 'arch', key, modules: read, shapes } : null
+  }
+  if (type === 'screen') {
+    const { action, id, args } = value as { action?: unknown; id?: unknown; args?: unknown }
+    if (action !== 'start' && action !== 'press' && action !== 'stop') return null
+    if (action !== 'press') return { type: 'screen', action }
+    if (!Number.isInteger(id)) return null
+    const given = Array.isArray(args)
+      ? args.filter(
+          (one): one is string | number => typeof one === 'string' || typeof one === 'number',
+        )
+      : []
+    return {
+      type: 'screen',
+      action,
+      id: id as number,
+      args: given.slice(0, 4),
+      ...((value as { tick?: unknown }).tick === true ? { tick: true } : {}),
+    }
   }
   if (type === 'config') {
     const { key, items } = value as { key?: unknown; items?: unknown }

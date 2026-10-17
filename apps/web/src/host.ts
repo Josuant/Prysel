@@ -15,6 +15,7 @@ import {
 import { Session } from '../../../packages/extension/src/session.ts'
 import { WebKernel } from './engine.ts'
 import { Orders } from './orders.ts'
+import { ScreenRunner } from './screen.ts'
 import { Gists } from '../../../packages/extension/src/gists.ts'
 import {
   deciderFrom,
@@ -86,6 +87,10 @@ export class WebHost {
   private started = performance.now()
   private orders: Orders
   private gists: Gists
+  /** El programa en marcha para usarlo (su `pantalla`): otro Python, aparte del que lo mira. */
+  private readonly screen = new ScreenRunner((event) => {
+    this.post({ type: 'screened', ...event })
+  })
 
   constructor() {
     this.parserReady = createPythonParser({ runtime: runtimeWasm, language: pythonWasm }).then(
@@ -321,6 +326,13 @@ export class WebHost {
       }
       case 'arch':
         this.orders.arch(message.key, message.modules, message.shapes)
+        return
+      case 'screen':
+        if (message.action === 'start') this.screen.start(this.doc.text)
+        else if (message.action === 'press' && message.id !== undefined) {
+          // Lo que se repite solo no se amontona: si aún está con lo anterior, este paso se salta.
+          if (!(message.tick && this.screen.busy)) this.screen.press(message.id, message.args ?? [])
+        } else this.screen.stop()
         return
       case 'config':
         this.orders.config(message.key, message.items)

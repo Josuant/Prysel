@@ -1314,7 +1314,61 @@ export async function judgeInterruption(
 const TEACH =
   'El usuario no ha pedido un programa: quiere ENTENDER un tema. El programa es tu pizarra: un modelo pequeño que lo simule con datos de ejemplo, con nombres tomados del tema.'
 
-export function planSystem(teach: boolean): string {
+// ───────────────────────── algo que se usa de verdad: la pantalla ─────────────────────────
+
+/**
+ * Cómo se hace, con la pantalla de Prysel, algo que se usa de verdad (suena, se toca, se juega): lo que se le
+ * enseña a la IA cuando el JEV dice que lo pedido es eso (`judgeScreen`) o el programa ya la usa.
+ */
+export const SCREEN_GUIDE = [
+  'Esto es algo que se USA de verdad (se toca, suena, se juega o se ve moverse): hazlo con el módulo `pantalla` de Prysel, que en el editor se ve, suena y se pulsa de verdad.',
+  'import pantalla',
+  'pantalla.titulo(texto) · pantalla.texto(...) escribe una línea en la pantalla · pantalla.limpiar_texto()',
+  'pantalla.boton(etiqueta, funcion, color=None): un botón; al pulsarlo llama a funcion() (pásala sin paréntesis).',
+  'pantalla.tecla(nombre, funcion): una tecla del teclado («a», «espacio», «izquierda», «derecha», «arriba», «abajo», «intro»).',
+  'pantalla.sonar(nota, segundos=0.4): suena una nota («do», «re#», «la4», «C5») o unos hercios; varias seguidas forman una melodía (cada una espera a la anterior: NO uses time.sleep). pantalla.silencio(segundos).',
+  'pantalla.lienzo(ancho, alto, fondo) y para dibujar: rect(x, y, ancho, alto, color), circulo(x, y, radio, color), linea(x1, y1, x2, y2, color), escribir(x, y, texto, color), borrar(). (0, 0) es arriba a la izquierda.',
+  'pantalla.cada(segundos, funcion): para lo que se mueve solo (un juego, un reloj); pantalla.parar() lo detiene. NUNCA un while True.',
+  'Al final del programa, pantalla.mostrar(). Nada de input(), time.sleep ni bucles sin fin: lo que hace el programa pasa al pulsar.',
+  'Para varios botones parecidos en un bucle, usa una función que devuelva otra: def tocar(nota): return lambda: pantalla.sonar(nota)',
+].join('\n')
+
+/** Con cuánta certeza del JEV lo pedido se hace como algo que se usa, con la pantalla. */
+export const SCREEN_THRESHOLD = 0.6
+
+/**
+ * ¿Lo pedido es **algo que se usa de verdad** (un instrumento, un juego, una calculadora con botones, algo
+ * que se dibuja y se mueve), más que un cálculo que enseña un resultado? Si lo es, se construye con la
+ * pantalla de Prysel.
+ */
+export async function judgeScreen(
+  decider: Decider,
+  command: string,
+): Promise<{ uses: number; ms: number }> {
+  const { answers, ms } = await decider.decide({
+    state: { orden: command },
+    questions: {
+      pantalla: {
+        type: 'noul',
+        instructions:
+          'Alguien pide un programa en Python con la `orden`. ¿Lo pedido es algo que se USA de verdad (se toca, suena, se juega con botones o teclas, o se ve dibujado y moviéndose), más que un cálculo o un proceso que enseña su resultado escrito?',
+        criteria: {
+          true: 'Sí: un instrumento, un juego, una calculadora con botones, un dibujo que se mueve, algo que suena o que se maneja pulsando.',
+          false:
+            'No: calcula, procesa o simula algo y enseña lo que da (aunque tenga una tabla o un resultado escrito).',
+        },
+      },
+    },
+  })
+  const answer = answers['pantalla']
+  return { uses: answer?.type === 'noul' ? answer.noul : 0, ms }
+}
+
+/** ¿Usa el programa la pantalla de Prysel? */
+export const usesScreenModule = (source: string): boolean =>
+  /^(?:import\s+pantalla\b|from\s+pantalla\s+import\b)/m.test(source)
+
+export function planSystem(teach: boolean, screen = false): string {
   return [
     teach
       ? `${TEACH} Piensa las partes de la EXPLICACIÓN (qué pasa primero, qué después), no partes de un programa cualquiera.`
@@ -1322,12 +1376,18 @@ export function planSystem(teach: boolean): string {
     'Lista las partes por las que pasa, en orden, una por línea: un título de dos a cuatro palabras y, si quieres, detrás de dos puntos, qué ocurre en esa parte en menos de diez palabras.',
     'Piensa también cómo encajan: si una parte necesita lo que otra guarda o hace, dilo al final de su línea, detrás de «<-», con el título exacto de esa otra parte (varias, separadas por comas). Ejemplo: «Mostrar el total: suma todos los precios <- Lista de gastos». La que no necesita a ninguna no lleva «<-».',
     'Si lo que se pide es un programa entero (no una pieza suelta que se añade a otro), la ÚLTIMA parte lo pone en marcha: lo arranca con un ejemplo concreto y enseña el resultado en pantalla. Quien lo pide quiere verlo funcionar.',
+    ...(screen
+      ? [
+          'Es algo que se usa de verdad: sus partes son lo que se ve y se pulsa (los sonidos o dibujos, cada botón o tecla y lo que hace). La ÚLTIMA parte pone en marcha la pantalla (botones, teclas, pantalla.mostrar()), en lugar de un ejemplo.',
+        ]
+      : []),
     'Entre 2 y 7 partes. Solo la lista: sin introducción, sin código y sin despedida.',
   ].join('\n')
 }
 
-export function codeSystem(teach: boolean): string {
+export function codeSystem(teach: boolean, screen = false): string {
   return [
+    ...(screen ? [SCREEN_GUIDE] : []),
     teach
       ? `${TEACH} Sé riguroso con el tema: no inventes datos; si usas valores aproximados, que sean razonables.`
       : 'Escribes un programa en Python que un editor va a dibujar como un diagrama, pieza a pieza.',

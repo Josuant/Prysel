@@ -1,5 +1,6 @@
 /// <reference lib="webworker" />
 import runnerSource from '../../../packages/extension/runtime/prysel_runner.py?raw'
+import screenSource from '../../../packages/extension/runtime/pantalla.py?raw'
 
 /**
  * El motor de ejecución de la web: el mismo `prysel_runner.py` de la extensión, pero dentro de Pyodide
@@ -32,6 +33,8 @@ async function boot(index: string): Promise<Pyodide> {
   }
   const pyodide = await loadPyodide({ indexURL: index, packageBaseUrl: PACKAGES })
   pyodide.FS.writeFile('/home/pyodide/prysel_runner.py', runnerSource)
+  // La pantalla de Prysel: aquí, sin nadie delante, pulsa cada botón una vez (ver `pantalla.py`).
+  pyodide.FS.writeFile('/home/pyodide/pantalla.py', screenSource)
   pyodide.globals.set('_prysel_send', (line: string) => {
     for (const part of line.split('\n')) {
       if (part.trim()) post(JSON.parse(part) as Record<string, unknown>)

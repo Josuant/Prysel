@@ -620,6 +620,8 @@ export class Orders {
       signal,
       program: () => port.analyse(),
       run: () => port.run(),
+      // En la web, lo que se pide para usarlo (suena, se toca) se hace con la pantalla y se usa de verdad.
+      screen: true,
       parses: (code) => !parser.parse(code).rootNode.hasError,
       async write(change) {
         const before = port.text()
