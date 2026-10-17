@@ -15,7 +15,7 @@ import {
 import { Session } from '../../../packages/extension/src/session.ts'
 import { WebKernel } from './engine.ts'
 import { Orders } from './orders.ts'
-import { Gists } from './gists.ts'
+import { Gists } from '../../../packages/extension/src/gists.ts'
 import {
   deciderFrom,
   loadFlow,

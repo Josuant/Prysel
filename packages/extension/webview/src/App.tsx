@@ -237,9 +237,22 @@ export interface HostFeatures {
    * pantalla pequeña quitan sitio al diagrama, que es lo que se viene a ver.
    */
   foldInsights?: boolean
+  /**
+   * La IA se pide desde el lienzo (clic derecho, un cable soltado, el botón «Pedir»), sin caja de órdenes
+   * abajo. En la interfaz de chat va siempre; aquí, la que tiene barra de herramientas, también.
+   */
+  hub?: boolean
+  /** Los números con los que se puede jugar y el dado, como un nodo del diagrama. */
+  knobs?: boolean
 }
 
-const ALL_FEATURES: HostFeatures = { orders: true, calls: true, editLesson: true }
+const ALL_FEATURES: HostFeatures = {
+  orders: true,
+  calls: true,
+  editLesson: true,
+  hub: true,
+  knobs: true,
+}
 
 export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {}) {
   // «Reducir movimiento» del sistema (o de VS Code, que lo refleja dentro del webview): la cámara del
@@ -1504,7 +1517,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     post({ type: 'edit', version, edits: [{ start: knob.start, end: knob.end, text }] })
   }
   /** La IA se maneja desde el lienzo (sin barra de escribir abajo): su botón flota sobre él. */
-  const hub = features.chat === true && features.orders === true
+  const hub = (features.chat === true || features.hub === true) && features.orders === true
   // «/» (o Ctrl+K) abre la caja de pedir desde el teclado: sobre lo elegido, o sobre el programa.
   const aboutId = about?.id
   const aboutLabel = about?.label
@@ -1778,7 +1791,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const hasStory = beats.length > 0
   // (Arriba, además, la barra de las perillas y el dado, si el programa los tiene.)
   const hasKnobs =
-    features.chat === true && (knobs.length > 0 || /\brandom\b/.test(program?.source ?? ''))
+    (features.chat === true || features.knobs === true) &&
+    (knobs.length > 0 || /\brandom\b/.test(program?.source ?? ''))
   // Las siluetas que hay en el dibujo, en el orden en que se leen. Con una sola no hay nada que distinguir.
   const roleKeys = useMemo(() => {
     const present = new Set(architecture?.modules.map((module) => module.role))
@@ -3012,7 +3026,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   : null
               }
               intro={intro}
-              chat={features.chat === true}
+              chat={features.chat === true || hub}
               sketch={drawing ?? asked?.sketch ?? null}
               kind={
                 drawing === null && asked
@@ -3139,9 +3153,18 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   <div className="canvas-float" data-at="top-right">
                     <DensityControl value={density} onChange={changeDensity} />
                   </div>
-                  <div className="canvas-float" data-at="bottom-left">
-                    <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
-                  </div>
+                  {/* (Con el botón de la IA abajo a la izquierda, se añade desde el lienzo: clic derecho, el
+                      «+» de cada paso o un cable soltado.) */}
+                  {!hub && (
+                    <div className="canvas-float" data-at="bottom-left">
+                      <AddNodeMenu
+                        onAdd={add}
+                        where={addWhere}
+                        placement="up"
+                        label="Añadir paso"
+                      />
+                    </div>
+                  )}
                 </>
               )}
               {/* Cuánto lleva lo que se construye: las partes del plan que ya tienen código. */}
@@ -3165,7 +3188,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
               )}
               {/* Desde dónde se mira: la idea, las partes o el detalle. Solo en el programa entero (no dentro
                   de una función) y cuando tiene partes que contar. */}
-              {features.chat &&
+              {(features.chat || hub) &&
                 lesson === null &&
                 view.focus === null &&
                 (architecture !== null || distance === 'detalle') &&
@@ -3355,7 +3378,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   />
                 </div>
               )}
-              {features.orders && !features.chat && (
+              {features.orders && !hub && (
                 <div className="canvas-float" data-at="bottom-center">
                   <CommandBar
                     state={order}

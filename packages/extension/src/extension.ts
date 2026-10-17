@@ -44,7 +44,14 @@ import { CallLog } from './calls.ts'
 import { smartAsk } from './jev/ask.ts'
 import { splitOrder } from './jev/compose.ts'
 import { contextFor } from './jev/context.ts'
-import { judgeInterruption, type Interruption } from './jev/plain.ts'
+import {
+  judgeArchitecture,
+  judgeCover,
+  judgeInterruption,
+  type Flavour,
+  type Interruption,
+} from './jev/plain.ts'
+import { Gists } from './gists.ts'
 import { build, modify, summaryOf, type Outcome, type Stagehand } from './jev/director.ts'
 import { decideCommand, type Directive, type Effect } from './jev/engine.ts'
 import { deepseekProvider, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
@@ -255,6 +262,8 @@ async function refresh() {
   try {
     const program = await analyse(doc)
     postToAll({ type: 'update', program, file: basename(doc.fileName), version: doc.version })
+    // Cuando el código se asiente, se mira (si no ha cambiado desde la última vez, no hace nada).
+    gistsFor(doc).touch()
     postRuns()
     postHistory(doc)
     void postLesson(doc)
@@ -272,6 +281,65 @@ async function refresh() {
 const callLog = new CallLog((entry) => {
   postToAll({ type: 'call', entry })
 })
+
+// ───────────────────────── «qué hace», cómo le fue y cómo avanza ─────────────────────────
+
+/**
+ * La IA y el JEV con los que se miran los programas (las tarjetas «Qué hace», el visor de cómo avanza…): se
+ * eligen como en las órdenes y se recuerdan aquí, porque se consultan a menudo y sin esperar.
+ */
+let gistProvider: AiProvider | null = null
+let gistDecider: Decider | null = null
+/** Lo que se mira de cada documento: el mismo motor que la web (`gists.ts`), con su propia memoria. */
+const gistHosts = new Map<string, Gists>()
+
+/**
+ * El motor que mira un documento: lo ejecuta aparte cuando el código se asienta, saca de la traza lo que
+ * hace cada función, cómo le fue al programa y cómo avanza, y se lo manda al lienzo.
+ *
+ * En VS Code el programa corre en el equipo de verdad (no en un navegador): solo se ejecuta solo en un
+ * espacio de trabajo de confianza y en **modo seguro** (módulos que no tocan nada: `random`, `math`…). Lo
+ * que no lo cumple se dice, y lo ejecuta quien lo usa.
+ */
+function gistsFor(doc: vscode.TextDocument): Gists {
+  const key = doc.uri.toString()
+  const known = gistHosts.get(key)
+  if (known) return known
+  const host = new Gists({
+    version: () => doc.version,
+    text: () => doc.getText(),
+    analyse: () => analyse(doc),
+    trace: async (code, inputs, seed = 7, watch) => {
+      if (!vscode.workspace.isTrusted) return null
+      // Un programa largo no se corta al llegar al tope: deja de grabarse y acaba, para ver qué da.
+      return sessionFor(doc).trace(code, 20_000, true, true, {
+        seed,
+        finish: true,
+        ...(inputs ? { inputs } : {}),
+        ...(watch ? { watch } : {}),
+      })
+    },
+    provider: () => gistProvider,
+    decider: () => gistDecider ?? callLog.decider(localDecider()),
+    busy: () => building.has(key),
+    post: (gists, version, run) => {
+      // El lienzo ya enseña otro archivo: esto no le dice nada.
+      if (currentDoc?.uri.toString() !== key) return
+      postToAll({ type: 'gists', version, gists, ...(run ? { run } : {}) })
+    },
+  })
+  gistHosts.set(key, host)
+  return host
+}
+
+/** Qué pieza cubre cada parte de lo pedido: una respuesta que llega tarde (a otra pregunta) no vale. */
+const coverTurns = { written: 0, planned: 0 }
+
+/** Por cada documento, cuánto había en su historia de deshacer al empezar cada orden («no, eso no»). */
+const orderMarks = new Map<string, number[]>()
+
+/** La versión con la que se rehace lo que se pidió (una de las propuestas): la toma la construcción. */
+let remaking: Flavour | null = null
 
 /** Dónde vive, en el llavero del sistema, la clave de la API de Anthropic. */
 const ANTHROPIC_SECRET = 'prysel.anthropicApiKey'
@@ -1227,6 +1295,8 @@ async function runDirected(
   said?: string,
 ): Promise<boolean> {
   const key = doc.uri.toString()
+  // La versión pedida (si se está rehaciendo con otra): se toma ahora, antes de esperar a nada.
+  const flavour = remaking
   builds.get(key)?.abort()
   const control = new AbortController()
   builds.set(key, control)
@@ -1283,8 +1353,16 @@ async function runDirected(
         })
         return
       }
-      // La versión que se eligió para una petición abierta: aquí no hay dónde ofrecer las otras.
-      if (event.type === 'flavours') return
+      // La versión que se eligió para una petición abierta: el lienzo ofrece las otras.
+      if (event.type === 'flavours') {
+        postToAll({
+          type: 'flavours',
+          command: said ?? command,
+          options: event.options,
+          chosen: event.chosen,
+        })
+        return
+      }
       // Lo que lleva voz lleva un número: el lienzo avisa con él cuando ha terminado de decirlo.
       const seq = event.say === '' ? undefined : ++speechSeq
       heard =
@@ -1346,6 +1424,7 @@ async function runDirected(
               where: effect.where,
               outline: effect.outline,
               ...(effect.teach ? { teach: true } : {}),
+              ...(flavour ? { flavour } : {}),
             },
           )
         : await modify(
@@ -1457,6 +1536,8 @@ async function postModels() {
   const context = extensionContext
   if (!context || webviews.size === 0) return
   const [provider, decider] = await Promise.all([pickProvider(context), pickDecider(context)])
+  gistProvider = provider
+  gistDecider = decider
   postToAll({ type: 'models', ai: provider?.id ?? null, jev: decider?.id ?? null })
 }
 
@@ -1670,6 +1751,73 @@ async function runFill(doc: vscode.TextDocument, gen: string) {
   }
 }
 
+/**
+ * Arrancar un programa que no hace nada: se le añade su etapa de arranque (y se puede deshacer). Si no se
+ * sabe con qué valores, se dice.
+ */
+async function launch(doc: vscode.TextDocument) {
+  const edit = await gistsFor(doc).launchEdit()
+  const before = doc.getText()
+  if (edit && (await writeEdits(doc, [edit]))) {
+    historyOf(doc).applied(before, [edit], doc.version)
+    postHistory(doc)
+    return
+  }
+  postToAll({
+    type: 'say',
+    text: 'No sé con qué valores arrancarlo. Dímelo tú: «arráncalo con …».',
+  })
+}
+
+/**
+ * «No, eso no»: se deshace lo que escribió la última orden que de verdad escribió algo (las que solo
+ * miraron no dejaron nada), volviendo justo a donde estaba la historia al darla.
+ */
+async function undoOrder() {
+  const doc = currentDoc
+  if (!doc) return
+  stopBuild(doc)
+  const key = doc.uri.toString()
+  const marks = orderMarks.get(key) ?? []
+  const sizes = () => historyOf(doc).sizes.undo
+  let to = marks.pop()
+  while (to !== undefined && to >= sizes() && marks.length > 0) to = marks.pop()
+  const floor = to === undefined || to >= sizes() ? Math.max(0, sizes() - 1) : to
+  while (sizes() > floor) {
+    const before = sizes()
+    await stepHistory('undo')
+    if (sizes() >= before) break
+  }
+}
+
+/**
+ * Rehace el programa con **otra versión** de las que se propusieron: lo que se estuviera construyendo se
+ * para, el programa se vacía (queda en el historial: se puede deshacer) y se construye de nuevo con ella.
+ */
+async function remake(context: vscode.ExtensionContext, message: CommandMessage, flavour: Flavour) {
+  const doc = currentDoc
+  if (!doc || doc.languageId !== 'python') return
+  const active = building.get(doc.uri.toString())
+  if (active) {
+    stopBuild(doc)
+    await active.done
+  }
+  const before = doc.getText()
+  if (before.length > 0) {
+    const edits = [{ start: 0, end: before.length, text: '' }]
+    if (!(await writeEdits(doc, edits))) return
+    historyOf(doc).applied(before, edits, doc.version)
+    postHistory(doc)
+  }
+  await refresh()
+  remaking = flavour
+  try {
+    await handleCommand(context, { ...message, version: doc.version, selected: null, focus: null })
+  } finally {
+    remaking = null
+  }
+}
+
 /** Graba la traza del archivo entero y se la manda al lienzo (con la versión del texto que se trazó). */
 async function traceDocument(doc: vscode.TextDocument) {
   const version = doc.version
@@ -1701,11 +1849,78 @@ function wireWebview(webview: vscode.Webview) {
       return
     }
     if (parsed.type === 'command') {
+      const doc = currentDoc
+      // Dónde estaba la historia al empezar esta orden: «no, eso no» vuelve justo hasta aquí.
+      if (doc) {
+        const marks = orderMarks.get(doc.uri.toString()) ?? []
+        marks.push(historyOf(doc).sizes.undo)
+        orderMarks.set(doc.uri.toString(), marks.slice(-40))
+      }
+      // Rehacerlo con otra de las versiones que se propusieron: se empieza de cero (se puede deshacer).
+      if (parsed.flavour && extensionContext) {
+        void remake(extensionContext, parsed, parsed.flavour)
+        return
+      }
       // Mientras se construye algo, lo que diga el usuario lo interrumpe: el JEV decide si lo que estaba
       // preparado sigue valiendo, si hay que rehacer lo que faltaba, o si es otra cosa.
       if (extensionContext) void interrupt(extensionContext, parsed)
       return
     }
+    // Lo que mira el motor de «qué hace»: probar una función, jugar el programa, otra tirada, qué mirar.
+    if (
+      parsed.type === 'tryCall' ||
+      parsed.type === 'play' ||
+      parsed.type === 'reroll' ||
+      parsed.type === 'watch'
+    ) {
+      const doc = currentDoc
+      if (!doc || doc.languageId !== 'python') return
+      const gists = gistsFor(doc)
+      if (parsed.type === 'tryCall') void gists.tryCall(parsed.id, parsed.call)
+      else if (parsed.type === 'play') void gists.play(parsed.answers, parsed.fresh === true)
+      else if (parsed.type === 'reroll') gists.reroll()
+      else gists.rewatch(parsed.text)
+      return
+    }
+    if (parsed.type === 'launch') {
+      const doc = currentDoc
+      if (doc && doc.languageId === 'python') void launch(doc)
+      return
+    }
+    if (parsed.type === 'arch') {
+      const decider = gistDecider ?? callLog.decider(localDecider())
+      void judgeArchitecture(decider, parsed.modules, parsed.shapes)
+        .then(({ roles, shape }) => {
+          postToAll({ type: 'arched', key: parsed.key, roles, shape })
+        })
+        .catch(() => undefined)
+      return
+    }
+    if (parsed.type === 'cover') {
+      // Lo escrito y lo planeado se preguntan por separado: una respuesta no deja vieja a la otra.
+      const which = parsed.plan === true ? 'planned' : 'written'
+      const turn = ++coverTurns[which]
+      const decider = gistDecider ?? callLog.decider(localDecider())
+      void judgeCover(decider, parsed.what, parsed.parts, parsed.pieces, parsed.plan === true)
+        .then((by) => {
+          if (turn !== coverTurns[which]) return
+          postToAll({
+            type: 'covered',
+            parts: parsed.parts,
+            pieces: parsed.pieces,
+            by,
+            ...(parsed.plan === true ? { plan: true } : {}),
+          })
+        })
+        .catch(() => undefined)
+      return
+    }
+    if (parsed.type === 'undoOrder') {
+      void undoOrder()
+      return
+    }
+    // Lo que se le está oyendo decir: aquí no hay voz que escuchar.
+    if (parsed.type === 'listening') return
     if (parsed.type === 'clearCalls') {
       callLog.clear()
       return
@@ -1757,6 +1972,8 @@ function wireWebview(webview: vscode.Webview) {
       else session?.restart()
       return
     }
+    // Lo que queda es el aviso de que el lienzo está listo: cualquier otra cosa que no se atienda, se ignora.
+    if (parsed.type !== 'ready') return
     webviewsReady++
     postToAll({ type: 'theme', theme: themeKind() })
     void postModels()

@@ -1111,8 +1111,11 @@ class _UnsafeCode(Exception):
         self.line = line
 
 
-def _check_safe(tree):
-    """Recorre el árbol antes de ejecutar nada: un módulo o un nombre fuera de la lista corta el paso."""
+def _check_safe(tree, scripted=False):
+    """Recorre el árbol antes de ejecutar nada: un módulo o un nombre fuera de la lista corta el paso.
+
+    `scripted`: lo que se teclee ya viene dado (respuestas de ejemplo): `input` no lee del equipo, y vale."""
+    forbidden = SAFE_FORBIDDEN_NAMES - {"input"} if scripted else SAFE_FORBIDDEN_NAMES
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1127,7 +1130,7 @@ def _check_safe(tree):
                 raise _UnsafeCode(
                     f'el módulo «{node.module or "."}» no está permitido en modo seguro', node.lineno
                 )
-        elif isinstance(node, ast.Name) and node.id in SAFE_FORBIDDEN_NAMES:
+        elif isinstance(node, ast.Name) and node.id in forbidden:
             raise _UnsafeCode(f'«{node.id}» no está permitido en modo seguro', node.lineno)
         elif isinstance(node, ast.Attribute) and node.attr in SAFE_FORBIDDEN_ATTRS:
             raise _UnsafeCode(f'acceder a «{node.attr}» no está permitido en modo seguro', node.lineno)
@@ -1477,7 +1480,7 @@ class Runner:
             hidden = _comprehension_only(tree)
             loops = _loops(tree)
             if safe:
-                _check_safe(tree)
+                _check_safe(tree, isinstance(inputs, list))
         except SyntaxError:
             hidden = frozenset()
         except _UnsafeCode as unsafe:

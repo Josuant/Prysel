@@ -1,10 +1,10 @@
 import type { Program } from '@prysel/python'
-import type { AiProvider } from '../../../packages/extension/src/ai/provider.ts'
-import { functionsIn, type Facts } from '../../../packages/extension/src/gist/facts.ts'
-import { entryOf, idleness, withLaunch } from '../../../packages/extension/src/gist/entry.ts'
-import { showValue } from '../../../packages/extension/src/gist/value.ts'
-import { storyOf } from '../../../packages/extension/src/gist/story.ts'
-import { judgeEntry } from '../../../packages/extension/src/jev/plain.ts'
+import type { AiProvider } from './ai/provider.ts'
+import { functionsIn, type Facts } from './gist/facts.ts'
+import { entryOf, idleness, withLaunch } from './gist/entry.ts'
+import { showValue } from './gist/value.ts'
+import { storyOf } from './gist/story.ts'
+import { judgeEntry } from './jev/plain.ts'
 import {
   ANSWER_ROUNDS,
   GistCache,
@@ -26,8 +26,8 @@ import {
   type Gist,
   type RunSummary,
   mixTracer,
-} from '../../../packages/extension/src/gist/gist.ts'
-import { loopsIn, type LoopFacts } from '../../../packages/extension/src/gist/laps.ts'
+} from './gist/gist.ts'
+import { loopsIn, type LoopFacts } from './gist/laps.ts'
 import {
   MAX_WATCHES,
   autoWatches,
@@ -38,14 +38,14 @@ import {
   wishedWatches,
   type Progress,
   type Watch,
-} from '../../../packages/extension/src/gist/progress.ts'
-import { triesIn } from '../../../packages/extension/src/gist/net.ts'
-import { classesIn } from '../../../packages/extension/src/gist/blueprint.ts'
-import { conditionsIn } from '../../../packages/extension/src/gist/branch.ts'
-import { pickRule, verifiedRules } from '../../../packages/extension/src/gist/patterns.ts'
-import type { MixRule } from '../../../packages/extension/src/gist/mechanisms.ts'
-import type { Decider } from '../../../packages/extension/src/jev/client.ts'
-import type { Trace } from '../../../packages/extension/src/trace.ts'
+} from './gist/progress.ts'
+import { triesIn } from './gist/net.ts'
+import { classesIn } from './gist/blueprint.ts'
+import { conditionsIn } from './gist/branch.ts'
+import { pickRule, verifiedRules } from './gist/patterns.ts'
+import type { MixRule } from './gist/mechanisms.ts'
+import type { Decider } from './jev/client.ts'
+import type { Trace } from './trace.ts'
 
 /**
  * «Qué hace» cada función, al día: cuando el código se asienta (nadie está escribiendo ni construyendo), se
@@ -469,6 +469,18 @@ export class Gists {
         this.answers.set(key, inputs)
         raw = await this.port.trace(text, inputs, seed, watch)
       }
+    }
+    // El anfitrión solo lo ejecuta solo en modo seguro (en VS Code corre en el equipo de verdad), y esto no lo
+    // cumple: no se ejecuta, y se dice por qué y que lo ejecute quien lo usa.
+    if (raw?.error?.name === 'UnsafeCode') {
+      this.ran = {
+        output: '',
+        ended: 'blocked',
+        problem: `Para ejecutarlo solo uso un modo seguro, y aquí ${raw.error.message}${
+          raw.error.line === null ? '' : ` (línea ${raw.error.line})`
+        }. Puede tocar tu equipo: ejecútalo tú cuando quieras.`,
+      }
+      return gistsOf(program, null)
     }
     if (raw) {
       const story = storyOf(program, raw)
