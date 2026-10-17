@@ -27,6 +27,7 @@ import {
   type Lesson,
 } from './lesson.ts'
 import {
+  MAX_COMMAND,
   parseHostMessage,
   type CommandMessage,
   type Theme,
@@ -223,7 +224,19 @@ function themeKind(): Theme {
     : 'dark'
 }
 
+/** Lo último que se le dijo al lienzo (las decisiones y lo que se dice): para las pruebas. */
+const saidLog: string[] = []
+/** Y lo último que llegó de él (su tipo): para las pruebas. */
+const heardLog: string[] = []
+
 function postToAll(message: WebviewMessage) {
+  if (message.type === 'decision') {
+    const { directive } = message
+    saidLog.push(
+      `${directive.kind}: ${'say' in directive ? directive.say : 'question' in directive ? directive.question : ''}`,
+    )
+  } else if (message.type === 'say') saidLog.push(`say: ${message.text}`)
+  if (saidLog.length > 20) saidLog.splice(0, saidLog.length - 20)
   if (message.type === 'trace') {
     lastTrace = {
       status: message.status,
@@ -1877,176 +1890,193 @@ async function traceDocument(doc: vscode.TextDocument) {
 
 /** Conecta un webview recién creado: responde al «ready» con el tema y el estado actual. */
 function wireWebview(webview: vscode.Webview) {
-  webview.onDidReceiveMessage((message) => {
-    const parsed = parseHostMessage(message)
-    if (!parsed) return
-    if (parsed.type === 'edit') {
-      void applyEdits(parsed.edits, parsed.version)
-      return
-    }
-    if (parsed.type === 'run') {
-      const doc = currentDoc
-      if (!doc || doc.languageId !== 'python') return
-      // Los ids llevan la línea: si el texto cambió desde que el lienzo los vio, no valen.
-      if (doc.version !== parsed.version) return void refresh()
-      if (mayRun()) void sessionFor(doc).run(parsed.ids)
-      return
-    }
-    if (parsed.type === 'command') {
-      void (async () => {
-        // Se pide algo sin un programa de Python abierto: se le crea uno, y se construye ahí. (Antes la
-        // orden se perdía sin decir nada.)
-        let doc = currentDoc
-        let message = parsed
-        if (!doc || doc.languageId !== 'python') {
-          doc = await newProgramDoc()
-          if (!doc) return
-          message = { ...parsed, version: doc.version }
-        }
-        // Dónde estaba la historia al empezar esta orden: «no, eso no» vuelve justo hasta aquí.
-        const marks = orderMarks.get(doc.uri.toString()) ?? []
-        marks.push(historyOf(doc).sizes.undo)
-        orderMarks.set(doc.uri.toString(), marks.slice(-40))
-        // Rehacerlo con otra de las versiones que se propusieron: se empieza de cero (se puede deshacer).
-        if (message.flavour && extensionContext) {
-          await remake(extensionContext, message, message.flavour)
-          return
-        }
-        // Mientras se construye algo, lo que diga el usuario lo interrumpe: el JEV decide si lo que estaba
-        // preparado sigue valiendo, si hay que rehacer lo que faltaba, o si es otra cosa.
-        if (extensionContext) await interrupt(extensionContext, message)
-      })()
-      return
-    }
-    // Lo que mira el motor de «qué hace»: probar una función, jugar el programa, otra tirada, qué mirar.
-    if (
-      parsed.type === 'tryCall' ||
-      parsed.type === 'play' ||
-      parsed.type === 'reroll' ||
-      parsed.type === 'watch'
-    ) {
-      const doc = currentDoc
-      if (!doc || doc.languageId !== 'python') return
-      const gists = gistsFor(doc)
-      if (parsed.type === 'tryCall') void gists.tryCall(parsed.id, parsed.call)
-      else if (parsed.type === 'play') void gists.play(parsed.answers, parsed.fresh === true)
-      else if (parsed.type === 'reroll') gists.reroll()
-      else gists.rewatch(parsed.text)
-      return
-    }
-    if (parsed.type === 'launch') {
-      const doc = currentDoc
-      if (doc && doc.languageId === 'python') void launch(doc)
-      return
-    }
-    if (parsed.type === 'arch') {
-      const decider = gistDecider ?? callLog.decider(localDecider())
-      void judgeArchitecture(decider, parsed.modules, parsed.shapes)
-        .then(({ roles, shape }) => {
-          postToAll({ type: 'arched', key: parsed.key, roles, shape })
-        })
-        .catch(() => undefined)
-      return
-    }
-    if (parsed.type === 'config') {
-      const decider = gistDecider ?? callLog.decider(localDecider())
-      void judgeConfig(decider, parsed.items)
-        .then((kinds) => {
-          postToAll({ type: 'configured', key: parsed.key, kinds })
-        })
-        .catch(() => undefined)
-      return
-    }
-    if (parsed.type === 'cover') {
-      // Lo escrito y lo planeado se preguntan por separado: una respuesta no deja vieja a la otra.
-      const which = parsed.plan === true ? 'planned' : 'written'
-      const turn = ++coverTurns[which]
-      const decider = gistDecider ?? callLog.decider(localDecider())
-      void judgeCover(decider, parsed.what, parsed.parts, parsed.pieces, parsed.plan === true)
-        .then((by) => {
-          if (turn !== coverTurns[which]) return
-          postToAll({
-            type: 'covered',
-            parts: parsed.parts,
-            pieces: parsed.pieces,
-            by,
-            ...(parsed.plan === true ? { plan: true } : {}),
-          })
-        })
-        .catch(() => undefined)
-      return
-    }
-    if (parsed.type === 'undoOrder') {
-      void undoOrder()
-      return
-    }
-    // Lo que se le está oyendo decir: aquí no hay voz que escuchar.
-    if (parsed.type === 'listening') return
-    if (parsed.type === 'clearCalls') {
-      callLog.clear()
-      return
-    }
-    if (parsed.type === 'spoken') {
-      speaking.get(parsed.seq)?.(parsed.spoke)
-      speaking.delete(parsed.seq)
-      return
-    }
-    if (parsed.type === 'stopOrder') {
-      stopBuild(currentDoc)
-      return
-    }
-    if (parsed.type === 'pickModel') {
-      void vscode.commands.executeCommand('prysel.pickModel')
-      return
-    }
-    if (parsed.type === 'jevKey') {
-      void vscode.commands.executeCommand('prysel.setTypesafeKey')
-      return
-    }
-    if (parsed.type === 'newLesson') {
-      void vscode.commands.executeCommand('prysel.newLesson')
-      return
-    }
-    if (parsed.type === 'proposeSections') {
-      void vscode.commands.executeCommand('prysel.proposeSections')
-      return
-    }
-    if (parsed.type === 'undo' || parsed.type === 'redo') {
-      void stepHistory(parsed.type)
-      return
-    }
-    if (parsed.type === 'noteMove') {
-      const doc = currentDoc
-      if (doc && doc.uri.scheme === 'file') void moveNote(doc, parsed.beat, parsed.offset)
-      return
-    }
-    if (parsed.type === 'trace') {
-      const doc = currentDoc
-      if (!doc || doc.languageId !== 'python') return
-      if (doc.version !== parsed.version) return void refresh()
-      if (mayRun()) void traceDocument(doc)
-      return
-    }
-    if (parsed.type === 'interrupt' || parsed.type === 'restart') {
-      const session = currentDoc ? sessions.get(currentDoc.uri.toString()) : undefined
-      if (parsed.type === 'interrupt') session?.interrupt()
-      else session?.restart()
-      return
-    }
-    // Lo que queda es el aviso de que el lienzo está listo: cualquier otra cosa que no se atienda, se ignora.
-    if (parsed.type !== 'ready') return
-    webviewsReady++
-    postToAll({ type: 'theme', theme: themeKind() })
-    void postModels()
-    // Un lienzo recién abierto no ha visto las consultas de antes: se le mandan.
-    for (const entry of callLog.all()) postToAll({ type: 'call', entry })
-    void refresh().then(() => {
-      // Un lienzo recién abierto no tiene las imágenes de lo que ya se ejecutó: se le mandan.
-      const session = currentDoc ? sessions.get(currentDoc.uri.toString()) : undefined
-      for (const { seq, assets } of session?.allAssets() ?? []) {
-        postToAll({ type: 'assets', seq, assets })
+  webview.onDidReceiveMessage(onWebviewMessage)
+}
+
+/** Lo que llega de un lienzo. */
+function onWebviewMessage(message: unknown) {
+  const parsed = parseHostMessage(message)
+  // (Para las pruebas: qué llegó, y si no se entendió.)
+  const kind = (message as { type?: unknown } | null)?.type
+  heardLog.push(
+    parsed?.type === 'webviewError'
+      ? `fallo en el lienzo: ${parsed.message}`
+      : parsed
+        ? parsed.type
+        : `no válido: ${String(kind)}`,
+  )
+  if (parsed?.type === 'webviewError') {
+    console.error(`Prysel: fallo en el lienzo: ${parsed.message}`)
+    return
+  }
+  if (heardLog.length > 30) heardLog.splice(0, heardLog.length - 30)
+  if (!parsed) return
+  if (parsed.type === 'edit') {
+    void applyEdits(parsed.edits, parsed.version)
+    return
+  }
+  if (parsed.type === 'run') {
+    const doc = currentDoc
+    if (!doc || doc.languageId !== 'python') return
+    // Los ids llevan la línea: si el texto cambió desde que el lienzo los vio, no valen.
+    if (doc.version !== parsed.version) return void refresh()
+    if (mayRun()) void sessionFor(doc).run(parsed.ids)
+    return
+  }
+  if (parsed.type === 'command') {
+    void (async () => {
+      // Se pide algo sin un programa de Python abierto: se le crea uno, y se construye ahí. (Antes la
+      // orden se perdía sin decir nada.)
+      let doc = currentDoc
+      let message = parsed
+      if (!doc || doc.languageId !== 'python') {
+        doc = await newProgramDoc()
+        if (!doc) return
+        message = { ...parsed, version: doc.version }
       }
-    })
+      // Dónde estaba la historia al empezar esta orden: «no, eso no» vuelve justo hasta aquí.
+      const marks = orderMarks.get(doc.uri.toString()) ?? []
+      marks.push(historyOf(doc).sizes.undo)
+      orderMarks.set(doc.uri.toString(), marks.slice(-40))
+      // Rehacerlo con otra de las versiones que se propusieron: se empieza de cero (se puede deshacer).
+      if (message.flavour && extensionContext) {
+        await remake(extensionContext, message, message.flavour)
+        return
+      }
+      // Mientras se construye algo, lo que diga el usuario lo interrumpe: el JEV decide si lo que estaba
+      // preparado sigue valiendo, si hay que rehacer lo que faltaba, o si es otra cosa.
+      if (extensionContext) await interrupt(extensionContext, message)
+    })()
+    return
+  }
+  // Lo que mira el motor de «qué hace»: probar una función, jugar el programa, otra tirada, qué mirar.
+  if (
+    parsed.type === 'tryCall' ||
+    parsed.type === 'play' ||
+    parsed.type === 'reroll' ||
+    parsed.type === 'watch'
+  ) {
+    const doc = currentDoc
+    if (!doc || doc.languageId !== 'python') return
+    const gists = gistsFor(doc)
+    if (parsed.type === 'tryCall') void gists.tryCall(parsed.id, parsed.call)
+    else if (parsed.type === 'play') void gists.play(parsed.answers, parsed.fresh === true)
+    else if (parsed.type === 'reroll') gists.reroll()
+    else gists.rewatch(parsed.text)
+    return
+  }
+  if (parsed.type === 'launch') {
+    const doc = currentDoc
+    if (doc && doc.languageId === 'python') void launch(doc)
+    return
+  }
+  if (parsed.type === 'arch') {
+    const decider = gistDecider ?? callLog.decider(localDecider())
+    void judgeArchitecture(decider, parsed.modules, parsed.shapes)
+      .then(({ roles, shape }) => {
+        postToAll({ type: 'arched', key: parsed.key, roles, shape })
+      })
+      .catch(() => undefined)
+    return
+  }
+  if (parsed.type === 'config') {
+    const decider = gistDecider ?? callLog.decider(localDecider())
+    void judgeConfig(decider, parsed.items)
+      .then((kinds) => {
+        postToAll({ type: 'configured', key: parsed.key, kinds })
+      })
+      .catch(() => undefined)
+    return
+  }
+  if (parsed.type === 'cover') {
+    // Lo escrito y lo planeado se preguntan por separado: una respuesta no deja vieja a la otra.
+    const which = parsed.plan === true ? 'planned' : 'written'
+    const turn = ++coverTurns[which]
+    const decider = gistDecider ?? callLog.decider(localDecider())
+    void judgeCover(decider, parsed.what, parsed.parts, parsed.pieces, parsed.plan === true)
+      .then((by) => {
+        if (turn !== coverTurns[which]) return
+        postToAll({
+          type: 'covered',
+          parts: parsed.parts,
+          pieces: parsed.pieces,
+          by,
+          ...(parsed.plan === true ? { plan: true } : {}),
+        })
+      })
+      .catch(() => undefined)
+    return
+  }
+  if (parsed.type === 'undoOrder') {
+    void undoOrder()
+    return
+  }
+  // Lo que se le está oyendo decir: aquí no hay voz que escuchar.
+  if (parsed.type === 'listening') return
+  if (parsed.type === 'clearCalls') {
+    callLog.clear()
+    return
+  }
+  if (parsed.type === 'spoken') {
+    speaking.get(parsed.seq)?.(parsed.spoke)
+    speaking.delete(parsed.seq)
+    return
+  }
+  if (parsed.type === 'stopOrder') {
+    stopBuild(currentDoc)
+    return
+  }
+  if (parsed.type === 'pickModel') {
+    void vscode.commands.executeCommand('prysel.pickModel')
+    return
+  }
+  if (parsed.type === 'jevKey') {
+    void vscode.commands.executeCommand('prysel.setTypesafeKey')
+    return
+  }
+  if (parsed.type === 'newLesson') {
+    void vscode.commands.executeCommand('prysel.newLesson')
+    return
+  }
+  if (parsed.type === 'proposeSections') {
+    void vscode.commands.executeCommand('prysel.proposeSections')
+    return
+  }
+  if (parsed.type === 'undo' || parsed.type === 'redo') {
+    void stepHistory(parsed.type)
+    return
+  }
+  if (parsed.type === 'noteMove') {
+    const doc = currentDoc
+    if (doc && doc.uri.scheme === 'file') void moveNote(doc, parsed.beat, parsed.offset)
+    return
+  }
+  if (parsed.type === 'trace') {
+    const doc = currentDoc
+    if (!doc || doc.languageId !== 'python') return
+    if (doc.version !== parsed.version) return void refresh()
+    if (mayRun()) void traceDocument(doc)
+    return
+  }
+  if (parsed.type === 'interrupt' || parsed.type === 'restart') {
+    const session = currentDoc ? sessions.get(currentDoc.uri.toString()) : undefined
+    if (parsed.type === 'interrupt') session?.interrupt()
+    else session?.restart()
+    return
+  }
+  // Lo que queda es el aviso de que el lienzo está listo: cualquier otra cosa que no se atienda, se ignora.
+  if (parsed.type !== 'ready') return
+  webviewsReady++
+  postToAll({ type: 'theme', theme: themeKind() })
+  void postModels()
+  // Un lienzo recién abierto no ha visto las consultas de antes: se le mandan.
+  for (const entry of callLog.all()) postToAll({ type: 'call', entry })
+  void refresh().then(() => {
+    // Un lienzo recién abierto no tiene las imágenes de lo que ya se ejecutó: se le mandan.
+    const session = currentDoc ? sessions.get(currentDoc.uri.toString()) : undefined
+    for (const { seq, assets } of session?.allAssets() ?? []) {
+      postToAll({ type: 'assets', seq, assets })
+    }
   })
 }
 
@@ -2058,6 +2088,9 @@ function createPanel(extensionUri: vscode.Uri): vscode.WebviewPanel {
     {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist')],
+      // Oculto detrás de otra pestaña no se deshace: si no, lo que se le mandara mientras tanto (lo que se
+      // decidió, lo que hay que escribir) se perdería, y lo pedido se quedaría sin hacer.
+      retainContextWhenHidden: true,
     },
   )
   created.webview.html = htmlFor(created.webview, extensionUri)
@@ -2117,6 +2150,10 @@ export interface PryselApi {
     trace: { status: 'running' | 'done' | 'failed'; steps: number; version: number } | null
     /** La última lección que se mandó al lienzo, si la hay. */
     lesson: { title: string; beats: number; error: string | null } | null
+    /** Lo último que se le dijo al lienzo: cada decisión y cada frase. */
+    said: string[]
+    /** Lo último que llegó del lienzo (el tipo de cada mensaje, o que no era válido). */
+    heard: string[]
   }
 }
 
@@ -2294,6 +2331,27 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
       const doc = targetDocument()
       if (doc) sessions.get(doc.uri.toString())?.restart()
     }),
+    // «Prysel: Pedir…»: lo que se escribe aquí llega al lienzo como si se hubiera tecleado en él (y, si no
+    // está abierto, se abre). Las pruebas lo usan con el texto ya dado.
+    vscode.commands.registerCommand('prysel.ask', async (given?: unknown) => {
+      const text =
+        typeof given === 'string' && given.trim() !== ''
+          ? given
+          : await vscode.window.showInputBox({
+              prompt: 'Prysel: ¿qué quieres construir o cambiar?',
+              placeHolder: 'Un piano que suene, un juego de adivinar un número…',
+            })
+      if (!text?.trim()) return
+      // El lienzo, a la vista: es donde se va a ver construirse.
+      if (panel && !panel.visible) panel.reveal(vscode.ViewColumn.Beside, true)
+      if (webviewsReady === 0 || webviews.size === 0) {
+        const before = webviewsReady
+        await vscode.commands.executeCommand('prysel.openCanvas')
+        const until = Date.now() + 15_000
+        while (webviewsReady === before && Date.now() < until) await sleep(100)
+      }
+      postToAll({ type: 'ask', text: text.trim().slice(0, MAX_COMMAND) })
+    }),
     vscode.commands.registerCommand('prysel.openCanvas', async () => {
       try {
         await getParser()
@@ -2380,6 +2438,8 @@ export function activate(context: vscode.ExtensionContext): PryselApi {
         sessions: [...sessions.keys()],
         trace: lastTrace,
         lesson: lastLesson,
+        said: [...saidLog],
+        heard: [...heardLog],
       }
     },
   }

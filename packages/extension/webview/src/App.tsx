@@ -153,6 +153,19 @@ const saved = (): SavedState => (vscode.getState() as SavedState | undefined) ??
 const post = (message: unknown) => {
   vscode.postMessage(message)
 }
+// Un fallo dentro del lienzo no debe perderse en silencio: se le cuenta a quien lo aloja, que lo apunta.
+if (typeof window !== 'undefined') {
+  const report = (text: string) => {
+    post({ type: 'webviewError', message: text.slice(0, 600) })
+  }
+  window.addEventListener('error', (event) => {
+    report(`${event.message} ${event.error instanceof Error ? (event.error.stack ?? '') : ''}`)
+  })
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason: unknown = event.reason
+    report(reason instanceof Error ? `${reason.message} ${reason.stack ?? ''}` : String(reason))
+  })
+}
 
 const DENSITIES: Density[] = ['compact', 'normal', 'expanded']
 const DENSITY_LABELS: Record<Density, string> = {
@@ -656,6 +669,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const onPreview = useRef<(kind: string, text: string) => void>(() => undefined)
   const onGenerated = useRef<(message: GeneratedMessage) => void>(() => undefined)
   const onSay = useRef<(message: SayMessage) => void>(() => undefined)
+  /** Lo que se pide desde fuera del lienzo (el comando «Prysel: Pedir…»): como si se tecleara aquí. */
+  const onAsk = useRef<(text: string) => void>(() => undefined)
   const onStep = useRef<(message: StepMessage) => void>(() => undefined)
   const onFlavours = useRef<(message: FlavoursMessage) => void>(() => undefined)
   const { pending, change: changeControl, submit, received } = useWriteBack(post, focusCreated)
@@ -702,6 +717,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         onGenerated.current(message)
       } else if (message.type === 'say') {
         onSay.current(message)
+      } else if (message.type === 'ask') {
+        onAsk.current(message.text)
       } else if (message.type === 'step') {
         onStep.current(message)
       } else if (message.type === 'call') {
@@ -3036,6 +3053,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       if (!message.ok) return
       if (message.say && voice) speak(message.say)
       if (message.line !== undefined) setWanted({ line: message.line, key: ++spotSeq.current })
+    }
+    onAsk.current = (text) => {
+      hear(text, null)
     }
     onSay.current = (message) => {
       setThinking(null)

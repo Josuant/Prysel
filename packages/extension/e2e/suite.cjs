@@ -31,6 +31,7 @@ exports.run = async () => {
       'comandos',
       [
         'prysel.openCanvas',
+        'prysel.ask',
         'prysel.runAll',
         'prysel.trace',
         'prysel.newLesson',
@@ -119,6 +120,40 @@ exports.run = async () => {
     await vscode.commands.executeCommand('prysel.restart')
     await wait(() => api.state().kernel === 'stopped')
     check('tras reiniciar', api.state().states)
+
+    // ── Pedir que construya: el JEV local decide (sin claves) y el lienzo escribe lo decidido ──
+    await vscode.workspace
+      .getConfiguration('prysel')
+      .update('jevEngine', 'local', vscode.ConfigurationTarget.Global)
+    const textOf = (file) =>
+      vscode.workspace.textDocuments
+        .find((one) => one.uri.fsPath.toLowerCase() === file.toLowerCase())
+        ?.getText() ?? ''
+
+    // Con un programa abierto: lo pedido se escribe en él. (Sin IA, el motor local no saca el nombre de la
+    // frase: escribe una variable con un nombre genérico. Lo que se comprueba es que llega al archivo.)
+    const opened = await vscode.workspace.openTextDocument(file)
+    // En la primera columna: el lienzo sigue a la vista en la suya, como cuando se usa.
+    await vscode.window.showTextDocument(opened, vscode.ViewColumn.One)
+    await wait(() => api.state().document === opened.uri.toString())
+    // (Por «Prysel: Pedir…»: llega al lienzo como si se tecleara en él, y de ahí sigue el camino de siempre.)
+    const beforeOrder = opened.getText()
+    await vscode.commands.executeCommand('prysel.ask', 'añade una variable tope')
+    await wait(() => opened.getText() !== beforeOrder, 30000)
+    check('orden con programa abierto', opened.getText().slice(beforeOrder.length - 20))
+
+    // Sin ningún programa abierto (el lienzo ofrece «¿Qué quieres construir?»): se crea uno y se construye ahí.
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors')
+    const readyBefore = api.state().webviewsReady
+    await vscode.commands.executeCommand('prysel.openCanvas')
+    await wait(() => api.state().webviewsReady > readyBefore)
+    check('sin programa abierto', api.state().document)
+    await vscode.commands.executeCommand('prysel.ask', 'añade una variable limite')
+    const created = path.join(process.env.PRYSEL_TEST_DIR, 'programa.py')
+    await wait(() => fs.existsSync(created), 20000)
+    await wait(() => textOf(created).trim() !== '', 30000)
+    check('programa creado', textOf(created))
+    check('lo que dijo', api.state().said)
   } catch (error) {
     result.error = String(error && error.stack ? error.stack : error)
     // Lo que se veía cuando falló: es lo primero que hace falta para entender por qué.

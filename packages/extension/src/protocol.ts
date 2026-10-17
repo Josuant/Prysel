@@ -299,7 +299,17 @@ export type ScreenedMessage = { type: 'screened' } & (
   | { ev: 'fatal'; message: string }
 )
 
+/**
+ * Anfitrión → webview: pedir algo **como si se hubiera escrito en el lienzo** (el comando «Prysel: Pedir…»
+ * de VS Code). El lienzo lo trata igual que lo que se teclea en su caja.
+ */
+export interface AskMessage {
+  type: 'ask'
+  text: string
+}
+
 export type WebviewMessage =
+  | AskMessage
   | ScreenedMessage
   | ConfiguredMessage
   | GistsMessage
@@ -511,6 +521,12 @@ export interface ConfigMessage {
  * El programa **en marcha para usarlo** (su `pantalla`): arrancarlo de cero con el código de ahora, una
  * pulsación (de un botón, una tecla o lo que se repite con `cada`; `id` es el de su función), o pararlo.
  */
+/** Un fallo dentro del lienzo (un error de JavaScript que nadie atrapó): quien lo aloja lo apunta. */
+export interface WebviewErrorMessage {
+  type: 'webviewError'
+  message: string
+}
+
 export interface ScreenMessage {
   type: 'screen'
   action: 'start' | 'press' | 'stop'
@@ -564,6 +580,7 @@ export type HostMessage =
   | ArchMessage
   | ConfigMessage
   | ScreenMessage
+  | WebviewErrorMessage
   | LaunchMessage
   | PlayMessage
   | TryCallMessage
@@ -832,6 +849,12 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (shape !== null && typeof shape !== 'string') return null
     return { type: 'arched', key, roles: roles as (string | null)[], shape }
   }
+  if (type === 'ask') {
+    const { text } = value as { text?: unknown }
+    return typeof text === 'string' && text.trim() !== '' && text.length <= MAX_COMMAND
+      ? { type: 'ask', text: text.trim() }
+      : null
+  }
   if (type === 'screened') {
     const event = value as Record<string, unknown>
     const { ev } = event
@@ -995,6 +1018,12 @@ export function parseHostMessage(value: unknown): HostMessage | null {
         : []
     })
     return read.length === modules.length ? { type: 'arch', key, modules: read, shapes } : null
+  }
+  if (type === 'webviewError') {
+    const { message } = value as { message?: unknown }
+    return typeof message === 'string'
+      ? { type: 'webviewError', message: message.slice(0, 600) }
+      : null
   }
   if (type === 'screen') {
     const { action, id, args } = value as { action?: unknown; id?: unknown; args?: unknown }
