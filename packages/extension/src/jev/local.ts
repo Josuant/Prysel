@@ -314,6 +314,9 @@ export function localDecider(): Decider {
         } else if (/^papel\d+$/.test(id) || id === 'forma') {
           // Sin un modelo que lea, el papel y la forma se quedan en lo que el código deja ver.
           answers[id] = pick(Object.keys(question.criteria ?? {})[0] ?? 'logica', UNSURE)
+        } else if (/^config\d+$/.test(id)) {
+          // Sin un modelo que lea, no se sabe qué es un ajuste: lo decide quien pregunta, por lo que se ve.
+          answers[id] = pick('no', UNSURE)
         } else if (/^parte\d+$/.test(id)) {
           // Sin un modelo que lea no se sabe qué pieza cubre qué: lo decide quien pregunta, por las palabras.
           answers[id] = pick('ninguna', UNSURE)

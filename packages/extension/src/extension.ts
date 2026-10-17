@@ -46,6 +46,7 @@ import { splitOrder } from './jev/compose.ts'
 import { contextFor } from './jev/context.ts'
 import {
   judgeArchitecture,
+  judgeConfig,
   judgeCover,
   judgeInterruption,
   type Flavour,
@@ -1892,6 +1893,15 @@ function wireWebview(webview: vscode.Webview) {
       void judgeArchitecture(decider, parsed.modules, parsed.shapes)
         .then(({ roles, shape }) => {
           postToAll({ type: 'arched', key: parsed.key, roles, shape })
+        })
+        .catch(() => undefined)
+      return
+    }
+    if (parsed.type === 'config') {
+      const decider = gistDecider ?? callLog.decider(localDecider())
+      void judgeConfig(decider, parsed.items)
+        .then((kinds) => {
+          postToAll({ type: 'configured', key: parsed.key, kinds })
         })
         .catch(() => undefined)
       return

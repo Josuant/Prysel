@@ -275,7 +275,18 @@ export interface ArchedMessage {
   shape: string | null
 }
 
+/**
+ * Extensión → webview: lo que dijo el JEV de las constantes que se le preguntaron (`key` es la de la
+ * pregunta): de cada una, en su orden, cómo se maneja (`no`: no es un ajuste; `null`: no lo sabe).
+ */
+export interface ConfiguredMessage {
+  type: 'configured'
+  key: string
+  kinds: (string | null)[]
+}
+
 export type WebviewMessage =
+  | ConfiguredMessage
   | GistsMessage
   | CoveredMessage
   | ArchitectureMessage
@@ -471,6 +482,17 @@ export interface ArchMessage {
 }
 
 /**
+ * Las constantes con las que empieza el programa: de cada una, su nombre, su valor escrito, una línea donde se
+ * usa y las formas de manejarla que su dato admite. El JEV dice cuáles son su configuración y cómo se maneja
+ * cada una (llega en `configured`).
+ */
+export interface ConfigMessage {
+  type: 'config'
+  key: string
+  items: { name: string; value: string; use: string; options: string[] }[]
+}
+
+/**
  * Quien lo usa juega el programa: `answers` son todas las respuestas de teclado que lleva dadas, en orden (el
  * programa se vuelve a ejecutar con ellas y se para en la siguiente pregunta). `null`: volver a la sesión de
  * ejemplo. `fresh`: una partida nueva (si el programa tira de azar, con otra suerte).
@@ -512,6 +534,7 @@ export type HostMessage =
   | ListeningMessage
   | CoverMessage
   | ArchMessage
+  | ConfigMessage
   | LaunchMessage
   | PlayMessage
   | TryCallMessage
@@ -542,6 +565,8 @@ const MAX_TRY_CALL = 2000
 /** Cuántos módulos caben en una arquitectura, y lo que puede medir la clave de su pregunta. */
 const MAX_ARCH_MODULES = 16
 const MAX_ARCH_KEY = 6000
+/** Cuántas constantes se le preguntan al JEV de una vez. */
+const MAX_CONFIG_ITEMS = 12
 /** Cuántas respuestas de teclado caben en una partida jugada a mano. */
 export const MAX_PLAY_ANSWERS = 80
 
@@ -778,6 +803,12 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (shape !== null && typeof shape !== 'string') return null
     return { type: 'arched', key, roles: roles as (string | null)[], shape }
   }
+  if (type === 'configured') {
+    const { key, kinds } = value as { key?: unknown; kinds?: unknown }
+    if (typeof key !== 'string' || !Array.isArray(kinds)) return null
+    if (!kinds.every((kind) => kind === null || typeof kind === 'string')) return null
+    return { type: 'configured', key, kinds: kinds as (string | null)[] }
+  }
   if (type === 'covered') {
     const { parts, pieces, by } = value as { parts?: unknown; pieces?: unknown; by?: unknown }
     if (!namesOf(parts) || !namesOf(pieces) || !Array.isArray(by)) return null
@@ -909,6 +940,27 @@ export function parseHostMessage(value: unknown): HostMessage | null {
         : []
     })
     return read.length === modules.length ? { type: 'arch', key, modules: read, shapes } : null
+  }
+  if (type === 'config') {
+    const { key, items } = value as { key?: unknown; items?: unknown }
+    if (typeof key !== 'string' || key.length > MAX_ARCH_KEY || !Array.isArray(items)) return null
+    if (items.length === 0 || items.length > MAX_CONFIG_ITEMS) return null
+    const read = items.flatMap((item: unknown) => {
+      const { name, value, use, options } = (item ?? {}) as {
+        name?: unknown
+        value?: unknown
+        use?: unknown
+        options?: unknown
+      }
+      return typeof name === 'string' &&
+        name !== '' &&
+        typeof value === 'string' &&
+        typeof use === 'string' &&
+        namesOf(options)
+        ? [{ name: name.slice(0, 80), value: value.slice(0, 200), use: use.slice(0, 200), options }]
+        : []
+    })
+    return read.length === items.length ? { type: 'config', key, items: read } : null
   }
   if (type === 'tryCall') {
     const { id, call } = value as { id?: unknown; call?: unknown }

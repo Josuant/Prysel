@@ -1060,6 +1060,63 @@ export async function judgeArchitecture(
   }
 }
 
+// ───────────────────────── la configuración del programa ─────────────────────────
+
+/**
+ * Las formas de manejar un valor del programa, y lo que el JEV lee de cada una. `no` es que no es un ajuste
+ * (es un dato con el que trabaja, un estado que empieza así…).
+ */
+export const CONFIG_KINDS = {
+  no: 'No es un ajuste del programa: es un dato con el que trabaja, el estado con el que empieza algo que luego cambia, o algo que no tiene sentido tocar.',
+  cantidad:
+    'Un ajuste: cuántos (un tamaño, unas vueltas, un tope), un número entero que se sube o se baja.',
+  medida:
+    'Un ajuste: una magnitud que puede llevar decimales (una velocidad, un peso, un tiempo, un umbral).',
+  proporcion:
+    'Un ajuste: una probabilidad, una tasa o una fracción, entre 0 y 1 (la probabilidad de mutar, el porcentaje que se queda).',
+  interruptor: 'Un ajuste: algo que se enciende o se apaga (sí o no).',
+  texto: 'Un ajuste: una palabra o una frase (un objetivo, un mensaje, un nombre).',
+  color: 'Un ajuste: un color.',
+  lista: 'Un ajuste: unos pocos valores que el programa usa tal cual (unas opciones, unos pesos).',
+} as const
+
+export type ConfigKind = keyof typeof CONFIG_KINDS
+
+/**
+ * De las constantes que un programa define al empezar, **cuáles son su configuración** (lo que quien lo usa
+ * querría ajustar) y cómo se maneja cada una, entre las formas que su dato admite (`options`). Cada constante
+ * llega con su nombre, su valor tal como está escrito y una línea donde se usa. `null`: no está seguro (quien
+ * pregunta decide por lo que ve).
+ */
+export async function judgeConfig(
+  decider: Decider,
+  items: readonly { name: string; value: string; use: string; options: readonly string[] }[],
+): Promise<(ConfigKind | null)[]> {
+  const offered = items.map((item) =>
+    ['no', ...item.options].filter((option): option is ConfigKind => option in CONFIG_KINDS),
+  )
+  const { answers } = await decider.decide({
+    state: { constantes: items.map((item) => `${item.name} = ${item.value}`) },
+    questions: Object.fromEntries(
+      items.map((item, at) => [
+        `config${at}`,
+        {
+          type: 'choice' as const,
+          instructions: `Un programa en Python empieza definiendo las constantes de \`constantes\`. Una de ellas es \`${item.name} = ${item.value}\`${item.use === '' ? '' : `, y se usa así: \`${item.use}\``}. ¿Es un ajuste que quien usa el programa querría cambiar para ver qué pasa? Si lo es, ¿cómo se maneja mejor?`,
+          criteria: Object.fromEntries(
+            offered[at]?.map((kind) => [kind, CONFIG_KINDS[kind]]) ?? [],
+          ),
+        },
+      ]),
+    ),
+  })
+  return items.map((_, at) => {
+    const answer = answers[`config${at}`]
+    if (answer?.type !== 'choice' || answer.confidence < ARCH_THRESHOLD) return null
+    return offered[at]?.includes(answer.choice as ConfigKind) ? (answer.choice as ConfigKind) : null
+  })
+}
+
 // ───────────────────────── al reescribir, ¿se quería quitar eso? ─────────────────────────
 
 /**

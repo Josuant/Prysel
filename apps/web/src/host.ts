@@ -320,6 +320,9 @@ export class WebHost {
       case 'arch':
         this.orders.arch(message.key, message.modules, message.shapes)
         return
+      case 'config':
+        this.orders.config(message.key, message.items)
+        return
       case 'tryCall':
         void this.gists.tryCall(message.id, message.call)
         return

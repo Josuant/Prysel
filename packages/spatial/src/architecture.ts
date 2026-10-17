@@ -239,13 +239,17 @@ export function withHead(bounds: Size, head: Size, side: 'left' | 'top'): Size {
 export function endSides(
   bounds: Size,
   tail: Size | null,
-  head: Size | null,
+  /** Lo que mide la cabeza; si son varios nodos, puede medir distinto a la izquierda (uno sobre otro) que encima (uno junto a otro). */
+  head: Size | { left: Size; top: Size } | null,
   frame: Size | undefined,
 ): { tail: 'right' | 'bottom'; head: 'left' | 'top' } {
   if (!frame || (!tail && !head)) return { tail: 'right', head: 'left' }
+  const headAt = (side: 'left' | 'top'): Size | null =>
+    head === null ? null : 'left' in head ? head[side] : head
   const zoomOf = (tailSide: 'right' | 'bottom', headSide: 'left' | 'top') => {
     const tailed = tail ? withTail(bounds, tail, tailSide) : bounds
-    return Math.min(1, fitZoom(head ? withHead(tailed, head, headSide) : tailed, frame))
+    const sized = headAt(headSide)
+    return Math.min(1, fitZoom(sized ? withHead(tailed, sized, headSide) : tailed, frame))
   }
   let best = { tail: 'right' as 'right' | 'bottom', head: 'left' as 'left' | 'top' }
   let bestZoom = zoomOf('right', 'left') * 1.08

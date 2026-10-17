@@ -37,6 +37,7 @@ import {
   DONE_THRESHOLD,
   judgeDone,
   judgeArchitecture,
+  judgeConfig,
   judgeCover,
   judgeHeard,
   judgeInterruption,
@@ -563,6 +564,15 @@ export class Orders {
     void judgeArchitecture(this.port.decider(), modules, shapes)
       .then(({ roles, shape }) => {
         this.port.post({ type: 'arched', key, roles, shape })
+      })
+      .catch(() => undefined)
+  }
+
+  /** Cuáles de las constantes del programa son su configuración, y cómo se maneja cada una: lo dice el JEV. */
+  config(key: string, items: { name: string; value: string; use: string; options: string[] }[]) {
+    void judgeConfig(this.port.decider(), items)
+      .then((kinds) => {
+        this.port.post({ type: 'configured', key, kinds })
       })
       .catch(() => undefined)
   }

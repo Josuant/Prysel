@@ -293,6 +293,12 @@ export interface CanvasProps {
    * parte donde están escritos; en el diagrama abierto, bajo la cajita del programa.
    */
   knobs?: KnobsPanel | null
+  /**
+   * La **configuración** del programa, como otro nodo: los valores con los que empieza y que se pueden
+   * ajustar, cada uno con su mando. Va con las perillas, a la entrada (encima de ellas, o a su lado si van
+   * encima del dibujo), con una flecha a cada parte que los usa.
+   */
+  config?: KnobsPanel | null
   /** Dónde **empieza** el trabajo: el módulo que lo arranca y lo que se dice de ello. */
   start?: { at: string; label: string } | null
   /**
@@ -531,6 +537,9 @@ const PROGRESS_NODE: CanvasNode = {
   label: 'Cómo avanza',
 }
 const KNOBS_ID = 'prysel:knobs'
+const CONFIG_ID = 'prysel:config'
+/** Lo que separa un nodo de mandos del otro. */
+const HEAD_STACK = 16
 /** Lo que separa el resultado de sus ejecuciones. */
 const RUNS_GAP = 18
 type Size2 = { w: number; h: number }
@@ -593,6 +602,7 @@ function CanvasInner({
   runs = null,
   progress = null,
   knobs = null,
+  config = null,
   start = null,
   exit = null,
   beat = null,
@@ -760,19 +770,48 @@ function CanvasInner({
   )
   // Las perillas, si las hay, son un nodo más: lo que miden (por sus filas, no por quién las trae: así no
   // se recoloca nada en cada dibujo).
-  const headRows = knobs?.items.length ?? 0
-  const headChance = knobs?.chance === true
-  const headSize = useMemo(
-    () => (headRows > 0 || headChance ? knobsSize(headRows, headChance) : null),
-    [headRows, headChance],
+  // Con la configuración, son dos nodos: uno sobre otro a la izquierda del dibujo, uno junto a otro encima.
+  const headPanels = (
+    [
+      [CONFIG_ID, config],
+      [KNOBS_ID, knobs],
+    ] as const
+  ).flatMap(([id, panel]) =>
+    panel && (panel.items.length > 0 || panel.chance === true) ? [{ id, panel }] : [],
   )
+  const headSig = headPanels
+    .map(({ id, panel }) => {
+      const size = knobsSize(panel.items, panel.chance === true)
+      return `${id}@${size.w}x${size.h}`
+    })
+    .join('|')
+  const headStack = useMemo(() => {
+    if (headSig === '') return null
+    const parts = headSig.split('|').map((part) => {
+      const [id = '', size = ''] = part.split('@')
+      const [w = 0, h = 0] = size.split('x').map(Number)
+      return { id, w, h }
+    })
+    const gaps = HEAD_STACK * (parts.length - 1)
+    return {
+      parts,
+      left: {
+        w: Math.max(...parts.map((part) => part.w)),
+        h: parts.reduce((sum, part) => sum + part.h, 0) + gaps,
+      },
+      top: {
+        w: parts.reduce((sum, part) => sum + part.w, 0) + gaps,
+        h: Math.max(...parts.map((part) => part.h)),
+      },
+    }
+  }, [headSig])
   // La arquitectura se coloca para el lienzo que le queda con ellas: a su lado si es apaisado; debajo, si no.
   const archFrame = useMemo(() => {
-    if (!fullFrame || !headSize) return fullFrame
+    if (!fullFrame || !headStack) return fullFrame
     return fullFrame.w >= fullFrame.h * 1.2
-      ? { w: Math.max(240, fullFrame.w - headSize.w - HEAD_GAP.x), h: fullFrame.h }
-      : { w: fullFrame.w, h: Math.max(200, fullFrame.h - headSize.h - HEAD_GAP.y) }
-  }, [fullFrame, headSize])
+      ? { w: Math.max(240, fullFrame.w - headStack.left.w - HEAD_GAP.x), h: fullFrame.h }
+      : { w: fullFrame.w, h: Math.max(200, fullFrame.h - headStack.top.h - HEAD_GAP.y) }
+  }, [fullFrame, headStack])
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
   /** El diagrama (su `fitKey`) al que una orden llevó la cámara: ahí el encuadre ya no se rehace solo. */
@@ -1250,17 +1289,19 @@ function CanvasInner({
   // Los pasos van por el centro. A la izquierda, lo auxiliar (la cajita de variables y los visores); a la
   // derecha, las notas. Leído en horizontal, la cajita va arriba y el resto del plano baja lo que ocupa.
   // Las perillas: en el diagrama abierto van en esa columna de la izquierda, bajo la cajita.
-  const headAside = headSize !== null && aside && !asArchitecture
+  const headAside = headStack !== null && aside && !asArchitecture
+  const asideHead = headStack?.left ?? null
   // Y debajo, el visor de cómo avanza (en la arquitectura va en la cola, con el resultado).
   const sideProgress = useMemo(
     () => (progress && aside && !asArchitecture ? viewerSize(progress) : null),
     [progress, aside, asArchitecture],
   )
-  const sideExtra = (headAside ? headSize.h + 16 : 0) + (sideProgress ? sideProgress.h + 16 : 0)
+  const sideExtra =
+    (headAside && asideHead ? asideHead.h + 16 : 0) + (sideProgress ? sideProgress.h + 16 : 0)
   const sideW = aside
     ? Math.max(
         moduleTray?.w ?? 0,
-        headAside ? headSize.w : 0,
+        headAside && asideHead ? asideHead.w : 0,
         sideProgress?.w ?? 0,
         ...sideViewers.map((node) => (node.viewer ? viewerSize(node.viewer).w : 0)),
       )
@@ -1282,15 +1323,17 @@ function CanvasInner({
   )
   // En la arquitectura las perillas van a la entrada y el resultado a la salida: de izquierda a derecha,
   // salvo que de otro modo (alguno encima o debajo) el conjunto se vea claramente más grande en este lienzo.
-  const headArch = headSize !== null && asArchitecture
-  const ends = endSides(layoutBounds, tailBox, headArch ? headSize : null, fullFrame)
+  const headArch = headStack !== null && asArchitecture
+  const ends = endSides(layoutBounds, tailBox, headArch ? headStack : null, fullFrame)
   const resultSide = tailBox ? ends.tail : 'right'
   const resultReserve = tailBox && resultSide === 'right' ? TAIL_GAP.x + tailBox.w : 0
   const resultBelow = tailBox && resultSide === 'bottom' ? TAIL_GAP.y + tailBox.h : 0
   // El dibujo se corre lo que ocupan las perillas.
   const headSide = ends.head
-  const shiftX = baseX + (headArch && headSide === 'left' ? headSize.w + HEAD_GAP.x : 0)
-  const shiftY = baseY + (headArch && headSide === 'top' ? headSize.h + HEAD_GAP.y : 0)
+  // Lo que ocupan los mandos, ya sabido dónde van.
+  const headSize = headStack ? (headArch ? headStack[headSide] : headStack.left) : null
+  const shiftX = baseX + (headArch && headSide === 'left' ? (headSize?.w ?? 0) + HEAD_GAP.x : 0)
+  const shiftY = baseY + (headArch && headSide === 'top' ? (headSize?.h ?? 0) + HEAD_GAP.y : 0)
   const diagramW =
     (aside
       ? shiftX + layoutBounds.w
@@ -2364,8 +2407,11 @@ function CanvasInner({
       y += size.h + RUNS_GAP
     }
   }
-  // Las perillas, a la entrada del dibujo (o, en el diagrama abierto, bajo la cajita del programa).
-  const knobInto = (knobs?.into ?? []).filter((id) => archModules.has(id))
+  // Los mandos (la configuración y las perillas), a la entrada del dibujo (o, en el diagrama abierto, bajo la
+  // cajita del programa).
+  const knobInto = [...new Set(headPanels.flatMap(({ panel }) => panel.into ?? []))].filter((id) =>
+    archModules.has(id),
+  )
   const knobTarget = knobInto.length === 1 ? boxOf.get(knobInto[0] ?? '') : undefined
   const knobsAt = !headSize
     ? null
@@ -2420,54 +2466,64 @@ function CanvasInner({
       size: sideProgress,
     })
   }
-  const knobsNodes: KnobsFlowNode[] =
-    knobs && knobsAt
-      ? [
+  // Cada nodo de mandos, en su sitio dentro de ese hueco: uno bajo otro, o (encima del dibujo) uno junto a otro.
+  const across = headArch && headSide === 'top'
+  const headBoxes: { id: string; panel: KnobsPanel; box: Size2 & { x: number; y: number } }[] = []
+  if (knobsAt && headStack) {
+    let cursor = across ? knobsAt.x : knobsAt.y
+    for (const part of headStack.parts) {
+      const panel = headPanels.find((one) => one.id === part.id)?.panel
+      if (!panel) continue
+      headBoxes.push({
+        id: part.id,
+        panel,
+        box: across
+          ? { x: cursor, y: knobsAt.y, w: part.w, h: part.h }
+          : { x: knobsAt.x, y: cursor, w: part.w, h: part.h },
+      })
+      cursor += (across ? part.w : part.h) + HEAD_STACK
+    }
+  }
+  const knobsNodes: KnobsFlowNode[] = headBoxes.map(({ id, panel, box }) => ({
+    id,
+    type: 'knobs' as const,
+    position: { x: box.x, y: box.y },
+    ...nodeFrame(box),
+    zIndex: 4,
+    draggable: false,
+    selectable: false,
+    data: { panel, size: box, out: across ? 'bottom' : 'right' },
+  }))
+  // De cada nodo de mandos, una flecha a cada parte que usa sus valores.
+  const knobEdges: ArchFlowEdge[] = (headArch ? headBoxes : []).flatMap(
+    ({ id: from, panel, box }) =>
+      (panel.into ?? []).flatMap((id) => {
+        const to = archModules.has(id) ? boxOf.get(id) : undefined
+        if (!to) return []
+        const others = [...archModules.keys()].flatMap((other) => {
+          const known = other === id ? undefined : boxOf.get(other)
+          return known ? [known] : []
+        })
+        return [
           {
-            id: KNOBS_ID,
-            type: 'knobs' as const,
-            position: { x: knobsAt.x, y: knobsAt.y },
-            ...nodeFrame(knobsAt),
-            zIndex: 4,
-            draggable: false,
+            id: `arch:${from}:${id}`,
+            source: from,
+            target: id,
+            sourceHandle: 'out',
+            targetHandle: 'step-in',
+            type: 'arch' as const,
             selectable: false,
+            focusable: false,
+            zIndex: 2,
             data: {
-              panel: knobs,
-              size: knobsAt,
-              out: headArch && headSide === 'top' ? 'bottom' : 'right',
+              kind: 'call' as const,
+              from: box,
+              to,
+              bend: clearBend(box, to, others, 0),
             },
           },
         ]
-      : []
-  // De las perillas, una flecha a cada parte donde están escritos sus números.
-  const knobEdges: ArchFlowEdge[] = (headArch && knobsAt ? (knobs?.into ?? []) : []).flatMap(
-    (id) => {
-      const to = archModules.has(id) ? boxOf.get(id) : undefined
-      if (!to || !knobsAt) return []
-      const others = [...archModules.keys()].flatMap((other) => {
-        const box = other === id ? undefined : boxOf.get(other)
-        return box ? [box] : []
-      })
-      return [
-        {
-          id: `arch:knobs:${id}`,
-          source: KNOBS_ID,
-          target: id,
-          sourceHandle: 'out',
-          targetHandle: 'step-in',
-          type: 'arch' as const,
-          selectable: false,
-          focusable: false,
-          zIndex: 2,
-          data: {
-            kind: 'call' as const,
-            from: knobsAt,
-            to,
-            bend: clearBend(knobsAt, to, others, 0),
-          },
-        },
-      ]
-    },
+      }),
   )
   const resultNodes: ViewerFlowNode[] = [
     ...(result && resultAt

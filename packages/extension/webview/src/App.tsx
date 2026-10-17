@@ -20,6 +20,9 @@ import {
   type NodeMenuItem,
   type AskChip,
   type AskWhere,
+  type KnobControl,
+  type KnobsPanel,
+  type KnobValue,
   FunctionMenu,
   Icon,
   IconButton,
@@ -105,7 +108,16 @@ import {
   runsViewer,
   type RunEntry,
 } from './outcome.ts'
-import { knobMoved, knobText, knobsOf, type Knob } from './knobs.ts'
+import {
+  dialRange,
+  kindGuess,
+  kindOptions,
+  knobShown,
+  knobWritten,
+  knobsOf,
+  type Knob,
+  type KnobKind,
+} from './knobs.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -532,6 +544,12 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [planWaited, setPlanWaited] = useState(false)
   /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
   const [archVerdicts, setArchVerdicts] = useState<Readonly<Record<string, ArchVerdict>>>({})
+  /**
+   * Lo que dijo el JEV de cada constante del programa (por su nombre y las formas que su dato admite): cómo
+   * se maneja, `no` si no es un ajuste, `null` si no lo sabe. Las preguntas ya hechas, para no repetirlas.
+   */
+  const [configKinds, setConfigKinds] = useState<Readonly<Record<string, string | null>>>({})
+  const configAsked = useRef(new Set<string>())
   const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
   /**
    * Lo que ocupa la consola («Al ejecutarlo») en el rincón del lienzo, con su margen: el encuadre le deja
@@ -746,6 +764,16 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             [message.key]: verdict,
           }))
           setArchLast(verdict)
+        } catch {
+          // Una clave que no es la nuestra: no hay a quién aplicarla.
+        }
+      } else if (message.type === 'configured') {
+        try {
+          const asked = JSON.parse(message.key) as string[]
+          setConfigKinds((known) => ({
+            ...(Object.keys(known).length > 200 ? {} : known),
+            ...Object.fromEntries(asked.map((one, at) => [one, message.kinds[at] ?? null])),
+          }))
         } catch {
           // Una clave que no es la nuestra: no hay a quién aplicarla.
         }
@@ -1738,6 +1766,50 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         : [],
     [program],
   )
+  // Las constantes del programa, candidatas a su configuración: de cada una, una línea donde se usa (para que
+  // el JEV vea para qué sirve) y las formas de manejarla que su dato admite. Al JEV se le pregunta por las
+  // que aún no conoce (por su nombre y su tipo de dato: cambiar su valor no vuelve a preguntar).
+  const constants = useMemo(() => {
+    const rows = program?.source.split('\n') ?? []
+    return knobs
+      .filter((knob) => knob.from === 'constant')
+      .map((knob) => {
+        const used = new RegExp(`\\b${knob.name}\\b`)
+        const use =
+          rows
+            .find((row, at) => at + 1 !== knob.line && used.test(row))
+            ?.trim()
+            .slice(0, 160) ?? ''
+        const options = kindOptions(knob.literal)
+        return { knob, use, options, ask: `${knob.name}:${options.join('/')}` }
+      })
+  }, [knobs, program])
+  const configQuestion = useMemo(() => {
+    const open = constants.filter((one) => !(one.ask in configKinds))
+    if (open.length === 0) return null
+    return {
+      key: JSON.stringify(open.map((one) => one.ask)),
+      items: open.map((one) => ({
+        name: one.knob.name,
+        value: one.knob.text,
+        use: one.use,
+        options: one.options,
+      })),
+    }
+  }, [constants, configKinds])
+  useEffect(() => {
+    if (configQuestion === null || constructing || configAsked.current.has(configQuestion.key)) {
+      return
+    }
+    // Se espera a que el programa deje de cambiar, como con la arquitectura.
+    const timer = window.setTimeout(() => {
+      configAsked.current.add(configQuestion.key)
+      post({ type: 'config', ...configQuestion })
+    }, ARCH_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [configQuestion, constructing])
   // Cómo le fue a cada módulo al ejecutarlo (cuántas veces se usó, si nadie lo usa, si ahí falló). Mientras se
   // construye no: lo que se ejecutó era otro programa.
   const states = useMemo(
@@ -1789,56 +1861,142 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   // Las franjas que ocupan las barras que flotan sobre la arquitectura: arriba las migas; abajo la leyenda
   // y, si hay historia, la de ver una vuelta (y la consola, si van encima de ella).
   const hasStory = beats.length > 0
-  // (Arriba, además, la barra de las perillas y el dado, si el programa los tiene.)
+  // (Además, los mandos del programa —su configuración, con qué arranca y el dado—, si los tiene.)
+  const chance = /\brandom\b/.test(program?.source ?? '')
   const hasKnobs =
-    (features.chat === true || features.knobs === true) &&
-    (knobs.length > 0 || /\brandom\b/.test(program?.source ?? ''))
+    (features.chat === true || features.knobs === true) && (knobs.length > 0 || chance)
   // Las siluetas que hay en el dibujo, en el orden en que se leen. Con una sola no hay nada que distinguir.
   const roleKeys = useMemo(() => {
     const present = new Set(architecture?.modules.map((module) => module.role))
     const keys = MODULE_ROLES.filter((role) => present.has(role))
     return keys.length > 1 ? keys : []
   }, [architecture])
-  // Las perillas van en el diagrama, como un nodo más: en el programa entero, y no mientras se construye.
-  const knobsPanel =
-    hasKnobs && lesson === null && view.focus === null && !constructing
-      ? {
-          items: knobs.map((knob) => ({
-            key: `${knob.line}:${knob.start}`,
-            name: knob.name.replace(/_+/g, ' ').toLowerCase(),
-            hint:
-              knob.from === 'launch'
-                ? `${knob.name}: un dato con el que se arranca (línea ${knob.line})`
-                : `${knob.name}: un número que el programa define (línea ${knob.line})`,
-            text: knobText(knob, knob.value),
-          })),
-          chance: /\brandom\b/.test(program?.source ?? ''),
-          // Las partes donde están escritos: el nodo les tiende una flecha.
-          into: [
-            ...new Set(
-              knobs.flatMap(
-                (knob) =>
-                  view.moduleFacts.find(
-                    (fact) => knob.line >= fact.line && knob.line <= fact.lineEnd,
-                  )?.id ?? [],
-              ),
+  // Los mandos van en el diagrama, como nodos: en el programa entero, y no mientras se construye.
+  const panelsOn = hasKnobs && lesson === null && view.focus === null && !constructing
+  const sourceRows = useMemo(() => program?.source.split('\n') ?? [], [program])
+  /** Las partes del programa que usan un nombre (sin contar la línea donde se le da valor). */
+  const usersOf = (name: string, skip: number) => {
+    const used = new RegExp(`\\b${name}\\b`)
+    return view.moduleFacts
+      .filter((fact) =>
+        sourceRows
+          .slice(fact.line - 1, fact.lineEnd)
+          .some((row, at) => fact.line + at !== skip && used.test(row.replace(/#.*$/, ''))),
+      )
+      .map((fact) => fact.id)
+  }
+  /** Cómo se enseña cada valor: con el mando que pide su dato (ver `knobs.ts`). */
+  const controlOf = (knob: Knob, kind: KnobKind): KnobControl => {
+    const shown = knobShown(knob)
+    if (
+      shown.number !== undefined &&
+      (kind === 'cantidad' || kind === 'medida' || kind === 'proporcion')
+    ) {
+      return {
+        type: 'dial',
+        value: shown.number,
+        ...dialRange(shown.number, kind),
+        ...(kind === 'proporcion' ? { percent: true } : {}),
+      }
+    }
+    if (shown.bool !== undefined) return { type: 'switch', value: shown.bool }
+    if (kind === 'color' && shown.color !== undefined) return { type: 'color', value: shown.color }
+    if (shown.items) return { type: 'list', items: shown.items, text: knob.text }
+    return { type: 'text', value: shown.text ?? knob.text }
+  }
+  type KnobEntry = { key: string; knob: Knob; kind: KnobKind }
+  const entriesOf = (list: readonly { knob: Knob; kind: KnobKind }[]): KnobEntry[] => {
+    const seen = new Map<string, number>()
+    return list.map(({ knob, kind }) => {
+      const base = `${knob.from}:${knob.name}`
+      const count = seen.get(base) ?? 0
+      seen.set(base, count + 1)
+      return { key: count === 0 ? base : `${base}:${count}`, knob, kind }
+    })
+  }
+  const itemsOf = (entries: readonly KnobEntry[]) =>
+    entries.map(({ key, knob, kind }) => ({
+      key,
+      name: knob.name.replace(/_+/g, ' ').toLowerCase(),
+      hint:
+        knob.from === 'launch'
+          ? `${knob.name}: un dato con el que se arranca (línea ${knob.line})`
+          : `${knob.name}: un ajuste que el programa define al empezar (línea ${knob.line})`,
+      control: controlOf(knob, kind),
+    }))
+  /** Darle otro valor a un mando: se escribe en el programa (si vale para su dato) y se vuelve a ejecutar. */
+  const setKnob = (entries: readonly KnobEntry[], key: string, given: KnobValue) => {
+    const entry = entries.find((one) => one.key === key)
+    if (!entry) return
+    const text = knobWritten(entry.knob, entry.kind, given)
+    if (text !== null && text !== entry.knob.text) turnKnob(entry.knob, text)
+  }
+  const roll = () => {
+    healthWait.current = { before: ran, how: 'roll' }
+    runCause.current = { text: 'otra tirada', at: Date.now(), again: true }
+    post({ type: 'reroll' })
+  }
+  // Con qué arranca: los valores de la llamada que lo pone en marcha.
+  const launchEntries = entriesOf(
+    knobs.filter((knob) => knob.from === 'launch').map((knob) => ({ knob, kind: kindGuess(knob) })),
+  )
+  // La configuración: las constantes que el JEV dice que son ajustes (mientras no lo dice, o si no lo sabe,
+  // las que lo parecen), cada una con la forma de manejarla que eligió.
+  const configEntries = entriesOf(
+    constants.flatMap(({ knob, ask, options }) => {
+      const said = configKinds[ask]
+      if (said === 'no') return []
+      const kind =
+        said !== undefined && said !== null && options.includes(said as KnobKind)
+          ? (said as KnobKind)
+          : kindGuess(knob)
+      return [{ knob, kind }]
+    }),
+  )
+  // El dado va con lo que arranca; si no hay con qué, con la configuración; si no hay nada más, solo.
+  const launchShown =
+    panelsOn && (launchEntries.length > 0 || (chance && configEntries.length === 0))
+  const knobsPanel: KnobsPanel | null = launchShown
+    ? {
+        title: launchEntries.length > 0 ? 'Con qué arranca' : 'El azar',
+        sub:
+          launchEntries.length > 0
+            ? 'los datos con los que se pone en marcha'
+            : 'otra tirada, otra suerte',
+        items: itemsOf(launchEntries),
+        chance,
+        // Las partes donde están escritos: el nodo les tiende una flecha.
+        into: [
+          ...new Set(
+            launchEntries.flatMap(
+              ({ knob }) =>
+                view.moduleFacts.find((fact) => knob.line >= fact.line && knob.line <= fact.lineEnd)
+                  ?.id ?? [],
             ),
-          ],
-          onStep: (key: string, direction: 1 | -1) => {
-            const knob = knobs.find((one) => `${one.line}:${one.start}` === key)
-            if (knob) turnKnob(knob, knobText(knob, knobMoved(knob, direction)))
-          },
-          onSet: (key: string, typed: string) => {
-            const knob = knobs.find((one) => `${one.line}:${one.start}` === key)
-            const value = Number(typed.replace(',', '.'))
-            if (!knob || !Number.isFinite(value)) return
-            const text = knobText(knob, value)
-            if (Number(text) !== knob.value) turnKnob(knob, text)
+          ),
+        ],
+        onSet: (key: string, given: KnobValue) => {
+          setKnob(launchEntries, key, given)
+        },
+        onRoll: () => {
+          roll()
+        },
+      }
+    : null
+  const configPanel: KnobsPanel | null =
+    panelsOn && configEntries.length > 0
+      ? {
+          title: 'Configuración',
+          sub: 'cámbiala y mira qué pasa',
+          items: itemsOf(configEntries),
+          chance: chance && !launchShown,
+          // Las partes que usan esos valores: el nodo les tiende una flecha.
+          into: [...new Set(configEntries.flatMap(({ knob }) => usersOf(knob.name, knob.line)))],
+          onSet: (key: string, given: KnobValue) => {
+            setKnob(configEntries, key, given)
           },
           onRoll: () => {
-            healthWait.current = { before: ran, how: 'roll' }
-            runCause.current = { text: 'otra tirada', at: Date.now(), again: true }
-            post({ type: 'reroll' })
+            roll()
           },
         }
       : null
@@ -2948,6 +3106,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 runs={outcome?.result ? runsShown : null}
                 progress={progressShown}
                 knobs={knobsPanel}
+                config={configPanel}
                 start={outcome?.start ?? null}
                 exit={
                   architecture?.order !== undefined && told?.exit !== undefined
