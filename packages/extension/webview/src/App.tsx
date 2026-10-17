@@ -1,13 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { Density, NodeState } from '@prysel/morphology'
 import type { Program } from '@prysel/python'
 import type { SemanticEdge } from '@prysel/spatial'
 import {
   AddNodeMenu,
+  AskBox,
+  AskBubble,
   Button,
   Canvas,
+  beatsOf,
+  ideaOf,
+  factsText,
+  withPlan,
+  withStory,
+  withVerdict,
+  type PlannedModule,
   type CanvasNode,
+  type ViewerContent,
   type NodeMenuItem,
+  type AskChip,
+  type AskWhere,
+  type KnobControl,
+  type KnobsPanel,
+  type KnobValue,
+  type ScreenPanel,
   FunctionMenu,
   Icon,
   IconButton,
@@ -21,18 +37,26 @@ import {
 import { actionEdits } from '@prysel/python/edits'
 import type { NodeAction, TemplateId } from '@prysel/morphology'
 import {
+  MAX_COVER_PARTS,
+  MAX_COVER_PIECES,
   parseWebviewMessage,
   type DecisionMessage,
   type GeneratedMessage,
   type SayMessage,
+  type FlavoursMessage,
   type StepMessage,
   type Theme,
 } from '../../src/protocol.ts'
-import type { Forced } from '../../src/jev/engine.ts'
+import type { Forced, PlaceId as Place } from '../../src/jev/engine.ts'
+import { MODULE_ROLES, shapeCandidates, type ArchShape, type ModuleRole } from '@prysel/spatial'
 import type { CallEntry } from '../../src/calls.ts'
 import { CallsPanel } from './CallsPanel.tsx'
+import { AiHub, type ChatEntry } from './AiHub.tsx'
 import { CommandBar } from './CommandBar.tsx'
-import { dragChips } from './dragging.ts'
+import { answerTo, rejection } from './answering.ts'
+import { dissolve, dragChips, flyNode, gesture } from './dragging.ts'
+import { morph } from './effects.ts'
+import { coverOf, draftOf, filledBy, piecesOf, sketchOf, type Sketch } from './drafting.ts'
 import { markIn } from './marking.ts'
 import { hush, speak, type OrderState } from './orders.ts'
 import { curveOf, parseVisual, tableOf } from '../../src/jev/visual.ts'
@@ -63,6 +87,50 @@ import {
 } from './player.ts'
 import { currentMoment, lessonNotes, momentsOf, noteNodeId, resolveBeats } from './lessons.ts'
 import { speakableNote, useNarration } from './useNarration.ts'
+import { functionsIn } from '../../src/gist/facts.ts'
+import { loopsIn } from '../../src/gist/laps.ts'
+import { triesIn } from '../../src/gist/net.ts'
+import { classesIn } from '../../src/gist/blueprint.ts'
+import { conditionsIn } from '../../src/gist/branch.ts'
+import type { Gist, RunSummary } from '../../src/gist/gist.ts'
+import { RunPanel } from './RunPanel.tsx'
+import { Transport, usePlayback } from './Transport.tsx'
+import { holdShape, sameHeld, type Held } from './holding.ts'
+import { IdeaView } from './IdeaView.tsx'
+import { sampleScene } from './gisting.ts'
+import { TryPanel } from './TryPanel.tsx'
+import {
+  healthOf,
+  moduleStates,
+  moduleStory,
+  outcomeOf,
+  progressViewer,
+  runEntry,
+  runsViewer,
+  type RunEntry,
+} from './outcome.ts'
+import {
+  EMPTY_SCREEN,
+  applyScreen,
+  keyLabel,
+  keyMatches,
+  playNote,
+  unlockSound,
+  restartScreen,
+  usesScreen,
+  withOutput,
+  type ScreenState,
+} from './screen.ts'
+import {
+  dialRange,
+  kindGuess,
+  kindOptions,
+  knobShown,
+  knobWritten,
+  knobsOf,
+  type Knob,
+  type KnobKind,
+} from './knobs.ts'
 import { usePlayer } from './usePlayer.ts'
 import { curvesOf, loopRefs, observedInLoops, positionOf, type LoopRef } from './loops.ts'
 import { chainRefs, describeStep, viewableStep, type ChainRef } from './chains.ts'
@@ -86,6 +154,19 @@ const saved = (): SavedState => (vscode.getState() as SavedState | undefined) ??
 const post = (message: unknown) => {
   vscode.postMessage(message)
 }
+// Un fallo dentro del lienzo no debe perderse en silencio: se le cuenta a quien lo aloja, que lo apunta.
+if (typeof window !== 'undefined') {
+  const report = (text: string) => {
+    post({ type: 'webviewError', message: text.slice(0, 600) })
+  }
+  window.addEventListener('error', (event) => {
+    report(`${event.message} ${event.error instanceof Error ? (event.error.stack ?? '') : ''}`)
+  })
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason: unknown = event.reason
+    report(reason instanceof Error ? `${reason.message} ${reason.stack ?? ''}` : String(reason))
+  })
+}
 
 const DENSITIES: Density[] = ['compact', 'normal', 'expanded']
 const DENSITY_LABELS: Record<Density, string> = {
@@ -104,6 +185,35 @@ interface SavedState {
   narrate?: boolean
   /** Decir en voz alta lo que se hace con cada orden. */
   voice?: boolean
+  /** La versión que se hizo de una petición abierta (y las otras que se propusieron), por archivo. */
+  flavours?: Record<string, Flavours>
+  /** Las ejecuciones del programa (qué provocó cada una y qué dio), por archivo: su historia sigue al recargar. */
+  runs?: Record<string, RunEntry[]>
+}
+
+/** Una petición abierta: lo que se pidió, las versiones que se propusieron y cuál se hizo. */
+interface Flavours {
+  command: string
+  options: { title: string; shows: string }[]
+  chosen: number
+}
+
+/** La leyenda de las siluetas: cómo se dice cada papel, en una palabra, y qué quiere decir. */
+const ROLE_KEYS: Record<ModuleRole, { word: string; why: string }> = {
+  entrada: {
+    word: 'entra',
+    why: 'Trae lo que el programa necesita de fuera: lo que se le da para empezar',
+  },
+  datos: {
+    word: 'guarda',
+    why: 'Guarda o prepara los datos con los que trabajan las demás partes',
+  },
+  logica: { word: 'calcula', why: 'Hace una parte del trabajo: recibe algo y devuelve otra cosa' },
+  control: {
+    word: 'manda',
+    why: 'Decide el orden: llama a las demás partes y repite lo que haga falta',
+  },
+  salida: { word: 'sale', why: 'Enseña o entrega el resultado' },
 }
 
 /** A partir de este ancho, los nodos para entender van a un lado del lienzo; si no, debajo. */
@@ -141,7 +251,53 @@ const KERNEL_LABEL: Record<KernelStatus, string> = {
   dead: 'Motor caído',
 }
 
-export function App() {
+/**
+ * Lo que el anfitrión sabe hacer. En VS Code, todo; otro anfitrión (la web) puede no tener aún las órdenes
+ * con IA, la pestaña de consultas o un guion de lección que abrir en un editor, y entonces no se ofrecen.
+ */
+export interface HostFeatures {
+  orders: boolean
+  calls: boolean
+  editLesson: boolean
+  /**
+   * Interfaz de chat (la web, el móvil): sin barra de herramientas, el diagrama a pantalla completa y,
+   * abajo, la conversación con la IA en lugar de la caja de órdenes.
+   */
+  chat?: boolean
+  /** Sugerencias para empezar a hablar con la IA (en la interfaz de chat). */
+  suggestions?: string[]
+  /** Lo que se propone con el lienzo vacío: ideas que construir, dichas como las diría cualquiera. */
+  starters?: string[]
+  /**
+   * El reproductor y los nodos para entender (variables, pila, árbol de llamadas…) empiezan recogidos. Una
+   * lección no se pone a reproducir sola al abrirla: el reproductor aparece cuando se pide «Paso a paso»
+   * (con su botón, o hablando con la IA), y dentro de él los nodos se eligen pulsando «Entender». En una
+   * pantalla pequeña quitan sitio al diagrama, que es lo que se viene a ver.
+   */
+  foldInsights?: boolean
+  /**
+   * La IA se pide desde el lienzo (clic derecho, un cable soltado, el botón «Pedir»), sin caja de órdenes
+   * abajo. En la interfaz de chat va siempre; aquí, la que tiene barra de herramientas, también.
+   */
+  hub?: boolean
+  /** Los números con los que se puede jugar y el dado, como un nodo del diagrama. */
+  knobs?: boolean
+  /**
+   * El programa se puede **usar de verdad** en su nodo «Pantalla» (suena, tiene botones, dibuja): quien lo
+   * aloja lo tiene en marcha aparte (mensajes `screen`/`screened`). De momento, la web.
+   */
+  screen?: boolean
+}
+
+const ALL_FEATURES: HostFeatures = {
+  orders: true,
+  calls: true,
+  editLesson: true,
+  hub: true,
+  knobs: true,
+}
+
+export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {}) {
   // «Reducir movimiento» del sistema (o de VS Code, que lo refleja dentro del webview): la cámara del
   // reproductor salta directa en vez de deslizarse. El desplazamiento de los nodos ya se apaga solo
   // (`useMotion`, en `@prysel/ui`); esto es lo mismo para la cámara, que no pasa por ahí.
@@ -204,11 +360,59 @@ export function App() {
     born?: boolean
     change?: 'changed' | 'leaving'
     wide?: boolean
+    /** Su parte del plan se deja plegada: se señala la tarjeta de la parte, no se abre. */
+    folded?: boolean
+    /** La línea donde se queda la cámara: la cabecera de lo que se construye. */
+    anchor?: number
     /** El trozo exacto de su código que se subraya mientras se habla de ella. */
     mark?: string[]
   } | null>(null)
   /** Lo que se le ha preguntado a cada modelo y lo que contestó, y si se está mirando esa pestaña. */
   const [calls, setCalls] = useState<CallEntry[]>([])
+  // «Qué hace» cada función: su muestra ejecutada, tal como la mandó quien ejecuta el programa.
+  const [gists, setGists] = useState<readonly Gist[]>([])
+  // Cómo le fue al programa entero al ejecutarlo: lo que salió por pantalla.
+  const [ran, setRan] = useState<RunSummary | null>(null)
+  // Cuántas veces se ha asentado lo construido (llega su comprobación): el lienzo lo enseña entero.
+  const [settled, setSettled] = useState(0)
+  /** La conversación con la IA (interfaz de chat): cada orden y lo que se contestó, y se fue contando. */
+  const [chat, setChat] = useState<ChatEntry[]>([])
+  /** Añade una frase a la respuesta de la orden en curso (o una respuesta nueva, si no hay ninguna). */
+  const tellChat = useCallback((line: string) => {
+    if (!line) return
+    setChat((previous) => {
+      const at = previous.findLastIndex((entry) => entry.role === 'ai')
+      const entry = previous[at]
+      if (!entry) return [...previous, { id: Date.now(), role: 'ai', text: '', lines: [line] }]
+      if (entry.lines?.[entry.lines.length - 1] === line || entry.text === line) return previous
+      const next = [...previous]
+      next[at] = { ...entry, lines: [...(entry.lines ?? []), line] }
+      return next
+    })
+  }, [])
+  // La respuesta de la orden en curso sigue a su estado: pensando, preguntando, hecho (o construyendo).
+  useEffect(() => {
+    if (order.phase === 'idle') return
+    const id = orderSeq.current
+    setChat((previous) =>
+      previous.map((entry) => {
+        if (entry.role !== 'ai' || entry.id !== id) return entry
+        if (order.phase === 'deciding') return { ...entry, busy: true, note: 'Pensando…' }
+        if (order.phase === 'ask') {
+          return { ...entry, busy: false, text: order.question, options: order.options, note: '' }
+        }
+        return {
+          ...entry,
+          text: order.say,
+          tone: order.tone,
+          busy: order.building === true,
+          note: order.note ?? '',
+          options: [],
+          needsKey: order.needsKey === true,
+        }
+      }),
+    )
+  }, [order])
   const [tab, setTab] = useState<'canvas' | 'calls'>('canvas')
   /** Lo que se está diciendo de la pieza enfocada: se ve escrito junto a ella, como una nota. */
   const [caption, setCaption] = useState<string | null>(null)
@@ -219,7 +423,226 @@ export function App() {
   /** La IA que redacta y el motor que decide ahora: lo dice la extensión. */
   const [models, setModels] = useState<{ ai: string | null; jev: string | null } | null>(null)
   const spotSeq = useRef(0)
-  const [voice, setVoice] = useState<boolean>(() => saved().voice ?? true)
+  const [voiceOn, setVoice] = useState<boolean>(() => saved().voice ?? true)
+  // Con el micrófono abierto no se habla en voz alta: se oiría a sí mismo y lo tomaría por una orden. Lo que
+  // se iba a decir se lee (el subtítulo, el chat).
+  const [micOpen, setMicOpen] = useState(false)
+  const voice = voiceOn && !micOpen
+  /** Lo que se le está oyendo decir al usuario ahora mismo (`null`: nada). */
+  const [hearing, setHearing] = useState<string | null>(null)
+  // Lo que lleva escrito en la caja del chat, sin mandar: el lienzo lo va esbozando, como lo que se le oye.
+  const [typed, setTyped] = useState<string | null>(null)
+  /**
+   * Las **ejecuciones** del programa, una tras otra: qué provocó cada una (una perilla, otra tirada, una
+   * orden) y qué dio. Es lo que enseña el visor que va junto al resultado.
+   */
+  const [pastRuns, setPastRuns] = useState<RunEntry[]>([])
+  /**
+   * La última orden que se dio **sobre una pieza** (en su menú, o con un cable): cuál, y sobre qué. Lo que se
+   * conteste a esa orden se dice junto a la pieza. `closed`: ya se quitó de ahí.
+   */
+  const [askedAbout, setAskedAbout] = useState<{
+    order: number
+    node: string
+    closed?: boolean
+  } | null>(null)
+  /** Se pidió ver algo en «Cómo avanza» y aún no ha llegado medido. */
+  const watchWait = useRef<{ wish: string; at: number } | null>(null)
+  /** Lo que va a provocar la próxima ejecución (`again`: sin cambiar el texto, solo otra tirada). */
+  const runCause = useRef<{ text: string; at: number; again?: boolean } | null>(null)
+  /** De qué archivo es esa historia: con otro, empieza de nuevo. */
+  const runsOf = useRef<string | null>(null)
+  /** Aún no se ha visto ejecutar desde que se abrió: lo primero que llegue puede ser lo que ya estaba apuntado. */
+  const firstRun = useRef(true)
+  // La historia se guarda con el lienzo: al recargar, sigue ahí.
+  useEffect(() => {
+    if (file === null) return
+    vscode.setState({
+      ...saved(),
+      runs: { ...saved().runs, [file]: pastRuns },
+    } satisfies SavedState)
+  }, [pastRuns, file])
+  /** La radiografía: los módulos enseñan sus nombres por dentro, y vuelven las flechas de quién llama a quién. */
+  const [xray, setXray] = useState(false)
+  /**
+   * Se espera la **salud** de un cambio: el programa cambió (una orden, una perilla) o se tiró otra vez, y
+   * cuando se vuelva a ejecutar se dirá cómo quedó. `before`: cómo le iba antes.
+   */
+  const healthWait = useRef<{
+    before: RunSummary | null
+    how: 'order' | 'knob' | 'roll'
+    /** La versión del texto a partir de la cual vale: una ejecución de un texto anterior no dice nada. */
+    from?: number
+  } | null>(null)
+  /** Cómo le iba al programa cuando se dio la última orden (`null`: no había programa). */
+  const baseline = useRef<RunSummary | null>(null)
+  /** La última ejecución que se ha visto, y de qué versión del texto era. */
+  const seenRun = useRef<{ version: number; run: RunSummary } | null>(null)
+  /** Dice en el chat cómo quedó el programa tras un cambio. */
+  const sayHealth = useCallback(
+    (before: RunSummary | null, after: RunSummary, how: 'order' | 'knob' | 'roll') => {
+      const health = healthOf(before, after, how)
+      if (!health) return
+      setChat((previous) => [
+        ...previous.slice(-60),
+        {
+          id: -Date.now(),
+          role: 'ai',
+          text: health.text,
+          tone: health.tone,
+          ...(health.undo || health.fix
+            ? {
+                options: [
+                  ...(health.fix
+                    ? [{ label: 'Arréglalo', order: `Arregla este error: ${health.fix}` }]
+                    : []),
+                  ...(health.undo ? [{ label: 'Deshacer el cambio', undo: true }] : []),
+                ],
+              }
+            : {}),
+        },
+      ])
+    },
+    [],
+  )
+  /** Una frase que se deja empezada en el chat al tocar una línea del guion («Cambia «X» para que »). */
+  /**
+   * La caja de pedir, abierta por la app y no por un gesto sobre el lienzo (el botón de la IA, la tecla «/»,
+   * una línea del guion): dónde, de qué pieza habla (si de alguna) y la frase que ya trae empezada.
+   */
+  const [asking, setAsking] = useState<{
+    x: number
+    y: number
+    seq: number
+    about?: string
+    title?: string
+    text?: string
+  } | null>(null)
+  const askSeq = useRef(0)
+  const stage = useRef<HTMLElement>(null)
+  const openAsk = useCallback((about?: { id: string; title: string }, text?: string) => {
+    const w = stage.current?.clientWidth ?? 640
+    const h = stage.current?.clientHeight ?? 480
+    setAsking({
+      x: Math.max(6, (w - 340) / 2),
+      y: Math.max(56, h * 0.28),
+      seq: ++askSeq.current,
+      ...(about ? { about: about.id, title: `Sobre «${about.title}»` } : {}),
+      ...(text === undefined ? {} : { text }),
+    })
+  }, [])
+  /**
+   * La petición era abierta y se hizo una versión concreta: lo que se pidió, las versiones que se propusieron
+   * y cuál se hizo. Las otras quedan a mano en el chat, para rehacerlo con una de ellas.
+   */
+  const [allFlavours, setAllFlavours] = useState<Record<string, Flavours>>(
+    () => saved().flavours ?? {},
+  )
+  const flavours = allFlavours[file ?? ''] ?? null
+  // Se recuerda al recargar: las otras versiones siguen a mano mientras el programa sea ese.
+  const setFlavours = useCallback(
+    (next: Flavours | null) => {
+      setAllFlavours((all) => {
+        const rest = Object.fromEntries(Object.entries(all).filter(([key]) => key !== (file ?? '')))
+        return next ? { ...rest, [file ?? '']: next } : rest
+      })
+    },
+    [file],
+  )
+  useEffect(() => {
+    vscode.setState({ ...saved(), flavours: allFlavours } satisfies SavedState)
+  }, [allFlavours])
+  /**
+   * Desde dónde se mira el programa: su **idea** (qué hace, en unas líneas), sus **partes** (la arquitectura)
+   * o su **detalle** (el diagrama abierto, paso a paso).
+   */
+  const [chosen, setChosen] = useState<Distance | null>(null)
+  /** Una pantalla estrecha (un móvil): ahí las partes, encuadradas, no se leen. */
+  const narrow = useSyncExternalStore(watchNarrow, isNarrow, () => false)
+  /** Cada vez que el diagrama cambia de distancia (de sus partes a su detalle, o al revés), se encuadra de nuevo. */
+  const [reframed, setReframed] = useState(0)
+  const lookFrom = useCallback(
+    (next: Distance) => {
+      if ((next === 'detalle') !== (chosen === 'detalle')) setReframed((count) => count + 1)
+      setChosen(next)
+    },
+    [chosen],
+  )
+  /** El plan de lo que se construye, como arquitectura: cada módulo y de cuáles necesita algo. */
+  const [planned, setPlanned] = useState<readonly PlannedModule[] | null>(null)
+  /** El plan ya está entero (no llegan más partes), y ya se esperó lo que dice el JEV de él. */
+  const [planDone, setPlanDone] = useState(false)
+  const [planWaited, setPlanWaited] = useState(false)
+  /** Lo que dijo el JEV de cada arquitectura que se le preguntó (por su clave), y lo último que dijo. */
+  const [archVerdicts, setArchVerdicts] = useState<Readonly<Record<string, ArchVerdict>>>({})
+  /**
+   * Lo que dijo el JEV de cada constante del programa (por su nombre y las formas que su dato admite): cómo
+   * se maneja, `no` si no es un ajuste, `null` si no lo sabe. Las preguntas ya hechas, para no repetirlas.
+   */
+  const [configKinds, setConfigKinds] = useState<Readonly<Record<string, string | null>>>({})
+  /** La pantalla del programa en marcha (ver `screen.ts`). */
+  const [screen, setScreen] = useState<ScreenState>(EMPTY_SCREEN)
+  /**
+   * Se pulsó «Empezar» en la pantalla: desde entonces se pone en marcha sola al cambiar el código. Antes no,
+   * porque el navegador no deja sonar nada hasta que se pulsa algo: lo que sonara al arrancar se perdería.
+   */
+  const [screenArmed, setScreenArmed] = useState(false)
+  const configAsked = useRef(new Set<string>())
+  const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
+  /**
+   * Lo que ocupa la consola («Al ejecutarlo») en el rincón del lienzo, con su margen: el encuadre le deja
+   * ese sitio. `null` si no está.
+   */
+  const [consoleBox, setConsoleBox] = useState<{ w: number; h: number } | null>(null)
+  /**
+   * Junto a la consola no queda sitio para las barras de abajo (la de ver una vuelta, la leyenda): el lienzo
+   * es estrecho. Entonces van encima de ella, no a su lado.
+   */
+  const [cramped, setCramped] = useState(false)
+  const consoleWatch = useRef<ResizeObserver | null>(null)
+  const watchConsole = useCallback((element: HTMLDivElement | null) => {
+    consoleWatch.current?.disconnect()
+    consoleWatch.current = null
+    if (!element) {
+      setConsoleBox(null)
+      setCramped(false)
+      return
+    }
+    const around = element.offsetParent
+    const measure = () => {
+      // Redondeado a saltos: que la consola crezca una línea no reencuadra el diagrama.
+      const w = Math.ceil((element.offsetWidth + CONSOLE_MARGIN) / 20) * 20
+      const h = Math.ceil((element.offsetHeight + CONSOLE_MARGIN) / 20) * 20
+      setConsoleBox((known) => (known?.w === w && known.h === h ? known : { w, h }))
+      setCramped(around !== null && around.clientWidth - w < DOCK_ROOM + HUB_ROOM)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    if (around) observer.observe(around)
+    consoleWatch.current = observer
+    measure()
+  }, [])
+  /** La función que se está probando con otros datos (el id de su nodo): su panel está abierto. */
+  const [trying, setTrying] = useState<string | null>(null)
+  /** Lo último que dijo el JEV de qué pieza cubre cada parte de lo pedido. */
+  const [judged, setJudged] = useState<{ key: string; by: (string | null)[] } | null>(null)
+  /** Y lo que dijo del plan: qué etapa se ocupará de cada parte, antes de que esté escrita. */
+  const [foreseen, setForeseen] = useState<{ key: string; by: (string | null)[] } | null>(null)
+  /** El esbozo de lo último que se pidió sobre un lienzo vacío: sigue a la vista mientras se construye. */
+  const [asked, setAsked] = useState<{ sketch: Sketch; kind: string | null } | null>(null)
+  /** Lo que parece estar pidiendo, por lo que lleva dicho: su hueco se dibuja antes de que acabe la frase. */
+  const [preview, setPreview] = useState<{ kind: string; text: string } | null>(null)
+  const heardWords = useRef(0)
+  /** Lo que ha dicho el JEV de cada cosa oída: si es una orden entera o está a medias. */
+  const wholeness = useRef(new Map<string, number>())
+  /** Dónde estaba la caja provisional cuando llegó la pieza de verdad: de ahí sale el marco que viaja. */
+  const morphFrom = useRef<DOMRect | null>(null)
+  /** La corrección que viene tras un «no, eso no»: se manda cuando lo deshecho ya se ve. */
+  const afterUndo = useRef<string | null>(null)
+  /** La línea de la función o la clase en la que hay que entrar en cuanto el programa la traiga. */
+  const [enterLine, setEnterLine] = useState<{ line: number; seq: number } | null>(null)
+  /** La última petición de entrar que ya se atendió: en cada cosa construida se entra una vez. */
+  const entered = useRef(0)
   /** El cambio de una orden ya está en el lienzo: en cuanto se pinte, se sabe cuánto tardó. */
   const markPainted = useCallback(() => {
     const from = awaitingPaint.current
@@ -249,9 +672,13 @@ export function App() {
   }, [])
   /** Lo que llega del motor JEV se atiende con lo que el lienzo sabe ahora (ver más abajo). */
   const onDecision = useRef<(message: DecisionMessage) => void>(() => undefined)
+  const onPreview = useRef<(kind: string, text: string) => void>(() => undefined)
   const onGenerated = useRef<(message: GeneratedMessage) => void>(() => undefined)
   const onSay = useRef<(message: SayMessage) => void>(() => undefined)
+  /** Lo que se pide desde fuera del lienzo (el comando «Prysel: Pedir…»): como si se tecleara aquí. */
+  const onAsk = useRef<(text: string) => void>(() => undefined)
   const onStep = useRef<(message: StepMessage) => void>(() => undefined)
+  const onFlavours = useRef<(message: FlavoursMessage) => void>(() => undefined)
   const { pending, change: changeControl, submit, received } = useWriteBack(post, focusCreated)
   const [theme, setTheme] = useState<Theme>('dark')
   const [density, setDensity] = useState<Density>(() => {
@@ -276,6 +703,17 @@ export function App() {
       if (message.type === 'update') {
         setProgram(message.program)
         setFile(message.file ?? null)
+        // Otro archivo: la historia de sus ejecuciones es la suya (la que se guardó, si la hay). Y un
+        // programa que empieza desde cero, sin historia.
+        if ((message.program?.nodes.length ?? 0) === 0) {
+          runsOf.current = message.file ?? null
+          setPastRuns((previous) => (previous.length === 0 ? previous : []))
+        } else if ((message.file ?? null) !== runsOf.current) {
+          runsOf.current = message.file ?? null
+          const kept = saved().runs?.[message.file ?? ''] ?? []
+          firstRun.current = true
+          setPastRuns(kept)
+        }
         setVersion(message.version ?? null)
         received(message.program, message.version ?? null)
         markPainted()
@@ -285,6 +723,8 @@ export function App() {
         onGenerated.current(message)
       } else if (message.type === 'say') {
         onSay.current(message)
+      } else if (message.type === 'ask') {
+        onAsk.current(message.text)
       } else if (message.type === 'step') {
         onStep.current(message)
       } else if (message.type === 'call') {
@@ -296,6 +736,131 @@ export function App() {
             at < 0 ? [...previous, entry] : previous.map((call, i) => (i === at ? entry : call))
           return next.length > 150 ? next.slice(next.length - 150) : next
         })
+      } else if (message.type === 'gists') {
+        setGists(message.gists)
+        setRan(message.run ?? null)
+        setSettled((count) => count + 1)
+        // La salud tras un cambio: el programa se volvió a ejecutar, y se dice cómo quedó respecto a antes.
+        // Llegó medido lo que se pidió ver: se dice.
+        const wished = watchWait.current
+        if (wished && message.run?.progress?.wish === wished.wish) {
+          watchWait.current = null
+          const shown = message.run.progress
+          const says = [(shown.text ?? shown.bars ?? shown.grid)?.says, shown.number?.says]
+            .filter(Boolean)
+            .join(' y ')
+          setChat((previous) => [
+            ...previous.slice(-60),
+            { id: -Date.now(), role: 'ai', text: `Hecho: «Cómo avanza» enseña ahora ${says}.` },
+          ])
+        }
+        if (message.run) {
+          // Una ejecución nueva (otro texto, u otra tirada del mismo): se apunta con lo que la provocó.
+          const cause = runCause.current
+          const due = cause !== null && Date.now() - cause.at < RUN_CAUSE_MS ? cause : null
+          if (seenRun.current?.version !== message.version || due?.again === true) {
+            runCause.current = null
+            const run = message.run
+            const reopened = firstRun.current && due === null
+            firstRun.current = false
+            setPastRuns((previous) => {
+              const last = previous[previous.length - 1]
+              const entry = runEntry(
+                run,
+                due?.text ?? (previous.length === 0 || reopened ? 'al abrirlo' : 'un cambio'),
+                (last?.n ?? 0) + 1,
+              )
+              // Recién abierto, si da lo mismo que lo último apuntado es esa misma ejecución: no se repite.
+              if (!entry || (reopened && last?.said === entry.said)) return previous
+              return [...previous.slice(-(RUNS_KEPT - 1)), entry]
+            })
+          }
+          seenRun.current = { version: message.version, run: message.run }
+        }
+        const waiting = healthWait.current
+        if (
+          waiting &&
+          message.run &&
+          (waiting.from === undefined || message.version >= waiting.from)
+        ) {
+          healthWait.current = null
+          sayHealth(waiting.before, message.run, waiting.how)
+        }
+      } else if (message.type === 'flavours') {
+        onFlavours.current(message)
+      } else if (message.type === 'architecture') {
+        setPlanned(message.modules)
+        if (message.complete) setPlanDone(true)
+      } else if (message.type === 'arched') {
+        // Los papeles se guardan por el título de su módulo: así siguen valiendo si el programa cambia.
+        try {
+          const [modules] = JSON.parse(message.key) as [{ title: string }[]]
+          const verdict = {
+            roles: Object.fromEntries(
+              modules.map((module, at) => [module.title, asRole(message.roles[at])]),
+            ),
+            shape: message.shape,
+          }
+          setArchVerdicts((known) => ({
+            ...(Object.keys(known).length > 40 ? {} : known),
+            [message.key]: verdict,
+          }))
+          setArchLast(verdict)
+        } catch {
+          // Una clave que no es la nuestra: no hay a quién aplicarla.
+        }
+      } else if (message.type === 'screened') {
+        if (message.ev === 'loading') setScreen(restartScreen)
+        else if (message.ev === 'screen') {
+          const { command } = message
+          // Lo que suena no se dibuja: suena.
+          if (command['op'] === 'sound') {
+            playNote(Number(command['hz']), Number(command['secs']), Number(command['delay']))
+          } else if (command['op'] === 'ready') {
+            setScreen((known) => ({
+              ...known,
+              phase: known.phase === 'failed' ? 'failed' : 'running',
+            }))
+          } else setScreen((known) => applyScreen(known, command))
+        } else if (message.ev === 'out') setScreen((known) => withOutput(known, message.text))
+        else if (message.ev === 'idle') {
+          setScreen((known) => (known.phase === 'loading' ? { ...known, phase: 'running' } : known))
+        } else {
+          const error =
+            message.ev === 'error'
+              ? { name: message.name, message: message.message, line: message.line }
+              : { name: 'Motor', message: message.message, line: null }
+          // Un fallo al arrancar lo para; uno al pulsar algo se dice, y lo demás se puede seguir usando.
+          const stops = message.ev === 'fatal' || error.name === 'Colgado'
+          setScreen((known) => ({
+            ...known,
+            phase: stops || known.phase === 'loading' ? 'failed' : known.phase,
+            error,
+            timers: [],
+          }))
+        }
+      } else if (message.type === 'configured') {
+        try {
+          const asked = JSON.parse(message.key) as string[]
+          setConfigKinds((known) => ({
+            ...(Object.keys(known).length > 200 ? {} : known),
+            ...Object.fromEntries(asked.map((one, at) => [one, message.kinds[at] ?? null])),
+          }))
+        } catch {
+          // Una clave que no es la nuestra: no hay a quién aplicarla.
+        }
+      } else if (message.type === 'covered') {
+        const verdict = { key: coverKey(message.parts, message.pieces), by: message.by }
+        if (message.plan) setForeseen(verdict)
+        else setJudged(verdict)
+      } else if (message.type === 'preview') {
+        // Si la frase está entera o a medias: el micrófono lo consulta antes de mandarla.
+        if (message.complete !== undefined) {
+          if (wholeness.current.size > 200) wholeness.current.clear()
+          wholeness.current.set(sayKey(message.text), message.complete)
+        }
+        setPreview({ kind: message.kind, text: message.text })
+        onPreview.current(message.kind, message.text)
       } else if (message.type === 'progress') {
         const text = message.text
         setThinking(text)
@@ -335,7 +900,7 @@ export function App() {
     return () => {
       window.removeEventListener('message', onMessage)
     }
-  }, [received, markPainted])
+  }, [received, markPainted, sayHealth])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -380,14 +945,16 @@ export function App() {
   const [insightChoice, setInsightChoice] = useState<Record<string, InsightId[]>>(
     () => saved().insights ?? {},
   )
+  // Con los nodos recogidos de entrada, los de la lección no salen solos: se eligen.
+  const suggested = features.foldInsights ? undefined : lesson?.show
   const insightIds = useMemo(
-    () => insightChoice[file ?? ''] ?? lesson?.show ?? [],
-    [insightChoice, file, lesson],
+    () => insightChoice[file ?? ''] ?? suggested ?? [],
+    [insightChoice, file, suggested],
   )
   // Se enciende o apaga sobre lo que había en ese momento (dos pulsaciones seguidas no se pisan).
   const toggleInsight = (id: InsightId) => {
     setInsightChoice((previous) => {
-      const current = previous[file ?? ''] ?? lesson?.show ?? []
+      const current = previous[file ?? ''] ?? suggested ?? []
       const now = current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
       return { ...previous, [file ?? '']: INSIGHTS.filter((x) => now.includes(x)) }
     })
@@ -397,13 +964,15 @@ export function App() {
   const autoTraced = useRef<string | null>(null)
   useEffect(() => {
     if (version === null || !lesson?.show || lesson.show.length === 0) return
+    // Con el reproductor recogido de entrada, no se graba nada hasta que se pide.
+    if (features.foldInsights) return
     const key = `${file ?? ''}@${version}`
     if (autoTraced.current === key) return
     // Ya hay algo grabado (o en marcha) para esta versión: no hace falta pedirlo otra vez.
     if (recording && recording.version === version) return
     autoTraced.current = key
     post({ type: 'trace', version })
-  }, [lesson, version, file, recording])
+  }, [lesson, version, file, recording, features.foldInsights])
   useEffect(() => {
     vscode.setState({ ...saved(), insights: insightChoice } satisfies SavedState)
   }, [insightChoice])
@@ -554,11 +1123,23 @@ export function App() {
     const statement = top.get(id)
     return statement === undefined ? undefined : runs[statement]
   }
+  // Si el programa falló al ejecutarlo, el paso en el que falló se marca en el diagrama: «línea 30» no le
+  // dice nada a quien no lee el código; ver cuál es, sí.
+  const failing =
+    ran?.ended === 'error' && ran.line !== undefined && program
+      ? ([...program.nodes]
+          .filter(
+            (n) => n.range && n.line <= (ran.line ?? 0) && (n.lineEnd ?? n.line) >= (ran.line ?? 0),
+          )
+          .sort((a, b) => b.line - a.line)[0]?.id ?? null)
+      : null
   const stateOf = (id: string): NodeState => {
+    if (id === failing) return 'error'
     const view = viewOf(id)
     return view ? NODE_STATE[view.state] : 'dormant'
   }
-  const started = kernel !== 'stopped' || Object.values(runs).some((r) => r.state !== 'never')
+  const started =
+    failing !== null || kernel !== 'stopped' || Object.values(runs).some((r) => r.state !== 'never')
 
   /** Ejecutar: los nodos pedidos (con lo que necesitan y no está al día), o todo. */
   const run = (ids: string[] | 'all') => {
@@ -635,9 +1216,37 @@ export function App() {
   // Compacto pliega las funciones (vista de pájaro); normal y expandido las abren.
   // El lienzo se lee hacia abajo, como diagrama de flujo (ver `axis` más abajo).
   // Con sus etapas: las fases con nombre del algoritmo, plegadas en normal hasta que se abren.
-  const view = useProgramView(source, program?.edges ?? NO_EDGES, density, {
+  // Cada función de la que se sabe qué hace lleva su tarjeta (lo que entró → lo que salió): plegada, se lee
+  // eso en vez de su diagrama. Solo mientras su texto sea el mismo del que salió la muestra.
+  const gisted = useMemo(() => {
+    if (!program || gists.length === 0) return source
+    const hashes = new Map(
+      [
+        ...functionsIn(program),
+        ...loopsIn(program),
+        ...triesIn(program),
+        ...classesIn(program),
+        ...conditionsIn(program),
+      ].map((fact) => [fact.id, fact.hash]),
+    )
+    const scenes = new Map(
+      gists.flatMap((gist) => {
+        const scene = hashes.get(gist.id) === gist.hash ? sampleScene(gist) : null
+        return scene ? [[gist.id, scene] as const] : []
+      }),
+    )
+    if (scenes.size === 0) return source
+    return source.map((node) => {
+      const scene = scenes.get(node.id)
+      return scene ? { ...node, gist: scene } : node
+    })
+  }, [source, program, gists])
+  const view = useProgramView(gisted, program?.edges ?? NO_EDGES, density, {
     flow: true,
     sections: program?.sections ?? NO_SECTIONS,
+    // El primer nivel se lee como arquitectura. (Una lección va paso a paso por el código: sigue en columna;
+    // y «Detalle» es justo eso: el diagrama abierto.)
+    architecture: lesson === null && chosen !== 'detalle',
   })
   // Durante la reproducción, si el paso ocurre dentro de una función o un método que no se está viendo, el
   // lienzo entra en él solo: si no, solo se vería la llamada que lo abrió, nunca la línea que se ejecuta.
@@ -830,8 +1439,18 @@ export function App() {
       })
       links.push({ from: shown.id, to: id, relation: 'transform' })
     }
-    const busy = thinking ?? (deciding ? 'Decidiendo qué hacer…' : null)
-    if (busy !== null) {
+    // Mientras se le oye, el hueco de lo que está pidiendo: «Una función · que sume dos…».
+    const guess = preview && preview.kind !== 'nada' ? (HEARD_LABELS[preview.kind] ?? null) : null
+    // La caja de lo que se pidió sigue ahí mientras se piensa y se escribe: es la misma pieza, y dentro
+    // se va leyendo lo que pasa. Solo se va cuando aparece el nodo de verdad (y se convierte en él).
+    const drafting = guess !== null && preview !== null
+    const busy = drafting
+      ? (thinking ?? preview.text)
+      : (thinking ?? (deciding ? 'Decidiendo qué hacer…' : null))
+    const busyTitle = drafting ? guess : 'La IA está pensando'
+    // Con el esbozo de lo pedido a la vista, en qué va la IA se lee en él: una caja más, colgada del
+    // diagrama, diría lo mismo dos veces (y acababa tapada por el esbozo).
+    if (busy !== null && asked === null) {
       // Donde trabaja: el hueco que espera contenido, lo último que tocó, lo seleccionado o el final.
       const hole = view.nodes.find((n) => byId.get(n.id)?.generating !== undefined)?.id
       const anchor =
@@ -843,14 +1462,38 @@ export function App() {
         nodes.push({
           id: 'prysel:thinking',
           kind: 'output.display',
-          label: 'La IA está pensando',
-          viewer: { title: 'La IA está pensando', text: [busy], busy: true },
+          label: busyTitle,
+          viewer: {
+            title: busyTitle,
+            text: [busy],
+            busy: true,
+            // Mientras se le oye: no una nota, la caja de la pieza, rellenándose con lo que va diciendo.
+            ...(drafting
+              ? {
+                  ghost: HEARD_GHOST[preview.kind],
+                  draft: {
+                    ...draftOf(preview.kind, preview.text),
+                    ...(thinking === null ? {} : { does: thinking }),
+                  },
+                }
+              : {}),
+          },
         })
         links.push({ from: anchor, to: 'prysel:thinking', relation: 'transform' })
       }
     }
     return { nodes, links, busy }
-  }, [program, view.nodes, view.representative, thinking, deciding, wanted, selected])
+  }, [
+    program,
+    view.nodes,
+    view.representative,
+    thinking,
+    deciding,
+    wanted,
+    selected,
+    preview,
+    asked,
+  ])
   const canvasNodes = useMemo(
     () => [...view.nodes, ...viewers.nodes, ...notes.nodes, ...extras.nodes],
     [view.nodes, viewers.nodes, notes.nodes, extras.nodes],
@@ -933,9 +1576,823 @@ export function App() {
 
   // ── Órdenes: lo que se escribe o se dicta lo decide el motor JEV, y aquí se ejecuta (docs/voz.md). ──
   const shownIds = useMemo(() => new Set(view.nodes.map((node) => node.id)), [view.nodes])
+  /** Volver de la función que se ve: a la anterior del camino, o al programa. */
+  const goBack = () => {
+    const previous = view.trail[view.trail.length - 1]
+    if (previous) view.descend(previous.id)
+    else view.open(null)
+  }
+  /**
+   * Lo que se le está oyendo o lo que lleva escrito (`was`: lo de antes). Al empezar, lo que se construye se
+   * queda quieto; si no dijo nada, sigue. Con cada palabra nueva se manda lo que lleva: el JEV va adelantando
+   * qué está pidiendo, y el lienzo lo esboza.
+   */
+  const attend = (heard: string | null, was: string | null) => {
+    const words = heard === null ? 0 : heard.trim().split(/\s+/).length
+    if ((heard !== null) !== (was !== null) || words !== heardWords.current) {
+      post({ type: 'listening', on: heard !== null, ...(heard === null ? {} : { text: heard }) })
+    }
+    heardWords.current = words
+    // Si no llegó a frase (un ruido, o lo borró), su hueco se va con ella.
+    if (heard === null && order.phase !== 'deciding') setPreview(null)
+  }
+  /** Lo seleccionado, como líneas del programa: lo que eso escribió se resalta en la salida. */
+  const picked = selected === null ? undefined : view.nodes.find((node) => node.id === selected)
+  const litLines =
+    picked?.line === undefined
+      ? undefined
+      : { from: picked.line, to: picked.lineEnd ?? picked.line }
+  /** Lo que se dice de lo seleccionado en el chat: su nombre, para ofrecer qué hacer con ello. */
+  const about = picked
+    ? { id: picked.id, label: picked.section?.title ?? picked.gist?.name ?? picked.label }
+    : undefined
+  /** Mover una perilla: se escribe su número en el programa, que se vuelve a ejecutar. */
+  const turnKnob = (knob: Knob, text: string) => {
+    if (version === null) return
+    healthWait.current = { before: ran, how: 'knob', from: version + 1 }
+    runCause.current = {
+      text: `${knob.name.replace(/_+/g, ' ').toLowerCase()} = ${text}`,
+      at: Date.now(),
+    }
+    post({ type: 'edit', version, edits: [{ start: knob.start, end: knob.end, text }] })
+  }
+  /** La IA se maneja desde el lienzo (sin barra de escribir abajo): su botón flota sobre él. */
+  const hub = (features.chat === true || features.hub === true) && features.orders === true
+  // «/» (o Ctrl+K) abre la caja de pedir desde el teclado: sobre lo elegido, o sobre el programa.
+  const aboutId = about?.id
+  const aboutLabel = about?.label
+  useEffect(() => {
+    if (!hub) return
+    const onKey = (event: KeyboardEvent) => {
+      const slash = event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey
+      const palette = event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)
+      if (!slash && !palette) return
+      const target = event.target
+      if (
+        target instanceof Element &&
+        target.closest('input, textarea, select, [contenteditable="true"]')
+      )
+        return
+      event.preventDefault()
+      openAsk(
+        aboutId !== undefined && aboutLabel !== undefined
+          ? { id: aboutId, title: aboutLabel }
+          : undefined,
+      )
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [hub, aboutId, aboutLabel, openAsk])
+  /** Lo que se lleva escrito en una caja de pedir se cuenta al lienzo, que lo va esbozando: no en cada tecla. */
+  const drafting = useRef<number | null>(null)
+  const draft = (written: string | null) => {
+    if (drafting.current !== null) window.clearTimeout(drafting.current)
+    drafting.current = null
+    const tell = (value: string | null) => {
+      attend(value, typed)
+      setTyped(value)
+    }
+    if (written === null || written.trim().length < 4) {
+      if (typed !== null) tell(null)
+      return
+    }
+    drafting.current = window.setTimeout(() => {
+      drafting.current = null
+      tell(written)
+    }, DRAFT_MS)
+  }
+  /** Cuánto lleva lo que se está construyendo por etapas: las que ya tienen código, de las que hay. */
+  const stages = program?.sections ?? NO_SECTIONS
+  const pendingStages = program
+    ? program.nodes.filter((node) => node.generating !== undefined).length
+    : 0
+  const building = order.phase === 'done' && order.building === true
+  const progress =
+    building && stages.length > 1
+      ? { done: Math.max(0, stages.length - pendingStages), total: stages.length }
+      : null
+  // ── La arquitectura que se dibuja: la del análisis, con lo que el plan prometió de lo que aún no tiene
+  // código y con lo que el JEV dijo de sus papeles y su forma. ──
+  const generatingLines = useMemo(
+    () => (program?.nodes ?? []).filter((node) => node.generating !== undefined).map((n) => n.line),
+    [program],
+  )
+  /** Los módulos que aún no tienen código: su hueco sigue esperando. */
+  const pendingModules = useMemo(
+    () =>
+      new Set(
+        view.moduleFacts
+          .filter((fact) =>
+            generatingLines.some((line) => line >= fact.line && line <= fact.lineEnd),
+          )
+          .map((fact) => fact.id),
+      ),
+    [view.moduleFacts, generatingLines],
+  )
+  const plannedArchitecture = useMemo(
+    () =>
+      view.architecture && planned && pendingModules.size > 0
+        ? withPlan(view.architecture, view.moduleFacts, planned, pendingModules)
+        : view.architecture,
+    [view.architecture, view.moduleFacts, planned, pendingModules],
+  )
+  /** Lo que se le pregunta al JEV: cada módulo con lo que su código deja ver, y las formas que cuadran. */
+  const archQuestion = useMemo(() => {
+    if (!plannedArchitecture) return null
+    const modules = view.moduleFacts.map((fact) => ({
+      title: fact.title,
+      does: factsText(fact, pendingModules.has(fact.id)),
+    }))
+    // «Capas» cuadra siempre: es lo que queda cuando ninguna otra forma dice más, no una opción entre ellas.
+    // Al JEV solo se le pregunta cuando hay varias formas de verdad entre las que elegir.
+    const shapes = shapeCandidates(plannedArchitecture)
+      .map((candidate) => candidate.shape)
+      .filter((shape) => shape !== 'capas')
+    return { key: JSON.stringify([modules, shapes]), modules, shapes }
+  }, [plannedArchitecture, view.moduleFacts, pendingModules])
+  useEffect(() => {
+    if (archQuestion === null || archQuestion.key in archVerdicts) return
+    // Se espera a que el programa deje de cambiar: mientras se escribe, cada pieza cambiaría la pregunta.
+    const timer = window.setTimeout(() => {
+      post({ type: 'arch', ...archQuestion })
+    }, ARCH_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [archQuestion, archVerdicts])
+  const judgedArchitecture = useMemo(() => {
+    if (!plannedArchitecture || archQuestion === null) return plannedArchitecture
+    // Lo último que dijo el JEV de estos mismos módulos vale aunque el programa haya seguido cambiando: los
+    // papeles van por título; la forma, solo si sigue siendo una de las que cuadran.
+    const verdict = archVerdicts[archQuestion.key] ?? archLast
+    if (!verdict) return plannedArchitecture
+    const roles = Object.fromEntries(
+      view.moduleFacts.map((fact) => [fact.id, verdict.roles[fact.title] ?? null]),
+    )
+    return withVerdict(plannedArchitecture, { roles, shape: verdict.shape })
+  }, [plannedArchitecture, archQuestion, archVerdicts, archLast, view.moduleFacts])
+  // Mientras se construye, la forma no baila: al pasar cada módulo de lo planeado a lo escrito hay ratos en
+  // que el grafo se queda sin lo que la sostenía (ya no están las flechas del plan y aún no las del código).
+  // Si la forma se cae a «capas» en uno de esos ratos, se mantiene la que había, con su ancla (por su título:
+  // los módulos cambian de línea mientras se escribe). Al acabar, manda lo que haya.
+  //
+  // Y con un plan, la forma se decide **una sola vez**: cuando el plan está entero y el JEV ha dicho de él (o
+  // se le ha esperado un rato). Mientras llega, filas; después, esa forma hasta acabar (ver `holding.ts`).
+  const constructing = order.phase === 'deciding' || building || thinking !== null || intro !== null
+  const [held, setHeld] = useState<Held | null>(null)
+  const titleOf = (id: string | undefined) =>
+    view.moduleFacts.find((fact) => fact.id === id)?.title ?? null
+  useEffect(() => {
+    if (!planDone) return
+    const timer = window.setTimeout(() => {
+      setPlanWaited(true)
+    }, PLAN_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [planDone])
+  const holding = holdShape({
+    constructing,
+    planning: planned !== null,
+    decidable:
+      planDone && (planWaited || (archQuestion !== null && archQuestion.key in archVerdicts)),
+    held,
+    judged: judgedArchitecture
+      ? { shape: judgedArchitecture.shape, anchor: titleOf(judgedArchitecture.anchor) }
+      : null,
+    alive: (title) => view.moduleFacts.some((fact) => fact.title === title),
+  })
+  if (!sameHeld(holding, held)) setHeld(holding)
+  const heldArchitecture = useMemo(() => {
+    if (!judgedArchitecture || !held) return judgedArchitecture
+    // Ya es la que hay: no hay nada que mantener.
+    if (
+      held.shape === judgedArchitecture.shape &&
+      held.anchor ===
+        (view.moduleFacts.find((fact) => fact.id === judgedArchitecture.anchor)?.title ?? null)
+    )
+      return judgedArchitecture
+    const anchor =
+      held.anchor === null
+        ? undefined
+        : view.moduleFacts.find((fact) => fact.title === held.anchor)?.id
+    // Una forma con ancla necesita que su ancla siga ahí.
+    if (held.anchor !== null && anchor === undefined) return judgedArchitecture
+    return {
+      modules: judgedArchitecture.modules,
+      links: judgedArchitecture.links,
+      shape: held.shape,
+      ...(anchor === undefined ? {} : { anchor }),
+    }
+  }, [judgedArchitecture, held, view.moduleFacts])
+  // Y por encima de todo, lo que pasó al ejecutarlo: si el programa lo lleva un bucle, el diagrama cuenta su
+  // vuelta (los pasos en su orden, lo que viaja entre ellos), no quién llama a quién. Mientras se construye
+  // no: lo que se ejecutó era otro programa.
+  const story = constructing ? undefined : ran?.story
+  const told = useMemo(
+    () => (story && program ? moduleStory(story, program.nodes, view.moduleFacts) : null),
+    [story, program, view.moduleFacts],
+  )
+  const architecture = useMemo(
+    () =>
+      heldArchitecture && told
+        ? withStory(heldArchitecture, told, { calls: xray })
+        : heldArchitecture,
+    [heldArchitecture, told, xray],
+  )
+  // Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final.
+  const outcome = useMemo(
+    () =>
+      ran && architecture && program
+        ? outcomeOf(
+            ran,
+            view.moduleFacts,
+            program.nodes.find(
+              (node) => node.kind === 'abstraction.collapsed' && node.label === ran.entry,
+            )?.line,
+          )
+        : null,
+    [ran, architecture, program, view.moduleFacts],
+  )
+  // Dónde van las barras de abajo: al lado de la consola si caben; si no, encima de ella.
+  const dock = useMemo(
+    () =>
+      ({
+        '--avoid': `${consoleBox && !cramped ? consoleBox.w : 0}px`,
+        '--lift': `${consoleBox && cramped ? consoleBox.h : 0}px`,
+      }) as React.CSSProperties,
+    [consoleBox, cramped],
+  )
+  // Las perillas: los números del programa con los que se puede jugar (ver `knobs.ts`).
+  const knobs = useMemo(
+    () =>
+      program
+        ? knobsOf(
+            program.source,
+            program.nodes
+              .filter((node) => node.kind === 'abstraction.collapsed')
+              .map((node) => ({ name: node.label, params: node.params ?? [] })),
+          )
+        : [],
+    [program],
+  )
+  // Las constantes del programa, candidatas a su configuración: de cada una, una línea donde se usa (para que
+  // el JEV vea para qué sirve) y las formas de manejarla que su dato admite. Al JEV se le pregunta por las
+  // que aún no conoce (por su nombre y su tipo de dato: cambiar su valor no vuelve a preguntar).
+  const constants = useMemo(() => {
+    const rows = program?.source.split('\n') ?? []
+    return knobs
+      .filter((knob) => knob.from === 'constant')
+      .map((knob) => {
+        const used = new RegExp(`\\b${knob.name}\\b`)
+        const use =
+          rows
+            .find((row, at) => at + 1 !== knob.line && used.test(row))
+            ?.trim()
+            .slice(0, 160) ?? ''
+        const options = kindOptions(knob.literal)
+        return { knob, use, options, ask: `${knob.name}:${options.join('/')}` }
+      })
+  }, [knobs, program])
+  const configQuestion = useMemo(() => {
+    const open = constants.filter((one) => !(one.ask in configKinds))
+    if (open.length === 0) return null
+    return {
+      key: JSON.stringify(open.map((one) => one.ask)),
+      items: open.map((one) => ({
+        name: one.knob.name,
+        value: one.knob.text,
+        use: one.use,
+        options: one.options,
+      })),
+    }
+  }, [constants, configKinds])
+  useEffect(() => {
+    if (configQuestion === null || constructing || configAsked.current.has(configQuestion.key)) {
+      return
+    }
+    // Se espera a que el programa deje de cambiar, como con la arquitectura.
+    const timer = window.setTimeout(() => {
+      configAsked.current.add(configQuestion.key)
+      post({ type: 'config', ...configQuestion })
+    }, ARCH_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [configQuestion, constructing])
+  // Cómo le fue a cada módulo al ejecutarlo (cuántas veces se usó, si nadie lo usa, si ahí falló). Mientras se
+  // construye no: lo que se ejecutó era otro programa.
+  const states = useMemo(
+    () =>
+      architecture && program && !constructing
+        ? moduleStates(ran, program.nodes, view.moduleFacts)
+        : null,
+    [architecture, program, constructing, ran, view.moduleFacts],
+  )
+  // Ver pasar una vuelta: los pasos de la historia, y el mando que los recorre.
+  const beats = useMemo(
+    () =>
+      architecture?.order === undefined
+        ? []
+        : beatsOf(architecture, outcome?.result?.planned ? null : (outcome?.result?.from ?? null)),
+    [architecture, outcome],
+  )
+  // Si hay un visor de cómo avanza, el paso en el que el resto de las vueltas pasan de corrido dura más: es
+  // cuando el visor las va enseñando.
+  const runBeat = useMemo(
+    () => (ran?.progress ? beats.findIndex((one) => one.phase === 'again') : -1),
+    [ran, beats],
+  )
+  const playback = usePlayback(beats.length, runBeat)
+  // La idea del programa: sus partes en unas líneas (ver `IdeaView`). Solo donde hay arquitectura que contar.
+  const idea = useMemo(
+    () => (architecture ? ideaOf(architecture, view.moduleFacts) : null),
+    [architecture, view.moduleFacts],
+  )
+  const ideaExtras = useMemo(
+    () => ({
+      start: outcome?.start ?? null,
+      laps: architecture?.caption ?? null,
+      exit: architecture?.order !== undefined ? (told?.exit ?? null) : null,
+      result: outcome?.result
+        ? {
+            said: outcome.result.content.subtitle ?? '',
+            lines: outcome.result.content.text ?? [],
+            planned: outcome.result.planned === true,
+          }
+        : null,
+    }),
+    [outcome, architecture, told],
+  )
+  // Si nadie ha elegido: las partes; en una pantalla estrecha, la idea (que ahí sí se lee), salvo mientras se
+  // construye, que lo que se ve es el diagrama creciendo.
+  const distance: Distance = chosen ?? (narrow && !constructing ? 'idea' : 'partes')
+  const showIdea = distance === 'idea' && idea !== null
+  // Las franjas que ocupan las barras que flotan sobre la arquitectura: arriba las migas; abajo la leyenda
+  // y, si hay historia, la de ver una vuelta (y la consola, si van encima de ella).
+  const hasStory = beats.length > 0
+  // (Además, los mandos del programa —su configuración, con qué arranca y el dado—, si los tiene.)
+  const chance = /\brandom\b/.test(program?.source ?? '')
+  const hasKnobs =
+    (features.chat === true || features.knobs === true) && (knobs.length > 0 || chance)
+  // Las siluetas que hay en el dibujo, en el orden en que se leen. Con una sola no hay nada que distinguir.
+  const roleKeys = useMemo(() => {
+    const present = new Set(architecture?.modules.map((module) => module.role))
+    const keys = MODULE_ROLES.filter((role) => present.has(role))
+    return keys.length > 1 ? keys : []
+  }, [architecture])
+  // Los mandos van en el diagrama, como nodos: en el programa entero, y no mientras se construye.
+  const panelsOn = hasKnobs && lesson === null && view.focus === null && !constructing
+  const sourceRows = useMemo(() => program?.source.split('\n') ?? [], [program])
+  /** Las partes del programa que usan un nombre (sin contar la línea donde se le da valor). */
+  const usersOf = (name: string, skip: number) => {
+    const used = new RegExp(`\\b${name}\\b`)
+    return view.moduleFacts
+      .filter((fact) =>
+        sourceRows
+          .slice(fact.line - 1, fact.lineEnd)
+          .some((row, at) => fact.line + at !== skip && used.test(row.replace(/#.*$/, ''))),
+      )
+      .map((fact) => fact.id)
+  }
+  /** Cómo se enseña cada valor: con el mando que pide su dato (ver `knobs.ts`). */
+  const controlOf = (knob: Knob, kind: KnobKind): KnobControl => {
+    const shown = knobShown(knob)
+    if (
+      shown.number !== undefined &&
+      (kind === 'cantidad' || kind === 'medida' || kind === 'proporcion')
+    ) {
+      return {
+        type: 'dial',
+        value: shown.number,
+        ...dialRange(shown.number, kind),
+        ...(kind === 'proporcion' ? { percent: true } : {}),
+      }
+    }
+    if (shown.bool !== undefined) return { type: 'switch', value: shown.bool }
+    if (kind === 'color' && shown.color !== undefined) return { type: 'color', value: shown.color }
+    if (shown.items) return { type: 'list', items: shown.items, text: knob.text }
+    return { type: 'text', value: shown.text ?? knob.text }
+  }
+  type KnobEntry = { key: string; knob: Knob; kind: KnobKind }
+  const entriesOf = (list: readonly { knob: Knob; kind: KnobKind }[]): KnobEntry[] => {
+    const seen = new Map<string, number>()
+    return list.map(({ knob, kind }) => {
+      const base = `${knob.from}:${knob.name}`
+      const count = seen.get(base) ?? 0
+      seen.set(base, count + 1)
+      return { key: count === 0 ? base : `${base}:${count}`, knob, kind }
+    })
+  }
+  const itemsOf = (entries: readonly KnobEntry[]) =>
+    entries.map(({ key, knob, kind }) => ({
+      key,
+      name: knob.name.replace(/_+/g, ' ').toLowerCase(),
+      hint:
+        knob.from === 'launch'
+          ? `${knob.name}: un dato con el que se arranca (línea ${knob.line})`
+          : `${knob.name}: un ajuste que el programa define al empezar (línea ${knob.line})`,
+      control: controlOf(knob, kind),
+    }))
+  /** Darle otro valor a un mando: se escribe en el programa (si vale para su dato) y se vuelve a ejecutar. */
+  const setKnob = (entries: readonly KnobEntry[], key: string, given: KnobValue) => {
+    const entry = entries.find((one) => one.key === key)
+    if (!entry) return
+    const text = knobWritten(entry.knob, entry.kind, given)
+    if (text !== null && text !== entry.knob.text) turnKnob(entry.knob, text)
+  }
+  const roll = () => {
+    healthWait.current = { before: ran, how: 'roll' }
+    runCause.current = { text: 'otra tirada', at: Date.now(), again: true }
+    post({ type: 'reroll' })
+  }
+  // Con qué arranca: los valores de la llamada que lo pone en marcha.
+  const launchEntries = entriesOf(
+    knobs.filter((knob) => knob.from === 'launch').map((knob) => ({ knob, kind: kindGuess(knob) })),
+  )
+  // La configuración: las constantes que el JEV dice que son ajustes (mientras no lo dice, o si no lo sabe,
+  // las que lo parecen), cada una con la forma de manejarla que eligió.
+  const configEntries = entriesOf(
+    constants.flatMap(({ knob, ask, options }) => {
+      const said = configKinds[ask]
+      if (said === 'no') return []
+      const kind =
+        said !== undefined && said !== null && options.includes(said as KnobKind)
+          ? (said as KnobKind)
+          : kindGuess(knob)
+      return [{ knob, kind }]
+    }),
+  )
+  // El dado va con lo que arranca; si no hay con qué, con la configuración; si no hay nada más, solo.
+  const launchShown =
+    panelsOn && (launchEntries.length > 0 || (chance && configEntries.length === 0))
+  const knobsPanel: KnobsPanel | null = launchShown
+    ? {
+        title: launchEntries.length > 0 ? 'Con qué arranca' : 'El azar',
+        sub:
+          launchEntries.length > 0
+            ? 'los datos con los que se pone en marcha'
+            : 'otra tirada, otra suerte',
+        items: itemsOf(launchEntries),
+        chance,
+        // Las partes donde están escritos: el nodo les tiende una flecha.
+        into: [
+          ...new Set(
+            launchEntries.flatMap(
+              ({ knob }) =>
+                view.moduleFacts.find((fact) => knob.line >= fact.line && knob.line <= fact.lineEnd)
+                  ?.id ?? [],
+            ),
+          ),
+        ],
+        onSet: (key: string, given: KnobValue) => {
+          setKnob(launchEntries, key, given)
+        },
+        onRoll: () => {
+          roll()
+        },
+      }
+    : null
+  const configPanel: KnobsPanel | null =
+    panelsOn && configEntries.length > 0
+      ? {
+          title: 'Configuración',
+          sub: 'cámbiala y mira qué pasa',
+          items: itemsOf(configEntries),
+          chance: chance && !launchShown,
+          // Las partes que usan esos valores: el nodo les tiende una flecha.
+          into: [...new Set(configEntries.flatMap(({ knob }) => usersOf(knob.name, knob.line)))],
+          onSet: (key: string, given: KnobValue) => {
+            setKnob(configEntries, key, given)
+          },
+          onRoll: () => {
+            roll()
+          },
+        }
+      : null
+  // ── La pantalla: el programa en marcha, para usarlo de verdad (ver `screen.ts`) ──
+  // Si el programa usa la pantalla de Prysel, se pone en marcha solo (aparte) cada vez que su código se asienta.
+  const screenSource =
+    features.screen === true &&
+    program &&
+    lesson === null &&
+    !constructing &&
+    usesScreen(program.source)
+      ? program.source
+      : null
+  useEffect(() => {
+    // (Lo que quedó en la pantalla no se borra aquí: al arrancar otra vez empieza en blanco.)
+    if (screenSource === null) {
+      post({ type: 'screen', action: 'stop' })
+      return
+    }
+    if (!screenArmed) return
+    const timer = window.setTimeout(() => {
+      post({ type: 'screen', action: 'start' })
+    }, SCREEN_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [screenSource, screenArmed])
+  // Lo que se repite (`pantalla.cada`): se pulsa solo, a su ritmo, mientras está en marcha.
+  const screenTimers = screen.phase === 'running' ? screen.timers : null
+  useEffect(() => {
+    if (!screenTimers || screenTimers.length === 0) return
+    const intervals = screenTimers.map(({ id, secs }) =>
+      window.setInterval(() => {
+        post({ type: 'screen', action: 'press', id, tick: true })
+      }, secs * 1000),
+    )
+    return () => {
+      for (const interval of intervals) window.clearInterval(interval)
+    }
+  }, [screenTimers])
+  // Sus teclas: se oyen en toda la página, salvo mientras se escribe en otro sitio (el código, una caja).
+  const screenKeys = screen.phase === 'running' && screen.keys.length > 0 ? screen.keys : null
+  useEffect(() => {
+    if (!screenKeys) return
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (
+        event.repeat ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        target?.closest('input, textarea, select, [contenteditable="true"], .cm-editor')
+      ) {
+        return
+      }
+      const hit = screenKeys.filter((one) => keyMatches(one.key, event.key))
+      if (hit.length === 0) return
+      event.preventDefault()
+      for (const one of hit) post({ type: 'screen', action: 'press', id: one.id })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [screenKeys])
+  const printed = screen.output.split('\n').filter((line) => line.trim() !== '')
+  const screenPanel: ScreenPanel | null =
+    screenSource !== null
+      ? {
+          view: {
+            // Hasta que se pulsa «Empezar», esperando.
+            phase: screenArmed ? screen.phase : 'idle',
+            title: screen.title,
+            // Lo que escribe en la pantalla; si no escribe nada en ella, lo último que imprime.
+            lines: screen.lines.length > 0 ? screen.lines : printed.slice(-4),
+            buttons: screen.buttons,
+            keys: screen.keys.map((one) => keyLabel(one.key)),
+            canvas: screenArmed ? screen.canvas : null,
+            zones: screen.zones,
+            touch: screen.touch,
+            error: screen.error,
+          },
+          onPress: (id: number, args?: readonly number[]) => {
+            setScreen((known) => (known.error ? { ...known, error: null } : known))
+            post({ type: 'screen', action: 'press', id, ...(args ? { args: [...args] } : {}) })
+          },
+          onRestart: () => {
+            // Es una pulsación: ahora el navegador deja sonar.
+            unlockSound()
+            // La primera vez la pone en marcha el aviso de arriba; después, se vuelve a arrancar de cero.
+            if (screenArmed) post({ type: 'screen', action: 'start' })
+            else setScreenArmed(true)
+          },
+        }
+      : null
+  // Una parte del programa que solo define la configuración ya está entera en su nodo: no se dibuja dos
+  // veces (sus flechas, a quien usa cada valor, salen del nodo).
+  const configLines =
+    // (Las mismas que van al nodo: las que el JEV no dice que no sean ajustes.)
+    panelsOn
+      ? constants
+          .filter(({ ask }) => configKinds[ask] !== 'no')
+          .map(({ knob }) => knob.line)
+          .join(',')
+      : ''
+  const drawn = useMemo(() => {
+    const lines = new Set(configLines === '' ? [] : configLines.split(',').map(Number))
+    const gone = new Set(
+      architecture && lines.size > 0
+        ? view.moduleFacts
+            .filter((fact) => {
+              if (fact.id === architecture.anchor) return false
+              if (!architecture.modules.some((module) => module.id === fact.id)) return false
+              const rows = sourceRows.slice(fact.line - 1, fact.lineEnd)
+              return (
+                rows.some((_, at) => lines.has(fact.line + at)) &&
+                rows.every((row, at) => lines.has(fact.line + at) || /^\s*(#.*)?$/.test(row))
+              )
+            })
+            .map((fact) => fact.id)
+        : [],
+    )
+    if (gone.size === 0 || !architecture) {
+      return { architecture, nodes: canvasNodes, edges: canvasEdges }
+    }
+    const keeps = (id: string) => !gone.has(id)
+    return {
+      architecture: {
+        ...architecture,
+        modules: architecture.modules.filter((module) => keeps(module.id)),
+        links: architecture.links.filter((link) => keeps(link.from) && keeps(link.to)),
+        ...(architecture.order ? { order: architecture.order.filter(keeps) } : {}),
+      },
+      nodes: canvasNodes.filter((node) => keeps(node.id)),
+      edges: canvasEdges.filter((edge) => keeps(edge.from) && keeps(edge.to)),
+    }
+  }, [configLines, architecture, view.moduleFacts, sourceRows, canvasNodes, canvasEdges])
+  const reserve = useMemo(
+    () =>
+      architecture
+        ? {
+            top: 40,
+            bottom: (hasStory ? 92 : 52) + (consoleBox && cramped ? consoleBox.h : 0),
+          }
+        : hub
+          ? // En el diagrama abierto, abajo solo flota el botón de la IA: si todo cabe, que quepa sin él encima.
+            { top: 0, bottom: 60 }
+          : null,
+    [architecture, hasStory, consoleBox, cramped, hub],
+  )
+  // Lo que se contestó a una orden dada sobre una pieza, para decirlo a su lado (si la pieza está a la vista).
+  const replied = askedAbout
+    ? chat.find((entry) => entry.role === 'ai' && entry.id === askedAbout.order)
+    : undefined
+  const repliedText = replied
+    ? replied.busy && replied.note
+      ? replied.note
+      : (replied.lines?.[replied.lines.length - 1] ?? replied.text)
+    : ''
+  const saidAt =
+    askedAbout &&
+    !askedAbout.closed &&
+    replied &&
+    repliedText !== '' &&
+    // Si pregunta algo o pide la clave, se contesta en la conversación, donde están sus botones.
+    (replied.options?.length ?? 0) === 0 &&
+    replied.needsKey !== true &&
+    view.nodes.some((node) => node.id === askedAbout.node)
+      ? {
+          id: askedAbout.node,
+          text: repliedText,
+          tone: replied.tone,
+          busy: replied.busy,
+          onClose: () => {
+            setAskedAbout({ ...askedAbout, closed: true })
+          },
+        }
+      : null
+  // Las ejecuciones: lo que fue dando el programa cada vez, junto al resultado.
+  const runsShown = useMemo(() => runsViewer(pastRuns), [pastRuns])
+  // Y cómo avanza por dentro, vuelta a vuelta: lo que se eligió mirar para este programa.
+  const progressShown = useMemo(
+    () => (ran?.progress && !constructing ? progressViewer(ran.progress) : null),
+    [ran, constructing],
+  )
+  const playingBeat = playback.at === null ? undefined : beats[playback.at]
+  const beat = useMemo(
+    () =>
+      playingBeat
+        ? {
+            at: playingBeat.at,
+            links: playingBeat.links,
+            phase: playingBeat.phase,
+            serial: playback.serial,
+            ms: Math.round(playback.ms * 0.72),
+          }
+        : null,
+    [playingBeat, playback.serial, playback.ms],
+  )
+  // La visita guiada: de cada paso, lo que es y lo que hace, lo que recibe, y cuánto se usó. Todo son hechos
+  // del programa (su rótulo) y de su ejecución; con voz, además se dice.
+  const guideText = useMemo(() => {
+    if (!playback.guided || !playingBeat || !architecture) return null
+    const { at, phase, links } = playingBeat
+    if (phase === 'result') {
+      const said = outcome?.result?.content.text?.slice(-1)[0]
+      return said
+        ? `Y al salir del ciclo, el resultado: ${said}`
+        : 'Y al salir del ciclo, el resultado.'
+    }
+    const fact = view.moduleFacts.find((one) => one.id === at)
+    if (!fact) return null
+    const does = fact.subtitle ? `: ${fact.subtitle}` : ''
+    if (phase === 'again') {
+      const laps = architecture.caption ? `Así, ${architecture.caption}` : 'Y vuelta a empezar'
+      return `${laps}${told?.exit ? `; ${told.exit}` : ''}.`
+    }
+    const brings = [
+      ...new Set(
+        links.flatMap(
+          (link) =>
+            architecture.links.find(
+              (other) => other.kind === 'data' && `${other.from}>${other.to}` === link,
+            )?.label ?? [],
+        ),
+      ),
+    ]
+    const used = states?.[at]?.tone === 'ran' ? states[at]?.title : undefined
+    return [
+      phase === 'before' ? `Antes de empezar, ${fact.title}${does}.` : `${fact.title}${does}.`,
+      brings.length > 0 ? `Recibe ${brings.join(' y ')}.` : '',
+      used ?? '',
+    ]
+      .filter((part) => part !== '')
+      .join(' ')
+  }, [playback.guided, playingBeat, architecture, outcome, view.moduleFacts, told, states])
+  useEffect(() => {
+    if (guideText && voice) speak(guideText)
+  }, [guideText, voice])
+  // Al acabar de construir, el programa se enseña solo una vez, despacio: es la primera vez que se ve entero.
+  const justBuilt = useRef(false)
+  const playStory = playback.play
+  useEffect(() => {
+    if (constructing) justBuilt.current = true
+  }, [constructing])
+  useEffect(() => {
+    if (constructing || !justBuilt.current || beats.length === 0) return
+    justBuilt.current = false
+    if (reducedMotion) return
+    // Un momento para que el diagrama se asiente (y se encuadre) antes de echar a andar.
+    const timer = window.setTimeout(() => {
+      playStory(true)
+    }, 1200)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [constructing, beats.length, reducedMotion, playStory])
+  const tryingGist =
+    trying === null ? null : (gists.find((gist) => gist.id === trying && gist.sample) ?? null)
   /** Lleva la cámara a un elemento (si no se ve, el lienzo va a donde está: ver el efecto de más abajo). */
+  /** Lo que se está escribiendo o diciendo ahora, esbozado. */
+  const drawing = sketchOf(typed ?? hearing ?? '')
+  // Cuando ya nadie trabaja en lo pedido (se acabó de construir, o no se pudo), su esbozo se retira: un
+  // momento después, para que se vea completo.
+  const working = order.phase === 'deciding' || building || thinking !== null || intro !== null
+  useEffect(() => {
+    if (asked === null || working) return
+    const timer = window.setTimeout(() => {
+      setAsked(null)
+    }, SKETCH_LINGER_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [asked, working])
+  // Las piezas que ya están escritas. Mientras se construye, una etapa es solo el plan: lo escrito son las
+  // funciones y clases que existen. Al acabar, también vale la etapa (hay programas sin funciones).
+  const programText = program?.source ?? ''
+  // (Las listas se guardan por su contenido: que el programa cambie sin traer piezas nuevas no vuelve a
+  // preguntar nada.)
+  const titlesKey = JSON.stringify(asked === null ? [] : stages.map((stage) => stage.title))
+  const titles = useMemo(
+    () => (JSON.parse(titlesKey) as string[]).slice(0, MAX_COVER_PIECES),
+    [titlesKey],
+  )
+  const writtenKey = JSON.stringify(
+    asked === null ? [] : piecesOf(programText, building ? [] : titles).slice(0, MAX_COVER_PIECES),
+  )
+  const written = useMemo(() => JSON.parse(writtenKey) as string[], [writtenKey])
+  // Qué pieza cubre cada parte lo dice el JEV, que entiende que «ver el total» es `calcular_suma`; mientras
+  // llega su respuesta (o si no hay JEV), valen las palabras que comparten.
+  const parts = asked?.sketch.parts
+  const what = asked?.sketch.what
+  useEffect(() => {
+    if (parts === undefined || what === undefined || parts.length === 0 || written.length === 0) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      post({ type: 'cover', what, parts: parts.slice(0, MAX_COVER_PARTS), pieces: written })
+    }, COVER_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [parts, what, written])
+  // Lo mismo con el plan, mientras se construye: qué etapa se ocupará de cada parte, antes de que exista su
+  // código. Así una parte no espera como hueco mudo a que llegue su función.
+  useEffect(() => {
+    if (parts === undefined || what === undefined || parts.length === 0) return
+    if (!building || titles.length === 0) return
+    const timer = window.setTimeout(() => {
+      post({
+        type: 'cover',
+        what,
+        parts: parts.slice(0, MAX_COVER_PARTS),
+        pieces: titles,
+        plan: true,
+      })
+    }, COVER_WAIT_MS)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [parts, what, titles, building])
   const goTo = (id: string) => {
-    setSelected(id)
+    // Se selecciona lo que se ve: si el paso está dentro de algo plegado, eso que lo guarda.
+    setSelected(shownIds.has(id) ? id : (view.representative(id) ?? id))
     setWanted({ id, key: ++spotSeq.current })
   }
   const wantedId = wanted
@@ -948,9 +2405,23 @@ export function App() {
         ? wantedId
         : view.representative(wantedId)
   const spotKey = wanted?.key
-  const spotBorn = wanted?.born === true
+  const wantedFolded = wanted?.folded === true
+  // Solo «nace» lo que se ve nacer: si lo que se señala es la tarjeta que lo guarda, esa ya estaba.
+  const spotBorn = wanted?.born === true && spotId === wantedId
   const spotChange = wanted?.change
   const spotWide = wanted?.wide === true
+  // La cámara puede quedarse en la caja que contiene la pieza (la función que se está escribiendo).
+  const anchorLine = wanted?.anchor
+  const anchorNode =
+    anchorLine === undefined
+      ? undefined
+      : program?.nodes.find((n) => n.range && n.line === anchorLine)?.id
+  const spotCamera =
+    anchorNode === undefined || anchorNode === spotId
+      ? undefined
+      : shownIds.has(anchorNode)
+        ? anchorNode
+        : (view.representative(anchorNode) ?? undefined)
   const spotlight = useMemo(
     () =>
       spotId !== null && spotKey !== undefined
@@ -960,10 +2431,23 @@ export function App() {
             ...(spotBorn ? { born: true } : {}),
             ...(spotChange ? { change: spotChange } : {}),
             ...(spotWide ? { wide: true } : {}),
+            ...(spotCamera && spotCamera !== spotId ? { camera: spotCamera } : {}),
           }
         : null,
-    [spotId, spotKey, spotBorn, spotChange, spotWide],
+    [spotId, spotKey, spotBorn, spotChange, spotWide, spotCamera],
   )
+  // Entrar en lo que se acaba de construir (una función, una clase), cuando el programa ya lo trae.
+  const functions = view.functions
+  const methods = view.methods
+  useEffect(() => {
+    if (enterLine === null || !program || entered.current === enterLine.seq) return
+    const head = program.nodes.find((n) => n.range && n.line === enterLine.line)
+    if (!head) return
+    entered.current = enterLine.seq
+    if (functions.some((fn) => fn.id === head.id) || methods.some((fn) => fn.id === head.id)) {
+      openView(head.id)
+    }
+  }, [enterLine, program, functions, methods, openView])
   // Mientras se habla de una pieza, se subraya —como con un rotulador— el trozo exacto del que habla la
   // frase. Se espera un momento a que el nodo esté pintado en su sitio; al pasar a otra cosa, se quita.
   // Llegan varios candidatos, por orden: se subraya el primero que el nodo tenga escrito.
@@ -980,6 +2464,30 @@ export function App() {
       unmark?.()
     }
   }, [spotId, spotMark, spotKey])
+  // La caja provisional se convierte en el nodo: un marco viaja de donde estaba ella a donde está él.
+  useEffect(() => {
+    const from = morphFrom.current
+    if (from === null || spotId === null) return
+    morphFrom.current = null
+    const timer = setTimeout(() => {
+      const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(spotId)}"]`)
+      if (node) morph(from, node)
+    }, 320)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [spotId, spotKey])
+  // Lo que está a punto de quitarse se deshace en partículas: no desaparece de golpe.
+  useEffect(() => {
+    if (spotId === null || spotChange !== 'leaving' || reducedMotion) return
+    const timer = setTimeout(() => {
+      const node = document.querySelector(`.react-flow__node[data-id="${CSS.escape(spotId)}"]`)
+      if (node) dissolve(node)
+    }, 250)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [spotId, spotChange, spotKey, reducedMotion])
   // Una pieza que acaba de aparecer y usa algo definido antes: se coge el chip de aquello y se arrastra
   // hasta la casilla donde se usa, para que se vea que no sale de la nada. Se espera a que la cámara llegue.
   useEffect(() => {
@@ -1005,39 +2513,290 @@ export function App() {
   const revealIds = useMemo(
     () => [
       ...(revealMoment === null ? [] : [revealMoment]),
-      ...(wantedId === undefined ? [] : [wantedId]),
+      // Lo que entra en una parte del plan que se deja plegada no la abre: se señala su tarjeta.
+      ...(wantedId === undefined || wantedFolded ? [] : [wantedId]),
     ],
-    [revealMoment, wantedId],
+    [revealMoment, wantedId, wantedFolded],
   )
   useEffect(() => {
     reveal(revealIds)
   }, [revealIds, reveal])
+  // Se va una vez por cada cosa que se quiere enseñar: después, el usuario puede irse a otra parte (abrir
+  // otra función, volver al programa) sin que la vista lo devuelva a lo último que se construyó.
+  const wentFor = useRef<number | undefined>(undefined)
   useEffect(() => {
     if (!program || wantedId === undefined || spotId !== null) return
+    if (spotKey === undefined || wentFor.current === spotKey) return
     const node = program.nodes.find((n) => n.id === wantedId)
     if (!node) return
+    wentFor.current = spotKey
     const fn = node.kind === 'abstraction.collapsed' ? node : enclosingFunctionNode(program, node)
     const home = fn ? homeOf(fn.id) : null
     if (home !== focusId) openView(home)
-  }, [program, wantedId, spotId, homeOf, focusId, openView])
-  const sendOrder = (text: string, force?: Forced) => {
-    if (version === null) return
+  }, [program, wantedId, spotId, spotKey, homeOf, focusId, openView])
+  const sendOrder = (
+    text: string,
+    force?: Forced,
+    /** Rehacerlo con otra de las versiones que se propusieron (`text` es la petición de entonces). */
+    flavour?: { title: string; shows: string },
+    /** De qué pieza se habla, si no es la seleccionada (`null`: de ninguna, se pidió en el vacío). */
+    about?: string | null,
+    /** Se pidió **sobre** esa pieza, en el lienzo: y, si el gesto lo dice, dónde va lo nuevo. */
+    pointed?: { place?: Place },
+  ) => {
+    // (Sin programa abierto también se pide: en VS Code, quien lo recibe le crea uno.)
     hush()
     const id = ++orderSeq.current
     lastOrder.current = text
     awaitingPaint.current = performance.now()
     paintArmed.current = false
     setOrder({ phase: 'deciding', text })
+    baseline.current = (program?.nodes.length ?? 0) === 0 ? null : ran
+    // Otra orden: la salud que se esperaba de un cambio anterior ya no viene a cuento.
+    healthWait.current = null
+    runCause.current = {
+      text: `«${flavour ? flavour.title : text.length > 30 ? `${text.slice(0, 29)}…` : text}»`,
+      at: Date.now(),
+    }
+    // Algo nuevo sobre un lienzo vacío: las versiones de lo anterior ya no vienen a cuento.
+    if (!flavour && (program?.nodes.length ?? 0) === 0) setFlavours(null)
+    // Lo pedido sobre un lienzo vacío se queda esbozado mientras se construye (ver `asked`).
+    const drawn = flavour || !(program && program.nodes.length > 0) ? sketchOf(text) : null
+    setJudged(null)
+    setPlanned(null)
+    setPlanDone(false)
+    setPlanWaited(false)
+    setForeseen(null)
+    setAsked(
+      drawn && force === undefined
+        ? {
+            sketch: drawn,
+            kind: preview && preview.kind !== 'nada' ? (HEARD_LABELS[preview.kind] ?? null) : null,
+          }
+        : null,
+    )
+    setChat((previous) => [
+      ...previous.slice(-60),
+      { id, role: 'user', text: flavour ? `Otra versión: ${flavour.title}` : text },
+      { id, role: 'ai', text: '', busy: true, note: 'Pensando…' },
+    ])
     post({
       type: 'command',
       id,
       text,
-      version,
-      selected,
-      focus: view.focus?.id ?? null,
+      version: version ?? NO_VERSION,
+      selected: flavour ? null : about === undefined ? selected : about,
+      focus: flavour ? null : (view.focus?.id ?? null),
       ...(force ? { force } : {}),
+      ...(flavour ? { flavour } : {}),
+      ...(pointed && !flavour && about ? { pointed } : {}),
     })
+    // Dada sobre una pieza: lo que se conteste se dirá a su lado.
+    setAskedAbout(pointed && !flavour && about ? { order: id, node: about } : null)
   }
+  /**
+   * Lo que se dice o se escribe en el chat. Antes que una orden puede ser la respuesta a una pregunta
+   * pendiente («sí», «la segunda») o un «no, eso no», que deshace lo último y, si trae la corrección detrás,
+   * la pide.
+   */
+  const hear = (text: string, about?: string | null, pointed?: { place?: Place }) => {
+    if (order.phase === 'ask') {
+      const answer = answerTo(
+        text,
+        order.options.map((option) => option.label),
+      )
+      if (answer === 'no') {
+        orderSeq.current++
+        setOrder({ phase: 'idle' })
+        setChat((previous) => [
+          ...previous.slice(-60),
+          { id: Date.now(), role: 'user', text },
+          { id: Date.now(), role: 'ai', text: 'Vale, lo dejo.', tone: 'muted' },
+        ])
+        return
+      }
+      const option = answer === null ? undefined : order.options[answer]
+      if (option) {
+        if (option.order) sendOrder(option.order)
+        else sendOrder(lastOrder.current, option.force)
+        return
+      }
+    }
+    const rejected = rejection(text)
+    if (rejected) {
+      hush()
+      orderSeq.current++
+      setOrder({ phase: 'idle' })
+      setPreview(null)
+      setThinking(null)
+      setChat((previous) => [
+        ...previous.slice(-60),
+        { id: Date.now(), role: 'user', text },
+        { id: Date.now(), role: 'ai', text: 'Deshecho.', tone: 'muted' },
+      ])
+      // Detrás puede venir lo que sí se quería: se pide en cuanto lo deshecho ya se ve.
+      afterUndo.current = rejected.then.split(' ').length >= 2 ? rejected.then : null
+      post({ type: 'undoOrder' })
+      return
+    }
+    sendOrder(text, undefined, undefined, about, pointed)
+  }
+  /** Cómo se llama una pieza (un paso o una etapa) para decirlo en una orden. */
+  const pieceName = (id: string): string => {
+    const node = view.nodes.find((one) => one.id === id)
+    return (
+      program?.sections?.find((section) => section.id === id)?.title ??
+      node?.section?.title ??
+      node?.gist?.name ??
+      node?.label ??
+      'esto'
+    )
+  }
+  /**
+   * Decir qué se quiere ver en «Cómo avanza» (`''`: lo que se elija solo). Se dice en la conversación; el
+   * visor cambia cuando el programa se ha vuelto a ejecutar midiéndolo (y si no se pudo, se dice también).
+   */
+  const watchFor = (wish: string) => {
+    const say = (text: string, tone?: 'muted' | 'error') => {
+      setChat((previous) => [
+        ...previous.slice(-60),
+        { id: -Date.now(), role: 'ai', text, ...(tone ? { tone } : {}) },
+      ])
+    }
+    if (wish !== '') {
+      setChat((previous) => [
+        ...previous.slice(-60),
+        { id: Date.now(), role: 'user', text: `Quiero ver en cada vuelta: ${wish}` },
+      ])
+      if (models?.ai === null) {
+        say(
+          'Para eso hace falta la IA: ella dice cómo medirlo. Conéctala y vuelve a pedirlo.',
+          'error',
+        )
+        return
+      }
+    }
+    say(
+      wish === ''
+        ? 'Vale: vuelvo a elegir yo qué enseñar.'
+        : 'Lo mido en cada vuelta: ahora lo verás.',
+      'muted',
+    )
+    const waiting = { wish, at: Date.now() }
+    watchWait.current = wish === '' ? null : waiting
+    post({ type: 'watch', text: wish })
+    // Si pasado un rato el visor no enseña lo pedido, es que no se pudo medir: se dice.
+    if (wish !== '') {
+      window.setTimeout(() => {
+        if (watchWait.current !== waiting) return
+        watchWait.current = null
+        say('No encontré cómo mirar eso en cada vuelta: dejo lo que se elige solo.', 'error')
+      }, WATCH_WAIT_MS)
+    }
+  }
+  /** Lo que se pidió con palabras en el lienzo: la frase, y dónde se señaló. */
+  const askHere = (text: string, where: AskWhere) => {
+    hush()
+    switch (where.at) {
+      case 'canvas':
+        hear(text, null)
+        break
+      case 'node':
+        hear(text, where.id, {})
+        break
+      // Un cable soltado en el vacío: lo que se pide va donde dice el puerto del que sale.
+      case 'after':
+        hear(text, where.id, { place: PORT_PLACE[where.port] ?? 'despues' })
+        break
+      // Un cable que lleva un valor: lo que se pide lo usa, y va detrás de donde sale.
+      case 'value':
+        hear(`${text} (usando «${where.name}»)`, where.id, { place: 'despues' })
+        break
+      // Qué se quiere ver en cada vuelta: la IA lo convierte en algo que medir, y se mide.
+      case 'progress':
+        watchFor(text)
+        break
+      // Sobre lo que enseña al acabar.
+      case 'result':
+        hear(`${text} (sobre el resultado que el programa enseña al acabar)`, null)
+        break
+      // De una pieza a otra: lo que se pide va entre las dos.
+      case 'link':
+        hear(`${text} (entre «${pieceName(where.from)}» y «${pieceName(where.to)}»)`, where.from, {
+          place: 'despues',
+        })
+        break
+    }
+  }
+  /** Lo que se ofrece bajo la caja, a un toque, según dónde se señaló. */
+  const askChips = (where: AskWhere): AskChip[] => {
+    if (where.at === 'node') {
+      return [
+        { label: '¿Qué hace?', say: '¿Qué hace esto?' },
+        { label: 'Explícamelo', say: 'Explícame esto' },
+        { label: 'Cámbialo para que…', prefill: 'Cambia esto para que ' },
+        { label: 'Quítalo', say: 'Quita esto' },
+      ]
+    }
+    if (where.at === 'progress') {
+      return [
+        {
+          label: 'Lo que elija Prysel',
+          title: 'Volver a lo que se elige solo para este programa',
+          onPick: () => {
+            watchFor('')
+          },
+        },
+      ]
+    }
+    if (where.at === 'result') {
+      return [
+        { label: '¿Por qué da esto?', say: '¿Por qué da este resultado el programa?' },
+        {
+          label: 'Que lo enseñe paso a paso',
+          say: 'Haz que enseñe cómo va avanzando, no solo el final',
+        },
+      ]
+    }
+    if (where.at !== 'canvas') return []
+    return [
+      ...(features.suggestions ?? []).slice(0, 3).map((say) => ({ label: say, say })),
+      // Se eligió una versión de lo que se pidió: las otras quedan a un toque.
+      ...(flavours?.options ?? []).flatMap((option, at): AskChip[] =>
+        at === flavours?.chosen
+          ? []
+          : [
+              {
+                label: `↻ ${option.title}`,
+                title: `Rehacerlo así: ${option.shows}`,
+                onPick: () => {
+                  if (!flavours) return
+                  setFlavours({ ...flavours, chosen: at })
+                  sendOrder(flavours.command, undefined, option)
+                },
+              },
+            ],
+      ),
+    ]
+  }
+  const sendLater = useRef<(text: string) => void>(() => undefined)
+  useEffect(() => {
+    sendLater.current = (text) => {
+      sendOrder(text)
+    }
+  })
+  // Lo deshecho ya se ve (llegó el programa de antes): ahora sí, la corrección.
+  useEffect(() => {
+    const next = afterUndo.current
+    if (next === null || version === null) return
+    afterUndo.current = null
+    const timer = setTimeout(() => {
+      sendLater.current(next)
+    }, 80)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [version])
   useEffect(() => {
     onDecision.current = (message) => {
       if (message.id !== orderSeq.current) return
@@ -1053,6 +2812,12 @@ export function App() {
         awaitingPaint.current = null
         setOrder({ phase: 'done', text, say, tone, ...meta, ...(needsKey ? { needsKey } : {}) })
         tell(say)
+      }
+      if (
+        directive.kind !== 'do' ||
+        (directive.effect.type !== 'compose' && directive.effect.type !== 'modify')
+      ) {
+        setPreview(null)
       }
       if (directive.kind === 'ask') {
         awaitingPaint.current = null
@@ -1078,12 +2843,102 @@ export function App() {
           return
         }
         orderCreates.current = effect.action.type === 'add'
-        act(effect.action)
-      } else if (effect.type === 'undo' || effect.type === 'redo') post({ type: effect.type })
-      else if (effect.type === 'run') run(effect.ids)
+        const action = effect.action
+        // Un cambio directo (borrar, mover, envolver…) también se ejecuta después: se dirá cómo quedó.
+        healthWait.current = { before: baseline.current, how: 'order', from: message.version + 1 }
+        const to =
+          action.type === 'move' ? (action.into ?? action.after ?? action.before) : undefined
+        const shown = directive.kind === 'do' ? directive.gesture : undefined
+        const gone =
+          action.type === 'delete' && !reducedMotion
+            ? document.querySelector(`.react-flow__node[data-id="${CSS.escape(action.id)}"]`)
+            : null
+        if (gone) {
+          // Borrar se ve: la pieza se deshace en partículas, y entonces se va del código.
+          dissolve(gone)
+          gone.setAttribute('data-moving', '')
+          setTimeout(() => {
+            act(action)
+          }, 420)
+        } else if (shown && !reducedMotion && action.type !== 'move') {
+          // Envolver o duplicar: primero se ve lo que se le va a hacer; el código cambia al acabar el gesto.
+          if (!shownIds.has(shown.id)) view.open(null)
+          setWanted({ id: shown.id, key: ++spotSeq.current })
+          setTimeout(
+            () => {
+              const piece = document.querySelector(
+                `.react-flow__node[data-id="${CSS.escape(shown.id)}"]`,
+              )
+              const ms = piece ? gesture(shown.kind, piece) : 0
+              setTimeout(() => {
+                act(action)
+              }, ms)
+            },
+            shownIds.has(shown.id) ? 550 : 900,
+          )
+        } else if (action.type !== 'move' || to === undefined || reducedMotion) act(action)
+        else {
+          // Mover se ve: su nombre viaja hasta el destino, y al llegar cambia el código. Si alguno de los
+          // dos no está a la vista (se mira otra función), antes se sale al programa.
+          const how =
+            action.into !== undefined ? 'into' : action.after !== undefined ? 'after' : 'before'
+          const hidden = !shownIds.has(action.id) || !shownIds.has(to)
+          if (hidden) view.open(null)
+          setWanted({ id: to, key: ++spotSeq.current, wide: true })
+          const find = (id: string) =>
+            document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+          setTimeout(
+            () => {
+              const source = find(action.id)
+              const target = find(to)
+              const flight = source && target ? flyNode(source, target, how) : { ms: 0 }
+              setTimeout(() => {
+                act(action)
+              }, flight.ms)
+            },
+            hidden ? 900 : 550,
+          )
+        }
+      } else if (effect.type === 'undo' || effect.type === 'redo') {
+        healthWait.current = { before: baseline.current, how: 'order', from: message.version + 1 }
+        post({ type: effect.type })
+      } else if (effect.type === 'modify' && directive.kind === 'do' && directive.gesture) {
+        // Juntar o extraer: el código lo reescribe la IA (tarda); mientras, se ve qué se va a hacer.
+        const shown = directive.gesture
+        if (!reducedMotion) {
+          // Las piezas tienen que estar a la vista las dos: si se mira otra cosa (una de ellas por
+          // dentro), antes se sale al programa.
+          const hidden =
+            !shownIds.has(shown.id) || (shown.to !== undefined && !shownIds.has(shown.to))
+          if (hidden) view.open(null)
+          else setWanted({ id: shown.id, key: ++spotSeq.current, wide: true })
+          setTimeout(
+            () => {
+              const find = (id: string) =>
+                document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+              const piece = find(shown.id)
+              if (piece) gesture(shown.kind, piece, shown.to === undefined ? null : find(shown.to))
+            },
+            hidden ? 950 : 550,
+          )
+        }
+      } else if (effect.type === 'run') run(effect.ids)
       else if (effect.type === 'trace') post({ type: 'trace', version })
       else if (effect.type === 'fold') view.enter(effect.id)
-      if (directive.focus !== undefined) goTo(directive.focus)
+      if (directive.kind === 'do' && directive.home) {
+        // «Ver el programa principal»: se sale de lo que se estuviera viendo.
+        view.open(null)
+      } else if (directive.focus !== undefined) {
+        const seen = directive.focus
+        // «Ver la clase Animal»: si es algo con interior, se entra; si no, la cámara va a ello.
+        if (
+          directive.kind === 'do' &&
+          directive.intent === 'enfocar' &&
+          (view.functions.some((fn) => fn.id === seen) || view.methods.some((fn) => fn.id === seen))
+        ) {
+          view.open(seen)
+        } else goTo(seen)
+      }
       setOrder({
         phase: 'done',
         text,
@@ -1101,7 +2956,29 @@ export function App() {
       if (effect.type !== 'action' && effect.type !== 'undo' && effect.type !== 'redo')
         markPainted()
     }
+    // Mientras se le oye hablar de algo que ya existe («vamos a cambiar la función sumar»), se señala, a la
+    // espera de saber qué quiere hacer con ello.
+    onPreview.current = (kind, text) => {
+      if (kind !== 'cambio' && kind !== 'explicacion') return
+      const said = text
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .split(/[^a-z0-9_]+/)
+      const named = [...view.functions, ...view.methods].find((fn) =>
+        said.includes((fn.name.split('.').pop() ?? fn.name).toLowerCase()),
+      )
+      if (named && wanted?.id !== named.id) setWanted({ id: named.id, key: ++spotSeq.current })
+    }
+    onFlavours.current = (message) => {
+      setFlavours({ command: message.command, options: message.options, chosen: message.chosen })
+    }
     onStep.current = (message) => {
+      // Llega la pieza de verdad: la caja provisional se va… convirtiéndose en ella.
+      if (preview !== null) {
+        morphFrom.current = document.querySelector('.ghost-box')?.getBoundingClientRect() ?? null
+        setPreview(null)
+      }
       setThinking(null)
       // Una pieza puede aparecer antes que su explicación (llega detrás): mientras, se queda lo que se decía.
       setOrder((previous) =>
@@ -1120,6 +2997,7 @@ export function App() {
       if (voice && message.say) speak(message.say, 'es', false, heard)
       else heard(false)
       setCaption(message.say ? message.say : null)
+      if (message.say) tellChat(message.say)
       // La pieza aparece (con su animación) y la cámara va a ella; de lejos, si el JEV dice que hay que ver el conjunto.
       setWanted({
         line: message.line,
@@ -1131,6 +3009,8 @@ export function App() {
             ? {}
             : { born: true }),
         ...(message.wide ? { wide: true } : {}),
+        ...(message.folded ? { folded: true } : {}),
+        ...(message.anchor === undefined ? {} : { anchor: message.anchor }),
         ...(message.mark?.length ? { mark: message.mark } : {}),
       })
     }
@@ -1139,6 +3019,23 @@ export function App() {
         setThinking(null)
         setCaption(null)
         setIntro(null)
+        setPreview(null)
+        // Lo construido es una función o una clase: la vista entra en ella, que es donde se va a seguir.
+        const enter = message.enter
+        if (enter !== undefined) setEnterLine((was) => ({ line: enter, seq: (was?.seq ?? 0) + 1 }))
+        // Algo se escribió: cuando el programa se vuelva a ejecutar, se dirá cómo quedó.
+        // (Si ya se ejecutó lo último que se escribió, se dice ya; si no, cuando llegue.)
+        if (message.ok) {
+          const seen = seenRun.current
+          if (seen && version !== null && seen.version >= version)
+            sayHealth(baseline.current, seen.run, 'order')
+          else
+            healthWait.current = {
+              before: baseline.current,
+              how: 'order',
+              ...(version === null ? {} : { from: version }),
+            }
+        }
       }
       const note = message.done
         ? (message.say ?? message.error ?? '')
@@ -1171,13 +3068,24 @@ export function App() {
       if (message.say && voice) speak(message.say)
       if (message.line !== undefined) setWanted({ line: message.line, key: ++spotSeq.current })
     }
+    onAsk.current = (text) => {
+      hear(text, null)
+    }
     onSay.current = (message) => {
       setThinking(null)
+      tellChat(message.text)
       setOrder((previous) =>
         previous.phase === 'done' ? { ...previous, note: message.text } : previous,
       )
       const heard = (spoke: boolean) => {
         if (message.seq !== undefined) post({ type: 'spoken', seq: message.seq, spoke })
+      }
+      // Un comentario al margen: subtítulo, y voz solo si no pisa a otra frase.
+      if (message.aside) {
+        if (voice && !window.speechSynthesis?.speaking) speak(message.text, 'es', false, heard)
+        else heard(false)
+        setCaption(message.text)
+        return
       }
       if (voice) speak(message.text, 'es', false, heard)
       else heard(false)
@@ -1190,138 +3098,149 @@ export function App() {
 
   return (
     <div ref={rootRef} className="flex h-full flex-col">
-      <header className="appbar">
-        <div className="appbar__lead">
-          <span className="appbar__mark" aria-hidden>
-            P
-          </span>
-          <span className="appbar__file" title={file ?? undefined}>
-            <Icon name="file" size={14} />
-            <span className="appbar__file-name">
-              {file ? baseName(file) : 'Sin archivo Python'}
+      {!features.chat && (
+        <header className="appbar">
+          <div className="appbar__lead">
+            <span className="appbar__mark" aria-hidden>
+              P
             </span>
-          </span>
-          <FunctionMenu
-            functions={view.functions}
-            methods={view.methods}
-            focus={view.focus}
-            trail={view.trail}
-            onOpen={view.open}
-            onCrumb={view.descend}
-          />
-        </div>
-        <div role="tablist" aria-label="Qué se ve" className="segmented appbar__tabs">
-          <button
-            type="button"
-            role="tab"
-            className="segmented__item"
-            aria-selected={tab === 'canvas'}
-            aria-pressed={tab === 'canvas'}
-            onClick={() => {
-              setTab('canvas')
-            }}
-          >
-            Diagrama
-          </button>
-          <button
-            type="button"
-            role="tab"
-            className="segmented__item"
-            aria-selected={tab === 'calls'}
-            aria-pressed={tab === 'calls'}
-            title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
-            onClick={() => {
-              setTab('calls')
-            }}
-          >
-            Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
-            {calls.some((call) => call.status === 'running') ? ' ·' : ''}
-          </button>
-        </div>
-        <span className="sr-only" aria-live="polite">
-          {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
-        </span>
-        {program && (
-          <div className="appbar__actions">
-            <RunControls
-              kernel={kernel}
-              problem={problem}
-              hasSelection={selected !== null}
-              onRunAll={() => {
-                run('all')
-              }}
-              onRunSelected={() => {
-                if (selected !== null) run([selected])
-              }}
-              onInterrupt={() => {
-                post({ type: 'interrupt' })
-              }}
-              onRestart={() => {
-                post({ type: 'restart' })
-              }}
-            />
-            <span className="appbar__sep" aria-hidden />
-            <Button
-              icon="step"
-              disabled={version === null || recording?.status === 'running'}
-              title={
-                recording?.status === 'failed'
-                  ? recording.message
-                  : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
-              }
-              onClick={() => {
-                if (version !== null) post({ type: 'trace', version })
-              }}
-            >
-              {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
-            </Button>
-            {file && (
+            <span className="appbar__file" title={file ?? undefined}>
+              <Icon name="file" size={14} />
+              <span className="appbar__file-name">
+                {file ? baseName(file) : 'Sin archivo Python'}
+              </span>
+            </span>
+            {view.focus !== null && (
               <Button
-                icon="book"
-                title={
-                  lesson
-                    ? 'Abrir el guion de la lección'
-                    : 'Crea el guion de la lección de este archivo (un .lesson.json junto a él)'
-                }
-                onClick={() => {
-                  post({ type: 'newLesson' })
-                }}
+                icon="undo"
+                title="Volver a donde estabas antes de entrar aquí"
+                onClick={goBack}
               >
-                {lesson ? lesson.title : 'Lección'}
+                Volver
               </Button>
             )}
-            {/* Solo si hay bloques largos sin etapas: la IA propone sus comentarios de sección. */}
-            {file && longBlocks > 0 && (
-              <Button
-                icon="section"
-                title={`${longBlocks === 1 ? 'Hay un bloque largo' : `Hay ${longBlocks} bloques largos`} sin etapas: la IA propone sus comentarios de sección, y los revisas antes de que se escriban`}
-                onClick={() => {
-                  post({ type: 'proposeSections' })
-                }}
-              >
-                Etapas
-              </Button>
-            )}
-            <span className="appbar__sep" aria-hidden />
-            <IconButton
-              icon="undo"
-              label="Deshacer lo último que se cambió en el lienzo (Ctrl+Z)"
-              disabled={history.undo === 0}
-              onClick={() => {
-                post({ type: 'undo' })
-              }}
-            />
-            <IconButton
-              icon="redo"
-              label="Rehacer (Ctrl+Mayús+Z)"
-              disabled={history.redo === 0}
-              onClick={() => {
-                post({ type: 'redo' })
-              }}
+            <FunctionMenu
+              functions={view.functions}
+              methods={view.methods}
+              focus={view.focus}
+              trail={view.trail}
+              onOpen={view.open}
+              onCrumb={view.descend}
             />
           </div>
-        )}
-      </header>
+          {features.calls && (
+            <div role="tablist" aria-label="Qué se ve" className="segmented appbar__tabs">
+              <button
+                type="button"
+                role="tab"
+                className="segmented__item"
+                aria-selected={tab === 'canvas'}
+                onClick={() => {
+                  setTab('canvas')
+                }}
+              >
+                Diagrama
+              </button>
+              <button
+                type="button"
+                role="tab"
+                className="segmented__item"
+                aria-selected={tab === 'calls'}
+                title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
+                onClick={() => {
+                  setTab('calls')
+                }}
+              >
+                Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
+                {calls.some((call) => call.status === 'running') ? ' ·' : ''}
+              </button>
+            </div>
+          )}
+          <span className="sr-only" aria-live="polite">
+            {program ? `${program.nodes.length} nodos · ${program.edges.length} conexiones` : ''}
+          </span>
+          {program && (
+            <div className="appbar__actions">
+              <RunControls
+                kernel={kernel}
+                problem={problem}
+                hasSelection={selected !== null}
+                onRunAll={() => {
+                  run('all')
+                }}
+                onRunSelected={() => {
+                  if (selected !== null) run([selected])
+                }}
+                onInterrupt={() => {
+                  post({ type: 'interrupt' })
+                }}
+                onRestart={() => {
+                  post({ type: 'restart' })
+                }}
+              />
+              <span className="appbar__sep" aria-hidden />
+              <Button
+                icon="step"
+                disabled={version === null || recording?.status === 'running'}
+                title={
+                  recording?.status === 'failed'
+                    ? recording.message
+                    : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
+                }
+                onClick={() => {
+                  if (version !== null) post({ type: 'trace', version })
+                }}
+              >
+                {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
+              </Button>
+              {file && features.editLesson && (
+                <Button
+                  icon="book"
+                  title={
+                    lesson
+                      ? 'Abrir el guion de la lección'
+                      : 'Crea el guion de la lección de este archivo (un .lesson.json junto a él)'
+                  }
+                  onClick={() => {
+                    post({ type: 'newLesson' })
+                  }}
+                >
+                  {lesson ? lesson.title : 'Lección'}
+                </Button>
+              )}
+              {/* Solo si hay bloques largos sin etapas: la IA propone sus comentarios de sección. */}
+              {file && longBlocks > 0 && (
+                <Button
+                  icon="section"
+                  title={`${longBlocks === 1 ? 'Hay un bloque largo' : `Hay ${longBlocks} bloques largos`} sin etapas: la IA propone sus comentarios de sección, y los revisas antes de que se escriban`}
+                  onClick={() => {
+                    post({ type: 'proposeSections' })
+                  }}
+                >
+                  Etapas
+                </Button>
+              )}
+              <span className="appbar__sep" aria-hidden />
+              <IconButton
+                icon="undo"
+                label="Deshacer lo último que se cambió en el lienzo (Ctrl+Z)"
+                disabled={history.undo === 0}
+                onClick={() => {
+                  post({ type: 'undo' })
+                }}
+              />
+              <IconButton
+                icon="redo"
+                label="Rehacer (Ctrl+Mayús+Z)"
+                disabled={history.redo === 0}
+                onClick={() => {
+                  post({ type: 'redo' })
+                }}
+              />
+            </div>
+          )}
+        </header>
+      )}
 
       {lessonError && (
         <div
@@ -1337,16 +3256,42 @@ export function App() {
           role="note"
           className="border-b border-border-card bg-surface px-3 py-1.5 text-[11px] leading-4 text-ink-muted"
         >
-          {unsupported.length} construcciones sin entender (líneas{' '}
-          {unsupported.map((u) => u.line).join(', ')}) — se muestran como nodos opacos.
+          {unsupported.length === 1
+            ? `1 construcción sin entender (línea ${unsupported[0]?.line ?? ''}): se muestra como un nodo opaco.`
+            : `${unsupported.length} construcciones sin entender (líneas ${unsupported.map((u) => u.line).join(', ')}): se muestran como nodos opacos.`}
         </div>
       )}
 
       <div className={`flex min-h-0 flex-1 ${wide ? 'flex-row' : 'flex-col'}`}>
-        <main className="relative min-h-0 min-w-0 flex-1">
+        <main
+          ref={stage}
+          className="relative min-h-0 min-w-0 flex-1"
+          data-hearing={hearing !== null ? '' : undefined}
+          // (Si las barras de abajo van subidas sobre la consola, el botón de la IA no les quita sitio.)
+          data-hub={hub && !(consoleBox && cramped) ? '' : undefined}
+        >
+          {/* Le estamos oyendo: se ve, grande, y con lo que va diciendo. Lo que se construía está quieto. */}
+          {hearing !== null && (
+            <div className="canvas-hearing" role="status" aria-live="polite">
+              <span className="canvas-hearing__dot" aria-hidden />
+              <span className="canvas-hearing__label">Te escucho</span>
+              <span className="canvas-hearing__text">{hearing}</span>
+            </div>
+          )}
           {/* La pestaña «Consultas» va encima del diagrama, que sigue montado (no pierde su cámara). */}
           {tab === 'calls' && (
             <div className="calls-layer">
+              {features.chat && (
+                <div className="calls-layer__back">
+                  <Button
+                    onClick={() => {
+                      setTab('canvas')
+                    }}
+                  >
+                    Volver al diagrama
+                  </Button>
+                </div>
+              )}
               <CallsPanel
                 calls={calls}
                 onClear={() => {
@@ -1359,11 +3304,30 @@ export function App() {
           {program && program.nodes.length > 0 ? (
             <ErrorBoundary label="No se pudo dibujar el lienzo" resetKey={program}>
               <Canvas
-                nodes={canvasNodes}
-                edges={canvasEdges}
+                nodes={drawn.nodes}
+                edges={drawn.edges}
                 density={density}
                 onEnter={view.enter}
                 onOpen={view.descend}
+                onGistEdit={setTrying}
+                architecture={drawn.architecture}
+                avoid={consoleBox}
+                result={outcome?.result ?? null}
+                runs={outcome?.result ? runsShown : null}
+                progress={progressShown}
+                knobs={knobsPanel}
+                config={configPanel}
+                screen={screenPanel}
+                start={outcome?.start ?? null}
+                exit={
+                  architecture?.order !== undefined && told?.exit !== undefined
+                    ? { at: told.anchor, label: told.exit }
+                    : null
+                }
+                beat={beat}
+                reserve={reserve}
+                moduleStates={states}
+                xray={xray}
                 onControlChange={changeControl}
                 onAction={act}
                 onRun={(id) => {
@@ -1381,6 +3345,12 @@ export function App() {
                     }
                   : {})}
                 extraMenu={viewerMenu}
+                said={saidAt}
+                ask={
+                  features.orders && lesson === null && !constructing
+                    ? { onAsk: askHere, chips: askChips, onDraft: draft }
+                    : undefined
+                }
                 onUnpin={(id) => {
                   const key = pins.find((p) => pinNodeId(p) === id)
                   if (key) pin(key)
@@ -1394,7 +3364,10 @@ export function App() {
                 framed={false}
                 interactive
                 height="fill"
-                fitKey={view.viewKey}
+                fitKey={`${view.viewKey}#${reframed}`}
+                settle={settled}
+                // Mientras se construye se ve el conjunto: la cámara no persigue cada pieza que nace.
+                follow={!building}
                 cursor={cursor}
                 spotlight={spotlight}
                 echo={echo}
@@ -1406,7 +3379,75 @@ export function App() {
               />
             </ErrorBoundary>
           ) : (
-            <EmptyState thinking={extras.busy} intro={intro} />
+            <EmptyState
+              // Lo que se teclea ya se lee en su campo: repetirlo bajo el esbozo no dice nada (con la voz sí,
+              // que no tiene dónde verse escrita).
+              thinking={
+                typed !== null &&
+                extras.busy != null &&
+                (typed.trim().startsWith(extras.busy.trim()) ||
+                  extras.busy.trim().startsWith(typed.trim()))
+                  ? null
+                  : extras.busy
+              }
+              title={
+                thinking === null && preview && preview.kind !== 'nada'
+                  ? (HEARD_LABELS[preview.kind] ?? null)
+                  : null
+              }
+              intro={intro}
+              chat={features.chat === true || hub}
+              sketch={drawing ?? asked?.sketch ?? null}
+              kind={
+                drawing === null && asked
+                  ? asked.kind
+                  : preview && preview.kind !== 'nada'
+                    ? (HEARD_LABELS[preview.kind] ?? null)
+                    : null
+              }
+              // Ya enviado: el esbozo se queda mientras se decide y se piensa el plan, diciendo en qué va.
+              sent={
+                drawing === null && asked ? (intro ?? thinking ?? 'Decidiendo qué hacer…') : null
+              }
+              prompt={
+                hub && lesson === null && !constructing ? (
+                  <AskBox
+                    placeholder="Escribe aquí lo que quieres construir…"
+                    focus={!narrow}
+                    chips={(features.starters ?? features.suggestions ?? []).map((say) => ({
+                      label: say,
+                      say,
+                    }))}
+                    onSubmit={(text) => {
+                      hear(text, null)
+                    }}
+                    onDraft={draft}
+                  />
+                ) : null
+              }
+            />
+          )}
+          {/* El esbozo de lo pedido sigue a la vista mientras se construye, y se va llenando: cada parte
+              se marca con la pieza del programa que la cubre, en cuanto existe. */}
+          {asked && program && program.nodes.length > 0 && (
+            <div className="canvas-float sketch-pin">
+              <SketchCard
+                sketch={asked.sketch}
+                kind={asked.kind}
+                filled={coverOf(
+                  filledBy(asked.sketch, written),
+                  verdictFor(judged, asked.sketch.parts, written),
+                  written,
+                )}
+                planned={coverOf(
+                  filledBy(asked.sketch, titles),
+                  verdictFor(foreseen, asked.sketch.parts, titles),
+                  titles,
+                )}
+                hint={thinking}
+                pinned
+              />
+            </div>
           )}
           {program && (
             <>
@@ -1417,52 +3458,431 @@ export function App() {
                   {caption}
                 </div>
               )}
-              <div className="canvas-float" data-at="top-right">
-                <DensityControl value={density} onChange={changeDensity} />
-              </div>
-              <div className="canvas-float" data-at="bottom-left">
-                <AddNodeMenu onAdd={add} where={addWhere} placement="up" label="Añadir paso" />
-              </div>
-              <div className="canvas-float" data-at="bottom-center">
-                <CommandBar
-                  state={order}
-                  voice={voice}
-                  onToggleVoice={() => {
-                    if (voice) hush()
-                    vscode.setState({ ...saved(), voice: !voice } satisfies SavedState)
-                    setVoice(!voice)
+              {features.chat ? (
+                <>
+                  {(view.functions.length > 0 ||
+                    view.methods.length > 0 ||
+                    view.focus !== null) && (
+                    <div className="canvas-float canvas-float--trail" data-at="top-left">
+                      {view.focus !== null && (
+                        <Button
+                          icon="undo"
+                          title="Volver a donde estabas antes de entrar aquí"
+                          onClick={goBack}
+                        >
+                          Volver
+                        </Button>
+                      )}
+                      <FunctionMenu
+                        functions={view.functions}
+                        methods={view.methods}
+                        focus={view.focus}
+                        trail={view.trail}
+                        onOpen={view.open}
+                        onCrumb={view.descend}
+                      />
+                    </div>
+                  )}
+                  {/* Sin barra de herramientas, el paso a paso se pide desde el lienzo: el reproductor no
+                      está a la vista hasta entonces. */}
+                  {(!replay || features.calls) && (
+                    <div className="canvas-float canvas-float--row" data-at="top-right">
+                      {!replay && (
+                        <Button
+                          icon="step"
+                          disabled={version === null || recording?.status === 'running'}
+                          title={
+                            recording?.status === 'failed'
+                              ? recording.message
+                              : 'Reproduce el programa línea a línea, viendo cómo cambia cada valor'
+                          }
+                          onClick={() => {
+                            if (version !== null) post({ type: 'trace', version })
+                          }}
+                        >
+                          {recording?.status === 'running' ? 'Grabando…' : 'Paso a paso'}
+                        </Button>
+                      )}
+                      {/* Sin pestañas (no hay barra de herramientas), las consultas se abren desde aquí. */}
+                      {features.calls && (
+                        <Button
+                          title="Lo que se le pregunta a cada modelo (la IA que redacta y el JEV que decide) y lo que contesta"
+                          onClick={() => {
+                            setTab('calls')
+                          }}
+                        >
+                          Consultas{calls.length > 0 ? ` ${calls.length}` : ''}
+                          {calls.some((call) => call.status === 'running') ? ' ·' : ''}
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="canvas-float" data-at="top-right">
+                    <DensityControl value={density} onChange={changeDensity} />
+                  </div>
+                  {/* (Con el botón de la IA abajo a la izquierda, se añade desde el lienzo: clic derecho, el
+                      «+» de cada paso o un cable soltado.) */}
+                  {!hub && (
+                    <div className="canvas-float" data-at="bottom-left">
+                      <AddNodeMenu
+                        onAdd={add}
+                        where={addWhere}
+                        placement="up"
+                        label="Añadir paso"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+              {/* Cuánto lleva lo que se construye: las partes del plan que ya tienen código. */}
+              {progress && (
+                <div
+                  className="build-progress"
+                  role="progressbar"
+                  aria-label="Lo que lleva construido"
+                  aria-valuemin={0}
+                  aria-valuemax={progress.total}
+                  aria-valuenow={progress.done}
+                >
+                  <span
+                    className="build-progress__bar"
+                    style={{ width: `${(progress.done / progress.total) * 100}%` }}
+                  />
+                  <span className="build-progress__text">
+                    {progress.done} de {progress.total} partes
+                  </span>
+                </div>
+              )}
+              {/* Desde dónde se mira: la idea, las partes o el detalle. Solo en el programa entero (no dentro
+                  de una función) y cuando tiene partes que contar. */}
+              {(features.chat || hub) &&
+                lesson === null &&
+                view.focus === null &&
+                (architecture !== null || distance === 'detalle') &&
+                program.nodes.length > 0 && (
+                  <div
+                    className="canvas-float distance"
+                    role="group"
+                    aria-label="Desde dónde mirar"
+                  >
+                    {DISTANCES.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className="distance__option"
+                        aria-pressed={distance === option.id}
+                        title={option.title}
+                        onClick={() => {
+                          lookFrom(option.id)
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              {/* La idea: el programa en unas líneas, a tamaño de lectura. Va encima del diagrama, que sigue
+                  montado (no pierde su cámara). */}
+              {showIdea && (
+                <IdeaView
+                  idea={idea}
+                  extras={ideaExtras}
+                  live={beat?.at ?? null}
+                  footer={(reserve?.bottom ?? 0) + 8}
+                  onPick={(id) => {
+                    lookFrom('partes')
+                    setSelected(id)
                   }}
-                  onSubmit={(text) => {
-                    sendOrder(text)
-                  }}
-                  onChoose={(option) => {
-                    // Una salida que es otra orden, ya completa, se manda tal cual; si no, aclara la que había.
-                    if (option.order) sendOrder(option.order)
-                    else sendOrder(lastOrder.current, option.force)
-                  }}
-                  onDismiss={() => {
-                    // Una decisión que llegue después ya no es de nadie.
-                    orderSeq.current++
-                    awaitingPaint.current = null
-                    hush()
-                    post({ type: 'stopOrder' })
-                    setOrder({ phase: 'idle' })
-                  }}
-                  onKey={() => {
-                    post({ type: 'jevKey' })
-                  }}
-                  onTyping={hush}
-                  onStop={() => {
-                    hush()
-                    post({ type: 'stopOrder' })
-                  }}
-                  models={models}
-                  onPickModel={() => {
-                    post({ type: 'pickModel' })
-                  }}
+                  // El guion se puede tocar cuando hay a quién pedírselo y no se está construyendo.
+                  actions={
+                    features.orders && !constructing
+                      ? {
+                          onChange: (step) => {
+                            setSelected(step.id)
+                            openAsk(step, `Cambia «${step.title}» para que `)
+                          },
+                          onAdd: (step) => {
+                            setSelected(step.id)
+                            openAsk(step, `Añade después de «${step.title}» un paso que `)
+                          },
+                          onRemove: (step) => {
+                            sendOrder(
+                              `Quita la parte «${step.title}»`,
+                              undefined,
+                              undefined,
+                              step.id,
+                            )
+                          },
+                        }
+                      : null
+                  }
                 />
-              </div>
+              )}
+              {/* Ver pasar una vuelta: lo que ya se ejecutó, paso a paso sobre el diagrama. */}
+              {architecture && story && beats.length > 0 && (
+                <Transport
+                  beats={beats}
+                  playback={playback}
+                  loop={story.loop}
+                  titleOf={(id) =>
+                    view.moduleFacts.find((fact) => fact.id === id)?.title ?? 'el resultado'
+                  }
+                  carriesOf={(link) =>
+                    architecture.links.find(
+                      (other) => other.kind === 'data' && `${other.from}>${other.to}` === link,
+                    )?.label
+                  }
+                  dock={dock}
+                  guide={guideText}
+                />
+              )}
+              {/* Cómo leer la arquitectura: qué forma tiene y qué dice cada flecha. */}
+              {architecture && program.nodes.length > 0 && !showIdea && (
+                <div className="canvas-float arch-legend" role="note" style={dock}>
+                  <span className="arch-legend__shape" title={SHAPE_WHY[architecture.shape]}>
+                    {SHAPE_NAMES[architecture.shape]}
+                  </span>
+                  {architecture.links.some((link) => link.kind === 'data') && (
+                    <span className="arch-legend__key" data-kind="data">
+                      le pasa un dato
+                    </span>
+                  )}
+                  {architecture.links.some((link) => link.kind === 'next') && (
+                    <span className="arch-legend__key" data-kind="next">
+                      luego
+                    </span>
+                  )}
+                  {architecture.links.some((link) => link.kind === 'call') && (
+                    <span className="arch-legend__key" data-kind="call">
+                      usa a
+                    </span>
+                  )}
+                  {/* Las siluetas: qué clase de parte es cada una, para reconocerla sin leer. Si no caben
+                      todas, se quedan las que quepan: lo demás de la leyenda va antes. */}
+                  {roleKeys.length > 0 && (
+                    <span className="arch-legend__roles">
+                      {roleKeys.map((role) => (
+                        <span
+                          key={role}
+                          className="arch-legend__role"
+                          data-role={role}
+                          title={ROLE_KEYS[role].why}
+                        >
+                          {ROLE_KEYS[role].word}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                  {/* La radiografía: lo que el diagrama dice con palabras, visto por dentro. Cada módulo
+                      enseña los nombres que usa y deja, y vuelven las flechas de quién llama a quién. */}
+                  <button
+                    type="button"
+                    className="arch-legend__toggle"
+                    aria-pressed={xray}
+                    title="Ver el código por dentro: los nombres que usa y deja cada parte, y quién llama a quién"
+                    onClick={() => {
+                      setXray(!xray)
+                    }}
+                  >
+                    radiografía
+                  </button>
+                  {architecture.links.some((link) => link.planned) && (
+                    <span className="arch-legend__key" data-kind="planned">
+                      planeado
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Probar una función con otros datos: su tarjeta cambia con lo que de verdad pasa. */}
+              {tryingGist && (
+                <div className="canvas-float try-panel">
+                  <TryPanel
+                    // Otra función, o su muestra cambió por fuera: los campos empiezan de lo que hay.
+                    key={`${tryingGist.id}:${tryingGist.sample?.call ?? ''}`}
+                    gist={tryingGist}
+                    onTry={(call) => {
+                      post({ type: 'tryCall', id: tryingGist.id, call })
+                    }}
+                    onClose={() => {
+                      setTrying(null)
+                    }}
+                  />
+                </div>
+              )}
+              {/* Lo que el programa saca por pantalla: a la vista mientras se construye. */}
+              {ran && program && program.nodes.length > 0 && (
+                <div className="canvas-float" data-at="bottom-right" ref={watchConsole}>
+                  <RunPanel
+                    run={ran}
+                    lit={litLines}
+                    quiet={outcome?.result != null && ran.asks !== true && ran.ended === 'done'}
+                    onPlay={(answers, fresh) => {
+                      post({ type: 'play', answers, ...(fresh ? { fresh: true } : {}) })
+                    }}
+                    onHelp={
+                      features.orders && !constructing
+                        ? (what, problem) => {
+                            if (what === 'fix') sendOrder(`Arregla este error: ${problem}`)
+                            else
+                              sendOrder(
+                                '¿Por qué este programa no termina, o tarda tanto en acabar?',
+                              )
+                          }
+                        : undefined
+                    }
+                    onWake={(idle) => {
+                      // Nadie lo arranca: se le añade su arranque. Trabaja sin enseñar: se le pide a la IA.
+                      if (idle === 'inert') post({ type: 'launch' })
+                      else sendOrder('Haz que el programa enseñe su resultado en pantalla')
+                    }}
+                    onPick={(line) => {
+                      // El paso más interior que abarca esa línea; si está plegado, lo que lo guarda.
+                      const node = [...program.nodes]
+                        .filter((n) => n.range && n.line <= line && (n.lineEnd ?? n.line) >= line)
+                        .sort((a, b) => b.line - a.line)[0]
+                      if (node) goTo(node.id)
+                    }}
+                  />
+                </div>
+              )}
+              {features.orders && !hub && (
+                <div className="canvas-float" data-at="bottom-center">
+                  <CommandBar
+                    state={order}
+                    voice={voice}
+                    onToggleVoice={() => {
+                      if (voice) hush()
+                      vscode.setState({ ...saved(), voice: !voiceOn } satisfies SavedState)
+                      setVoice(!voiceOn)
+                    }}
+                    onSubmit={(text) => {
+                      sendOrder(text)
+                    }}
+                    onChoose={(option) => {
+                      // Una salida que es otra orden, ya completa, se manda tal cual; si no, aclara la que había.
+                      if (option.order) sendOrder(option.order)
+                      else sendOrder(lastOrder.current, option.force)
+                    }}
+                    onDismiss={() => {
+                      // Una decisión que llegue después ya no es de nadie.
+                      orderSeq.current++
+                      awaitingPaint.current = null
+                      hush()
+                      post({ type: 'stopOrder' })
+                      setOrder({ phase: 'idle' })
+                    }}
+                    onKey={() => {
+                      post({ type: 'jevKey' })
+                    }}
+                    onTyping={hush}
+                    onStop={() => {
+                      hush()
+                      post({ type: 'stopOrder' })
+                    }}
+                    models={models}
+                    onPickModel={() => {
+                      post({ type: 'pickModel' })
+                    }}
+                  />
+                </div>
+              )}
             </>
+          )}
+          {/* La IA, sobre el lienzo: pedir sin señalar nada, el micrófono, lo último que dijo y la
+              conversación. Lo demás se pide donde se señala (clic derecho, un cable soltado). */}
+          {hub && (
+            <AiHub
+              entries={chat}
+              building={order.phase === 'done' && order.building === true}
+              voice={voice}
+              ai={models ? models.ai : ''}
+              // Lo que ya se dice junto a su pieza no se repite en la esquina.
+              elsewhere={saidAt ? askedAbout?.order : undefined}
+              style={
+                {
+                  ...dock,
+                  // Lo que dice va por encima de las barras de abajo (y de la consola, si van sobre ella).
+                  '--above': `${
+                    (architecture && hasStory ? 46 : 8) + (consoleBox && cramped ? consoleBox.h : 0)
+                  }px`,
+                } as React.CSSProperties
+              }
+              onAsk={() => {
+                hush()
+                // Con algo elegido, se pide sobre ello; si no, sobre el programa.
+                openAsk(about ? { id: about.id, title: about.label } : undefined)
+              }}
+              onSubmit={(text) => {
+                hear(text)
+              }}
+              onChoose={(option) => {
+                if (option.undo) {
+                  // «Deshacer el cambio»: lo último que se escribió, fuera.
+                  setChat((previous) => [
+                    ...previous.slice(-60),
+                    { id: -Date.now(), role: 'ai', text: 'Deshecho.', tone: 'muted' },
+                  ])
+                  // Y cuando se vuelva a ejecutar, se dice cómo quedó.
+                  if (version !== null)
+                    healthWait.current = { before: ran, how: 'order', from: version + 1 }
+                  post({ type: 'undoOrder' })
+                } else if (option.order) sendOrder(option.order)
+                else sendOrder(lastOrder.current, option.force)
+              }}
+              onStop={() => {
+                hush()
+                post({ type: 'stopOrder' })
+              }}
+              onToggleVoice={() => {
+                if (voice) hush()
+                vscode.setState({ ...saved(), voice: !voiceOn } satisfies SavedState)
+                setVoice(!voiceOn)
+              }}
+              onSettings={() => {
+                post({ type: 'pickModel' })
+              }}
+              onTyping={hush}
+              onMic={(open) => {
+                if (open) hush()
+                setMicOpen(open)
+                if (!open) setHearing(null)
+              }}
+              judged={(heard) => wholeness.current.get(sayKey(heard))}
+              onHearing={(heard) => {
+                attend(heard, hearing)
+                setHearing(heard)
+              }}
+            />
+          )}
+          {/* La caja de pedir que abre la app: en medio, sobre lo que haya elegido o sobre el programa. */}
+          {asking && (
+            <AskBubble
+              key={asking.seq}
+              x={asking.x}
+              y={asking.y}
+              {...(asking.title ? { title: asking.title } : {})}
+              {...(asking.text === undefined ? {} : { initial: asking.text })}
+              placeholder={
+                asking.about
+                  ? 'Cámbialo, o pregunta por ello…'
+                  : 'Pide algo: «añade…», «explícame…»'
+              }
+              chips={() =>
+                askChips(asking.about ? { at: 'node', id: asking.about } : { at: 'canvas' })
+              }
+              onSubmit={(text) => {
+                if (asking.about) hear(text, asking.about, {})
+                else hear(text, null)
+              }}
+              {...(asking.about ? {} : { onDraft: draft })}
+              onClose={() => {
+                draft(null)
+                setAsking(null)
+              }}
+            />
           )}
         </main>
 
@@ -1500,7 +3920,13 @@ export function App() {
             player={player}
             truncated={replay.trace.truncated}
             failure={replay.trace.error}
-            extras={<InsightToggles ids={insightIds} onToggle={toggleInsight} />}
+            extras={
+              <InsightToggles
+                ids={insightIds}
+                onToggle={toggleInsight}
+                folded={features.foldInsights === true}
+              />
+            }
             narrate={narrate}
             onToggleNarrate={toggleNarrate}
             {...(lesson
@@ -1668,32 +4094,277 @@ function baseName(file: string): string {
   return file.split(/[\\/]/).pop() ?? file
 }
 
-function EmptyState({ thinking, intro }: { thinking: string | null; intro: string | null }) {
-  // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
-  if (intro !== null) {
-    return (
-      <div className="flex h-full items-center justify-center p-6" role="status">
-        <p className="intro-card">{intro}</p>
-      </div>
-    )
+/** Lo dicho, para buscarlo: sin mayúsculas, signos ni espacios de más. */
+const sayKey = (text: string) =>
+  text
+    .toLowerCase()
+    .replace(/[¿?¡!.,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+/** Con qué aspecto se dibuja el hueco de cada cosa que se puede pedir. */
+const HEARD_GHOST: Record<string, NonNullable<ViewerContent['ghost']>> = {
+  funcion: 'function',
+  clase: 'class',
+  bucle: 'loop',
+  decision: 'condition',
+  variable: 'value',
+  lista: 'list',
+  programa: 'program',
+  cambio: 'change',
+  explicacion: 'talk',
+}
+
+/** Cómo se nombra lo que el usuario parece estar pidiendo mientras aún habla. */
+const HEARD_LABELS: Record<string, string> = {
+  funcion: 'Una función',
+  clase: 'Una clase',
+  bucle: 'Un bucle',
+  decision: 'Una decisión',
+  variable: 'Un dato',
+  lista: 'Una lista',
+  programa: 'Un programa',
+  cambio: 'Un cambio',
+  explicacion: 'Una explicación',
+}
+
+/** El aire entre la consola y el diagrama (su separación del borde, y un poco más). */
+const CONSOLE_MARGIN = 28
+/** Lo que se espera a que el JEV diga la forma del plan entero antes de elegirla sin él. */
+const PLAN_WAIT_MS = 3500
+type Distance = 'idea' | 'partes' | 'detalle'
+/** Lo que se tiene por una pantalla estrecha (la misma medida que usa la hoja de estilos). */
+const NARROW = '(max-width: 560px)'
+const canMatch = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+const isNarrow = () => canMatch() && window.matchMedia(NARROW).matches
+const watchNarrow = (changed: () => void) => {
+  if (!canMatch()) return () => undefined
+  const query = window.matchMedia(NARROW)
+  query.addEventListener('change', changed)
+  return () => {
+    query.removeEventListener('change', changed)
   }
-  // Aún no hay diagrama, pero la IA ya está en ello: se dice aquí, donde va a aparecer.
-  if (thinking !== null) {
-    return (
-      <div className="flex h-full items-center justify-center p-6" role="status">
-        <div className="thinking-card">La IA está pensando · {thinking}</div>
-      </div>
-    )
-  }
+}
+const DISTANCES: readonly { id: Distance; label: string; title: string }[] = [
+  { id: 'idea', label: 'Idea', title: 'Qué hace, en unas pocas líneas' },
+  { id: 'partes', label: 'Partes', title: 'Sus partes y lo que se pasan' },
+  {
+    id: 'detalle',
+    label: 'Detalle',
+    title: 'Cada parte con lo que usa y lo que deja; ábrela para ver sus pasos',
+  },
+]
+/** Lo que necesitan, a lo ancho, las barras de abajo para ir al lado de la consola y no encima. */
+const DOCK_ROOM = 480
+/** Cuántas ejecuciones se recuerdan, y lo que vale lo que se dijo que iba a provocar la siguiente. */
+const RUNS_KEPT = 12
+const RUN_CAUSE_MS = 120_000
+/** Lo que se espera a que llegue medido lo que se pidió ver, antes de decir que no se pudo. */
+const WATCH_WAIT_MS = 30_000
+/** Lo que se espera tras una tecla antes de contarle al lienzo lo que se lleva escrito. */
+const DRAFT_MS = 220
+/** Lo que ocupa, a su izquierda, el botón de la IA (ver `--hub` en los estilos). */
+const HUB_ROOM = 190
+/** Por dónde sale el cable dice dónde va lo que se pide al soltarlo. */
+const PORT_PLACE: Record<string, Place> = {
+  'order-out': 'despues',
+  'order-yes': 'camino_si',
+  'order-no': 'camino_no',
+  'order-body': 'dentro',
+}
+
+/** Cómo se dice cada forma de la arquitectura, y por qué se eligió. */
+const SHAPE_NAMES: Record<ArchShape, string> = {
+  capas: 'Por capas',
+  tuberia: 'Una tubería',
+  centro: 'Un centro que reparte',
+  ciclo: 'Un ciclo',
+  embudo: 'Un embudo',
+  abanico: 'Un abanico',
+}
+const SHAPE_WHY: Record<ArchShape, string> = {
+  capas: 'Arriba, quien manda; en medio, lo que entra, se hace y sale; abajo, lo que se guarda.',
+  tuberia: 'Cada parte le pasa su resultado a la siguiente.',
+  centro: 'Un módulo reparte el trabajo: usa a uno u otro de los demás.',
+  ciclo: 'Un bucle que en cada vuelta usa a los demás, uno tras otro.',
+  embudo: 'Varias partes le pasan lo suyo a una, que lo junta.',
+  abanico: 'Lo que guarda un módulo lo usan varias partes independientes.',
+}
+
+/** Lo que dijo el JEV de una arquitectura: el papel de cada módulo (por su título) y la forma. */
+interface ArchVerdict {
+  roles: Record<string, ModuleRole | null>
+  shape: string | null
+}
+const asRole = (role: string | null | undefined): ModuleRole | null =>
+  MODULE_ROLES.find((known) => known === role) ?? null
+/** Cuánto se espera a que el código se asiente antes de volver a poner en marcha su pantalla. */
+const SCREEN_WAIT_MS = 700
+
+/** La versión con la que se pide algo sin programa abierto: quien lo recibe le crea uno y usa la suya. */
+const NO_VERSION = -1
+
+/** Cuánto se espera a que el programa deje de cambiar antes de preguntarle al JEV por su arquitectura. */
+const ARCH_WAIT_MS = 500
+
+/** Cuánto se espera a que el programa deje de cambiar antes de preguntar al JEV qué cubre cada parte. */
+const COVER_WAIT_MS = 350
+const coverKey = (parts: readonly string[], pieces: readonly string[]) =>
+  JSON.stringify([parts, pieces])
+
+/**
+ * Lo que dijo el JEV, si vale para estas partes. Un «ninguna» dicho de unas piezas que ya han cambiado no
+ * cuenta: puede haber llegado la que faltaba.
+ */
+function verdictFor(
+  verdict: { key: string; by: (string | null)[] } | null,
+  parts: readonly string[],
+  pieces: readonly string[],
+): (string | null)[] | null {
+  if (verdict?.by.length !== parts.length) return null
+  return verdict.key === coverKey(parts, pieces)
+    ? verdict.by
+    : verdict.by.map((piece) => (piece === '' ? null : piece))
+}
+
+/** Cuánto se queda el esbozo de lo pedido cuando ya está construido: lo justo para verlo completo. */
+const SKETCH_LINGER_MS = 3200
+
+/**
+ * El esbozo de lo que se pide: la cosa, arriba; debajo, cada parte que la frase nombra, como el hueco de una
+ * pieza que vendrá. Con `filled`, cada hueco que el programa ya cubre lleva su marca y el nombre de la pieza.
+ */
+function SketchCard({
+  sketch,
+  kind,
+  hint = null,
+  filled,
+  planned,
+  pinned = false,
+}: {
+  sketch: Sketch
+  kind: string | null
+  hint?: string | null
+  filled?: (string | null)[]
+  /** La etapa del plan que cubrirá cada parte, aún sin escribir: se anuncia, pero no se da por hecha. */
+  planned?: (string | null)[]
+  pinned?: boolean
+}) {
+  const done = filled?.filter((piece) => piece !== null).length ?? 0
   return (
-    <div className="flex h-full items-center justify-center p-6 text-center" role="status">
-      <div className="max-w-xs">
+    <div className="sketch" data-pinned={pinned ? '' : undefined}>
+      <div className="sketch__what">
+        <span className="sketch__kind">{kind ?? 'Lo que pides'}</span>
+        <span className="sketch__name">{sketch.what}</span>
+        {filled && sketch.parts.length > 0 && (
+          <span className="sketch__count">
+            {done} de {sketch.parts.length}
+          </span>
+        )}
+      </div>
+      {sketch.parts.length > 0 && (
+        <ol className="sketch__parts">
+          {sketch.parts.map((part, index) => {
+            const piece = filled?.[index] ?? null
+            const plan = piece === null ? (planned?.[index] ?? null) : null
+            return (
+              // La clave es su sitio: una parte que se sigue escribiendo crece sin volver a entrar.
+              <li
+                key={index}
+                className="sketch__part"
+                data-filled={piece ? '' : undefined}
+                data-planned={plan ? '' : undefined}
+              >
+                <span className="sketch__n" aria-hidden>
+                  {piece ? '✓' : index + 1}
+                </span>
+                <span className="sketch__text">{part}</span>
+                {(piece ?? plan) && <span className="sketch__piece">{piece ?? plan}</span>}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+      {hint !== null && <p className="sketch__hint">{hint}</p>}
+    </div>
+  )
+}
+
+function EmptyState({
+  thinking,
+  title = null,
+  intro,
+  chat,
+  sketch = null,
+  kind = null,
+  sent = null,
+  prompt = null,
+}: {
+  /** Ya se envió: en qué va quien lo construye. El esbozo no se quita mientras tanto. */
+  sent?: string | null
+  thinking: string | null
+  /** Si se sabe qué se está pidiendo (aún se le oye), su nombre en vez de «La IA está pensando». */
+  title?: string | null
+  intro: string | null
+  chat: boolean
+  /** Lo que se está pidiendo, tal como se va escribiendo o diciendo: la cosa y las partes que ya nombra. */
+  sketch?: Sketch | null
+  /** Qué clase de cosa es, si el JEV ya lo ha dicho («Un programa», «Una función»…). */
+  kind?: string | null
+  /** La caja donde se pide lo que se quiere construir: va debajo, y se queda mientras lo de arriba cambia. */
+  prompt?: React.ReactNode
+}) {
+  const said = (() => {
+    // El comentario de entrada: lo que se va a hacer, mientras aún no hay nada dibujado.
+    if (sketch !== null && sent !== null) {
+      return <SketchCard sketch={sketch} kind={kind} hint={sent} />
+    }
+    if (intro !== null) return <p className="intro-card">{intro}</p>
+    // Se está escribiendo (o diciendo) lo que se quiere: el lienzo lo va esbozando antes de mandarlo. La
+    // cosa, arriba; debajo, cada parte que la frase ya nombra, como el hueco de una pieza que vendrá.
+    if (sketch !== null && (thinking === null || kind !== null)) {
+      return (
+        <SketchCard
+          sketch={sketch}
+          kind={kind}
+          hint={thinking ?? 'Sigue escribiendo, o pulsa Intro: lo construyo aquí.'}
+        />
+      )
+    }
+    // Aún no hay diagrama, pero la IA ya está en ello: se dice aquí, donde va a aparecer.
+    if (thinking !== null) {
+      return (
+        <div className="thinking-card" data-preview={title ? '' : undefined}>
+          {title ?? 'La IA está pensando'} · {thinking}
+        </div>
+      )
+    }
+    if (chat) {
+      return (
+        <div className="max-w-sm text-center">
+          <p className="text-base text-ink">¿Qué quieres construir?</p>
+          <p className="mt-2 text-sm leading-6 text-ink-faint">
+            Dilo con tus palabras: «un juego de adivinar el número», «llevar la cuenta de mis
+            gastos». Verás el programa crecer aquí, y funcionar. Luego, con un clic derecho sobre
+            cualquier parte, lo cambias.
+          </p>
+        </div>
+      )
+    }
+    return (
+      <div className="max-w-xs text-center">
         <p className="text-sm text-ink">Sin diagrama que mostrar</p>
         <p className="mt-1 text-xs leading-5 text-ink-faint">
           Abre un archivo <code className="type-code">.py</code> y concéntralo para ver su diagrama,
           o ejecuta «Prysel: Abrir lienzo». En un archivo vacío, empieza con «Añadir».
         </p>
       </div>
+    )
+  })()
+  return (
+    <div className="empty-stage" role="status" aria-live="polite">
+      <div className="empty-stage__said">{said}</div>
+      {prompt && <div className="empty-stage__prompt">{prompt}</div>}
     </div>
   )
 }

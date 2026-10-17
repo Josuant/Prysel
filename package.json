@@ -21,7 +21,9 @@
     "test": "vitest run",
     "verify": "pnpm tokens:check && pnpm lint && pnpm typecheck && pnpm test && pnpm format:check",
     "package:extension": "pnpm --filter prysel-extension package",
-    "e2e:extension": "pnpm --filter prysel-extension e2e"
+    "e2e:extension": "pnpm --filter prysel-extension e2e",
+    "dev:web": "pnpm --filter @prysel/web dev",
+    "build:web": "pnpm --filter @prysel/web build"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

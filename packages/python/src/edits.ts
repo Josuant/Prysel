@@ -349,6 +349,67 @@ export function duplicateNode(program: Program, id: string): Change {
 }
 
 /**
+ * Envuelve una sentencia (con su cuerpo y los comentarios que lleva pegados) en un bucle, una decisión o un
+ * intento: la cabecera ocupa su sitio y ella pasa dentro, un nivel más sangrada.
+ */
+export function wrapNode(
+  program: Program,
+  id: string,
+  wrapper: 'for' | 'if' | 'try' | 'class',
+  /** Con `class`: cómo se llama la clase nueva. */
+  name = 'MiClase',
+): Change {
+  const node = nodeById(program, id)
+  const range = node?.range
+  if (!node || !range) return { edits: [] }
+  const text = program.source
+  const first = range.lead ?? range.start
+  const begin = lineStart(text, first)
+  // Una sentencia que comparte línea con otra no es una línea suya: no se envuelve.
+  if (!blankBefore(text, begin, first)) return { edits: [] }
+  const end = lineEnd(text, range.end)
+  const pad = ' '.repeat(range.indent)
+  const block = text.slice(begin, end).split(/\r?\n/)
+  // Una función que pasa a vivir en una clase nueva es su primer método: recibe `self`, y las llamadas
+  // que ya había se reescriben para que sigan llegando a ella.
+  let calls: TextEdit[] = []
+  const at = block.findIndex((row) => /^\s*(?:async\s+)?def\s+\w+\s*\(/.test(row))
+  const header = block[at]
+  if (wrapper === 'class' && node.kind === 'abstraction.collapsed' && header !== undefined) {
+    const fn = /def\s+(\w+)/.exec(header)?.[1] ?? ''
+    calls = methodCalls(text, fn, name, null, { start: begin, end }).edits
+    for (let i = at + 1; i < block.length; i++) {
+      block[i] = (block[i] ?? '').replace(
+        new RegExp(`(?<![\\w.])${fn}(?=\\s*\\()`, 'g'),
+        `self.${fn}`,
+      )
+    }
+    block[at] = header.replace(
+      /^(\s*(?:async\s+)?def\s+\w+\s*\()\s*(?!self\b)/,
+      (_, head: string) =>
+        /^\s*(?:async\s+)?def\s+\w+\s*\(\s*\)/.test(header) ? `${head}self` : `${head}self, `,
+    )
+  }
+  const body = reindent(block, range.indent, range.indent + 4)
+  const head =
+    wrapper === 'class'
+      ? `class ${name}:`
+      : wrapper === 'for'
+        ? 'for _ in range(3):'
+        : wrapper === 'if'
+          ? 'if True:'
+          : 'try:'
+  const tail =
+    wrapper === 'try' ? [`${pad}except Exception as error:`, `${pad}    print(error)`] : []
+  const wrapped = { start: begin, end, text: [`${pad}${head}`, ...body, ...tail].join(eolOf(text)) }
+  const edits = [wrapped, ...calls]
+  return {
+    edits: validEdits(edits, text.length) ? edits : [wrapped],
+    select: { line: lineOf(text, begin) },
+  }
+}
+
+/**
  * Las líneas de cada plantilla. Es el Python que aparece al añadir un nodo. Con `fill` (el nombre
  * de una variable que llega por un cable), el primer campo que admite un valor lo lee de ella.
  */
@@ -680,10 +741,108 @@ export function moveNode(
 
   let removed = deleteNode(program, id).edits
   if (removed.length === 0) return { edits: [] }
+  // Una función que entra en una clase pasa a ser un método (recibe `self`); la que sale, deja de serlo.
+  // Dónde vive ahora: lo más pequeño que la envuelve, entre clases y funciones.
+  const owner = program.nodes
+    .filter(
+      (other) =>
+        other.id !== id &&
+        other.range !== undefined &&
+        (other.kind === 'abstraction.class' || other.kind === 'abstraction.collapsed') &&
+        other.range.start <= range.start &&
+        other.range.end >= range.end,
+    )
+    .sort((x, y) => (y.range?.start ?? 0) - (x.range?.start ?? 0))[0]
+  const becomesMethod = where.into !== undefined && target.kind === 'abstraction.class'
+  const wasMethod = owner?.kind === 'abstraction.class'
+  /** Las llamadas que ya había a la función, reescritas para que sigan llegando a ella. */
+  let calls: TextEdit[] = []
+  if (node.kind === 'abstraction.collapsed' && becomesMethod !== wasMethod) {
+    const at = block.findIndex((row) => /^\s*(?:async\s+)?def\s+\w+\s*\(/.test(row))
+    const header = block[at]
+    if (header !== undefined && becomesMethod) {
+      const name = /def\s+(\w+)/.exec(header)?.[1] ?? ''
+      const className =
+        /class\s+(\w+)/.exec(text.slice(target.range.start, target.range.end))?.[1] ?? ''
+      const moved = methodCalls(text, name, className, target.range, {
+        start: begin,
+        end: lineEnd(text, range.end),
+      })
+      calls = moved.edits
+      // Dentro de sí misma (si se llama a sí misma), también.
+      for (let i = at + 1; i < block.length; i++) {
+        block[i] = (block[i] ?? '').replace(
+          new RegExp(`(?<![\\w.])${name}(?=\\s*\\()`, 'g'),
+          `${moved.inner}${name}`,
+        )
+      }
+      if (moved.static) {
+        // No se puede crear un objeto solo para llamarla: se queda como función de la clase, sin `self`.
+        block.splice(at, 0, `${/^\s*/.exec(header)?.[0] ?? ''}@staticmethod`)
+      } else {
+        block[at] = header.replace(
+          /^(\s*(?:async\s+)?def\s+\w+\s*\()\s*(?!self\b)/,
+          (_, head: string) =>
+            /^\s*(?:async\s+)?def\s+\w+\s*\(\s*\)/.test(header) ? `${head}self` : `${head}self, `,
+        )
+      }
+    } else if (header !== undefined && owner?.range) {
+      // Un método que sale de su clase: deja de llamarse por un objeto. Si por dentro usa el objeto (sus
+      // datos, otros métodos), lo sigue recibiendo, ahora como un argumento más: `calc.sumar(1, 2)` pasa a
+      // ser `sumar(calc, 1, 2)`. Si no lo usa, pierde el `self` y se la llama sin él: `sumar(1, 2)`.
+      const name = /def\s+(\w+)/.exec(header)?.[1] ?? ''
+      const className =
+        /class\s+(\w+)/.exec(text.slice(owner.range.start, owner.range.end))?.[1] ?? ''
+      const itself = new RegExp(`\\bself\\.${name}(?=\\s*\\()`, 'g')
+      const body = block
+        .slice(at + 1)
+        .join('\n')
+        .replace(/"[^"\n]*"|'[^'\n]*'|#[^\n]*/g, '')
+      const keepsSelf = /\bself\b/.test(body.replace(itself, ''))
+      // Adónde va: dentro de otra función solo se la puede llamar desde ahí; si no, desde todo el archivo.
+      const reach =
+        where.into !== undefined && target.kind === 'abstraction.collapsed' ? target.range : null
+      calls = functionCalls(
+        text,
+        name,
+        className,
+        { start: begin, end: lineEnd(text, range.end) },
+        keepsSelf,
+        reach,
+      )
+      for (let i = at + 1; i < block.length; i++) {
+        block[i] = (block[i] ?? '').replace(
+          new RegExp(`\\bself\\.${name}\\s*\\(\\s*(\\)?)`, 'g'),
+          (_, closes: string) =>
+            keepsSelf ? `${name}(self${closes === ')' ? ')' : ', '}` : `${name}(${closes}`,
+        )
+      }
+      if (!keepsSelf) {
+        block[at] = header.replace(/^(\s*(?:async\s+)?def\s+\w+\s*\()\s*self\s*,?\s*/, '$1')
+      }
+    }
+  }
+  // Un método no va pegado al anterior: una línea en blanco entre los dos.
+  if (
+    becomesMethod &&
+    node.kind === 'abstraction.collapsed' &&
+    (target.contains?.length ?? 0) > 0
+  ) {
+    block.unshift('')
+  }
+  // La función que se va del principio del archivo no deja su hueco arriba.
+  const [head] = removed
+  if (becomesMethod && removed.length === 1 && head?.start === 0 && head.text === '') {
+    let end = head.end
+    while (text[end] === '\n' || text[end] === '\r') end++
+    removed = [{ ...head, end }]
+  }
   const placed = insertLines(program, where, (indent) => reindent(block, range.indent, indent))
   const insertion = placed.edits[0]
   if (!insertion) return { edits: [] }
-  let edits = [...removed, ...placed.edits]
+  let edits = [...removed, ...placed.edits, ...calls]
+  // Si reescribir las llamadas chocara con lo que se mueve, se mueve sin tocarlas.
+  if (calls.length > 0 && !validEdits(edits, text.length)) edits = [...removed, ...placed.edits]
   if (!validEdits(edits, text.length)) {
     // Sacar lo último de una función y ponerlo detrás de ella: el sitio de destino es justo el final
     // de lo que se quita. Se lleva el salto de línea de antes en vez del de después, y las dos
@@ -704,6 +863,121 @@ export function moveNode(
     }
   }
   return { edits, ...(placed.select ? { select: { line: placed.select.line - shift } } : {}) }
+}
+
+/**
+ * Una función suelta entra en una clase: las llamadas que ya había tienen que seguir llegando a ella.
+ *
+ * - Dentro de la clase se la llama por `self.`.
+ * - Fuera, por un objeto de esa clase que ya exista antes de la llamada (`calc = Calculadora()` →
+ *   `calc.sumar(…)`); si no hay ninguno, creando uno (`Calculadora().sumar(…)`).
+ * - Si crear uno pide datos que no se tienen (su `__init__` recibe argumentos sin valor por defecto), no se
+ *   inventan: la función entra como `@staticmethod` y se la llama por la clase (`Calculadora.sumar(…)`).
+ *
+ * `moved` es el tramo de la propia función, que no se mira aquí (se reescribe al moverla). `owner` es la
+ * clase adonde va, o `null` si la clase se crea ahora para ella (aún no tiene nada dentro).
+ */
+function methodCalls(
+  text: string,
+  name: string,
+  className: string,
+  owner: { start: number; end: number } | null,
+  moved: { start: number; end: number },
+): { edits: TextEdit[]; static: boolean; inner: string } {
+  if (name === '' || className === '') return { edits: [], static: false, inner: 'self.' }
+  // Lo que va entre comillas o en un comentario no es código: se tapa, sin mover nada de sitio.
+  const bare = text.replace(/"[^"\n]*"|'[^'\n]*'|#[^\n]*/g, (found) => ' '.repeat(found.length))
+  const offsets: number[] = []
+  for (const match of bare.matchAll(new RegExp(`(?<![\\w.])${name}(?=\\s*\\()`, 'g'))) {
+    const at = match.index
+    if (at >= moved.start && at < moved.end) continue
+    if (/\bdef\s+$/.test(bare.slice(Math.max(0, at - 12), at))) continue
+    offsets.push(at)
+  }
+  const inside = (at: number) => owner !== null && at >= owner.start && at < owner.end
+  // El último objeto de la clase que se guardó en un nombre antes de la llamada.
+  const made = [
+    ...bare.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)\\s*=\\s*${className}\\s*\\(`, 'gm')),
+  ]
+  const instanceBefore = (at: number) => made.filter((match) => match.index < at).pop()?.[1]
+  const init = owner
+    ? /def\s+__init__\s*\(\s*self\s*,?([^)]*)\)/.exec(bare.slice(owner.start, owner.end))
+    : null
+  const needsData = (init?.[1] ?? '')
+    .split(',')
+    .some((param) => param.trim() !== '' && !param.includes('=') && !param.trim().startsWith('*'))
+  const orphan = offsets.some((at) => !inside(at) && instanceBefore(at) === undefined)
+  const asStatic = orphan && needsData
+  return {
+    static: asStatic,
+    inner: asStatic ? `${className}.` : 'self.',
+    edits: offsets.map((at) => ({
+      start: at,
+      end: at,
+      text: inside(at)
+        ? 'self.'
+        : asStatic
+          ? `${className}.`
+          : `${instanceBefore(at) ?? `${className}()`}.`,
+    })),
+  }
+}
+
+/**
+ * Un método sale de su clase y pasa a ser una función suelta: las llamadas que ya había tienen que seguir
+ * llegando a ella. Solo se tocan las que se hacen sobre un objeto de esa clase —`self`, la propia clase
+ * (`Clase.metodo(…)`, `Clase().metodo(…)`) o un nombre al que se le asignó uno—: otro objeto que tenga un
+ * método con el mismo nombre no tiene nada que ver.
+ *
+ * `keepsSelf`: la función sigue necesitando el objeto, y lo recibe delante. `reach`: si va a quedar dentro
+ * de otra función, solo se reescriben las llamadas de ahí dentro (desde fuera ya no se la puede alcanzar).
+ */
+function functionCalls(
+  text: string,
+  name: string,
+  className: string,
+  moved: { start: number; end: number },
+  keepsSelf: boolean,
+  reach: { start: number; end: number } | null,
+): TextEdit[] {
+  if (name === '' || className === '') return []
+  // Lo que va entre comillas o en un comentario no es código: se tapa, sin mover nada de sitio.
+  const bare = text.replace(/"[^"\n]*"|'[^'\n]*'|#[^\n]*/g, (found) => ' '.repeat(found.length))
+  const instances = new Set(
+    [...bare.matchAll(new RegExp(`^[ \\t]*([A-Za-z_]\\w*)\\s*=\\s*${className}\\s*\\(`, 'gm'))].map(
+      (match) => match[1] ?? '',
+    ),
+  )
+  const edits: TextEdit[] = []
+  const call = new RegExp(
+    `(?<![\\w.])([A-Za-z_]\\w*(?:\\([^()\\n]*\\))?)\\.${name}\\s*\\(\\s*(\\)?)`,
+    'g',
+  )
+  for (const match of bare.matchAll(call)) {
+    const at = match.index
+    if (at >= moved.start && at < moved.end) continue
+    if (reach && (at < reach.start || at >= reach.end)) continue
+    const receiver = match[1] ?? ''
+    const known =
+      receiver === 'self' ||
+      receiver === className ||
+      receiver.startsWith(`${className}(`) ||
+      instances.has(receiver)
+    if (!known) continue
+    // El receptor se lee del texto de verdad (en el tapado, un argumento con comillas saldría en blanco).
+    const passed = text.slice(at, at + receiver.length)
+    const closes = match[2] ?? ''
+    edits.push({
+      start: at,
+      end: at + match[0].length,
+      // `Clase.metodo(…)` ya no pasa un objeto: no hay qué pasarle.
+      text:
+        keepsSelf && receiver !== className
+          ? `${name}(${passed}${closes === ')' ? ')' : ', '}`
+          : `${name}(${closes}`,
+    })
+  }
+  return edits
 }
 
 /**
@@ -999,6 +1273,8 @@ export function actionEdits(program: Program, action: NodeAction): Change {
       return deleteNode(program, action.id)
     case 'duplicate':
       return duplicateNode(program, action.id)
+    case 'wrap':
+      return wrapNode(program, action.id, action.with, action.name)
     case 'rename':
       return renameNode(program, action.id, action.to, action.from)
     case 'add': {

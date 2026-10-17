@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
+  NodeToolbar,
   Panel,
+  Position,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -32,9 +34,15 @@ import {
 } from '@prysel/morphology'
 import {
   SCOPE_FRAME,
+  TAIL_GAP,
   channelOf,
   layout,
+  endSides,
+  HEAD_GAP,
+  type Architecture,
   type Axis,
+  type Figure,
+  type ModuleRole,
   type SemanticEdge,
   type SemanticGraph,
 } from '@prysel/spatial'
@@ -42,7 +50,18 @@ import { EdgeDefs } from './Edge.tsx'
 import { NoteNode, type NoteFlowNode } from './flow/NoteNode.tsx'
 import { NOTE, NOTE_GUTTER, noteSize, placeNotes, type NoteContent, type NoteSlot } from './note.ts'
 import { PryselNode, type PryselFlowNode } from './flow/PryselNode.tsx'
+import type { ModuleState } from './flow/SectionCard.tsx'
 import { PryselEdge, type PryselFlowEdge } from './flow/PryselEdge.tsx'
+import {
+  ArchEdge,
+  archPath,
+  clearBend,
+  labelSize,
+  labelCover,
+  labelSpot,
+  type ArchFlowEdge,
+} from './flow/ArchEdge.tsx'
+import { FigureNode, type FigureFlowNode } from './flow/FigureNode.tsx'
 import { dragTerritory, territoryAt } from './drag.ts'
 import {
   FLOW_LANE,
@@ -58,13 +77,24 @@ import { useMotion } from './motion.ts'
 import type { ControlModel } from './controls.tsx'
 import { CodePanel } from './CodePanel.tsx'
 import { QuickAdd } from './QuickAdd.tsx'
+import { AskBubble, type AskChip } from './AskBox.tsx'
 import { NodeMenu, type NodeMenuItem } from './NodeMenu.tsx'
 import { IconButton } from './chrome.tsx'
+import { Icon } from './Icon.tsx'
 import { ChipNode, TrayNode, type ChipFlowNode, type TrayFlowNode } from './flow/ChipNode.tsx'
 import { ViewerNode, type ViewerFlowNode } from './flow/ViewerNode.tsx'
+import { KnobsNode, knobsSize, type KnobsFlowNode, type KnobsPanel } from './flow/KnobsNode.tsx'
+import {
+  ScreenNode,
+  screenSize,
+  type ScreenFlowNode,
+  type ScreenPanel,
+} from './flow/ScreenNode.tsx'
+import { gistSize, titledScene, type GistScene } from './gist.ts'
 import { viewerSize, type ViewerContent } from './viewer.ts'
 import type { LapsView } from './laps.ts'
-import { runFor } from './fit.ts'
+import { archRunFor, roomFor, runFor } from './fit.ts'
+import { flowHues, flowName, RESULT_BEAT } from './architecture.ts'
 import type { StepInfo } from './steps.ts'
 import { FUNCTION_CHIP, chipSource, useChipDrag } from './flow/useChipDrag.ts'
 import {
@@ -139,6 +169,8 @@ export interface CanvasNode {
   renamable?: boolean
   /** Su línea en el archivo. */
   line?: number
+  /** Su última línea, si abarca varias (un bloque). */
+  lineEnd?: number
   /** Los nombres que se pueden usar en sus campos (las variables definidas antes): son las sugerencias. */
   scope?: readonly string[]
   /** El nombre que el nodo deja definido: lo que sale por su puerto de salida, si sale algo. */
@@ -176,6 +208,40 @@ export interface CanvasNode {
   section?: SectionInfo
   /** Las funciones, clases y métodos del archivo a los que llama: pastillas que los abren. */
   subprocesses?: readonly Subprocess[]
+  /**
+   * En una función: «qué hace», con los datos de una vez que se ejecutó de verdad. Plegada, se dibuja como
+   * esa tarjeta (lo que entró → lo que salió) en vez de su cabecera sola.
+   */
+  gist?: GistScene
+}
+
+/**
+ * Sobre qué se pide algo con palabras, según dónde se señaló en el lienzo: en el vacío, en un nodo, al final
+ * de un cable de orden que sale de un nodo (`port`: por dónde sale), con un valor que sale de un nodo, o entre
+ * dos nodos (un cable tendido de uno a otro, o la flecha que ya los une).
+ */
+export type AskWhere =
+  | { at: 'canvas' }
+  | { at: 'node'; id: string }
+  | { at: 'after'; id: string; port: OrderPort }
+  | { at: 'value'; id: string; name: string }
+  | { at: 'link'; from: string; to: string }
+  /** Sobre lo que el programa enseña al acabar (el nodo «Resultado»). */
+  | { at: 'result' }
+  /** Sobre el visor de cómo avanza: qué se quiere ver en cada vuelta. */
+  | { at: 'progress' }
+
+/**
+ * **Pedir con palabras desde el propio lienzo.** Con ello, un clic derecho (o un doble clic) en el vacío abre
+ * una caja donde escribir; el menú de un nodo la lleva arriba; y un cable soltado en el vacío pregunta qué va
+ * ahí. El lienzo no sabe quién lo atiende: entrega la frase y dónde se señaló.
+ */
+export interface CanvasAsk {
+  onAsk: (text: string, where: AskWhere) => void
+  /** Lo que se ofrece bajo la caja, a un toque, según dónde se señaló. */
+  chips?: (where: AskWhere) => readonly AskChip[]
+  /** Lo que se lleva escrito en la caja del vacío (`null`: nada): se puede ir esbozando. */
+  onDraft?: (text: string | null) => void
 }
 
 export interface CanvasProps {
@@ -198,6 +264,88 @@ export interface CanvasProps {
   onAction?: (action: NodeAction) => void
   /** Abrir un subproceso (la función, la clase o el método al que llama un nodo) desde su pastilla. */
   onOpen?: (id: string) => void
+  /** Probar con otros datos la función de una tarjeta «Qué hace». */
+  onGistEdit?: (id: string) => void
+  /**
+   * La arquitectura del programa: con ella, el primer nivel no baja en columna sino que coloca sus módulos
+   * (las etapas de arriba) según su forma, con las flechas de lo que los une y su figura de fondo. Solo en
+   * el diagrama de flujo.
+   */
+  architecture?: Architecture | null
+  /**
+   * Algo ocupa el rincón de abajo a la derecha del lienzo (la consola): lo que mide. El encuadre deja ese
+   * rincón libre, a un lado o por encima, según cómo se vea más grande el diagrama.
+   */
+  avoid?: { w: number; h: number } | null
+  /**
+   * El **resultado** del programa, como un nodo más al final de la arquitectura: lo último que salió por
+   * pantalla. `from`: los módulos que lo escribieron (le llega una flecha de cada uno); `planned`, si aún
+   * no sale del programa sino de una prueba aparte. No es código.
+   */
+  result?: { content: ViewerContent; from: readonly string[]; planned?: boolean } | null
+  /**
+   * Las **ejecuciones**: lo que fue dando el programa cada vez que se ejecutó (al mover una perilla, al
+   * tirar otra vez, tras una orden). Un visor más, junto al resultado: es su historia.
+   */
+  runs?: ViewerContent | null
+  /**
+   * **Cómo avanza** el programa vuelta a vuelta (lo mejor que lleva encontrado, un número que mide cómo va):
+   * otro visor junto al resultado, entre él y las ejecuciones.
+   */
+  progress?: ViewerContent | null
+  /**
+   * Las **perillas**, como un nodo del diagrama: los números con los que se puede jugar y el dado. En la
+   * arquitectura va a la entrada (a la izquierda, o encima si el dibujo es estrecho), con una flecha a cada
+   * parte donde están escritos; en el diagrama abierto, bajo la cajita del programa.
+   */
+  knobs?: KnobsPanel | null
+  /**
+   * La **configuración** del programa, como otro nodo: los valores con los que empieza y que se pueden
+   * ajustar, cada uno con su mando. Va con las perillas, a la entrada (encima de ellas, o a su lado si van
+   * encima del dibujo), con una flecha a cada parte que los usa.
+   */
+  config?: KnobsPanel | null
+  /**
+   * La **pantalla** del programa en marcha (su módulo `pantalla`): lo que se usa de verdad, con sus botones,
+   * sus teclas y lo que dibuja. En la arquitectura va a la salida, antes que el resultado; en el diagrama
+   * abierto, en la columna de la izquierda.
+   */
+  screen?: ScreenPanel | null
+  /** Dónde **empieza** el trabajo: el módulo que lo arranca y lo que se dice de ello. */
+  start?: { at: string; label: string } | null
+  /**
+   * Por dónde **se sale** de lo que se repite (el módulo que lleva el ciclo) y cómo acabó: su compuerta de
+   * salida, un nodo junto a ese módulo. De ella va una flecha al resultado, si no lo escribe la propia vuelta.
+   */
+  exit?: { at: string; label: string } | null
+  /**
+   * Al **reproducir** la historia: el módulo en el que se está (o `RESULT_BEAT`, el resultado), las flechas
+   * por las que le llega algo (`desde>hasta`), y lo que dura el paso. `serial` cambia en cada paso.
+   */
+  beat?: {
+    at: string
+    links: readonly string[]
+    serial: number
+    ms: number
+    /**
+     * En qué parte de la historia se está: lo de antes y la primera vuelta, el «y otra vez» (las demás
+     * vueltas, de corrido) o el resultado. Con ello, el visor de cómo avanza va al paso.
+     */
+    phase?: 'before' | 'lap' | 'again' | 'result'
+  } | null
+  /**
+   * Lo que ocupan, arriba y abajo, las barras que flotan sobre el lienzo (las migas, la de ver una vuelta, la
+   * leyenda): el encuadre deja esas franjas libres, y la arquitectura se coloca para lo que queda. `left`: un
+   * panel abierto a la izquierda (las perillas).
+   */
+  reserve?: { top?: number; bottom?: number; left?: number } | null
+  /**
+   * La **radiografía** de la arquitectura: sus módulos, que se dicen con palabras, enseñan además lo que
+   * llevan dentro (los nombres que usan y que dejan, a quién llaman). El código, a un gesto.
+   */
+  xray?: boolean
+  /** En la arquitectura: el estado de cada módulo tras ejecutar el programa (por su id). */
+  moduleStates?: Readonly<Record<string, ModuleState>> | null
   /** La función (o el bucle) donde irá lo que se añada, para marcarla: es donde va a caer, no un misterio. */
   addTarget?: string | null
   /** Las funciones del programa: se ofrecen como chips que se arrastran a una llamada. */
@@ -211,6 +359,19 @@ export interface CanvasProps {
   onRun?: (id: string) => void
   /** Más entradas para el menú de un nodo (por ejemplo, fijar su valor en un visor). */
   extraMenu?: (id: string) => NodeMenuItem[]
+  /** Pedir con palabras desde el lienzo (ver `CanvasAsk`). */
+  ask?: CanvasAsk | undefined
+  /**
+   * Lo que se contestó a algo que se pidió **sobre una pieza**: se dice ahí, a su lado, y no en una esquina.
+   * `busy`: aún se está en ello.
+   */
+  said?: {
+    id: string
+    text: string
+    tone?: 'ok' | 'muted' | 'error' | undefined
+    busy?: boolean | undefined
+    onClose: () => void
+  } | null
   /** Quitar un visor del lienzo. */
   onUnpin?: (id: string) => void
   onEnter?: (id: string) => void
@@ -248,6 +409,18 @@ export interface CanvasProps {
    */
   fitKey?: string
   /**
+   * Sube cada vez que lo que se estaba construyendo ha terminado y se ha asentado: la cámara suelta lo último
+   * que fue siguiendo y enseña el programa entero (si cabe a un tamaño que se lea), para verlo de un vistazo.
+   * Si el usuario ya movió el lienzo a mano, se respeta.
+   */
+  settle?: number
+  /**
+   * Si la cámara acompaña a lo que se señala (lo normal). En falso —mientras se construye un programa
+   * entero— lo señalado se sigue iluminando, pero la vista se queda en el conjunto: se ve crecer todo, y no
+   * se pierde de vista lo que ya estaba.
+   */
+  follow?: boolean
+  /**
    * El nodo por el que va la reproducción de una traza: se marca con un anillo y, si se sale de la vista,
    * la cámara lo sigue. Sin él, no hay reproducción.
    */
@@ -266,6 +439,11 @@ export interface CanvasProps {
     change?: 'changed' | 'leaving'
     /** La cámara enseña el nodo con lo que lo rodea, más de lejos, en vez de acercarse a él. */
     wide?: boolean
+    /**
+     * Adónde mira la cámara, si no es al propio nodo: la caja que lo contiene. Lo de dentro aparece (con su
+     * animación) sin que la vista vaya saltando de pieza en pieza.
+     */
+    camera?: string
   } | null
   /**
    * Los nodos de los que saca sus datos la pieza que se está explicando: laten con ella, para que se vea de
@@ -321,11 +499,22 @@ const NODE_TYPES = {
   chip: ChipNode,
   tray: TrayNode,
   viewer: ViewerNode,
+  knobs: KnobsNode,
+  screen: ScreenNode,
   note: NoteNode,
+  figure: FigureNode,
 }
 
 /** Todo lo que el lienzo dibuja: nodos, chips y la cajita del programa. */
-type AnyFlowNode = PryselFlowNode | ChipFlowNode | TrayFlowNode | ViewerFlowNode | NoteFlowNode
+type AnyFlowNode =
+  | PryselFlowNode
+  | ChipFlowNode
+  | TrayFlowNode
+  | ViewerFlowNode
+  | KnobsFlowNode
+  | ScreenFlowNode
+  | NoteFlowNode
+  | FigureFlowNode
 
 /** Funciones de uso común que se ofrecen al elegir a quién llama una llamada. */
 const COMMON_CALLS = [
@@ -349,7 +538,46 @@ const COMMON_CALLS = [
 
 /** Dónde empieza la cajita del programa. */
 const MODULE_TRAY_AT = { x: 28, y: 28 }
-const EDGE_TYPES = { prysel: PryselEdge }
+const EDGE_TYPES = { prysel: PryselEdge, arch: ArchEdge }
+/** El nodo del resultado del programa, y lo que se separa de la arquitectura. */
+const RESULT_ID = RESULT_BEAT
+const RESULT_NODE: CanvasNode = { id: RESULT_ID, kind: 'output.display', label: 'Resultado' }
+/** Las ejecuciones (la historia del resultado) y las perillas: dos nodos más del dibujo, que no son código. */
+const RUNS_ID = 'prysel:runs'
+const RUNS_NODE: CanvasNode = { id: RUNS_ID, kind: 'output.display', label: 'Ejecuciones' }
+const PROGRESS_NODE: CanvasNode = {
+  id: 'prysel:progress',
+  kind: 'output.display',
+  label: 'Cómo avanza',
+}
+const KNOBS_ID = 'prysel:knobs'
+/** El punto, si sus dos coordenadas son números de verdad (ni `NaN` ni infinitos). */
+const finitePoint = (point: Point | undefined): Point | undefined =>
+  point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined
+const CONFIG_ID = 'prysel:config'
+/** Lo que separa un nodo de mandos del otro. */
+const HEAD_STACK = 16
+/** Lo que separa el resultado de sus ejecuciones. */
+const RUNS_GAP = 18
+const SCREEN_ID = 'prysel:screen'
+type Size2 = { w: number; h: number }
+/** La cola de la arquitectura: la pantalla (si la hay), el resultado y, debajo, sus ejecuciones si las hay. */
+const tailOf = (
+  contents: readonly (ViewerContent | null | undefined)[],
+  lead: Size2 | null = null,
+): { w: number; h: number } | null => {
+  let w = lead?.w ?? 0
+  let h = lead?.h ?? 0
+  for (const content of contents) {
+    if (!content) continue
+    const size = viewerSize(content)
+    w = Math.max(w, size.w)
+    h += (h > 0 ? RUNS_GAP : 0) + size.h
+  }
+  return h > 0 ? { w, h } : null
+}
+/** A partir de cuántos módulos que usan lo mismo sus flechas dejan de dibujarse todas a la vez. */
+const SHARED_FROM = 3
 /** Alto máximo por defecto: a partir de aquí, el lienzo se recorre en vez de crecer. */
 const MAX_HEIGHT = 640
 /** Hueco entre lo auxiliar (a la izquierda) y el diagrama. */
@@ -386,6 +614,21 @@ function CanvasInner({
   onControlChange,
   onAction: sentAction,
   onOpen,
+  onGistEdit,
+  architecture = null,
+  avoid = null,
+  result = null,
+  runs = null,
+  progress = null,
+  knobs = null,
+  config = null,
+  screen = null,
+  start = null,
+  exit = null,
+  beat = null,
+  reserve = null,
+  moduleStates = null,
+  xray = false,
   addTarget,
   palette,
   addToModule = true,
@@ -401,11 +644,15 @@ function CanvasInner({
   showActions = true,
   onRun,
   extraMenu,
+  ask,
+  said = null,
   onUnpin,
   showStatus = true,
   animate = true,
   fitMode,
   fitKey = '',
+  settle = 0,
+  follow = true,
   cursor = null,
   spotlight = null,
   echo,
@@ -484,6 +731,8 @@ function CanvasInner({
   )
   /** El menú de un nodo, abierto donde se hizo clic derecho. */
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null)
+  /** La caja para pedir con palabras, abierta donde se señaló (en el vacío, o entre dos nodos). */
+  const [asking, setAsking] = useState<{ x: number; y: number; where: AskWhere } | null>(null)
   /** Un nodo al que el menú le ha pedido renombrarse: el contador abre su cuadro cada vez. */
   const [renaming, setRenaming] = useState<{ id: string; n: number }>({ id: '', n: 0 })
   /** Por qué no se pudo conectar: un aviso breve, para que el rechazo no parezca un fallo. */
@@ -514,7 +763,29 @@ function CanvasInner({
   }>({ key: fitKey, sizes: {} })
   const resized = resizedState.key === fitKey ? resizedState.sizes : NO_SIZES
 
-  const { setViewport, getViewport, setCenter, zoomIn, zoomOut } = useReactFlow()
+  const {
+    setViewport: moveCamera,
+    getViewport,
+    setCenter: centerCamera,
+    zoomIn,
+    zoomOut,
+  } = useReactFlow()
+  // La cámara nunca va a un sitio que no es un número: con un NaN se queda clavada (ni arrastrar el fondo
+  // ni la rueda la mueven ya), así que esa orden se ignora.
+  const setViewport = useCallback(
+    (...args: Parameters<typeof moveCamera>) =>
+      [args[0].x, args[0].y, args[0].zoom].every(Number.isFinite)
+        ? moveCamera(...args)
+        : Promise.resolve(false),
+    [moveCamera],
+  )
+  const setCenter = useCallback(
+    (...args: Parameters<typeof centerCamera>) =>
+      [args[0], args[1], args[2]?.zoom ?? 1].every(Number.isFinite)
+        ? centerCamera(...args)
+        : Promise.resolve(false),
+    [centerCamera],
+  )
   /** Sube cada vez que se pide encuadrar todo otra vez (el botón del lienzo): rehace el encuadre. */
   const [refits, setRefits] = useState(0)
   /**
@@ -522,6 +793,67 @@ function CanvasInner({
    * antes, para que el programa se lea a un zoom legible y crezca en alto (ver `fit.ts`).
    */
   const [run, setRun] = useState<number | undefined>(undefined)
+  /** Lo más ancho que puede ser una fila de módulos de la arquitectura, para el ancho que tiene el lienzo. */
+  const [archRun, setArchRun] = useState<number | undefined>(undefined)
+  /** Lo que mide el lienzo (a saltos, para no recolocar a cada píxel): la arquitectura se coloca para él. */
+  const [frameSize, setFrameSize] = useState<{ w: number; h: number } | undefined>(undefined)
+  const reserveTop = reserve?.top ?? 0
+  const reserveBottom = reserve?.bottom ?? 0
+  const reserveLeft = reserve?.left ?? 0
+  const fullFrame = useMemo(
+    () =>
+      frameSize
+        ? {
+            w: Math.max(240, frameSize.w - reserveLeft),
+            h: Math.max(200, frameSize.h - reserveTop - reserveBottom),
+          }
+        : undefined,
+    [frameSize, reserveTop, reserveBottom, reserveLeft],
+  )
+  // Las perillas, si las hay, son un nodo más: lo que miden (por sus filas, no por quién las trae: así no
+  // se recoloca nada en cada dibujo).
+  // Con la configuración, son dos nodos: uno sobre otro a la izquierda del dibujo, uno junto a otro encima.
+  const headPanels = (
+    [
+      [CONFIG_ID, config],
+      [KNOBS_ID, knobs],
+    ] as const
+  ).flatMap(([id, panel]) =>
+    panel && (panel.items.length > 0 || panel.chance === true) ? [{ id, panel }] : [],
+  )
+  const headSig = headPanels
+    .map(({ id, panel }) => {
+      const size = knobsSize(panel.items, panel.chance === true)
+      return `${id}@${size.w}x${size.h}`
+    })
+    .join('|')
+  const headStack = useMemo(() => {
+    if (headSig === '') return null
+    const parts = headSig.split('|').map((part) => {
+      const [id = '', size = ''] = part.split('@')
+      const [w = 0, h = 0] = size.split('x').map(Number)
+      return { id, w, h }
+    })
+    const gaps = HEAD_STACK * (parts.length - 1)
+    return {
+      parts,
+      left: {
+        w: Math.max(...parts.map((part) => part.w)),
+        h: parts.reduce((sum, part) => sum + part.h, 0) + gaps,
+      },
+      top: {
+        w: parts.reduce((sum, part) => sum + part.w, 0) + gaps,
+        h: Math.max(...parts.map((part) => part.h)),
+      },
+    }
+  }, [headSig])
+  // La arquitectura se coloca para el lienzo que le queda con ellas: a su lado si es apaisado; debajo, si no.
+  const archFrame = useMemo(() => {
+    if (!fullFrame || !headStack) return fullFrame
+    return fullFrame.w >= fullFrame.h * 1.2
+      ? { w: Math.max(240, fullFrame.w - headStack.left.w - HEAD_GAP.x), h: fullFrame.h }
+      : { w: fullFrame.w, h: Math.max(200, fullFrame.h - headStack.top.h - HEAD_GAP.y) }
+  }, [fullFrame, headStack])
   const frameRef = useRef<HTMLDivElement>(null)
   const lastFit = useRef('')
   /** El diagrama (su `fitKey`) al que una orden llevó la cámara: ahí el encuadre ya no se rehace solo. */
@@ -545,6 +877,29 @@ function CanvasInner({
    * únicamente como chips. No hay cables de datos, ni puertos para ellos.
    */
   const flow = aside
+  // La compuerta de salida de un ciclo mide lo que su texto: se le hace sitio al colocar.
+  const exitLabel = flow && architecture && exit ? exit.label : null
+  const gateSize = useMemo(
+    () => (exitLabel === null ? undefined : { w: Math.round(exitLabel.length * 6.6 + 48), h: 30 }),
+    [exitLabel],
+  )
+  // El resultado, si lo hay, va a la cola de la arquitectura: cuenta para saber cuánto cabe.
+  // (Y bajo él, si las hay, las ejecuciones: los dos son la cola.)
+  // Lo que mide la pantalla (por su contenido, no por quién la trae: así no se recoloca nada en cada dibujo).
+  const screenDims = screen ? screenSize(screen.view) : null
+  const screenKey = screenDims ? `${screenDims.w}x${screenDims.h}` : ''
+  const screenBox = useMemo(() => {
+    if (screenKey === '') return null
+    const [w = 0, h = 0] = screenKey.split('x').map(Number)
+    return { w, h }
+  }, [screenKey])
+  const tailSize = useMemo(
+    () =>
+      flow && architecture
+        ? (tailOf([result?.content, progress, runs], screenBox) ?? undefined)
+        : undefined,
+    [result, progress, runs, flow, architecture, screenBox],
+  )
   const nodes = useMemo(
     () => allNodes.filter((node) => !node.handwritten && !(aside && node.viewer)),
     [allNodes, aside],
@@ -722,6 +1077,7 @@ function CanvasInner({
     bounds: layoutBounds,
     scopes,
     spines,
+    figures,
   } = useMemo(() => {
     /** Lo que se dibuja: un ámbito con algo de esto dentro está abierto (si no, está plegado). */
     const present = new Set(plan.flowNodes.map((node) => node.id))
@@ -742,57 +1098,71 @@ function CanvasInner({
             ? viewerSize(node.viewer)
             : isChipKind(node)
               ? chipSize(node)
-              : node.section && !node.contains?.some((id) => present.has(id))
-                ? // Plegada, una etapa es su tarjeta; abierta, el marco la hace crecer con lo que tiene dentro.
-                  sectionCardSize({
-                    title: node.section.title,
-                    subtitle: node.section.subtitle,
-                    uses: node.section.uses,
-                    leaves: node.section.leaves.map((leaf) => leaf.name),
-                    callees: node.section.opens.map((open) => open.name),
-                    glyphs: node.section.glyphs.length,
-                  })
-                : flow && isDecision(node)
-                  ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
-                    widen(questionSize(node.control, d, node.label, node.code), node)
-                  : d === 'normal' && isLineCard(node.kind, node.control)
-                    ? // Una operación o una llamada: una sola línea, con su nombre como chip.
-                      {
-                        w: lineWidth(
-                          node.control,
-                          // Cada pastilla mide también lo que se observó de su valor (`200×2`).
-                          resultNames(node, d).map((name) => {
-                            const short = node.observed?.[name]?.short
-                            return short ? `${name} ${short}` : name
-                          }),
-                          linked[node.id],
-                          // Lo que abre (el chevron de una llamada, o las pastillas de sus subprocesos).
-                          subprocessesOf(node).length > 0
-                            ? opensWidth(subprocessesOf(node))
-                            : node.openable
-                              ? 26
-                              : 0,
-                        ),
-                        h: lineHeight(node.note),
-                      }
-                    : d === 'normal'
-                      ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
-                        widen(
-                          {
-                            w: slimWidth(base.w, node.control),
-                            h: slimHeight(
-                              node.control,
-                              linked[node.id],
-                              node.note,
-                              node.code !== undefined,
-                            ),
+              : node.gist && !node.contains?.some((id) => present.has(id))
+                ? // Plegada, una función de la que se sabe qué hace es su tarjeta «Qué hace».
+                  gistSize(
+                    titledScene(node.gist, {
+                      ...(node.section ? { stage: node.section.title } : {}),
+                      ...(node.note ? { note: node.note } : {}),
+                    }),
+                  )
+                : node.section && !node.contains?.some((id) => present.has(id))
+                  ? // Plegada, una etapa es su tarjeta; abierta, el marco la hace crecer con lo que tiene dentro.
+                    sectionCardSize({
+                      title: node.section.title,
+                      subtitle: node.section.subtitle,
+                      uses: node.section.uses,
+                      leaves: node.section.leaves.map((leaf) => leaf.name),
+                      callees: node.section.opens.map((open) => open.name),
+                      glyphs: node.section.glyphs.length,
+                      // Como módulo de la arquitectura se dice con palabras: se lee de lejos.
+                      // (Salvo en la radiografía, que enseña también sus nombres.)
+                      plain:
+                        !xray &&
+                        flow &&
+                        architecture?.modules.some((module) => module.id === node.id),
+                    })
+                  : flow && isDecision(node)
+                    ? // Leída como diagrama de flujo, una decisión es su pregunta y, debajo, el rombo de la bifurcación.
+                      widen(questionSize(node.control, d, node.label, node.code), node)
+                    : d === 'normal' && isLineCard(node.kind, node.control)
+                      ? // Una operación o una llamada: una sola línea, con su nombre como chip.
+                        {
+                          w: lineWidth(
+                            node.control,
+                            // Cada pastilla mide también lo que se observó de su valor (`200×2`).
+                            resultNames(node, d).map((name) => {
+                              const short = node.observed?.[name]?.short
+                              return short ? `${name} ${short}` : name
+                            }),
+                            linked[node.id],
+                            // Lo que abre (el chevron de una llamada, o las pastillas de sus subprocesos).
+                            subprocessesOf(node).length > 0
+                              ? opensWidth(subprocessesOf(node))
+                              : node.openable
+                                ? 26
+                                : 0,
+                          ),
+                          h: lineHeight(node.note),
+                        }
+                      : d === 'normal'
+                        ? // La tarjeta esbelta mide lo que lleva dentro, ni más ni menos.
+                          widen(
+                            {
+                              w: slimWidth(base.w, node.control),
+                              h: slimHeight(
+                                node.control,
+                                linked[node.id],
+                                node.note,
+                                node.code !== undefined,
+                              ),
+                            },
+                            node,
+                          )
+                        : {
+                            w: base.w,
+                            h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
                           },
-                          node,
-                        )
-                      : {
-                          w: base.w,
-                          h: base.h + extraHeight(node.control, d, linked[node.id], node.note),
-                        },
           // La documentación, el editor de un bucle y la cajita de chips viven en la cabecera de un territorio.
           ...(head > 0 ? { headroom: head } : {}),
           ...(flowFoot(node, flow) > 0 ? { footroom: flowFoot(node, flow) } : {}),
@@ -814,8 +1184,34 @@ function CanvasInner({
       ...(gapY === undefined ? {} : { gapY }),
       // Una lista de pasos que se lee hacia abajo no se pliega en columnas: se recorre.
       ...(axis === 'vertical' ? { maxRun: 0 } : run === undefined ? {} : { maxRun: run }),
+      // Las filas de módulos miden lo que cabe a un tamaño que se lea, sin contar lo que va al margen.
+      ...(flow && architecture
+        ? {
+            architecture,
+            ...(archRun === undefined ? {} : { architectureWidth: archRun }),
+            ...(archFrame === undefined ? {} : { architectureFrame: archFrame }),
+            ...(tailSize === undefined ? {} : { architectureTail: tailSize }),
+            ...(gateSize === undefined ? {} : { architectureGate: gateSize }),
+          }
+        : {}),
     })
-  }, [plan, densityOf, axis, flow, gapX, gapY, linked, resized, run])
+  }, [
+    plan,
+    densityOf,
+    axis,
+    flow,
+    gapX,
+    gapY,
+    linked,
+    resized,
+    run,
+    architecture,
+    archRun,
+    archFrame,
+    tailSize,
+    gateSize,
+    xray,
+  ])
 
   /**
    * La procedencia a demanda: al seleccionar un nodo se dibujan sus cables ocultos (de dónde le llegan
@@ -938,33 +1334,93 @@ function CanvasInner({
   // El destino tiene que ser estable entre renders: si cambia de identidad en cada uno,
   // la animación se relanzaría sin parar en vez de avanzar.
   // La cajita del programa va arriba del todo, y el resto del plano baja lo que ocupa.
-  const moduleTray = plan.trays.get(MODULE)
+  // Como arquitectura, la cajita de variables y funciones del programa no se enseña: repite, con sus nombres
+  // en código, lo que ya dicen los módulos, y le quita al diagrama un tercio del ancho.
+  const asArchitecture = flow && architecture !== null && figures !== undefined
+  const moduleTray = asArchitecture ? undefined : plan.trays.get(MODULE)
   // Los pasos van por el centro. A la izquierda, lo auxiliar (la cajita de variables y los visores); a la
   // derecha, las notas. Leído en horizontal, la cajita va arriba y el resto del plano baja lo que ocupa.
+  // Las perillas: en el diagrama abierto van en esa columna de la izquierda, bajo la cajita.
+  const headAside = headStack !== null && aside && !asArchitecture
+  const asideHead = headStack?.left ?? null
+  // Y debajo, el visor de cómo avanza (en la arquitectura va en la cola, con el resultado).
+  const sideProgress = useMemo(
+    () => (progress && aside && !asArchitecture ? viewerSize(progress) : null),
+    [progress, aside, asArchitecture],
+  )
+  // La pantalla, ahí también: bajo las perillas y antes que el visor.
+  const sideScreen = screenBox && aside && !asArchitecture ? screenBox : null
+  const sideExtra =
+    (headAside && asideHead ? asideHead.h + 16 : 0) +
+    (sideScreen ? sideScreen.h + 16 : 0) +
+    (sideProgress ? sideProgress.h + 16 : 0)
   const sideW = aside
     ? Math.max(
         moduleTray?.w ?? 0,
+        headAside && asideHead ? asideHead.w : 0,
+        sideScreen?.w ?? 0,
+        sideProgress?.w ?? 0,
         ...sideViewers.map((node) => (node.viewer ? viewerSize(node.viewer).w : 0)),
       )
     : 0
-  const shiftX = aside && sideW > 0 ? sideW + MODULE_TRAY_AT.x + SIDE_GAP : 0
-  const shiftY = !aside && moduleTray ? moduleTray.h + 24 : 0
+  const baseX = aside && sideW > 0 ? sideW + MODULE_TRAY_AT.x + SIDE_GAP : 0
+  const baseY = !aside && moduleTray ? moduleTray.h + 24 : 0
   /** Hasta dónde llega el diagrama; a partir de ahí, el margen de las notas. */
-  const diagramW = aside
-    ? shiftX + layoutBounds.w
-    : Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0)
+  // El resultado, si lo hay, va a la cola de la arquitectura: a su derecha o, si así se ve más grande en
+  // este lienzo, debajo. El encuadre le deja su sitio.
+  const resultSize = useMemo(
+    () => (result && figures !== undefined ? viewerSize(result.content) : null),
+    [result, figures],
+  )
+  // Con las ejecuciones debajo, la cola son los dos visores, uno sobre otro.
+  const tailBox = useMemo(
+    // (Puede no haber resultado —el programa se cortó sin enseñar nada— y sí algo que contar de cómo iba.)
+    () => (figures !== undefined ? tailOf([result?.content, progress, runs], screenBox) : null),
+    [result, progress, runs, figures, screenBox],
+  )
+  // En la arquitectura las perillas van a la entrada y el resultado a la salida: de izquierda a derecha,
+  // salvo que de otro modo (alguno encima o debajo) el conjunto se vea claramente más grande en este lienzo.
+  const headArch = headStack !== null && asArchitecture
+  const ends = endSides(layoutBounds, tailBox, headArch ? headStack : null, fullFrame)
+  const resultSide = tailBox ? ends.tail : 'right'
+  const resultReserve = tailBox && resultSide === 'right' ? TAIL_GAP.x + tailBox.w : 0
+  const resultBelow = tailBox && resultSide === 'bottom' ? TAIL_GAP.y + tailBox.h : 0
+  // El dibujo se corre lo que ocupan las perillas.
+  const headSide = ends.head
+  // Lo que ocupan los mandos, ya sabido dónde van.
+  const headSize = headStack ? (headArch ? headStack[headSide] : headStack.left) : null
+  const shiftX = baseX + (headArch && headSide === 'left' ? (headSize?.w ?? 0) + HEAD_GAP.x : 0)
+  const shiftY = baseY + (headArch && headSide === 'top' ? (headSize?.h ?? 0) + HEAD_GAP.y : 0)
+  const diagramW =
+    (aside
+      ? shiftX + layoutBounds.w
+      : Math.max(layoutBounds.w, moduleTray ? moduleTray.w + MODULE_TRAY_AT.x * 2 : 0)) +
+    resultReserve
   // Con notas, el margen cuenta para el encuadre: el zoom es el mismo llegue la nota que llegue.
   const noteReserve = noteNodes.length > 0 ? NOTE_GUTTER + NOTE.width + 24 : 0
   const bounds = useMemo(
     () => ({
       // Un salto que sale de un bucle (`break`) baja por su derecha: el encuadre le deja sitio.
       w: diagramW + noteReserve + (flow ? FLOW_LANE + 8 : 0),
-      h: Math.max(
-        layoutBounds.h + shiftY,
-        aside && moduleTray ? moduleTray.h + MODULE_TRAY_AT.y * 2 : 0,
-      ),
+      h:
+        Math.max(
+          layoutBounds.h + shiftY,
+          aside && (moduleTray || sideExtra > 0)
+            ? (moduleTray ? moduleTray.h + 16 : 0) + sideExtra + MODULE_TRAY_AT.y * 2
+            : 0,
+        ) + resultBelow,
     }),
-    [diagramW, noteReserve, layoutBounds.h, shiftY, aside, moduleTray, flow],
+    [
+      diagramW,
+      noteReserve,
+      layoutBounds.h,
+      shiftY,
+      aside,
+      moduleTray,
+      flow,
+      resultBelow,
+      sideExtra,
+    ],
   )
 
   const motionItems = useMemo(
@@ -972,7 +1428,11 @@ function CanvasInner({
       placements.map((placement) => ({
         id: placement.id,
         value: placement,
-        position: moved[placement.id] ?? { x: placement.x + shiftX, y: placement.y + shiftY },
+        // (Un sitio movido a mano que no es un número no vale: el nodo vuelve al suyo.)
+        position: finitePoint(moved[placement.id]) ?? {
+          x: placement.x + shiftX,
+          y: placement.y + shiftY,
+        },
       })),
     [placements, moved, shiftX, shiftY],
   )
@@ -1073,15 +1533,34 @@ function CanvasInner({
       const dragged = ordering
       setOrdering(null)
       if (dragged) {
-        // Soltado sobre un nodo pero no sobre su puerto: vale igual, es ese nodo el que se coloca.
-        if (!state.isValid && state.toNode) orderTo(dragged.from, dragged.port, state.toNode.id)
-        else if (!state.isValid) {
+        if (state.isValid) return
+        const frame = frameRef.current?.getBoundingClientRect()
+        const point = 'changedTouches' in event ? event.changedTouches[0] : event
+        // Una etapa no tiene puerto de entrada: el nodo sobre el que se soltó es el que hay bajo el puntero.
+        const under =
+          state.toNode?.id ??
+          (point
+            ? document
+                .elementFromPoint(point.clientX, point.clientY)
+                ?.closest<HTMLElement>('.react-flow__node')?.dataset['id']
+            : undefined)
+        const onto = under !== undefined && under !== dragged.from && byId.has(under) ? under : null
+        const stages =
+          byId.get(dragged.from)?.kind === 'space.section' ||
+          (onto !== null && byId.get(onto)?.kind === 'space.section')
+        if (onto !== null && ask && stages && frame && point) {
+          // De una parte a otra: no hay un «mover» que valga, pero sí algo que pedir entre las dos.
+          setAsking({
+            x: point.clientX - frame.left,
+            y: point.clientY - frame.top,
+            where: { at: 'link', from: dragged.from, to: onto },
+          })
+        } else if (onto !== null) {
+          // Soltado sobre un nodo pero no sobre su puerto: vale igual, es ese nodo el que se coloca.
+          orderTo(dragged.from, dragged.port, onto)
+        } else if (frame && point) {
           // En el vacío: se ofrece crear ahí una sentencia nueva.
-          const frame = frameRef.current?.getBoundingClientRect()
-          const point = 'changedTouches' in event ? event.changedTouches[0] : event
-          if (frame && point) {
-            setOrderAdd({ ...dragged, x: point.clientX - frame.left, y: point.clientY - frame.top })
-          }
+          setOrderAdd({ ...dragged, x: point.clientX - frame.left, y: point.clientY - frame.top })
         }
         return
       }
@@ -1115,8 +1594,26 @@ function CanvasInner({
         setQuick({ ...origin, x: point.clientX - frame.left, y: point.clientY - frame.top })
       }
     },
-    [byId, lookup, eligible, onAction, ordering, orderTo],
+    [byId, lookup, eligible, onAction, ordering, orderTo, ask],
   )
+
+  /** Cómo se llama un nodo para quien lo lee: el título de su etapa, o su rótulo. */
+  const nameOf = (id: string): string => {
+    const node = byId.get(id)
+    const name = node?.section?.title ?? node?.label ?? ''
+    return name.length > 30 ? `${name.slice(0, 29)}…` : name
+  }
+  /** La caja de pedir, para un sitio: lo que dice, lo que ofrece y a quién entrega la frase. */
+  const askFor = (where: AskWhere, placeholder: string) =>
+    ask
+      ? {
+          placeholder,
+          chips: ask.chips?.(where) ?? [],
+          onSubmit: (text: string) => {
+            ask.onAsk(text, where)
+          },
+        }
+      : undefined
 
   /** Lo que ofrece el menú de un nodo: lo que se hacía con los iconos de su cabecera, y más. */
   const menuItems = (id: string): NodeMenuItem[] => {
@@ -1541,6 +2038,27 @@ function CanvasInner({
     data: { node, content, size, ...(onUnpin ? { onUnpin } : {}) },
   })
 
+  /** El papel de cada módulo de la arquitectura, cuando el plano se colocó con ella. */
+  const roleOf: Record<string, ModuleRole> =
+    architecture && figures !== undefined
+      ? Object.fromEntries(architecture.modules.map((module) => [module.id, module.role]))
+      : {}
+  /**
+   * Los módulos cuyos datos usan tres o más de los demás, y cuántos: sus flechas no se dibujan todas a la vez
+   * (ver `archEdges`). Quien ancla la forma no cuenta: sus flechas son la forma.
+   */
+  const sharedBy: Record<string, number> = {}
+  if (architecture && figures !== undefined) {
+    for (const module of architecture.modules) {
+      if (module.id === architecture.anchor) continue
+      const users = new Set(
+        architecture.links
+          .filter((link) => link.kind === 'data' && link.told !== true && link.from === module.id)
+          .map((link) => link.to),
+      )
+      if (users.size >= SHARED_FROM) sharedBy[module.id] = users.size
+    }
+  }
   const flowNodes: AnyFlowNode[] = animated.flatMap((item): AnyFlowNode[] => {
     const node = byId.get(item.id)
     if (!node) return []
@@ -1571,6 +2089,13 @@ function CanvasInner({
           // Leído como diagrama de flujo, por dónde entra y sale la secuencia de un territorio.
           ...(container && spines?.[node.id] !== undefined ? { spine: spines[node.id] } : {}),
           renameSignal: renaming.id === node.id ? renaming.n : 0,
+          // En la arquitectura, el papel del módulo: su icono y su tinte.
+          ...(roleOf[node.id] === undefined ? {} : { role: roleOf[node.id] }),
+          ...(xray ? { xray: true } : {}),
+          ...(sharedBy[node.id] === undefined ? {} : { usedBy: sharedBy[node.id] }),
+          ...(roleOf[node.id] !== undefined && moduleStates?.[node.id]
+            ? { moduleState: moduleStates[node.id] }
+            : {}),
           showStatus,
           linkedSlots: linked[node.id] ?? [],
           connectable,
@@ -1604,11 +2129,14 @@ function CanvasInner({
           ...(connectable ? { onAddChip, onClearChip } : {}),
           ...(container && interactive ? { onResize } : {}),
           ...(flow && connectable ? { onAddAfter } : {}),
+          // En la arquitectura, de cada parte sale un cable para pedir lo que va detrás.
+          ...(ask && connectable && roleOf[node.id] !== undefined ? { askPort: true } : {}),
           phase: item.phase,
           ...(onControlChange ? { onControlChange: changeControl } : {}),
           ...(onAction ? { onNodeEdit } : {}),
           ...(onEnter ? { onEnter } : {}),
           ...(onOpen ? { onOpen } : {}),
+          ...(onGistEdit ? { onGistEdit } : {}),
         },
       },
     ]
@@ -1623,6 +2151,7 @@ function CanvasInner({
     const positionOf = new Map(animated.map((item) => [item.id, item.position]))
     for (const [context, tray] of plan.trays) {
       let origin: Point | undefined
+      if (context === MODULE && asArchitecture) continue
       if (context === MODULE) {
         origin = MODULE_TRAY_AT
         dockedNodes.push({
@@ -1681,6 +2210,8 @@ function CanvasInner({
             size,
             ...(chip ? { chip } : {}),
             ...(fn ? { fn } : {}),
+            // Doble clic en el chip de una función: se va a su definición.
+            ...(fn && onOpen ? { onOpen } : {}),
             // La cajita en columna numera sus chips como los pasos: la línea en la que se definen.
             ...(aside && context === MODULE && (chip?.line ?? fn?.line) !== undefined
               ? { line: chip?.line ?? fn?.line }
@@ -1822,7 +2353,510 @@ function CanvasInner({
       ...(no ? { tag: 'no' } : edge.relation === 'branch' ? { tag: 'sí' } : {}),
     }
   }
-  const roles = new Map(visibleEdges.map((edge) => [edge, flowRole(edge)]))
+  // ── La arquitectura: el primer nivel son módulos unidos por lo que se pasan y por quién usa a quién ──
+  /** Los módulos que el plano colocó según su forma (si lo hizo). */
+  const archModules = new Map(
+    architecture && figures !== undefined
+      ? architecture.modules.flatMap((module) =>
+          boxOf.has(module.id) && parentOf[module.id] === undefined ? [[module.id, module]] : [],
+        )
+      : [],
+  )
+  // Entre módulos no hay una espina que baje: el orden se lee en su número, y lo que los une, en sus flechas.
+  const drawnEdges =
+    archModules.size === 0
+      ? visibleEdges
+      : visibleEdges.filter(
+          (edge) =>
+            !(
+              (archModules.has(edge.from) || archModules.has(edge.to)) &&
+              parentOf[edge.from] === undefined &&
+              parentOf[edge.to] === undefined
+            ),
+        )
+  // Cada dato que viaja, con su color: el mismo en todas las flechas por las que pasa.
+  const hues = flowHues(archModules.size > 0 && architecture ? architecture.links : [])
+  const archEdges: ArchFlowEdge[] = (
+    archModules.size > 0 && architecture ? architecture.links : []
+  ).flatMap((link, at, links) => {
+    const from = archModules.has(link.from) ? boxOf.get(link.from) : undefined
+    const to = archModules.has(link.to) ? boxOf.get(link.to) : undefined
+    if (!from || !to) return []
+    // Lo que usan casi todos (los datos del programa) no tiende una flecha a cada uno: sería una maraña que
+    // no dice más que la pastilla que ya lleva cada módulo. Se dice en el propio módulo, y sus flechas salen
+    // al seleccionarlo (o al seleccionar a quien lo usa).
+    if (
+      link.kind === 'data' &&
+      link.told !== true &&
+      (sharedBy[link.from] ?? 0) > 0 &&
+      !(lit?.has(link.from) || lit?.has(link.to))
+    ) {
+      return []
+    }
+    // Dos flechas entre los mismos dos módulos se comban cada una hacia un lado, para no pisarse.
+    const twins = links.filter(
+      (other) =>
+        (other.from === link.from && other.to === link.to) ||
+        (other.from === link.to && other.to === link.from),
+    )
+    const same = twins.filter((other) => other.from === link.from)
+    const prefer = twins.length < 2 ? 0 : same.indexOf(link) % 2 === 0 ? 22 : -22
+    // …y ninguna pasa por encima de otro módulo: se comba lo justo para rodearlo.
+    const others = [...archModules.keys()].flatMap((id) => {
+      const box = id === link.from || id === link.to ? undefined : boxOf.get(id)
+      return box ? [box] : []
+    })
+    const bend = clearBend(from, to, others, prefer)
+    const touched = lit ? lit.has(link.from) || lit.has(link.to) : null
+    const hue = link.kind === 'data' && link.label ? hues.get(flowName(link.label)) : undefined
+    const live = beat?.links.includes(`${link.from}>${link.to}`) === true
+    return [
+      {
+        id: `arch:${link.kind}:${link.from}:${link.to}`,
+        source: link.from,
+        target: link.to,
+        sourceHandle: 'note-out',
+        targetHandle: 'step-in',
+        type: 'arch' as const,
+        selectable: false,
+        focusable: false,
+        ...(link.label === undefined ? {} : { label: link.label }),
+        zIndex: touched || live ? 10 : 2,
+        data: {
+          kind: link.kind,
+          from,
+          to,
+          bend,
+          turn: at,
+          ...(live && beat ? { live: beat.serial, ms: beat.ms } : {}),
+          ...(hue === undefined ? {} : { hue }),
+          ...(link.sample ? { sample: link.sample } : {}),
+          ...(link.planned ? { planned: true } : {}),
+          ...(touched === null
+            ? {}
+            : { emphasis: touched ? ('active' as const) : ('dim' as const) }),
+        },
+      },
+    ]
+  })
+  // ── El resultado y el arranque: los dos extremos de la arquitectura ──
+  // Dónde empieza la cola (su esquina de arriba a la izquierda): a la derecha del dibujo, o debajo.
+  const tailAt =
+    tailBox && archModules.size > 0
+      ? resultSide === 'bottom'
+        ? {
+            x: shiftX + Math.max(28, (layoutBounds.w - tailBox.w) / 2),
+            y: shiftY + layoutBounds.h - 28 + TAIL_GAP.y,
+          }
+        : {
+            x: shiftX + layoutBounds.w + TAIL_GAP.x - 28,
+            y: shiftY + Math.max(28, (layoutBounds.h - tailBox.h) / 2),
+          }
+      : null
+  // Lo primero de la cola es la pantalla (lo que se usa); debajo, el resultado y sus ejecuciones.
+  const screenAt = screenBox && tailAt ? { ...tailAt, ...screenBox } : null
+  const resultAt =
+    resultSize && tailAt
+      ? { x: tailAt.x, y: tailAt.y + (screenAt ? screenAt.h + RUNS_GAP : 0), ...resultSize }
+      : null
+  // Las ejecuciones, bajo el resultado: es su historia.
+  const tailViewers: { node: CanvasNode; content: ViewerContent; at: Point; size: Size2 }[] = []
+  if (tailAt) {
+    let y =
+      tailAt.y + (screenAt ? screenAt.h + RUNS_GAP : 0) + (resultAt ? resultAt.h + RUNS_GAP : 0)
+    for (const [node, content] of [
+      [PROGRESS_NODE, progress],
+      [RUNS_NODE, runs],
+    ] as const) {
+      if (!content) continue
+      const size = viewerSize(content)
+      tailViewers.push({ node, content, at: { x: tailAt.x, y }, size })
+      y += size.h + RUNS_GAP
+    }
+  }
+  // Los mandos (la configuración y las perillas), a la entrada del dibujo (o, en el diagrama abierto, bajo la
+  // cajita del programa).
+  const knobInto = [...new Set(headPanels.flatMap(({ panel }) => panel.into ?? []))].filter((id) =>
+    archModules.has(id),
+  )
+  const knobTarget = knobInto.length === 1 ? boxOf.get(knobInto[0] ?? '') : undefined
+  const knobsAt = !headSize
+    ? null
+    : headArch
+      ? archModules.size === 0
+        ? null
+        : headSide === 'left'
+          ? {
+              x: baseX + 28,
+              // A la altura de la parte a la que apuntan (o en medio, si son varias o ninguna).
+              y: Math.max(
+                shiftY + 28,
+                Math.min(
+                  shiftY + layoutBounds.h - 28 - headSize.h,
+                  (knobTarget ? knobTarget.y + knobTarget.h / 2 : shiftY + layoutBounds.h / 2) -
+                    headSize.h / 2,
+                ),
+              ),
+              ...headSize,
+            }
+          : {
+              x: Math.max(
+                shiftX + 28,
+                Math.min(
+                  shiftX + layoutBounds.w - 28 - headSize.w,
+                  (knobTarget ? knobTarget.x + knobTarget.w / 2 : shiftX + layoutBounds.w / 2) -
+                    headSize.w / 2,
+                ),
+              ),
+              y: baseY + 28,
+              ...headSize,
+            }
+      : headAside
+        ? {
+            x: MODULE_TRAY_AT.x,
+            y: MODULE_TRAY_AT.y + (moduleTray ? moduleTray.h + 16 : 0),
+            ...headSize,
+          }
+        : null
+  // En el diagrama abierto, la pantalla y el visor de cómo avanza van bajo las perillas.
+  const sideTop =
+    MODULE_TRAY_AT.y +
+    (moduleTray ? moduleTray.h + 16 : 0) +
+    (headAside && headSize ? headSize.h + 16 : 0)
+  const sideScreenAt = sideScreen ? { x: MODULE_TRAY_AT.x, y: sideTop, ...sideScreen } : null
+  if (sideProgress && progress) {
+    tailViewers.push({
+      node: PROGRESS_NODE,
+      content: progress,
+      at: { x: MODULE_TRAY_AT.x, y: sideTop + (sideScreen ? sideScreen.h + 16 : 0) },
+      size: sideProgress,
+    })
+  }
+  const screenFrame = screenAt ?? sideScreenAt
+  const screenNodes: ScreenFlowNode[] =
+    screen && screenFrame
+      ? [
+          {
+            id: SCREEN_ID,
+            type: 'screen' as const,
+            position: { x: screenFrame.x, y: screenFrame.y },
+            ...nodeFrame(screenFrame),
+            zIndex: 4,
+            draggable: false,
+            selectable: false,
+            data: { panel: screen, size: screenFrame },
+          },
+        ]
+      : []
+  // Cada nodo de mandos, en su sitio dentro de ese hueco: uno bajo otro, o (encima del dibujo) uno junto a otro.
+  const across = headArch && headSide === 'top'
+  const headBoxes: { id: string; panel: KnobsPanel; box: Size2 & { x: number; y: number } }[] = []
+  if (knobsAt && headStack) {
+    let cursor = across ? knobsAt.x : knobsAt.y
+    for (const part of headStack.parts) {
+      const panel = headPanels.find((one) => one.id === part.id)?.panel
+      if (!panel) continue
+      headBoxes.push({
+        id: part.id,
+        panel,
+        box: across
+          ? { x: cursor, y: knobsAt.y, w: part.w, h: part.h }
+          : { x: knobsAt.x, y: cursor, w: part.w, h: part.h },
+      })
+      cursor += (across ? part.w : part.h) + HEAD_STACK
+    }
+  }
+  const knobsNodes: KnobsFlowNode[] = headBoxes.map(({ id, panel, box }) => ({
+    id,
+    type: 'knobs' as const,
+    position: { x: box.x, y: box.y },
+    ...nodeFrame(box),
+    zIndex: 4,
+    draggable: false,
+    selectable: false,
+    data: { panel, size: box, out: across ? 'bottom' : 'right' },
+  }))
+  // De cada nodo de mandos, una flecha a cada parte que usa sus valores.
+  const knobEdges: ArchFlowEdge[] = (headArch ? headBoxes : []).flatMap(
+    ({ id: from, panel, box }) =>
+      (panel.into ?? []).flatMap((id) => {
+        const to = archModules.has(id) ? boxOf.get(id) : undefined
+        if (!to) return []
+        const others = [...archModules.keys()].flatMap((other) => {
+          const known = other === id ? undefined : boxOf.get(other)
+          return known ? [known] : []
+        })
+        return [
+          {
+            id: `arch:${from}:${id}`,
+            source: from,
+            target: id,
+            sourceHandle: 'out',
+            targetHandle: 'step-in',
+            type: 'arch' as const,
+            selectable: false,
+            focusable: false,
+            zIndex: 2,
+            data: {
+              kind: 'call' as const,
+              from: box,
+              to,
+              bend: clearBend(box, to, others, 0),
+            },
+          },
+        ]
+      }),
+  )
+  const resultNodes: ViewerFlowNode[] = [
+    ...(result && resultAt
+      ? [
+          {
+            ...viewerNode(
+              RESULT_NODE,
+              result.content,
+              { x: resultAt.x, y: resultAt.y },
+              { w: resultAt.w, h: resultAt.h },
+            ),
+            draggable: false,
+            selectable: false,
+            // No es un visor que se haya fijado: no se quita.
+            data: { node: RESULT_NODE, content: result.content, size: resultAt },
+          },
+        ]
+      : []),
+    ...tailViewers.map(({ node, content, at, size }) => ({
+      ...viewerNode(node, content, at, size),
+      draggable: false,
+      selectable: false,
+      // Al reproducir la historia, el visor de cómo avanza va al paso: el punto de partida durante la
+      // primera vuelta, corriendo en el «y otra vez», y entero al llegar al resultado.
+      data: {
+        node,
+        content,
+        size,
+        ...(node === PROGRESS_NODE && beat?.phase
+          ? {
+              play: {
+                phase:
+                  beat.phase === 'again'
+                    ? ('run' as const)
+                    : beat.phase === 'result'
+                      ? ('end' as const)
+                      : ('start' as const),
+                ms: beat.ms,
+                serial: beat.serial,
+              },
+            }
+          : {}),
+      },
+    })),
+  ]
+  // Quién escribe el resultado le tiende una flecha… salvo en un ciclo con su compuerta de salida: ahí el
+  // resultado llega «al salir», y esa es la única flecha que lo dice (la de quien lo escribe, que está fuera
+  // de la vuelta, tendría que cruzar el anillo para decir lo mismo).
+  const viaGate =
+    exit !== null &&
+    archModules.has(exit.at) &&
+    figures?.some((figure) => figure.kind === 'gate') === true &&
+    architecture?.order !== undefined &&
+    result !== null &&
+    !result.from.some((id) => architecture.order?.includes(id))
+  const resultEdges: ArchFlowEdge[] = (result && resultAt && !viaGate ? result.from : []).flatMap(
+    (id, at) => {
+      const from = archModules.has(id) ? boxOf.get(id) : undefined
+      if (!from || !resultAt) return []
+      const others = [...archModules.keys()].flatMap((other) => {
+        const box = other === id ? undefined : boxOf.get(other)
+        return box ? [box] : []
+      })
+      return [
+        {
+          id: `arch:result:${id}`,
+          source: id,
+          target: RESULT_ID,
+          sourceHandle: 'note-out',
+          targetHandle: 'in',
+          type: 'arch' as const,
+          selectable: false,
+          focusable: false,
+          label: result?.planned ? 'daría' : 'enseña',
+          zIndex: 2,
+          data: {
+            kind: 'data' as const,
+            from,
+            to: resultAt,
+            bend: clearBend(from, resultAt, others, 0),
+            turn: at,
+            ...(beat?.links.includes(`${id}>${RESULT_ID}`)
+              ? { live: beat.serial, ms: beat.ms }
+              : {}),
+            ...(result?.planned ? { planned: true } : {}),
+          },
+        },
+      ]
+    },
+  )
+  const startBox = start && archModules.has(start.at) ? boxOf.get(start.at) : undefined
+  const startFigures: Figure[] = startBox
+    ? [
+        {
+          id: 'start',
+          kind: 'start',
+          x: startBox.x - shiftX + 14,
+          y: startBox.y - shiftY - 26,
+          w: 200,
+          h: 22,
+          label: start?.label ?? '',
+        },
+      ]
+    : []
+  // La compuerta de salida del ciclo: el plano le hizo sitio junto a quien lo lleva. Es un nodo más: le
+  // llega la flecha de la cabeza («no hay otra vuelta») y de ella sale la que va al resultado, salvo que el
+  // resultado lo escriba la propia vuelta (entonces no es «al salir» cuando aparece).
+  const gateFigure =
+    exit && archModules.has(exit.at) ? figures?.find((figure) => figure.kind === 'gate') : undefined
+  const gateBox = gateFigure
+    ? { x: gateFigure.x + shiftX, y: gateFigure.y + shiftY, w: gateFigure.w, h: gateFigure.h }
+    : undefined
+  const exitFrom = exit && gateBox ? boxOf.get(exit.at) : undefined
+  const turning = new Set(architecture?.order ?? [])
+  const exitLeads =
+    result !== null && resultAt !== null && !result.from.some((id) => turning.has(id))
+  const moduleBoxes = [...archModules.keys()].flatMap((id) => boxOf.get(id) ?? [])
+  const exitLive = beat?.at === RESULT_ID ? { live: beat.serial, ms: beat.ms } : {}
+  const exitEdges: ArchFlowEdge[] =
+    exit && gateBox && exitFrom
+      ? [
+          {
+            id: 'arch:exit:in',
+            source: exit.at,
+            target: 'figure:gate',
+            sourceHandle: 'note-out',
+            targetHandle: 'in',
+            type: 'arch' as const,
+            selectable: false,
+            focusable: false,
+            zIndex: 2,
+            data: { kind: 'next' as const, from: exitFrom, to: gateBox, bend: 0, ...exitLive },
+          },
+          ...(exitLeads && resultAt
+            ? [
+                {
+                  id: 'arch:exit:out',
+                  source: 'figure:gate',
+                  target: RESULT_ID,
+                  sourceHandle: 'out',
+                  targetHandle: 'in',
+                  type: 'arch' as const,
+                  selectable: false,
+                  focusable: false,
+                  zIndex: 2,
+                  data: {
+                    kind: 'next' as const,
+                    from: gateBox,
+                    to: resultAt,
+                    bend: clearBend(gateBox, resultAt, moduleBoxes, 0),
+                    ...(result?.planned ? { planned: true } : {}),
+                    ...exitLive,
+                  },
+                },
+              ]
+            : []),
+        ]
+      : []
+  // Las pastillas de las flechas, cada una donde no tape a nadie: ni a un módulo, ni a una marca (la de
+  // arranque, la de salida), ni a otra pastilla ya puesta.
+  const labelObstacles: { x: number; y: number; w: number; h: number }[] = [
+    ...moduleBoxes,
+    ...(gateBox ? [gateBox] : []),
+    ...startFigures.map((figure) => ({
+      x: figure.x + shiftX,
+      y: figure.y + shiftY,
+      // La marca mide lo que su texto, no lo que su hueco.
+      w: Math.min(figure.w, (figure.label?.length ?? 0) * 6.4 + 34),
+      h: figure.h,
+    })),
+  ]
+  const withLabel = (edge: ArchFlowEdge): ArchFlowEdge => {
+    const text = typeof edge.label === 'string' ? edge.label : ''
+    if (text === '' || !edge.data) return edge
+    const size = labelSize(text)
+    const { from, to, bend = 0 } = edge.data
+    const labelAt = labelSpot(from, to, bend, size, labelObstacles)
+    // Quién llama a quién ya lo dice la flecha (a trazos): si su pastilla no cabe sin tapar a nadie (un
+    // módulo, u otra pastilla), se queda sin ella. Lo que viaja sí se dice siempre.
+    if (
+      edge.data.kind === 'call' &&
+      labelCover(from, to, bend, size, labelObstacles, labelAt) > 0
+    ) {
+      const bare = { ...edge }
+      delete bare.label
+      return bare
+    }
+    const { mid } = archPath(from, to, bend, labelAt)
+    labelObstacles.push({ x: mid.x - size.w / 2, y: mid.y - size.h / 2, ...size })
+    return labelAt === 0.5 ? edge : { ...edge, data: { ...edge.data, labelAt } }
+  }
+  // Primero las de lo que viaja (se dicen siempre); las de llamada, después, en el sitio que quede.
+  const placedLabels = new Map<string, ArchFlowEdge>()
+  for (const edge of archEdges)
+    if (edge.data?.kind !== 'call') placedLabels.set(edge.id, withLabel(edge))
+  for (const edge of archEdges)
+    if (edge.data?.kind === 'call') placedLabels.set(edge.id, withLabel(edge))
+  const labelledEdges: ArchFlowEdge[] = archEdges.map((edge) => placedLabels.get(edge.id) ?? edge)
+  // Al reproducir: el marco de «ahora está aquí», alrededor del módulo (o del resultado) al que se llega.
+  const spotBox = !beat
+    ? undefined
+    : beat.at === RESULT_ID
+      ? (resultAt ?? undefined)
+      : archModules.has(beat.at)
+        ? boxOf.get(beat.at)
+        : undefined
+  const SPOT_AIR = 7
+  const spotFigures: Figure[] = spotBox
+    ? [
+        {
+          id: 'spot',
+          kind: 'spot',
+          x: spotBox.x - shiftX - SPOT_AIR,
+          y: spotBox.y - shiftY - SPOT_AIR,
+          w: spotBox.w + SPOT_AIR * 2,
+          h: spotBox.h + SPOT_AIR * 2,
+        },
+      ]
+    : []
+  /** Las figuras de fondo que dicen la forma: van detrás de todo y no se tocan. */
+  const figureNodes: FigureFlowNode[] = (
+    archModules.size > 0
+      ? [
+          // La compuerta solo se dibuja si hay salida que contar; y lleva su texto.
+          ...(figures ?? []).flatMap((figure) =>
+            figure.kind !== 'gate'
+              ? [figure]
+              : gateFigure
+                ? [{ ...figure, label: exit?.label ?? '' }]
+                : [],
+          ),
+          ...startFigures,
+          ...spotFigures,
+        ]
+      : []
+  ).map((figure) => ({
+    id: `figure:${figure.id}`,
+    type: 'figure' as const,
+    position: { x: figure.x + shiftX, y: figure.y + shiftY },
+    ...nodeFrame({ w: figure.w, h: figure.h }),
+    // Las marcas van por delante: se apoyan en el borde de su módulo.
+    zIndex: figure.kind === 'start' || figure.kind === 'gate' || figure.kind === 'spot' ? 6 : -1,
+    ...(figure.kind === 'spot' ? { className: 'arch-spot-node' } : {}),
+    draggable: false,
+    selectable: false,
+    focusable: false,
+    style: { pointerEvents: 'none' as const },
+    data: { figure },
+  }))
+
+  const roles = new Map(drawnEdges.map((edge) => [edge, flowRole(edge)]))
   /** Cuántos caminos llegan a cada punto: si son varios, se juntan en un punto justo encima de él. */
   const arriving = new Map<string, number>()
   for (const role of roles.values()) {
@@ -1831,7 +2865,7 @@ function CanvasInner({
     arriving.set(key, (arriving.get(key) ?? 0) + 1)
   }
 
-  const flowEdges: PryselFlowEdge[] = visibleEdges.map((edge) => {
+  const flowEdges: PryselFlowEdge[] = drawnEdges.map((edge) => {
     const role = roles.get(edge) ?? null
     const step = role !== null
     return {
@@ -1928,7 +2962,10 @@ function CanvasInner({
       const anchor = anchorRects.get(linkOf.get(node.id)?.from ?? '')
       if (anchor && node.viewer) slots.push({ id: node.id, anchor, size: viewerSize(node.viewer) })
     }
-    const top = moduleTray ? MODULE_TRAY_AT.y + moduleTray.h + 16 : -Infinity
+    const top =
+      moduleTray || sideExtra > 0
+        ? MODULE_TRAY_AT.y + (moduleTray ? moduleTray.h + 16 : 0) + sideExtra
+        : -Infinity
     const placed = placeNotes(slots, MODULE_TRAY_AT.x, 14, top)
     for (const node of sideViewers) {
       const at = placed.get(node.id)
@@ -2093,8 +3130,10 @@ function CanvasInner({
   const onNodesChange = useCallback(
     (changes: NodeChange<AnyFlowNode>[]) => {
       for (const change of changes) {
-        if (change.type !== 'position' || !change.position) continue
-        const { id, position } = change
+        if (change.type !== 'position') continue
+        const position = finitePoint(change.position)
+        if (!position) continue
+        const { id } = change
         // Una nota no entra en el reparto: se lleva a mano, y lo que se aparta se guarda en el guion al soltarla.
         if (noteIds.has(id)) {
           setNoteMoves((previous) => ({ ...previous, [id]: position }))
@@ -2118,7 +3157,12 @@ function CanvasInner({
   )
 
   // Al cambiar el programa, el encuadre se rehace — salvo que el usuario ya lo haya movido.
-  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}`
+  const avoidW = avoid?.w ?? 0
+  const avoidH = avoid?.h ?? 0
+  /** Se está viendo la arquitectura: el encuadre la enseña entera. */
+  const picture = asArchitecture
+  const shape = `${fitKey}|${bounds.w}x${bounds.h}:${placements.length}|${refits}|${settle}|${avoidW}x${avoidH}|${reserveTop}:${reserveBottom}:${reserveLeft}|${picture}`
+  const lastSettle = useRef(settle)
   /**
    * El encuadre lo calcula la propia gramática: ya sabe cuánto ocupa el programa, así que
    * no hace falta que la vista lo redescubra midiendo el DOM (que además llega tarde).
@@ -2126,21 +3170,54 @@ function CanvasInner({
   useEffect(() => {
     const frame = frameRef.current
     if (!frame || taken) return
+    // Lo que se construía ha terminado: la cámara deja de estar donde la llevó la orden y se enseña todo.
+    const settled = lastSettle.current !== settle
+    if (settled) {
+      lastSettle.current = settle
+      spotHeld.current = null
+    }
     const fit = () => {
       // La cámara está donde la dejó una orden: no se la lleva un reencuadre.
       if (spotHeld.current === fitKey) return
       const pad = 24
-      const byWidth = Math.max(0.15, (frame.clientWidth - pad * 2) / bounds.w)
-      const byHeight = Math.max(0.15, (frame.clientHeight - pad * 2) / bounds.h)
+      // Lo que hay para el diagrama: el lienzo, menos las franjas de las barras que flotan arriba y abajo y
+      // el rincón que ocupe la consola (lo que sobresalga de la franja de abajo).
+      const room = roomFor(
+        {
+          w: frame.clientWidth - reserveLeft,
+          h: frame.clientHeight - reserveTop - reserveBottom,
+        },
+        bounds,
+        avoidW > 0 && avoidH > reserveBottom ? { w: avoidW, h: avoidH - reserveBottom } : null,
+        pad,
+      )
+      const byWidth = Math.max(0.15, (room.w - pad * 2) / bounds.w)
+      const byHeight = Math.max(0.15, (room.h - pad * 2) / bounds.h)
       // Un lienzo de trabajo se ajusta al ancho y se recorre; una ilustración se enseña entera.
       const mode = fitMode ?? (interactive ? 'width' : 'contain')
-      const zoom = Math.min(1, mode === 'width' ? byWidth : Math.min(byWidth, byHeight))
+      // Al asentarse, entero si se lee (no por debajo de un tamaño legible); si no, a lo ancho y desde arriba.
+      const whole = Math.min(byWidth, byHeight)
+      const zoom = Math.min(
+        1,
+        // Mientras se construye basta con ver el conjunto; al acabar, entero solo si se lee.
+        mode === 'width'
+          ? // La arquitectura es un dibujo que se ve de una vez (y se colocó para caber en este lienzo): entera,
+            // salvo que entera ya no se lea.
+            picture
+            ? whole >= 0.35
+              ? whole
+              : byWidth
+            : whole >= (follow ? 0.6 : 0.5) && (settled || !follow)
+              ? whole
+              : byWidth
+          : whole,
+      )
       const first = lastFit.current === ''
       lastFit.current = shape
       void setViewport(
         {
-          x: (frame.clientWidth - bounds.w * zoom) / 2,
-          y: Math.max(pad, (frame.clientHeight - bounds.h * zoom) / 2),
+          x: reserveLeft + (room.w - bounds.w * zoom) / 2,
+          y: reserveTop + Math.max(pad, (room.h - bounds.h * zoom) / 2),
           zoom,
         },
         { duration: first || !animate ? 0 : 300 },
@@ -2153,7 +3230,25 @@ function CanvasInner({
     return () => {
       observer.disconnect()
     }
-  }, [shape, taken, setViewport, animate, bounds.w, bounds.h, fitMode, interactive, fitKey])
+  }, [
+    shape,
+    taken,
+    setViewport,
+    animate,
+    bounds.w,
+    bounds.h,
+    fitMode,
+    interactive,
+    fitKey,
+    settle,
+    follow,
+    avoidW,
+    avoidH,
+    reserveTop,
+    reserveBottom,
+    reserveLeft,
+    picture,
+  ])
 
   // El foco de una orden: la cámara va a donde el nodo **va a quedar** (no a donde está a medio camino de
   // su animación), a un tamaño que se lea. Desde ahí la cámara ya no se reencuadra sola: se movió a propósito.
@@ -2163,7 +3258,14 @@ function CanvasInner({
     const frame = frameRef.current
     const gesture = spotlight ? `${spotlight.key}:${spotlight.id}` : ''
     if (!frame || !spotlight || spotDone.current === gesture) return
-    const item = motionItems.find((entry) => entry.id === spotlight.id)
+    // Mientras se construye, la vista es la del conjunto: el gesto se da por hecho sin mover la cámara.
+    // Y en la arquitectura, también: es un dibujo que se ve de una vez (lo nuevo se enciende en su sitio).
+    if (!follow || picture) {
+      spotDone.current = gesture
+      return
+    }
+    const target = spotlight.camera ?? spotlight.id
+    const item = motionItems.find((entry) => entry.id === target)
     if (!item) return
     spotDone.current = gesture
     const { w, h } = item.value.size
@@ -2190,9 +3292,10 @@ function CanvasInner({
       : item.position.y + frame.clientHeight / zoom / 2 - margin / zoom
     void setCenter(item.position.x + w / 2, centerY, {
       zoom,
-      duration: animate ? 450 : 0,
+      // Hacia una caja que crece, despacio: es un acompañar, no un salto.
+      duration: animate ? (spotlight.camera ? 700 : 450) : 0,
     })
-  }, [spotlight, motionItems, setCenter, animate, fitKey])
+  }, [spotlight, motionItems, setCenter, animate, fitKey, follow, picture])
 
   // Un lienzo de trabajo (que se ajusta al ancho) pliega sus filas según el ancho que tiene.
   const narrowing = interactive && (fitMode ?? 'width') === 'width'
@@ -2202,6 +3305,10 @@ function CanvasInner({
     // El observador avisa nada más empezar a mirar: no hace falta medir a mano.
     const observer = new ResizeObserver(() => {
       setRun(runFor(frame.clientWidth))
+      setArchRun(archRunFor(frame.clientWidth))
+      const w = Math.floor(frame.clientWidth / 40) * 40
+      const h = Math.floor(frame.clientHeight / 40) * 40
+      setFrameSize((known) => (known?.w === w && known.h === h ? known : { w, h }))
     })
     observer.observe(frame)
     return () => {
@@ -2235,6 +3342,23 @@ function CanvasInner({
       role="group"
       aria-label={ariaLabel ?? 'Diagrama del programa'}
       onKeyDown={interactive ? onKeyDown : undefined}
+      // Un doble clic en el vacío: lo mismo que el clic derecho, para quien no lo tiene a mano.
+      onDoubleClick={
+        ask && interactive
+          ? (event) => {
+              const frame = frameRef.current?.getBoundingClientRect()
+              if (!frame || !(event.target as HTMLElement).classList.contains('react-flow__pane'))
+                return
+              setMenu(null)
+              setQuick(null)
+              setAsking({
+                x: event.clientX - frame.left,
+                y: event.clientY - frame.top,
+                where: { at: 'canvas' },
+              })
+            }
+          : undefined
+      }
       onPointerDown={
         interactive
           ? (event) => {
@@ -2251,8 +3375,26 @@ function CanvasInner({
         <EdgeDefs />
       </svg>
       <ReactFlow
-        nodes={[...flowNodes, ...dockedNodes, ...sideFlow.nodes, ...noteFlow.nodes]}
-        edges={[...flowEdges, ...sideFlow.edges, ...noteFlow.edges]}
+        nodes={[
+          ...figureNodes,
+          ...flowNodes,
+          ...resultNodes,
+          ...knobsNodes,
+          ...screenNodes,
+          ...dockedNodes,
+          ...sideFlow.nodes,
+          ...noteFlow.nodes,
+        ]}
+        // (Las de la arquitectura son otro tipo de arista; el lienzo solo las dibuja, no las edita.)
+        edges={[
+          ...(labelledEdges as unknown as PryselFlowEdge[]),
+          ...(resultEdges as unknown as PryselFlowEdge[]),
+          ...(knobEdges as unknown as PryselFlowEdge[]),
+          ...(exitEdges as unknown as PryselFlowEdge[]),
+          ...flowEdges,
+          ...sideFlow.edges,
+          ...noteFlow.edges,
+        ]}
         nodeTypes={NODE_TYPES}
         edgeTypes={EDGE_TYPES}
         onNodesChange={interactive ? onNodesChange : undefined}
@@ -2280,6 +3422,42 @@ function CanvasInner({
               }
             : undefined
         }
+        onPaneContextMenu={
+          ask && interactive
+            ? (event) => {
+                // El menú del navegador no pinta nada aquí: se abre la caja para pedir, junto al puntero.
+                event.preventDefault()
+                const frame = frameRef.current?.getBoundingClientRect()
+                if (!frame) return
+                select(null)
+                setQuick(null)
+                setMenu(null)
+                setAsking({
+                  x: event.clientX - frame.left,
+                  y: event.clientY - frame.top,
+                  where: { at: 'canvas' },
+                })
+              }
+            : undefined
+        }
+        onEdgeContextMenu={
+          ask && interactive
+            ? (event, edge) => {
+                // Sobre una flecha entre dos nodos del programa: se pide algo para ahí en medio.
+                if (!byId.has(edge.source) || !byId.has(edge.target)) return
+                event.preventDefault()
+                const frame = frameRef.current?.getBoundingClientRect()
+                if (!frame) return
+                setQuick(null)
+                setMenu(null)
+                setAsking({
+                  x: event.clientX - frame.left,
+                  y: event.clientY - frame.top,
+                  where: { at: 'link', from: edge.source, to: edge.target },
+                })
+              }
+            : undefined
+        }
         onNodeContextMenu={
           connectable && showActions
             ? (event, node) => {
@@ -2287,6 +3465,20 @@ function CanvasInner({
                 event.preventDefault()
                 const frame = frameRef.current?.getBoundingClientRect()
                 if (!frame) return
+                // El resultado no es una sentencia: no tiene menú, pero se puede pedir algo sobre él.
+                if (node.id === RESULT_ID || node.id === PROGRESS_NODE.id) {
+                  if (!ask) return
+                  setQuick(null)
+                  setMenu(null)
+                  setAsking({
+                    x: event.clientX - frame.left,
+                    y: event.clientY - frame.top,
+                    where: { at: node.id === RESULT_ID ? 'result' : 'progress' },
+                  })
+                  return
+                }
+                // (Los demás visores de la cola no tienen menú.)
+                if (node.id === RUNS_ID) return
                 select(node.id)
                 setQuick(null)
                 setMenu({
@@ -2414,8 +3606,70 @@ function CanvasInner({
         elevateNodesOnSelect={false}
       >
         {interactive && <Background variant={BackgroundVariant.Dots} gap={24} size={1.3} />}
+        {ask &&
+          interactive &&
+          selectedId !== null &&
+          byId.has(selectedId) &&
+          !byId.get(selectedId)?.viewer &&
+          menu === null &&
+          !beat && (
+            <NodeToolbar
+              nodeId={selectedId}
+              isVisible
+              position={Position.Top}
+              align="end"
+              offset={6}
+            >
+              <button
+                type="button"
+                className="ask-spark nodrag nopan"
+                title="Pedir algo sobre esto: cambiarlo, preguntar qué hace… (también con clic derecho)"
+                onClick={(event) => {
+                  const frame = frameRef.current?.getBoundingClientRect()
+                  if (!frame) return
+                  setQuick(null)
+                  setAsking(null)
+                  setMenu({
+                    id: selectedId,
+                    x: event.clientX - frame.left - 20,
+                    y: event.clientY - frame.top + 16,
+                  })
+                }}
+              >
+                <Icon name="sparkles" size={12} />
+                Pedir
+              </button>
+            </NodeToolbar>
+          )}
+        {said && byId.has(said.id) && (
+          <NodeToolbar nodeId={said.id} isVisible position={Position.Bottom} offset={10}>
+            <div
+              className="ask-answer nodrag nopan nowheel"
+              role="status"
+              data-tone={said.tone}
+              data-busy={said.busy ? '' : undefined}
+            >
+              <p className="ask-answer__text">{said.text}</p>
+              {!said.busy && (
+                <button
+                  type="button"
+                  className="ask-answer__close"
+                  aria-label="Quitar la respuesta"
+                  onClick={said.onClose}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </NodeToolbar>
+        )}
         {interactive && controls && (
-          <Panel position="bottom-right" className="canvas-controls">
+          <Panel
+            position="bottom-right"
+            className="canvas-controls"
+            // La consola va en esa esquina: los mandos del mapa se ponen encima de ella, no debajo.
+            style={avoidH > 0 ? { marginBottom: avoidH + 8 } : undefined}
+          >
             <IconButton
               icon="plus"
               label="Acercar"
@@ -2464,6 +3718,11 @@ function CanvasInner({
           y={menu.y}
           title={byId.get(menu.id)?.label ?? ''}
           items={menuItems(menu.id)}
+          ask={
+            byId.get(menu.id)?.viewer
+              ? undefined
+              : askFor({ at: 'node', id: menu.id }, 'Cámbialo, o pregunta por ello…')
+          }
           onClose={() => {
             setMenu(null)
           }}
@@ -2488,7 +3747,13 @@ function CanvasInner({
         <QuickAdd
           x={orderAdd.x}
           y={orderAdd.y}
-          title="Crear aquí…"
+          title={ask ? `Después de «${nameOf(orderAdd.from)}»…` : 'Crear aquí…'}
+          ask={askFor(
+            { at: 'after', id: orderAdd.from, port: orderAdd.port },
+            '¿Qué va aquí? Dilo con palabras…',
+          )}
+          // De una parte de la arquitectura no cuelga una sentencia suelta: ahí solo se pide.
+          templates={!asArchitecture}
           onPick={(template) => {
             onAction?.({ type: 'add', template, ...orderPlace(orderAdd.from, orderAdd.port) })
             setOrderAdd(null)
@@ -2504,6 +3769,14 @@ function CanvasInner({
           y={quick.y}
           type={byId.get(quick.from)?.valueType ?? 'any'}
           name={outputName(byId.get(quick.from) as CanvasNode, quick.port) ?? ''}
+          ask={askFor(
+            {
+              at: 'value',
+              id: quick.from,
+              name: outputName(byId.get(quick.from) as CanvasNode, quick.port) ?? '',
+            },
+            '¿Qué hago con ello? Dilo con palabras…',
+          )}
           onPick={(template) => {
             const source = byId.get(quick.from)
             if (source) {
@@ -2518,6 +3791,37 @@ function CanvasInner({
           }}
           onClose={() => {
             setQuick(null)
+          }}
+        />
+      )}
+      {asking && ask && (
+        <AskBubble
+          x={asking.x}
+          y={asking.y}
+          {...(asking.where.at === 'link'
+            ? { title: `De «${nameOf(asking.where.from)}» a «${nameOf(asking.where.to)}»` }
+            : asking.where.at === 'result'
+              ? { title: 'Sobre el resultado' }
+              : asking.where.at === 'progress'
+                ? { title: 'Qué ver en cada vuelta' }
+                : {})}
+          placeholder={
+            asking.where.at === 'link'
+              ? '¿Qué quieres entre los dos?'
+              : asking.where.at === 'result'
+                ? '¿Qué quieres que enseñe al acabar?'
+                : asking.where.at === 'progress'
+                  ? '¿Qué quieres ver avanzar?'
+                  : 'Pide algo: «añade…», «explícame…»'
+          }
+          chips={ask.chips?.(asking.where) ?? []}
+          onSubmit={(text) => {
+            ask.onAsk(text, asking.where)
+          }}
+          {...(ask.onDraft && asking.where.at === 'canvas' ? { onDraft: ask.onDraft } : {})}
+          onClose={() => {
+            ask.onDraft?.(null)
+            setAsking(null)
           }}
         />
       )}

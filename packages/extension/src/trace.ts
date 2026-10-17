@@ -71,13 +71,169 @@ export interface TraceEvent {
   h?: Record<string, HeapObject>
 }
 
+export interface CoastedLoop {
+  l: number
+  f: number
+  n: number
+  e: 'done' | 'break' | 'return' | 'error' | null
+}
+
+/** Lo que el motor dice de los bucles que siguieron tras dejar de grabar, tal como llega (o nada, si no vale). */
+export function coastOf(raw: unknown): { coast: CoastedLoop[] } | Record<string, never> {
+  if (!Array.isArray(raw)) return {}
+  const ends = ['done', 'break', 'return', 'error']
+  const coast = raw.flatMap((item): CoastedLoop[] => {
+    const loop = item as Partial<Record<keyof CoastedLoop, unknown>> | null
+    if (!loop || typeof loop.l !== 'number' || typeof loop.f !== 'number') return []
+    return [
+      {
+        l: loop.l,
+        f: loop.f,
+        n: typeof loop.n === 'number' ? loop.n : 0,
+        e: ends.includes(loop.e as string) ? (loop.e as CoastedLoop['e']) : null,
+      },
+    ]
+  })
+  return coast.length > 0 ? { coast } : {}
+}
+
+/** Lo que el motor dice que se usó tras dejar de grabar, tal como llega (o nada, si no vale). */
+export function laterOf(
+  raw: unknown,
+): { later: NonNullable<Trace['later']> } | Record<string, never> {
+  const found = raw as { calls?: unknown; lines?: unknown } | null
+  if (!found || typeof found !== 'object') return {}
+  const calls: Record<number, number> = {}
+  for (const [line, count] of Object.entries((found.calls ?? {}) as Record<string, unknown>)) {
+    if (Number.isFinite(Number(line)) && typeof count === 'number') calls[Number(line)] = count
+  }
+  const lines = Array.isArray(found.lines)
+    ? found.lines.filter((line): line is number => typeof line === 'number')
+    : []
+  return Object.keys(calls).length + lines.length > 0 ? { later: { calls, lines } } : {}
+}
+
 export interface Trace {
   events: TraceEvent[]
-  /** Se llegó al tope de pasos: la traza está cortada y el programa no acabó. */
+  /** Se llegó al tope de pasos: la traza está cortada (y, salvo `finished`, el programa no acabó). */
   truncated: boolean
+  /**
+   * Con `truncated`: se dejó de grabar el paso a paso, pero el programa siguió hasta acabar. Lo que imprimió
+   * (`output`) está entero; lo que falta es el detalle de sus últimos pasos.
+   */
+  finished?: boolean
+  /**
+   * De los bucles que seguían dando vueltas cuando se dejó de grabar: cuántas veces más se pasó por su
+   * cabecera y cómo se salió de ellos (`null`: no se les vio salir; se acabó el tiempo). `l` es la línea de
+   * la cabecera y `f`, el marco. Con esto se sabe cuántas vueltas dio de verdad un bucle del que solo se
+   * grabaron las primeras.
+   */
+  coast?: CoastedLoop[]
+  /**
+   * Lo que se usó **después** de dejar de grabar: cuántas veces se entró en cada función (por la línea de su
+   * `def`) y qué líneas del programa (fuera de toda función) se pisaron. Con `finished`, sumado a lo grabado,
+   * es todo lo que se usó.
+   */
+  later?: { calls: Record<number, number>; lines: number[] }
+  /** Lo que midieron las sondas, si se pidieron (ver `TraceExtra.watch`). */
+  probe?: Probe
   error: { name: string; message: string; line: number | null } | null
   /** Todo lo que imprimió el programa (el final, si es muy largo). */
   output: string
+}
+
+/**
+ * Lo que se le da de más a una traza para ver funcionar un programa sin nadie delante: las respuestas de
+ * teclado, en orden (cada `input()` toma la siguiente; si se acaban, el programa se queda ahí y la traza
+ * lo dice con el error `NoMoreInput`), y una semilla para que su azar salga igual cada vez.
+ */
+export interface TraceExtra {
+  inputs?: readonly string[]
+  seed?: number
+  /**
+   * Al llegar al tope de pasos, no cortar: dejar de grabar y dejar que el programa acabe (como mucho, unos
+   * segundos), para saber qué da. `true`, o los segundos que se le dan.
+   */
+  finish?: boolean | number
+  /**
+   * **Sondas**: unas expresiones que mirar en cada vuelta de un bucle (el de esa línea). Solo leen: el motor
+   * las revisa antes, y lo que impriman o el azar que gasten no llega al programa.
+   */
+  watch?: { line: number; exprs: readonly string[] }
+}
+
+/**
+ * Lo que valió una sonda en una vuelta: un número, un texto, una lista corta de números (`n`), un tablero
+ * (`g`: sus filas de casillas), o la forma escrita de otra cosa (`o`, que también llevan la lista y el tablero).
+ */
+export type ProbeValue =
+  | number
+  | { s: string }
+  | { o: string }
+  | { n: number[]; o: string }
+  | { g: (string | number)[][]; o: string }
+  | null
+
+/**
+ * Lo que midieron las sondas de un bucle: de cada expresión (`names`), lo que valió al empezar cada vuelta
+ * guardada (`laps`, base 0; con muchas vueltas se guarda una de cada tantas) y al salir. `errors`: por qué
+ * no se pudo mirar una. `total`: las veces que se pasó por la cabecera.
+ */
+export interface Probe {
+  line: number
+  names: string[]
+  laps: number[]
+  values: ProbeValue[][]
+  errors: (string | null)[]
+  total: number
+  cut: boolean
+}
+
+/** Lee `probe` de un evento del motor: lo que no tenga su forma, fuera. */
+export function probeOf(raw: unknown): { probe: Probe } | Record<string, never> {
+  const found = raw as Partial<Record<keyof Probe, unknown>> | null
+  if (!found || typeof found !== 'object') return {}
+  if (typeof found.line !== 'number' || !Array.isArray(found.names)) return {}
+  if (!Array.isArray(found.laps) || !Array.isArray(found.values)) return {}
+  const names = found.names.filter((name): name is string => typeof name === 'string')
+  const laps = found.laps.filter((lap): lap is number => typeof lap === 'number')
+  const value = (item: unknown): ProbeValue => {
+    if (typeof item === 'number') return Number.isFinite(item) ? item : null
+    if (typeof item === 'string') return { o: item }
+    const boxed = item as { s?: unknown; o?: unknown; n?: unknown; g?: unknown } | null
+    if (boxed && typeof boxed.s === 'string') return { s: boxed.s }
+    if (!boxed || typeof boxed.o !== 'string') return null
+    if (Array.isArray(boxed.n) && boxed.n.every((one) => typeof one === 'number')) {
+      return { n: boxed.n as number[], o: boxed.o }
+    }
+    const cell = (one: unknown) => typeof one === 'number' || typeof one === 'string'
+    if (
+      Array.isArray(boxed.g) &&
+      boxed.g.every((row) => Array.isArray(row) && (row as unknown[]).every(cell))
+    ) {
+      return { g: boxed.g as (string | number)[][], o: boxed.o }
+    }
+    return { o: boxed.o }
+  }
+  const values = names.map((_, at) => {
+    const column = (found.values as unknown[])[at]
+    return Array.isArray(column) ? column.slice(0, laps.length).map(value) : []
+  })
+  const errors = names.map((_, at) => {
+    const problem = Array.isArray(found.errors) ? (found.errors as unknown[])[at] : null
+    return typeof problem === 'string' ? problem : null
+  })
+  return {
+    probe: {
+      line: found.line,
+      names,
+      laps,
+      values,
+      errors,
+      total: typeof found.total === 'number' ? found.total : laps.length,
+      cut: found.cut === true,
+    },
+  }
 }
 
 export interface FrameState {

@@ -263,6 +263,13 @@ const GENERIC_ARG = /^(arg\d+|valor)$/
 export const labelsArgs = (args: readonly { name: string }[]): boolean =>
   args.length > 1 && args.some((arg) => !GENERIC_ARG.test(arg.name))
 
+/**
+ * Si un argumento lleva su rótulo en la línea: no cuando lo que se le pasa se llama igual que él
+ * (`poblacion=poblacion`), que sería leer dos veces lo mismo y quitarle sitio a lo demás.
+ */
+export const labelsArg = (arg: { name: string; value: string }): boolean =>
+  arg.name !== arg.value.trim()
+
 /** Cuántos argumentos se enseñan en la línea: los de siempre, y los conectados nunca se esconden. */
 export function lineArgs<T extends { name: string }>(
   args: readonly T[],
@@ -319,7 +326,10 @@ export function lineWidth(
       10 +
       shown.reduce(
         (sum, arg) =>
-          sum + lineField(arg.value, 60) + (label ? Math.ceil(arg.name.length * 6.4) + 4 : 0) + gap,
+          sum +
+          lineField(arg.value, 60) +
+          (label && labelsArg(arg) ? Math.ceil(arg.name.length * 6.4) + 4 : 0) +
+          gap,
         0,
       ) +
       (hidden > 0 ? 26 : 0) +
@@ -327,7 +337,9 @@ export function lineWidth(
   }
   // Varias pastillas abren la línea con más sitio: sin él, sus campos se aprietan hasta no leerse. Lo que va
   // aparte (el chevron, las pastillas de los subprocesos) no le quita sitio a los campos.
-  const cap = (names.length > 1 ? 800 : 560) + extra
+  // El tope es alto a propósito: una llamada con varios argumentos largos tiene que caber entera. Más
+  // estrecha, sus casillas se montan unas sobre otras y el nombre de la función se corta.
+  const cap = (names.length > 1 ? 1200 : 1100) + extra
   return Math.min(cap, Math.max(180, 30 + icon + gap + chip + title + inner + extra))
 }
 
@@ -471,7 +483,35 @@ export const SECTION = {
   /** Cuántos chips caben a cada lado de la flecha; el resto se cuenta («+2»). */
   uses: 3,
   leaves: 4,
+  /**
+   * Dicha solo con palabras (en la arquitectura): las letras que caben en una línea del título y del
+   * subtítulo (se parten en dos líneas antes que ensanchar la tarjeta: estrecha, el diagrama se ve más
+   * grande), lo que mide de alto cada línea del título, y su ancho mínimo.
+   */
+  plainTitle: 17,
+  plainLine: 25,
+  titleLine: 19,
+  plainMin: 180,
 } as const
+
+/**
+ * Un texto partido por sus palabras en líneas de hasta `max` letras. Si no cabe en `lines` líneas, se da más
+ * ancho (de letra en letra) hasta que quepa: una palabra larga no se corta.
+ */
+export function wrapWords(text: string, max: number, lines = 2): string[] {
+  const words = text.trim().split(/\s+/).filter(Boolean)
+  if (words.length === 0) return []
+  for (let width = Math.max(1, max); ; width++) {
+    const rows: string[] = []
+    for (const word of words) {
+      const last = rows[rows.length - 1]
+      if (last !== undefined && last.length + 1 + word.length <= width) {
+        rows[rows.length - 1] = `${last} ${word}`
+      } else rows.push(word)
+    }
+    if (rows.length <= lines || width > text.length) return rows
+  }
+}
 
 /** Lo que mide un chip o una pastilla con ese nombre en una tarjeta de etapa. */
 export const sectionChipWidth = (name: string) => Math.ceil(name.length * 6.8 + 22)
@@ -510,8 +550,34 @@ export function sectionCardSize(card: {
   callees: readonly string[]
   /** Cuántos glifos de lo que esconde (bucle, decisión, salida) lleva. */
   glyphs: number
+  /**
+   * Dicha solo con palabras: su título y su subtítulo (en dos líneas si es largo), sin los nombres del código
+   * (lo que usa, lo que deja, a quién llama). Así es un módulo en la arquitectura: se lee de lejos, y el
+   * código queda a un gesto (abrirla).
+   */
+  plain?: boolean
 }): { w: number; h: number } {
   const indent = SECTION.pad + SECTION.badge + 10
+  if (card.plain) {
+    const longest = (rows: readonly string[]) => Math.max(0, ...rows.map((row) => row.length))
+    const title = wrapWords(card.title, SECTION.plainTitle)
+    const sub = wrapWords(card.subtitle ?? '', SECTION.plainLine)
+    const width = Math.max(
+      // El número, el papel, el título y el botón de abrirla. Con un poco de holgura: si el texto no cabe
+      // en sus líneas, se corta.
+      indent + SECTION.badge + Math.ceil(longest(title) * 8.4) + 10 + 20 + SECTION.pad + 6,
+      sub.length === 0 ? 0 : indent + longest(sub) * 6.9 + SECTION.pad + 8,
+    )
+    return {
+      w: snap(clamp(width, SECTION.plainMin, SECTION.max)),
+      // La cabecera (más alta si el título va en dos líneas) y, debajo, el hueco y las líneas del subtítulo.
+      h: snap(
+        SECTION.pad * 2 +
+          Math.max(SECTION.head, title.length * SECTION.titleLine) +
+          (sub.length === 0 ? 0 : SECTION.gap + sub.length * SECTION.sub),
+      ),
+    }
+  }
   const chips = (names: readonly string[], max: number) =>
     names.slice(0, max).reduce((sum, name) => sum + sectionChipWidth(name) + 4, 0) +
     (names.length > max ? 30 : 0)

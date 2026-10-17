@@ -3,13 +3,16 @@ import type { Assets, KernelStatus, RunView } from './runs.ts'
 import { LESSON_LIMITS, parseLesson, type Lesson } from './lesson.ts'
 import type { Trace } from './trace.ts'
 import type { CallEntry } from './calls.ts'
+import type { Gist, RunSummary } from './gist/gist.ts'
 import {
   INTENTS,
+  PLACES,
   type Decision,
   type Directive,
   type Evidence,
   type Forced,
   type Intent,
+  type PlaceId,
 } from './jev/engine.ts'
 import { TEMPLATE_IDS, type TemplateId } from '@prysel/morphology'
 
@@ -122,6 +125,8 @@ export interface GeneratedMessage {
   jevMs?: number
   /** Ya no queda nada en marcha de esa orden. */
   done?: boolean
+  /** Lo construido es una sola función o clase (la línea de su cabecera): la vista entra en ella. */
+  enter?: number
 }
 
 /**
@@ -150,6 +155,27 @@ export interface StepMessage {
   effect?: 'born' | 'told' | 'changed' | 'leaving'
   /** La cámara enseña el conjunto, no solo la pieza (lo decide el JEV). */
   wide?: boolean
+  /**
+   * La pieza entra en una parte del plan que se deja plegada: se señala la tarjeta de esa parte (la intención),
+   * no se abre para enseñar la línea. Quien quiera el detalle, abre la tarjeta.
+   */
+  folded?: boolean
+  /** La línea donde se queda la cámara mientras la pieza entra: la cabecera de lo que se construye. */
+  anchor?: number
+}
+
+/**
+ * Extensión → webview: lo que el usuario parece estar pidiendo, por lo que lleva dicho (aún no ha acabado
+ * la frase). El lienzo dibuja su hueco y lo va actualizando palabra a palabra.
+ */
+export interface PreviewMessage {
+  type: 'preview'
+  /** Qué clase de cosa es (`funcion`, `clase`, `programa`…; `nada`: aún no se sabe). */
+  kind: string
+  /** Lo que lleva dicho. */
+  text: string
+  /** Si lo dicho es ya una orden entera (1) o la frase está a medias (0). Lo dice el JEV. */
+  complete?: number
 }
 
 /**
@@ -183,13 +209,119 @@ export interface SayMessage {
   focus?: string
   /** Si lo lleva, el lienzo avisa (`spoken`) cuando ha terminado de decirlo. */
   seq?: number
+  /**
+   * Un comentario al margen de lo que se está escribiendo: sale como subtítulo y se dice solo si no se está
+   * diciendo otra cosa (no corta a nadie, ni nadie espera por él).
+   */
+  aside?: boolean
+}
+
+/**
+ * Extensión → webview: «qué hace» cada función, con una muestra ejecutada de verdad. `version` es la del
+ * texto del que salió; cada una lleva además el resumen de su función, y solo vale mientras coincida.
+ */
+export interface GistsMessage {
+  type: 'gists'
+  version: number
+  gists: Gist[]
+  /** Cómo le fue al programa entero al ejecutarlo (lo que salió por pantalla). */
+  run?: RunSummary
+}
+
+/**
+ * Extensión → webview: qué pieza del programa cubre cada parte de lo que se pidió, según el JEV. Va con las
+ * mismas `parts` y `pieces` que se preguntaron. Por parte: el nombre de la pieza, `''` si está seguro de que
+ * ninguna la cubre, o `null` si no lo sabe.
+ */
+export interface CoveredMessage {
+  type: 'covered'
+  parts: string[]
+  pieces: string[]
+  by: (string | null)[]
+  /** Las piezas eran las etapas del plan, aún sin escribir. */
+  plan?: boolean
+}
+
+/**
+ * Extensión → webview: la arquitectura **planeada** de lo que se está construyendo. Cada módulo, por su
+ * título, y de cuáles de los otros necesita algo. Vale para los módulos que aún no tienen código.
+ */
+export interface ArchitectureMessage {
+  type: 'architecture'
+  modules: { title: string; needs: string[] }[]
+  /** El plan ya está entero (no llegan más partes): se puede decidir su forma. */
+  complete?: boolean
+}
+
+/**
+ * Extensión → webview: la petición era abierta y se eligió una **versión concreta** para construirla. Las que
+ * se propusieron, cuál se hace, y lo que se pidió (para poder pedir otra de ellas).
+ */
+export interface FlavoursMessage {
+  type: 'flavours'
+  command: string
+  options: { title: string; shows: string }[]
+  chosen: number
+}
+
+/**
+ * Extensión → webview: lo que dijo el JEV de la arquitectura que se le preguntó (`key` es la de la pregunta).
+ * El papel de cada módulo, en su orden (`null`: no lo sabe), y la forma (`null`: no elige).
+ */
+export interface ArchedMessage {
+  type: 'arched'
+  key: string
+  roles: (string | null)[]
+  shape: string | null
+}
+
+/**
+ * Extensión → webview: lo que dijo el JEV de las constantes que se le preguntaron (`key` es la de la
+ * pregunta): de cada una, en su orden, cómo se maneja (`no`: no es un ajuste; `null`: no lo sabe).
+ */
+export interface ConfiguredMessage {
+  type: 'configured'
+  key: string
+  kinds: (string | null)[]
+}
+
+/**
+ * Anfitrión → webview: lo que hace el programa **en marcha para usarlo** (su `pantalla`): una orden de la
+ * pantalla (`screen`: sonar, un botón, dibujar…), lo que imprime (`out`), un fallo, que terminó de atender lo
+ * último (`idle`), que está arrancando (`loading`) o que el motor se paró (`fatal`).
+ */
+export type ScreenedMessage = { type: 'screened' } & (
+  | { ev: 'screen'; command: Record<string, unknown> }
+  | { ev: 'out'; text: string }
+  | { ev: 'error'; name: string; message: string; line: number | null }
+  | { ev: 'idle' }
+  | { ev: 'loading' }
+  | { ev: 'fatal'; message: string }
+)
+
+/**
+ * Anfitrión → webview: pedir algo **como si se hubiera escrito en el lienzo** (el comando «Prysel: Pedir…»
+ * de VS Code). El lienzo lo trata igual que lo que se teclea en su caja.
+ */
+export interface AskMessage {
+  type: 'ask'
+  text: string
 }
 
 export type WebviewMessage =
+  | AskMessage
+  | ScreenedMessage
+  | ConfiguredMessage
+  | GistsMessage
+  | CoveredMessage
+  | ArchitectureMessage
+  | FlavoursMessage
+  | ArchedMessage
   | DecisionMessage
   | GeneratedMessage
   | StepMessage
   | ProgressMessage
+  | PreviewMessage
   | CallMessage
   | ModelsMessage
   | SayMessage
@@ -275,6 +407,16 @@ export interface CommandMessage {
   selected: string | null
   focus: string | null
   force?: Forced
+  /**
+   * Hacer **otra versión** de lo que se pidió: una de las que se propusieron al construirlo (ver
+   * `FlavoursMessage`). El programa se rehace desde el principio con ella; `text` es la petición de entonces.
+   */
+  flavour?: { title: string; shows: string }
+  /**
+   * La orden se dio **sobre** `selected`, en el propio lienzo (en su menú, o al soltar un cable que sale de
+   * ello): habla de eso aunque no lo nombre. `place`: el gesto dice, además, dónde va lo nuevo.
+   */
+  pointed?: { place?: PlaceId }
 }
 
 /** Guardar la clave de TypeSafe (la pide VS Code en su propia caja: el lienzo nunca la ve). */
@@ -293,8 +435,127 @@ export interface SpokenMessage {
 }
 
 /** Detener lo que una orden esté construyendo paso a paso. */
+/** Volver a ejecutar el programa con otra suerte: el azar saldrá distinto. No cambia el código. */
+export interface RerollMessage {
+  type: 'reroll'
+}
+
+/**
+ * Decir **qué se quiere ver** en el visor de cómo avanza («cuántas letras acierta el peor»). La IA lo
+ * convierte en algo que mirar en cada vuelta, y el programa se vuelve a ejecutar midiéndolo. `''`: volver a
+ * lo que elija Prysel.
+ */
+export interface WatchMessage {
+  type: 'watch'
+  text: string
+}
+
 export interface StopOrderMessage {
   type: 'stopOrder'
+}
+
+/**
+ * Deshacer la última orden entera («no, eso no»): todo lo que escribió, aunque fueran muchos pasos, de una
+ * vez. No es el deshacer del lienzo, que va cambio a cambio.
+ */
+export interface UndoOrderMessage {
+  type: 'undoOrder'
+}
+
+/**
+ * El usuario ha empezado a hablar (`on`) o ha dejado de hacerlo sin decir nada que valga. Mientras habla, lo
+ * que se esté construyendo se queda quieto: va a decir algo, y puede cambiarlo todo.
+ */
+export interface ListeningMessage {
+  type: 'listening'
+  on: boolean
+  /** Lo que lleva dicho hasta ahora: con ello se va adelantando qué está pidiendo. */
+  text?: string
+}
+
+/**
+ * Lo que se pidió (`what`) nombraba unas partes, y el programa ya tiene unas piezas: ¿cuál cubre cada parte?
+ * Lo decide el JEV (una pregunta cerrada por parte); la respuesta llega en `covered`.
+ */
+export interface CoverMessage {
+  type: 'cover'
+  what: string
+  parts: string[]
+  pieces: string[]
+  /** Las piezas son las etapas del plan: se pregunta cuál se ocupará de cada parte, no cuál lo hace ya. */
+  plan?: boolean
+}
+
+/**
+ * Arrancar un programa que define su función principal y no la llama: se le añade al final una etapa que la
+ * llama con un ejemplo y enseña lo que da.
+ */
+export interface LaunchMessage {
+  type: 'launch'
+}
+
+/**
+ * El programa, visto como módulos: de cada uno, su título y lo que su código deja ver; y las formas que su
+ * grafo tiene de verdad. El JEV dice el papel de cada uno y qué forma lo cuenta mejor (llega en `arched`).
+ */
+export interface ArchMessage {
+  type: 'arch'
+  /** Lo que identifica la pregunta: la respuesta la trae de vuelta. */
+  key: string
+  modules: { title: string; does: string }[]
+  shapes: string[]
+}
+
+/**
+ * Las constantes con las que empieza el programa: de cada una, su nombre, su valor escrito, una línea donde se
+ * usa y las formas de manejarla que su dato admite. El JEV dice cuáles son su configuración y cómo se maneja
+ * cada una (llega en `configured`).
+ */
+export interface ConfigMessage {
+  type: 'config'
+  key: string
+  items: { name: string; value: string; use: string; options: string[] }[]
+}
+
+/**
+ * El programa **en marcha para usarlo** (su `pantalla`): arrancarlo de cero con el código de ahora, una
+ * pulsación (de un botón, una tecla o lo que se repite con `cada`; `id` es el de su función), o pararlo.
+ */
+/** Un fallo dentro del lienzo (un error de JavaScript que nadie atrapó): quien lo aloja lo apunta. */
+export interface WebviewErrorMessage {
+  type: 'webviewError'
+  message: string
+}
+
+export interface ScreenMessage {
+  type: 'screen'
+  action: 'start' | 'press' | 'stop'
+  id?: number
+  args?: (string | number)[]
+  /** Es lo que se repite solo (`cada`): si aún está con lo anterior, este se salta (no se amontonan). */
+  tick?: boolean
+}
+
+/**
+ * Quien lo usa juega el programa: `answers` son todas las respuestas de teclado que lleva dadas, en orden (el
+ * programa se vuelve a ejecutar con ellas y se para en la siguiente pregunta). `null`: volver a la sesión de
+ * ejemplo. `fresh`: una partida nueva (si el programa tira de azar, con otra suerte).
+ */
+export interface PlayMessage {
+  type: 'play'
+  answers: string[] | null
+  fresh?: boolean
+}
+
+/**
+ * Probar una función con otros datos: `call` es la llamada, escrita solo con valores (`total([3, 4])`); se
+ * ejecuta de verdad y su tarjeta enseña lo que pasó. `null`: volver a la muestra del programa.
+ */
+export interface TryCallMessage {
+  type: 'tryCall'
+  /** El id del nodo de la función. */
+  id: string
+  call: string | null
 }
 
 /** Olvidar las consultas apuntadas. */
@@ -311,6 +572,18 @@ export type HostMessage =
   | CommandMessage
   | JevKeyMessage
   | StopOrderMessage
+  | RerollMessage
+  | WatchMessage
+  | UndoOrderMessage
+  | ListeningMessage
+  | CoverMessage
+  | ArchMessage
+  | ConfigMessage
+  | ScreenMessage
+  | WebviewErrorMessage
+  | LaunchMessage
+  | PlayMessage
+  | TryCallMessage
   | SpokenMessage
   | ClearCallsMessage
   | PickModelMessage
@@ -330,8 +603,27 @@ const MAX_EDITS = 64
 const MAX_TEXT = 200_000
 const MAX_RUN_IDS = 500
 /** Una orden es una frase: lo que pase de aquí no lo es. */
-export const MAX_COMMAND = 400
+export const MAX_COMMAND = 2000
 const MAX_ID = 200
+
+/** Lo que puede medir la llamada con la que se prueba una función (sus datos caben de sobra). */
+const MAX_TRY_CALL = 2000
+/** Cuántos módulos caben en una arquitectura, y lo que puede medir la clave de su pregunta. */
+const MAX_ARCH_MODULES = 16
+const MAX_ARCH_KEY = 6000
+/** Cuántas constantes se le preguntan al JEV de una vez. */
+const MAX_CONFIG_ITEMS = 12
+/** Cuántas respuestas de teclado caben en una partida jugada a mano. */
+export const MAX_PLAY_ANSWERS = 80
+
+/** Cuántas partes de lo pedido y cuántas piezas del programa caben en una pregunta de `cover`. */
+export const MAX_COVER_PARTS = 6
+export const MAX_COVER_PIECES = 24
+
+/** Una lista de nombres cortos, como los de las partes de lo pedido o las piezas del programa. */
+const namesOf = (value: unknown): value is string[] =>
+  Array.isArray(value) &&
+  value.every((one) => typeof one === 'string' && one !== '' && one.length <= MAX_COMMAND)
 
 const DIRECTIVE_KINDS = ['do', 'ask', 'several', 'ignored', 'unknown', 'failed']
 
@@ -355,6 +647,22 @@ const isId = (value: unknown): value is string =>
   typeof value === 'string' && value !== '' && value.length <= MAX_ID
 
 /** Lo que el usuario aclaró: solo lo que se conoce, y nada más. */
+/** Una versión concreta de una petición abierta, tal como llega: su título y lo que se verá. */
+function parseFlavour(value: unknown): { title: string; shows: string } | null {
+  const { title, shows } = (value ?? {}) as { title?: unknown; shows?: unknown }
+  if (typeof title !== 'string' || title.trim() === '' || title.length > 80) return null
+  if (typeof shows !== 'string' || shows.length > 240) return null
+  return { title: title.trim(), shows: shows.trim() }
+}
+
+function parsePointed(value: unknown): { place?: PlaceId } | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { place } = value as { place?: unknown }
+  if (place === undefined) return {}
+  const known = PLACES.find((id) => id === place)
+  return known === undefined ? null : { place: known }
+}
+
 function parseForced(value: unknown): Forced | null {
   if (typeof value !== 'object' || value === null) return null
   const { intent, piece, target } = value as { intent?: unknown; piece?: unknown; target?: unknown }
@@ -479,10 +787,126 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (!['running', 'done', 'failed'].includes(entry.status as string)) return null
     return { type: 'call', entry: entry as CallEntry }
   }
+  if (type === 'gists') {
+    const { version, gists } = value as Partial<GistsMessage>
+    if (!Number.isInteger(version) || !Array.isArray(gists)) return null
+    const sound = gists.every(
+      (gist: Partial<Gist> | null) =>
+        typeof gist === 'object' &&
+        gist !== null &&
+        typeof gist.id === 'string' &&
+        typeof gist.name === 'string' &&
+        typeof gist.hash === 'string' &&
+        typeof gist.status === 'string',
+    )
+    const run = (value as { run?: Partial<RunSummary> | null }).run
+    const ran =
+      typeof run === 'object' &&
+      run !== null &&
+      typeof run.output === 'string' &&
+      typeof run.ended === 'string'
+    return sound
+      ? {
+          type: 'gists',
+          version: version as number,
+          gists,
+          ...(ran ? { run: run as RunSummary } : {}),
+        }
+      : null
+  }
   if (type === 'progress') {
     const { gen, text } = value as Partial<ProgressMessage>
     if (typeof gen !== 'string' || typeof text !== 'string' || text === '') return null
     return { type: 'progress', gen, text }
+  }
+  if (type === 'flavours') {
+    const { command, options, chosen } = value as Record<string, unknown>
+    if (typeof command !== 'string' || !Array.isArray(options) || options.length > 6) return null
+    const read = options.flatMap((option: unknown) => parseFlavour(option) ?? [])
+    if (read.length !== options.length || read.length === 0) return null
+    if (!Number.isInteger(chosen) || (chosen as number) < 0 || (chosen as number) >= read.length)
+      return null
+    return { type: 'flavours', command, options: read, chosen: chosen as number }
+  }
+  if (type === 'architecture') {
+    const { modules } = value as { modules?: unknown }
+    if (!Array.isArray(modules) || modules.length > MAX_ARCH_MODULES) return null
+    const read = modules.flatMap((module: unknown) => {
+      const { title, needs } = (module ?? {}) as { title?: unknown; needs?: unknown }
+      return typeof title === 'string' && title !== '' && namesOf(needs ?? [])
+        ? [{ title, needs: (needs ?? []) as string[] }]
+        : []
+    })
+    const { complete } = value as { complete?: unknown }
+    return read.length === modules.length
+      ? { type: 'architecture', modules: read, ...(complete === true ? { complete: true } : {}) }
+      : null
+  }
+  if (type === 'arched') {
+    const { key, roles, shape } = value as { key?: unknown; roles?: unknown; shape?: unknown }
+    if (typeof key !== 'string' || !Array.isArray(roles)) return null
+    if (!roles.every((role) => role === null || typeof role === 'string')) return null
+    if (shape !== null && typeof shape !== 'string') return null
+    return { type: 'arched', key, roles: roles as (string | null)[], shape }
+  }
+  if (type === 'ask') {
+    const { text } = value as { text?: unknown }
+    return typeof text === 'string' && text.trim() !== '' && text.length <= MAX_COMMAND
+      ? { type: 'ask', text: text.trim() }
+      : null
+  }
+  if (type === 'screened') {
+    const event = value as Record<string, unknown>
+    const { ev } = event
+    if (ev === 'screen') {
+      const { command } = event
+      return command !== null && typeof command === 'object' && !Array.isArray(command)
+        ? { type: 'screened', ev, command: command as Record<string, unknown> }
+        : null
+    }
+    if (ev === 'out')
+      return typeof event['text'] === 'string'
+        ? { type: 'screened', ev, text: event['text'] }
+        : null
+    if (ev === 'error') {
+      const { name, message, line } = event
+      if (typeof name !== 'string' || typeof message !== 'string') return null
+      return { type: 'screened', ev, name, message, line: typeof line === 'number' ? line : null }
+    }
+    if (ev === 'fatal') {
+      return typeof event['message'] === 'string'
+        ? { type: 'screened', ev, message: event['message'] }
+        : null
+    }
+    if (ev === 'idle' || ev === 'loading') return { type: 'screened', ev }
+    return null
+  }
+  if (type === 'configured') {
+    const { key, kinds } = value as { key?: unknown; kinds?: unknown }
+    if (typeof key !== 'string' || !Array.isArray(kinds)) return null
+    if (!kinds.every((kind) => kind === null || typeof kind === 'string')) return null
+    return { type: 'configured', key, kinds: kinds as (string | null)[] }
+  }
+  if (type === 'covered') {
+    const { parts, pieces, by } = value as { parts?: unknown; pieces?: unknown; by?: unknown }
+    if (!namesOf(parts) || !namesOf(pieces) || !Array.isArray(by)) return null
+    if (by.length !== parts.length || !by.every((one) => one === null || typeof one === 'string')) {
+      return null
+    }
+    return {
+      type: 'covered',
+      parts,
+      pieces,
+      by: by as (string | null)[],
+      ...((value as { plan?: unknown }).plan === true ? { plan: true } : {}),
+    }
+  }
+  if (type === 'preview') {
+    const { kind, text } = value as Partial<PreviewMessage>
+    const complete = (value as { complete?: unknown }).complete
+    return typeof kind === 'string' && typeof text === 'string'
+      ? { type: 'preview', kind, text, ...(typeof complete === 'number' ? { complete } : {}) }
+      : null
   }
   if (type === 'models') {
     const { ai, jev } = value as Partial<ModelsMessage>
@@ -537,13 +961,20 @@ export function parseHostMessage(value: unknown): HostMessage | null {
     return Number.isInteger(version) ? { type: 'trace', version: version as number } : null
   }
   if (type === 'command') {
-    const { id, text, version, selected, focus, force } = value as Record<string, unknown>
+    const { id, text, version, selected, focus, force, flavour, pointed } = value as Record<
+      string,
+      unknown
+    >
     if (!Number.isInteger(id) || !Number.isInteger(version)) return null
     if (typeof text !== 'string' || text.trim() === '' || text.length > MAX_COMMAND) return null
     if (selected !== null && !isId(selected)) return null
     if (focus !== null && !isId(focus)) return null
     const forced = force === undefined ? undefined : parseForced(force)
     if (forced === null) return null
+    const version2 = flavour === undefined ? undefined : parseFlavour(flavour)
+    if (version2 === null) return null
+    const gesture = pointed === undefined ? undefined : parsePointed(pointed)
+    if (gesture === null) return null
     return {
       type: 'command',
       id: id as number,
@@ -552,10 +983,119 @@ export function parseHostMessage(value: unknown): HostMessage | null {
       selected,
       focus,
       ...(forced === undefined ? {} : { force: forced }),
+      ...(version2 === undefined ? {} : { flavour: version2 }),
+      ...(gesture === undefined ? {} : { pointed: gesture }),
     }
   }
   if (type === 'jevKey') return { type: 'jevKey' }
   if (type === 'stopOrder') return { type: 'stopOrder' }
+  if (type === 'reroll') return { type: 'reroll' }
+  if (type === 'watch') {
+    const { text } = value as { text?: unknown }
+    return typeof text === 'string' && text.length <= MAX_COMMAND
+      ? { type: 'watch', text: text.trim() }
+      : null
+  }
+  if (type === 'undoOrder') return { type: 'undoOrder' }
+  if (type === 'listening') {
+    const { on, text } = value as { on?: unknown; text?: unknown }
+    if (typeof on !== 'boolean') return null
+    return typeof text === 'string' && text !== ''
+      ? { type: 'listening', on, text: text.slice(0, MAX_COMMAND) }
+      : { type: 'listening', on }
+  }
+  if (type === 'launch') return { type: 'launch' }
+  if (type === 'arch') {
+    const { key, modules, shapes } = value as { key?: unknown; modules?: unknown; shapes?: unknown }
+    if (typeof key !== 'string' || key.length > MAX_ARCH_KEY || !namesOf(shapes)) return null
+    if (!Array.isArray(modules) || modules.length < 2 || modules.length > MAX_ARCH_MODULES) {
+      return null
+    }
+    const read = modules.flatMap((module: unknown) => {
+      const { title, does } = (module ?? {}) as { title?: unknown; does?: unknown }
+      return typeof title === 'string' && title !== '' && typeof does === 'string'
+        ? [{ title: title.slice(0, 80), does: does.slice(0, 300) }]
+        : []
+    })
+    return read.length === modules.length ? { type: 'arch', key, modules: read, shapes } : null
+  }
+  if (type === 'webviewError') {
+    const { message } = value as { message?: unknown }
+    return typeof message === 'string'
+      ? { type: 'webviewError', message: message.slice(0, 600) }
+      : null
+  }
+  if (type === 'screen') {
+    const { action, id, args } = value as { action?: unknown; id?: unknown; args?: unknown }
+    if (action !== 'start' && action !== 'press' && action !== 'stop') return null
+    if (action !== 'press') return { type: 'screen', action }
+    if (!Number.isInteger(id)) return null
+    const given = Array.isArray(args)
+      ? args.filter(
+          (one): one is string | number => typeof one === 'string' || typeof one === 'number',
+        )
+      : []
+    return {
+      type: 'screen',
+      action,
+      id: id as number,
+      args: given.slice(0, 4),
+      ...((value as { tick?: unknown }).tick === true ? { tick: true } : {}),
+    }
+  }
+  if (type === 'config') {
+    const { key, items } = value as { key?: unknown; items?: unknown }
+    if (typeof key !== 'string' || key.length > MAX_ARCH_KEY || !Array.isArray(items)) return null
+    if (items.length === 0 || items.length > MAX_CONFIG_ITEMS) return null
+    const read = items.flatMap((item: unknown) => {
+      const { name, value, use, options } = (item ?? {}) as {
+        name?: unknown
+        value?: unknown
+        use?: unknown
+        options?: unknown
+      }
+      return typeof name === 'string' &&
+        name !== '' &&
+        typeof value === 'string' &&
+        typeof use === 'string' &&
+        namesOf(options)
+        ? [{ name: name.slice(0, 80), value: value.slice(0, 200), use: use.slice(0, 200), options }]
+        : []
+    })
+    return read.length === items.length ? { type: 'config', key, items: read } : null
+  }
+  if (type === 'tryCall') {
+    const { id, call } = value as { id?: unknown; call?: unknown }
+    if (typeof id !== 'string' || id === '' || id.length > MAX_ID) return null
+    if (call === null) return { type: 'tryCall', id, call: null }
+    if (typeof call !== 'string' || call.trim() === '' || call.length > MAX_TRY_CALL) return null
+    return { type: 'tryCall', id, call }
+  }
+  if (type === 'play') {
+    const { answers, fresh } = value as { answers?: unknown; fresh?: unknown }
+    if (answers === null) return { type: 'play', answers: null }
+    if (!Array.isArray(answers) || answers.length > MAX_PLAY_ANSWERS) return null
+    if (!answers.every((one) => typeof one === 'string' && one.length <= MAX_COMMAND)) return null
+    return {
+      type: 'play',
+      answers: answers as string[],
+      ...(fresh === true ? { fresh: true } : {}),
+    }
+  }
+  if (type === 'cover') {
+    const { what, parts, pieces } = value as { what?: unknown; parts?: unknown; pieces?: unknown }
+    if (typeof what !== 'string' || !namesOf(parts) || !namesOf(pieces)) return null
+    if (parts.length === 0 || parts.length > MAX_COVER_PARTS || pieces.length > MAX_COVER_PIECES) {
+      return null
+    }
+    return {
+      type: 'cover',
+      what: what.slice(0, MAX_COMMAND),
+      parts,
+      pieces,
+      ...((value as { plan?: unknown }).plan === true ? { plan: true } : {}),
+    }
+  }
   if (type === 'spoken') {
     const { seq, spoke } = value as { seq?: unknown; spoke?: unknown }
     return Number.isInteger(seq) && typeof spoke === 'boolean'

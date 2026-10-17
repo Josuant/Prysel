@@ -13,6 +13,8 @@ export interface AskOption {
   label: string
   force?: Forced
   order?: string
+  /** Deshace lo último que se hizo (se ofrece cuando un cambio rompió el programa). */
+  undo?: boolean
 }
 
 export type OrderState =

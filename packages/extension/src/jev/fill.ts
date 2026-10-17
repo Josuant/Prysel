@@ -1,3 +1,4 @@
+import { dedent } from './modify.ts'
 import { TEMPLATES, type TemplateId } from '@prysel/morphology'
 import type { Program, ProgramNode } from '@prysel/python'
 import { templateLines } from '@prysel/python/edits'
@@ -149,7 +150,8 @@ export async function generateFill(
     else if (typeof value?.code !== 'string' || typeof value.say !== 'string') {
       error = 'Faltan «code» o «say» (dos textos).'
     } else {
-      const code = value.code.replace(/\r\n/g, '\n').replace(/\s+$/, '')
+      // Si viene con la sangría del sitio donde va, se le quita aquí: no hace falta volver a pedirlo.
+      const code = dedent(value.code.replace(/\r\n/g, '\n').replace(/\s+$/, ''))
       const problem = checkFill(runtime, request.template, code)
       if (problem === null) {
         return { ok: true, code, say: value.say.trim().slice(0, MAX_SAY), attempts: attempt }
@@ -162,6 +164,44 @@ export async function generateFill(
 }
 
 /** Explicar un elemento que ya existe: una o dos frases para leer en voz alta. */
+/**
+ * Contesta una pregunta sobre el programa («¿cómo sabe cuándo he ganado?») mirándolo entero: una o dos
+ * frases para decir en voz alta, y la línea que lo decide, para señalarla. `null` si no hubo respuesta.
+ */
+export async function answerQuestion(
+  provider: AiProvider,
+  program: Program,
+  question: string,
+  /** Lo que estaba seleccionado al preguntar («esto»): sus líneas. */
+  about?: { from: number; to: number },
+): Promise<{ said: string; line: number | null } | null> {
+  const numbered = program.source
+    .split(/\r?\n/)
+    .map((row, at) => `${at + 1}: ${row}`)
+    .join('\n')
+    .slice(0, MAX_CONTEXT * 2)
+  try {
+    const raw = await provider.generate({
+      system:
+        'Respondes una pregunta sobre un programa en Python a quien lo está construyendo y no quiere leer el código. ' +
+        'Primera línea de tu respuesta: solo «LINEA: n», con el número de la línea del programa que lo decide. ' +
+        'Después, una o dos frases cortas en español, sin código ni formato: se leerán en voz alta. ' +
+        'Habla de lo que hace ESTE programa, no de programación en general.',
+      prompt: `La pregunta: ${question}${about ? `\n\n«Esto» es lo que va de la línea ${about.from} a la ${about.to}.` : ''}\n\nEl programa, con sus números de línea:\n${numbered}`,
+      maxTokens: 300,
+    })
+    const found = /^\s*L[IÍ]NEA:\s*(\d+)/i.exec(raw)
+    const said = raw
+      .replace(/^\s*L[IÍ]NEA:\s*\d+\s*/i, '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .slice(0, MAX_SAY)
+    return said === '' ? null : { said, line: found ? Number(found[1]) : null }
+  } catch {
+    return null
+  }
+}
+
 export async function explainNode(
   provider: AiProvider,
   program: Program,

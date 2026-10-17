@@ -1,5 +1,6 @@
 import { classify, incoming, outgoing } from './classify.ts'
 import { layoutFlowchart } from './flowchart.ts'
+import { layoutArchitecture, type Architecture } from './architecture.ts'
 import {
   SCOPE_FRAME,
   type Axis,
@@ -39,6 +40,18 @@ export interface LayoutOptions {
   maxRun?: number
   /** Separación entre filas plegadas. */
   gapRun?: number
+  /**
+   * La arquitectura del programa: con ella, el plano de fuera no es una columna de pasos sino sus módulos
+   * colocados según su forma. Lo que hay dentro de cada módulo se sigue colocando como siempre.
+   */
+  architecture?: Architecture
+  /** Lo más ancho que puede ser una fila de módulos de la arquitectura (lo que cabe a un tamaño legible). */
+  architectureWidth?: number
+  /** El lienzo en el que se verá la arquitectura, y lo que irá a su cola (el resultado): ver `layoutArchitecture`. */
+  architectureFrame?: { w: number; h: number }
+  architectureTail?: { w: number; h: number }
+  /** En un ciclo: lo que mide su compuerta de salida (ver `layoutArchitecture`). */
+  architectureGate?: { w: number; h: number }
 }
 
 /** Lo que mide de largo una fila antes de plegar a la siguiente, si no se dice otra cosa. */
@@ -66,6 +79,9 @@ const SPREAD = {
   /** Altura del arco que describe el cuerpo de un bucle sobre su cabecera. */
   orbit: 0.55,
 }
+
+/** Entre la arquitectura y las sentencias sueltas que no son de ningún módulo. */
+const LOOSE_GAP = 56
 
 /** Hueco al final del programa para el arco de una conexión de retorno. */
 const FEEDBACK_ROOM = 86
@@ -401,8 +417,61 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     flow
       ? layoutFlowchart(g, o.padding === undefined ? {} : { padding: o.padding })
       : layoutFlat(g, o)
+  /**
+   * El plano de fuera. Con arquitectura (y al menos dos de sus módulos a la vista), los módulos van donde
+   * diga su forma; lo que no es de ningún módulo (unas sentencias sueltas) baja debajo, en su orden.
+   */
+  const surface = (g: SemanticGraph, o: LayoutOptions): LayoutResult => {
+    const architecture = o.architecture
+    const wanted = new Set(architecture?.modules.map((module) => module.id))
+    const modules = g.nodes.filter((node) => wanted.has(node.id))
+    if (!architecture || modules.length < 2) return flat(g, o)
+    const arch = layoutArchitecture(
+      architecture,
+      new Map(modules.map((node) => [node.id, node.size])),
+      {
+        ...(o.architectureWidth === undefined ? {} : { maxWidth: o.architectureWidth }),
+        ...(o.architectureFrame === undefined ? {} : { frame: o.architectureFrame }),
+        ...(o.architectureTail === undefined ? {} : { tail: o.architectureTail }),
+        ...(o.architectureGate === undefined ? {} : { gate: o.architectureGate }),
+      },
+    )
+    const loose = g.nodes.filter((node) => !wanted.has(node.id))
+    const rest =
+      loose.length === 0
+        ? null
+        : flat(
+            {
+              nodes: loose,
+              edges: g.edges.filter((e) => !wanted.has(e.from) && !wanted.has(e.to)),
+            },
+            { ...o, padding: 0 },
+          )
+    const below = arch.bounds.h + LOOSE_GAP
+    const left = rest ? Math.max(0, Math.round((arch.bounds.w - rest.bounds.w) / 2)) : 0
+    const placements: Placement[] = [
+      ...modules.map((node) => {
+        const at = arch.positions.get(node.id) ?? { x: 0, y: 0 }
+        return { id: node.id, size: node.size, region: 'architecture', row: 0, x: at.x, y: at.y }
+      }),
+      ...(rest?.placements ?? []).map((p) => ({ ...p, x: p.x + left, y: p.y + below })),
+    ]
+    return {
+      placements,
+      regions: rest?.regions ?? [],
+      layers: Object.fromEntries(placements.map((p, at) => [p.id, at])),
+      axis: 'vertical',
+      rows: 1,
+      scopes: {},
+      bounds: {
+        w: Math.max(arch.bounds.w, (rest?.bounds.w ?? 0) + left),
+        h: rest ? below + rest.bounds.h + (o.padding ?? DEFAULTS.padding) : arch.bounds.h,
+      },
+      figures: arch.figures,
+    }
+  }
   const scopes = findScopes(graph)
-  if (scopes.size === 0) return flat(graph, options)
+  if (scopes.size === 0) return surface(graph, options)
 
   const byId = new Map(graph.nodes.map((n) => [n.id, n]))
   const parentOf = new Map<string, string>()
@@ -501,7 +570,7 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
       { from, to, relation: e.relation, ...(e.label === undefined ? {} : { label: e.label }) },
     ]
   })
-  const outer = flat(
+  const outer = surface(
     {
       nodes: graph.nodes
         .filter((n) => !parentOf.has(n.id))
@@ -543,6 +612,7 @@ export function layout(graph: SemanticGraph, options: LayoutOptions = {}): Layou
     bounds: outer.bounds,
     scopes: Object.fromEntries(scopes),
     ...(outer.spine === undefined ? {} : { spine: outer.spine }),
+    ...(outer.figures ? { figures: outer.figures } : {}),
     ...(flow
       ? {
           spines: Object.fromEntries(
