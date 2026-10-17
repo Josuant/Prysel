@@ -151,6 +151,17 @@ describe('los mandos de un programa', () => {
     expect(knobsOf(source).map((knob) => knob.name)).toEqual(['TOPE'])
   })
 
+  it('lo que monta la pantalla (qué hace cada botón) no es con qué arranca', () => {
+    const source = lines(
+      'import pantalla',
+      'def tocar(nota):',
+      '    return lambda: pantalla.sonar(nota)',
+      'pantalla.boton("Do", tocar("do"))',
+      'pantalla.tecla("a", tocar("do"))',
+    )
+    expect(knobsOf(source, [{ name: 'tocar', params: ['nota'] }])).toEqual([])
+  })
+
   it('una llamada a algo que no es del programa no da mandos', () => {
     const source = lines('import random', 'x = random.randint(1, 6)', 'print(max(3, x))')
     expect(knobsOf(source, FUNCTIONS)).toEqual([])

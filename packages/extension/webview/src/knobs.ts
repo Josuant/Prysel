@@ -185,8 +185,10 @@ export function knobsOf(
           const start = offset + line.indexOf(value.text, name.length + 1)
           knobs.push(knob(name, value, start, at + 1, 'constant'))
         }
-      } else {
-        // Una llamada a una función del programa, con valores escritos: los datos con los que arranca.
+      } else if (!/^pantalla\.\w+\s*\(/.test(line)) {
+        // Una llamada a una función del programa, con valores escritos: los datos con los que arranca. (Las
+        // que van dentro de lo que monta la pantalla —`pantalla.boton("do", tocar("do"))`— no arrancan
+        // nada: dicen qué hace cada botón.)
         for (const call of line.matchAll(/\b([A-Za-z_]\w*)\(/g)) {
           const params = byName.get(call[1] ?? '')
           if (!params) continue
