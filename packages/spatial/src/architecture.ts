@@ -741,7 +741,16 @@ export function layoutArchitecture(
       })
     }
     boxes = [...best.circle, ...best.column]
-  } else if (architecture.shape === 'embudo' && anchor !== undefined) {
+  } else if (
+    architecture.shape === 'embudo' &&
+    anchor !== undefined &&
+    // (Un embudo sin nada que entre —se quitó del dibujo lo que entraba— no es un embudo: va por capas.)
+    ids.some((id) =>
+      architecture.links.some(
+        (link) => link.kind === 'data' && link.from === id && link.to === anchor,
+      ),
+    )
+  ) {
     // Arriba, a lo ancho, lo que entra; debajo, donde se junta; y más abajo, lo que sale de ahí.
     const feeds = new Set(
       architecture.links
@@ -778,7 +787,16 @@ export function layoutArchitecture(
       h: narrow.y + narrow.h + 14 - (wide.y - 18),
       narrow: narrow.w + 36,
     })
-  } else if (architecture.shape === 'abanico' && anchor !== undefined) {
+  } else if (
+    architecture.shape === 'abanico' &&
+    anchor !== undefined &&
+    // (Igual: un abanico sin nadie que use lo que sale de él va por capas.)
+    ids.some((id) =>
+      architecture.links.some(
+        (link) => link.kind === 'data' && link.from === anchor && link.to === id,
+      ),
+    )
+  ) {
     // A la izquierda, de dónde sale; a la derecha, en arco, quienes lo usan; lo demás, debajo.
     const takes = new Set(
       architecture.links

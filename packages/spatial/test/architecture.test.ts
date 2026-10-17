@@ -422,3 +422,26 @@ describe('el plano de fuera, con arquitectura', () => {
     expect(plane.scopes.menu).toEqual(['a', 'b'])
   })
 })
+
+describe('una forma que se quedó sin lo que la hacía', () => {
+  it('un embudo sin nada que entre (o un abanico sin quien use) va por capas, sin medidas imposibles', () => {
+    const sizes = new Map(['a', 'b', 'c'].map((id) => [id, { w: 200, h: 80 }]))
+    for (const shape of ['embudo', 'abanico'] as const) {
+      const out = layoutArchitecture(
+        {
+          modules: ['a', 'b', 'c'].map((id) => ({ id, role: 'logica' as const })),
+          links: [{ from: 'b', to: 'c', kind: 'next' as const }],
+          shape,
+          anchor: 'b',
+        },
+        sizes,
+      )
+      for (const figure of out.figures) {
+        expect([figure.x, figure.y, figure.w, figure.h].every(Number.isFinite)).toBe(true)
+      }
+      for (const point of out.positions.values()) {
+        expect(Number.isFinite(point.x) && Number.isFinite(point.y)).toBe(true)
+      }
+    }
+  })
+})
