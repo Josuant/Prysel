@@ -3256,8 +3256,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           role="note"
           className="border-b border-border-card bg-surface px-3 py-1.5 text-[11px] leading-4 text-ink-muted"
         >
-          {unsupported.length} construcciones sin entender (líneas{' '}
-          {unsupported.map((u) => u.line).join(', ')}) — se muestran como nodos opacos.
+          {unsupported.length === 1
+            ? `1 construcción sin entender (línea ${unsupported[0]?.line ?? ''}): se muestra como un nodo opaco.`
+            : `${unsupported.length} construcciones sin entender (líneas ${unsupported.map((u) => u.line).join(', ')}): se muestran como nodos opacos.`}
         </div>
       )}
 

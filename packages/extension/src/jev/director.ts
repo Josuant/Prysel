@@ -1,4 +1,4 @@
-import type { Program } from '@prysel/python'
+import type { Program, ProgramNode } from '@prysel/python'
 import {
   applyEdits,
   clearGenerating,
@@ -504,7 +504,12 @@ export async function build(
   players: Players,
   request: BuildRequest,
 ): Promise<Outcome> {
-  return review(host, players, request.command, await buildOnce(host, players, request))
+  return review(
+    host,
+    players,
+    request.command,
+    await tidy(host, players, await buildOnce(host, players, request)),
+  )
 }
 
 async function buildOnce(
@@ -1246,7 +1251,114 @@ export async function modify(
   players: Players,
   request: ModifyRequest,
 ): Promise<Outcome> {
-  return review(host, players, request.command, await modifyOnce(host, players, request))
+  return review(
+    host,
+    players,
+    request.command,
+    await tidy(host, players, await modifyOnce(host, players, request)),
+  )
+}
+
+// ───────────────────────── ordenar: nada fuera de una etapa ─────────────────────────
+
+/**
+ * Lo de primer nivel que quedó **fuera de toda etapa** en un programa que sí las tiene: lo que va antes de su
+ * primer rótulo (lo de después es siempre de alguna). En el diagrama eso no es ningún módulo: se queda suelto
+ * debajo, y la idea del programa no lo cuenta.
+ */
+export function orphansOf(program: Program): ProgramNode[] {
+  const top = (program.sections ?? []).filter((section) => section.owner === undefined)
+  if (top.length === 0) return []
+  const first = Math.min(...top.map((section) => section.line))
+  return program.nodes
+    .filter((node) => node.range && node.range.owner === undefined && node.line < first)
+    .sort((a, b) => a.line - b.line)
+}
+
+/** Cómo se ordena, sin IA: los datos (lo que se importa y se guarda) por un lado y las funciones por otro. */
+export function plainStagesFor(orphans: readonly ProgramNode[]): { at: number; title: string }[] {
+  const isPiece = (node: ProgramNode) =>
+    node.kind === 'abstraction.collapsed' || node.kind === 'abstraction.class'
+  const firstPiece = orphans.findIndex(isPiece)
+  if (firstPiece <= 0) {
+    return [
+      {
+        at: 0,
+        title:
+          firstPiece === 0
+            ? 'Las piezas: las funciones que usa el programa'
+            : 'Preparar los datos: lo que usa el programa',
+      },
+    ]
+  }
+  return [
+    { at: 0, title: 'Preparar los datos: lo que usa el programa' },
+    { at: firstPiece, title: 'Las piezas: las funciones que usa el programa' },
+  ]
+}
+
+/** Lee la propuesta de la IA: líneas «N | Título: qué hace», la primera en 1, en orden, como mucho tres. */
+export function stagesFrom(text: string, count: number): { at: number; title: string }[] | null {
+  const stages: { at: number; title: string }[] = []
+  for (const line of text.split('\n')) {
+    const found = /^\s*(\d+)\s*[|:)-]\s*(.+?)\s*$/.exec(line)
+    if (!found) continue
+    const at = Number(found[1]) - 1
+    const title = (found[2] ?? '').replace(/^#+\s*/, '').replace(/^[«"]|[»"]$/g, '')
+    if (!/^[^:]{2,40}:\s+\S.{2,80}$/.test(title)) return null
+    if (at < 0 || at >= count || (stages.length > 0 && at <= (stages.at(-1)?.at ?? -1))) return null
+    stages.push({ at, title })
+  }
+  return stages.length >= 1 && stages.length <= 3 && stages[0]?.at === 0 ? stages : null
+}
+
+/**
+ * **Ordenar**: si al acabar una orden queda código de primer nivel fuera de toda etapa, se le ponen sus
+ * rótulos (la IA los propone, agrupando lo que va junto; si no contesta, datos por un lado y funciones por
+ * otro). Son comentarios en el código, como los demás: se ven, se renombran y se pueden deshacer.
+ */
+async function tidy(host: Stagehand, players: Players, outcome: Outcome): Promise<Outcome> {
+  if (outcome.stopped || outcome.written === 0 || host.signal.aborted) return outcome
+  const program = await host.program()
+  const orphans = orphansOf(program)
+  if (orphans.length === 0) return outcome
+  await host.show({ type: 'progress', text: 'Pongo en su etapa lo que quedó suelto…' })
+  const listed = orphans
+    .map((node, at) => `${at + 1}. ${(node.text ?? node.label).split('\n')[0]?.slice(0, 90) ?? ''}`)
+    .join('\n')
+  let stages: { at: number; title: string }[] | null = null
+  try {
+    stages = stagesFrom(
+      await players.provider.generate({
+        system: [
+          'Este es el principio de un programa en Python, que quedó sin rótulo de etapa: sus sentencias de primer nivel, numeradas (la primera línea de cada una).',
+          'Agrúpalas en 1 a 3 etapas SEGUIDAS, según lo que hacen juntas (los datos que usa, las piezas que dibujan algo, las que calculan…).',
+          'Responde solo con una línea por etapa: «N | Título: qué hace», donde N es el número de la sentencia con la que empieza (la primera, 1), el título tiene de dos a cuatro palabras y lo que hace, menos de diez. Sin nada más.',
+        ].join('\n'),
+        prompt: listed,
+        maxTokens: 200,
+      }),
+      orphans.length,
+    )
+  } catch {
+    stages = null
+  }
+  stages ??= plainStagesFor(orphans)
+  const source = program.source
+  const eol = source.includes('\r\n') ? '\r\n' : '\n'
+  const edits = stages.flatMap(({ at, title }) => {
+    const node = orphans[at]
+    const start = node?.range ? (node.range.lead ?? node.range.start) : undefined
+    if (start === undefined) return []
+    // Una línea en blanco delante (salvo al principio del archivo), como entre las demás etapas.
+    const before = source.slice(0, start)
+    const gap = start === 0 || /\n\s*\n$/.test(before) ? '' : eol
+    return [{ start, end: start, text: `${gap}# ${title}${eol}` }]
+  })
+  if (edits.length === 0) return outcome
+  // (Si no se pudiera escribir, lo hecho sigue igual de hecho: solo queda sin ordenar.)
+  await host.write({ edits })
+  return outcome
 }
 
 /**
