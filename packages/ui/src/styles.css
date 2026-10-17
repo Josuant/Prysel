@@ -7797,6 +7797,28 @@ button.run-panel__line:hover {
   gap: 6px;
   padding: 10px 12px 12px;
 }
+.screen-node__canvas[data-touchable] {
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.screen-node__start {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  gap: 8px;
+  margin: auto 0;
+  padding: 10px 22px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.screen-node__start:hover {
+  filter: brightness(1.08);
+}
 .screen-node__canvas {
   align-self: center;
   border-radius: 6px;

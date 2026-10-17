@@ -68,6 +68,40 @@ describe.skipIf(!available)('al mirarlo sin nadie delante', () => {
     expect(second.output.split('[pulso «do»]').length - 1).toBe(1)
   }, 30_000)
 
+  it('los colores se dicen en español; uno que no existe es un error (no un lienzo negro)', async () => {
+    const good = await kernel.trace(
+      lines(
+        'import pantalla',
+        'pantalla.lienzo(100, 100, "blanco")',
+        'pantalla.rect(0, 0, 10, 10, "azul claro")',
+        'pantalla.mostrar()',
+      ),
+      20_000,
+    )
+    expect(good.error).toBeNull()
+    const bad = await kernel.trace(
+      lines('import pantalla', 'pantalla.rect(0, 0, 1, 1, "azulito")'),
+      20_000,
+    )
+    expect(bad.error?.message).toContain('No conozco el color «azulito»')
+  }, 30_000)
+
+  it('lo dibujado se pulsa (zonas y el lienzo entero), y se dice qué ofrece la pantalla para usarla', async () => {
+    const trace = await kernel.trace(
+      lines(
+        'import pantalla',
+        'pantalla.lienzo(200, 100)',
+        'pantalla.zona(0, 0, 50, 50, lambda: pantalla.sonar("do"))',
+        'pantalla.al_tocar(lambda x, y: print("toque", x, y))',
+        'pantalla.mostrar()',
+      ),
+      20_000,
+    )
+    expect(trace.output).toContain('suena do')
+    expect(trace.output).toContain('toque 100 50')
+    expect(trace.output).toContain('[pantalla: 0 botones, 0 teclas, 1 zonas, se toca el lienzo')
+  }, 30_000)
+
   it('una nota que no existe se dice', async () => {
     const trace = await kernel.trace(lines('import pantalla', 'pantalla.sonar("dó#9x")'), 20_000)
     expect(trace.error?.name).toBe('ValueError')
@@ -99,6 +133,12 @@ describe('lo que enseña la pantalla en el lienzo', () => {
     // Dibujar sin pedir un lienzo pone uno de tamaño normal.
     expect(state.canvas).toMatchObject({ w: 400, h: 300, shapes: [{ shape: 'circle', r: 5 }] })
     expect(state.timers).toEqual([{ id: 4, secs: 0.5 }])
+    const touchable = applyScreen(
+      applyScreen(state, { op: 'zone', id: 5, x: 0, y: 0, w: 10, h: 10 }),
+      { op: 'touch', id: 6 },
+    )
+    expect(touchable.zones).toEqual([{ id: 5, x: 0, y: 0, w: 10, h: 10 }])
+    expect(touchable.touch).toBe(6)
     expect(applyScreen(state, { op: 'stop' }).timers).toEqual([])
     expect(applyScreen(state, { op: 'clear' }).canvas?.shapes).toEqual([])
     expect(restartScreen(state)).toMatchObject({

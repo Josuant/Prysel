@@ -115,6 +115,7 @@ import {
   keyLabel,
   keyMatches,
   playNote,
+  unlockSound,
   restartScreen,
   usesScreen,
   withOutput,
@@ -581,6 +582,11 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [configKinds, setConfigKinds] = useState<Readonly<Record<string, string | null>>>({})
   /** La pantalla del programa en marcha (ver `screen.ts`). */
   const [screen, setScreen] = useState<ScreenState>(EMPTY_SCREEN)
+  /**
+   * Se pulsó «Empezar» en la pantalla: desde entonces se pone en marcha sola al cambiar el código. Antes no,
+   * porque el navegador no deja sonar nada hasta que se pulsa algo: lo que sonara al arrancar se perdería.
+   */
+  const [screenArmed, setScreenArmed] = useState(false)
   const configAsked = useRef(new Set<string>())
   const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
   /**
@@ -2082,13 +2088,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       post({ type: 'screen', action: 'stop' })
       return
     }
+    if (!screenArmed) return
     const timer = window.setTimeout(() => {
       post({ type: 'screen', action: 'start' })
     }, SCREEN_WAIT_MS)
     return () => {
       window.clearTimeout(timer)
     }
-  }, [screenSource])
+  }, [screenSource, screenArmed])
   // Lo que se repite (`pantalla.cada`): se pulsa solo, a su ritmo, mientras está en marcha.
   const screenTimers = screen.phase === 'running' ? screen.timers : null
   useEffect(() => {
@@ -2129,24 +2136,31 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   }, [screenKeys])
   const printed = screen.output.split('\n').filter((line) => line.trim() !== '')
   const screenPanel: ScreenPanel | null =
-    screenSource !== null && screen.phase !== 'idle'
+    screenSource !== null
       ? {
           view: {
-            phase: screen.phase,
+            // Hasta que se pulsa «Empezar», esperando.
+            phase: screenArmed ? screen.phase : 'idle',
             title: screen.title,
             // Lo que escribe en la pantalla; si no escribe nada en ella, lo último que imprime.
             lines: screen.lines.length > 0 ? screen.lines : printed.slice(-4),
             buttons: screen.buttons,
             keys: screen.keys.map((one) => keyLabel(one.key)),
-            canvas: screen.canvas,
+            canvas: screenArmed ? screen.canvas : null,
+            zones: screen.zones,
+            touch: screen.touch,
             error: screen.error,
           },
-          onPress: (id: number) => {
+          onPress: (id: number, args?: readonly number[]) => {
             setScreen((known) => (known.error ? { ...known, error: null } : known))
-            post({ type: 'screen', action: 'press', id })
+            post({ type: 'screen', action: 'press', id, ...(args ? { args: [...args] } : {}) })
           },
           onRestart: () => {
-            post({ type: 'screen', action: 'start' })
+            // Es una pulsación: ahora el navegador deja sonar.
+            unlockSound()
+            // La primera vez la pone en marcha el aviso de arriba; después, se vuelve a arrancar de cero.
+            if (screenArmed) post({ type: 'screen', action: 'start' })
+            else setScreenArmed(true)
           },
         }
       : null

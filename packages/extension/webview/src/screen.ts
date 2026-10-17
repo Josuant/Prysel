@@ -17,6 +17,10 @@ export interface ScreenState {
   lines: string[]
   buttons: { id: number; label: string; color?: string }[]
   keys: { id: number; key: string }[]
+  /** Partes del lienzo que se pulsan (una tecla dibujada). */
+  zones: { id: number; x: number; y: number; w: number; h: number }[]
+  /** Lo que se llama al pulsar en cualquier sitio del lienzo (con dónde), si lo hay. */
+  touch: number | null
   timers: { id: number; secs: number }[]
   canvas: { w: number; h: number; bg: string; shapes: ScreenShape[] } | null
   /** Lo que imprimió (el final). */
@@ -32,6 +36,8 @@ export const EMPTY_SCREEN: ScreenState = {
   lines: [],
   buttons: [],
   keys: [],
+  zones: [],
+  touch: null,
   timers: [],
   canvas: null,
   output: '',
@@ -73,6 +79,22 @@ export function applyScreen(state: ScreenState, command: Record<string, unknown>
     case 'key': {
       const id = num(command['id'], -1)
       return id < 0 ? state : { ...state, keys: [...state.keys, { id, key: str(command['key']) }] }
+    }
+    case 'zone': {
+      const id = num(command['id'], -1)
+      if (id < 0) return state
+      const zone = {
+        id,
+        x: num(command['x']),
+        y: num(command['y']),
+        w: num(command['w']),
+        h: num(command['h']),
+      }
+      return { ...state, zones: [...state.zones, zone].slice(-200) }
+    }
+    case 'touch': {
+      const id = num(command['id'], -1)
+      return id < 0 ? state : { ...state, touch: id }
     }
     case 'timer': {
       const id = num(command['id'], -1)
@@ -199,19 +221,27 @@ export const keyLabel = (name: string): string =>
 
 let audio: AudioContext | null = null
 
+/** El sonido de la página, creado (o despertado) ahora: llamado al pulsar algo, que es cuando el navegador lo deja. */
+export function unlockSound(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  const Context =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  if (!Context) return null
+  audio ??= new Context()
+  if (audio.state === 'suspended') void audio.resume()
+  return audio
+}
+
 /**
  * Suena una nota: `hz` hercios durante `secs` segundos, empezando dentro de `delay` segundos. Una envolvente
  * corta (ataque rápido, caída suave), como una tecla de piano sencilla. El primer sonido necesita que se haya
  * pulsado algo en la página (así lo exigen los navegadores): lo de antes no suena.
  */
 export function playNote(hz: number, secs: number, delay = 0) {
-  if (typeof window === 'undefined' || !Number.isFinite(hz) || hz <= 0) return
-  const Context =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-  if (!Context) return
-  audio ??= new Context()
-  if (audio.state === 'suspended') void audio.resume()
+  if (!Number.isFinite(hz) || hz <= 0) return
+  const audio = unlockSound()
+  if (!audio) return
   const start = audio.currentTime + Math.max(0, delay) + 0.01
   const length = Math.min(8, Math.max(0.05, secs))
   const gain = audio.createGain()

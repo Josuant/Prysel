@@ -977,6 +977,27 @@ const NO_FACTS: readonly ModuleFacts[] = []
  * función enfocada, con la principal desplegada en el programa; lo plegado según la densidad (compacto, todo;
  * normal, las etapas hoja; expandido, nada) y lo que el usuario o un momento de la lección dieron la vuelta.
  */
+/**
+ * Qué cambia al pulsar plegar/abrir en algo. Si estaba abierto **para enseñar algo** (`revealed`: lo que una
+ * orden quiere que se vea), pulsarlo es dejar de enseñarlo: se quita de ahí. Darle la vuelta, como a lo demás,
+ * no valdría: al plegarse, lo que enseñaba deja de verse, se deja de revelar… y la vuelta lo volvía a abrir.
+ */
+export function afterToggle(
+  id: string,
+  revealed: ReadonlySet<string>,
+  flipped: ReadonlySet<string>,
+): { revealed: ReadonlySet<string>; flipped: ReadonlySet<string> } {
+  if (revealed.has(id) && !flipped.has(id)) {
+    const next = new Set(revealed)
+    next.delete(id)
+    return { revealed: next, flipped }
+  }
+  const next = new Set(flipped)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  return { revealed, flipped: next }
+}
+
 export function viewOf(
   all: CanvasNode[],
   edges: SemanticEdge[],
@@ -1171,15 +1192,11 @@ export function useProgramView(
 
   const toggle = useCallback(
     (id: string) => {
-      setState((previous) => {
-        const from = previous.mode === mode ? previous.flipped : NONE
-        const next = new Set(from)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return { mode, flipped: next }
-      })
+      const after = afterToggle(id, revealed, flipped)
+      if (after.revealed !== revealed) setRevealed(after.revealed)
+      if (after.flipped !== flipped) setState({ mode, flipped: after.flipped })
     },
-    [mode],
+    [mode, revealed, flipped],
   )
 
   const open = useCallback((id: string | null) => {

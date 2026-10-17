@@ -16,6 +16,7 @@ export type ScreenShapeView =
   | { shape: 'text'; x: number; y: number; text: string; color: string; size: number }
 
 export interface ScreenView {
+  /** `idle`: aún no se ha puesto en marcha (se espera a «Empezar», que además deja sonar). */
   phase: 'idle' | 'loading' | 'running' | 'failed'
   title: string | null
   lines: readonly string[]
@@ -23,13 +24,17 @@ export interface ScreenView {
   /** Las teclas que usa, ya dichas para leerlas («a», «espacio», «←»). */
   keys: readonly string[]
   canvas: { w: number; h: number; bg: string; shapes: readonly ScreenShapeView[] } | null
+  /** Partes del lienzo que se pulsan; y si pulsar en cualquier otro sitio también hace algo. */
+  zones?: readonly { id: number; x: number; y: number; w: number; h: number }[]
+  touch?: number | null
   error: { message: string; line: number | null } | null
 }
 
 export interface ScreenPanel {
   view: ScreenView
-  onPress: (id: number) => void
-  /** Volver a arrancarlo de cero. */
+  /** Una pulsación: de un botón, una zona del lienzo o (con dónde, `[x, y]`) del lienzo entero. */
+  onPress: (id: number, args?: readonly number[]) => void
+  /** Volver a arrancarlo de cero (o ponerlo en marcha la primera vez). */
   onRestart: () => void
 }
 
@@ -136,7 +141,32 @@ export function ScreenNode({ data }: NodeProps<ScreenFlowNode>) {
         </button>
       </header>
       <div className="screen-node__body">
-        {view.canvas && <Drawing canvas={view.canvas} width={size.w - PAD * 2} />}
+        {view.phase === 'idle' && (
+          <button type="button" className="screen-node__start" onClick={panel.onRestart}>
+            <span aria-hidden>▶</span> Empezar
+          </button>
+        )}
+        {view.canvas && (
+          <Drawing
+            canvas={view.canvas}
+            width={size.w - PAD * 2}
+            onPoint={
+              view.phase === 'running' && ((view.zones?.length ?? 0) > 0 || view.touch != null)
+                ? (x, y) => {
+                    // La zona de más arriba (la última que se dibujó) gana; si no hay, el lienzo entero.
+                    const zone = [...(view.zones ?? [])]
+                      .reverse()
+                      .find(
+                        (one) =>
+                          x >= one.x && x <= one.x + one.w && y >= one.y && y <= one.y + one.h,
+                      )
+                    if (zone) panel.onPress(zone.id)
+                    else if (view.touch != null) panel.onPress(view.touch, [x, y])
+                  }
+                : undefined
+            }
+          />
+        )}
         {view.buttons.length > 0 && (
           <div className="screen-node__buttons">
             {view.buttons.map((button) => (
@@ -199,7 +229,16 @@ export function ScreenNode({ data }: NodeProps<ScreenFlowNode>) {
 }
 
 /** El lienzo donde dibuja el programa, a escala para que quepa. */
-function Drawing({ canvas, width }: { canvas: NonNullable<ScreenView['canvas']>; width: number }) {
+function Drawing({
+  canvas,
+  width,
+  onPoint,
+}: {
+  canvas: NonNullable<ScreenView['canvas']>
+  width: number
+  /** Se pulsó en el lienzo, en (x, y) de sus propias medidas. */
+  onPoint?: ((x: number, y: number) => void) | undefined
+}) {
   const ref = useRef<HTMLCanvasElement>(null)
   const scale = Math.min(1, width / canvas.w)
   useEffect(() => {
@@ -234,7 +273,22 @@ function Drawing({ canvas, width }: { canvas: NonNullable<ScreenView['canvas']>;
       className="screen-node__canvas"
       width={canvas.w}
       height={canvas.h}
+      data-touchable={onPoint ? '' : undefined}
       style={{ width: canvas.w * scale, height: canvas.h * scale }}
+      onPointerDown={
+        onPoint
+          ? (event) => {
+              if (event.button !== 0) return
+              event.preventDefault()
+              const box = event.currentTarget.getBoundingClientRect()
+              // (El lienzo puede verse más pequeño, y el diagrama, con zoom: se pasa a sus medidas.)
+              onPoint(
+                Math.round(((event.clientX - box.left) / box.width) * canvas.w),
+                Math.round(((event.clientY - box.top) / box.height) * canvas.h),
+              )
+            }
+          : undefined
+      }
     />
   )
 }

@@ -1328,7 +1328,10 @@ export const SCREEN_GUIDE = [
   'pantalla.tecla(nombre, funcion): una tecla del teclado («a», «espacio», «izquierda», «derecha», «arriba», «abajo», «intro»).',
   'pantalla.sonar(nota, segundos=0.4): suena una nota («do», «re#», «la4», «C5») o unos hercios; varias seguidas forman una melodía (cada una espera a la anterior: NO uses time.sleep). pantalla.silencio(segundos).',
   'pantalla.lienzo(ancho, alto, fondo) y para dibujar: rect(x, y, ancho, alto, color), circulo(x, y, radio, color), linea(x1, y1, x2, y2, color), escribir(x, y, texto, color), borrar(). (0, 0) es arriba a la izquierda.',
-  'pantalla.cada(segundos, funcion): para lo que se mueve solo (un juego, un reloj); pantalla.parar() lo detiene. NUNCA un while True.',
+  'Los colores, en español: blanco, negro, rojo, verde, azul, amarillo, naranja, morado, rosa, gris (y «azul claro», «verde oscuro»…), o «#ff8800». Un color que no exista es un error.',
+  'Lo dibujado también se pulsa: pantalla.zona(x, y, ancho, alto, funcion) hace pulsable un rectángulo (una tecla dibujada, una casilla); pantalla.al_tocar(funcion) llama a funcion(x, y) al pulsar en cualquier sitio del lienzo.',
+  'pantalla.cada(segundos, funcion): para lo que se mueve solo (un juego, un reloj); pantalla.parar() lo detiene cuando ya no hace falta (al acabar una melodía, al perder). NUNCA un while True.',
+  'Lo que se usa tiene que poder usarse: algo que se toca (un instrumento, un juego) necesita botones, teclas o zonas que hagan algo al pulsarlas. Nada suena ni empieza solo al arrancar: lo pone en marcha quien lo usa (un botón «Tocar la melodía», «Empezar»).',
   'Al final del programa, pantalla.mostrar(). Nada de input(), time.sleep ni bucles sin fin: lo que hace el programa pasa al pulsar.',
   'Para varios botones parecidos en un bucle, usa una función que devuelva otra: def tocar(nota): return lambda: pantalla.sonar(nota)',
 ].join('\n')
