@@ -15,7 +15,7 @@ export const SAFE_WHEN_IT_ONLY_COMPUTES = 0.3
 
 /** Módulos que solo calculan: importarlos no da con qué tocar el equipo. */
 const HARMLESS = new Set(
-  'random math cmath statistics itertools functools collections dataclasses typing string re json datetime time copy enum decimal fractions heapq bisect operator abc numbers textwrap pprint unicodedata array numpy'.split(
+  'random math cmath statistics itertools functools collections dataclasses typing string re json datetime time copy enum decimal fractions heapq bisect operator abc numbers textwrap pprint unicodedata array numpy pantalla'.split(
     ' ',
   ),
 )

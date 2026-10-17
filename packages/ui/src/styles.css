@@ -7804,6 +7804,7 @@ button.run-panel__line:hover {
 }
 .screen-node__buttons {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   gap: 6px;
 }
@@ -7836,6 +7837,7 @@ button.run-panel__line:hover {
   opacity: 0.55;
 }
 .screen-node__lines {
+  flex: none;
   overflow: hidden;
   color: var(--ink);
   font-family: var(--font-mono);
@@ -7849,7 +7851,10 @@ button.run-panel__line:hover {
   white-space: nowrap;
 }
 .screen-node__keys {
+  height: 20px;
+  flex: none;
   margin: 0;
+  line-height: 20px;
   color: var(--ink-faint);
   font-size: 11px;
 }

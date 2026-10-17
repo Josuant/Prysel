@@ -38,7 +38,11 @@ const HEAD = 34
 const LINE = 18
 const BUTTON_H = 40
 const GAP = 6
-const MAX_LINES = 6
+const MAX_LINES = 4
+/** Lo que miden la fila de las teclas, el aviso de un fallo y el relleno de arriba y abajo del cuerpo. */
+const KEYS_H = 20
+const ERROR_H = 44
+const BODY_PAD = 22
 
 /** Lo ancho que es la pantalla: la de su lienzo (hasta un tope) o, sin lienzo, según sus botones. */
 function widthOf(view: ScreenView): number {
@@ -67,19 +71,24 @@ function buttonRows(view: ScreenView, width: number): number {
 /** Lo que mide el nodo: su cabecera, su lienzo (a escala), sus botones, su texto, sus teclas y su aviso. */
 export function screenSize(view: ScreenView): { w: number; h: number } {
   const w = widthOf(view)
-  const canvas = view.canvas
-    ? Math.round(view.canvas.h * Math.min(1, (w - PAD * 2) / view.canvas.w)) + GAP
-    : 0
   const rows = buttonRows(view, w)
-  const lines = Math.min(MAX_LINES, view.lines.length)
-  const body =
-    canvas +
-    (rows > 0 ? rows * BUTTON_H + (rows - 1) * GAP + GAP : 0) +
-    (lines > 0 ? lines * LINE + GAP : 0) +
-    (view.keys.length > 0 ? 22 : 0) +
-    (view.error ? 46 : 0)
-  return { w, h: HEAD + Math.max(56, body) + PAD }
+  const parts = [
+    view.canvas ? Math.round(view.canvas.h * Math.min(1, (w - PAD * 2) / view.canvas.w)) : 0,
+    rows > 0 ? rows * BUTTON_H + (rows - 1) * GAP : 0,
+    textRoom(view),
+    view.keys.length > 0 ? KEYS_H : 0,
+    view.error ? ERROR_H : 0,
+  ].filter((height) => height > 0)
+  const body = parts.reduce((sum, height) => sum + height, 0) + GAP * Math.max(0, parts.length - 1)
+  return { w, h: HEAD + Math.max(56, body) + BODY_PAD + 3 }
 }
+
+/**
+ * El sitio del texto: fijo (las últimas líneas) en cuanto la pantalla tiene algo que usar, para que el nodo
+ * no crezca ni se mueva mientras se toca.
+ */
+const textRoom = (view: ScreenView) =>
+  view.lines.length > 0 || view.buttons.length > 0 || view.keys.length > 0 ? MAX_LINES * LINE : 0
 
 export interface ScreenNodeData extends Record<string, unknown> {
   panel: ScreenPanel
@@ -155,8 +164,13 @@ export function ScreenNode({ data }: NodeProps<ScreenFlowNode>) {
             ))}
           </div>
         )}
-        {lines.length > 0 && (
-          <div className="screen-node__lines" role="log" aria-live="polite">
+        {textRoom(view) > 0 && (
+          <div
+            className="screen-node__lines"
+            role="log"
+            aria-live="polite"
+            style={{ height: textRoom(view) }}
+          >
             {lines.map((line, at) => (
               <p key={`${at}:${line}`}>{line}</p>
             ))}
