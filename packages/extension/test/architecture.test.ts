@@ -301,3 +301,19 @@ describe('lo planeado y lo que dice el JEV, sobre lo que sale del análisis', ()
     expect(factsText(first, true)).toBe('Aún no tiene código.')
   })
 })
+
+describe('los números de las fases', () => {
+  it('una etapa que es solo una clase que otra usa sigue siendo una fase: los números, sin huecos', () => {
+    // (Visto con la IA real: «Registrar devolución» era solo la clase `Prestamo`; al usarse en otra etapa se
+    // escondía, y el esquema se quedaba en 1, 2, 4, 5.)
+    const { program, all, view } = seen('biblioteca')
+    const { facts } = moduleGraph(view.nodes, all, program.edges)
+    expect(facts.map((fact) => `${fact.ordinal} ${fact.title}`)).toEqual([
+      '1 Modelo de datos',
+      '2 Registrar préstamo',
+      '3 Registrar devolución',
+      '4 Informe final',
+      '5 Ejecutar ejemplo',
+    ])
+  })
+})

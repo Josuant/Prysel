@@ -631,8 +631,13 @@ export function programView(
   // Una función de la que se sabe qué hace no se esconde aunque el programa la use: su tarjeta es lo que se
   // lee de ella.
   const gisted = new Set(nodes.filter((node) => node.gist).map((node) => node.id))
+  // Ni una que es, ella sola, una etapa del programa (la etapa y su única definición son un mismo nodo): se
+  // iría la etapa entera, y en el esquema quedaría un hueco en la numeración.
+  const phases = new Set(
+    nodes.filter((node) => node.section !== undefined && node.owner === undefined).map((n) => n.id),
+  )
   const used = functionsOf(nodes, edges).filter(
-    (f) => f.used && f.id !== focus && !around.has(f.id) && !gisted.has(f.id),
+    (f) => f.used && f.id !== focus && !around.has(f.id) && !gisted.has(f.id) && !phases.has(f.id),
   )
   const hidden = new Set<string>()
   for (const fn of used) {
@@ -985,6 +990,12 @@ export interface ProgramView extends FoldedView {
   architecture: Architecture | null
   /** De cada módulo de la arquitectura, lo que su código deja ver. */
   moduleFacts: readonly ModuleFacts[]
+  /**
+   * La del programa entero **aunque se esté dentro de una función** (fuera, la misma que `architecture`): la
+   * necesita quien lo audita, que no mira lo que se ve ahora sino el diagrama del programa.
+   */
+  programArchitecture: Architecture | null
+  programFacts: readonly ModuleFacts[]
   /** Cuántos ámbitos hay plegados ahora. */
   folded: number
   /** Cambia con lo que se ve: es la señal para que el lienzo se reencuadre. */
@@ -1211,6 +1222,18 @@ export function useProgramView(
         : { architecture: null, facts: NO_FACTS },
     [wantsArchitecture, view, all, edges],
   )
+  const outer = useMemo(() => {
+    if (!(flow && options.architecture === true) || focus === null) return null
+    const top = viewOf(all, edges, functions, {
+      focus: null,
+      flow,
+      density: mode,
+      flipped,
+      revealed,
+      modules: true,
+    })
+    return described(top.view.nodes, all, edges)
+  }, [all, edges, functions, focus, flow, mode, flipped, revealed, options.architecture])
 
   const toggle = useCallback(
     (id: string) => {
@@ -1280,6 +1303,8 @@ export function useProgramView(
     homeOf,
     architecture,
     moduleFacts,
+    programArchitecture: outer ? outer.architecture : architecture,
+    programFacts: outer ? outer.facts : moduleFacts,
     folded: foldedSet.size,
     viewKey: focus?.id ?? PROGRAM,
   }

@@ -65,7 +65,7 @@ export type DiagramCorrection =
 export function diagramAuditSystem(): string {
   return [
     'Eres el AUDITOR INTERNO del diagrama de un programa en Python. Quien lo usa no lee el código: lo entiende por este diagrama. Tienes su forma, sus fases (con el número que se ve en cada una, su nombre, lo que dice que hace, su papel y lo que tiene en su primer nivel), sus flechas (de qué fase a cuál y qué dicen) y el código.',
-    'Revisa que el diagrama ayude de verdad a entender el programa. TOPOLOGÍA: la forma cuenta cómo funciona (si otra de las posibles lo cuenta mejor, dila). NOMBRES: cada fase dice en pocas palabras lo que hace, se entiende sin saber programar, y no hay dos que se llamen igual o se confundan. NÚMEROS: el orden de las fases es el que se sigue al leerlo y al ejecutarlo (lo que prepara algo va antes que lo que lo usa). CONEXIONES: cada flecha dice algo verdadero y útil; ninguna fase queda suelta sin razón; no falta la que cuenta cómo pasan los datos de una fase a otra. CONTENIDO: cada fase tiene lo que dice su nombre; si tiene líneas que son de otra (por ejemplo, el arranque metido en «Mostrar ticket»), su papel y sus flechas engañan: esa fase parece la que manda.',
+    'Revisa que el diagrama ayude de verdad a entender el programa. TOPOLOGÍA: la forma cuenta cómo funciona (si otra de las posibles lo cuenta mejor, dila). NOMBRES: cada fase dice en pocas palabras lo que hace, se entiende sin saber programar, y no hay dos que se llamen igual o se confundan. NÚMEROS: el orden de las fases es el que se sigue al leerlo y al ejecutarlo (lo que prepara algo va antes que lo que lo usa), y van seguidos. CONEXIONES: cada flecha dice algo verdadero y útil; ninguna fase queda suelta sin razón; no falta la que cuenta cómo pasan los datos de una fase a otra. CONTENIDO: cada fase tiene lo que dice su nombre; si tiene líneas que son de otra (por ejemplo, el arranque metido en «Mostrar ticket»), su papel y sus flechas engañan: esa fase parece la que manda.',
     'Si hay que corregir, una corrección por línea, como mucho cuatro:',
     '«RENOMBRAR N | Título: qué hace | por qué» · «UNIR N y M | Título: qué hace | por qué» (fases seguidas que hacen lo mismo) · «MOVER N tras M | por qué» (tras 0 es al principio) · «FORMA nombre | por qué» (una de las posibles) · «SEPARAR N | primera línea de la nueva fase, tal cual | Título: qué hace | por qué» (una fase que hace dos cosas: desde esa línea, otra fase) · «ARREGLAR | qué líneas llevar a qué fase, o qué cambiar en el código para que se vea cómo pasa el dato | por qué».',
     'En lo que escribas tras ARREGLAR, nombra las fases por su nombre entre comillas («Mostrar ticket»), nunca por su número: quien lo lea no ve los números. Lo que pidas no puede cambiar lo que hace el programa.',
@@ -88,7 +88,8 @@ export function diagramAuditPrompt(
   /** Lo que tiene cada fase en su primer nivel (la primera línea de cada sentencia), por su id. */
   contents: ReadonlyMap<string, readonly string[]> = new Map(),
 ): string {
-  const at = new Map(diagram.modules.map((module, index) => [module.id, index + 1]))
+  // Con el número que se ve en cada fase (el de su tarjeta), no con su puesto en la lista.
+  const at = new Map(diagram.modules.map((module, index) => [module.id, seenNumber(module, index)]))
   const shapeSaid = (shape: string) =>
     shape in ARCH_SHAPES ? `${shape} (${ARCH_SHAPES[shape as ArchShapeId]})` : shape
   const others = diagram.shapes.filter((shape) => shape !== diagram.shape)
@@ -108,7 +109,7 @@ export function diagramAuditPrompt(
       const shown =
         has.slice(0, 6).join(' · ') + (has.length > 6 ? ` · (y ${has.length - 6} más)` : '')
       return [
-        `${index + 1}. ${module.title}${module.subtitle ? `: ${module.subtitle}` : ''}${module.role ? ` (${module.role})` : ''}`,
+        `${seenNumber(module, index)}. ${module.title}${module.subtitle ? `: ${module.subtitle}` : ''}${module.role ? ` (${module.role})` : ''}`,
         ...(has.length > 0 ? [`   tiene: ${shown}`] : []),
       ]
     }),
@@ -130,11 +131,21 @@ export function diagramAuditPrompt(
   ].join('\n')
 }
 
+/** El número que se ve en una fase: el de su tarjeta (o su puesto, si no lo trae). */
+const seenNumber = (module: DiagramModule, index: number) => module.n || String(index + 1)
+
 /** Lee lo que dijo el auditor: sus correcciones (validadas contra el diagrama), o ninguna. `null`: no se entiende. */
 export function diagramCorrectionsOf(text: string, diagram: Diagram): DiagramCorrection[] | null {
   const count = diagram.modules.length
   const out: DiagramCorrection[] = []
   const inRange = (n: number) => Number.isInteger(n) && n >= 1 && n <= count
+  /** El puesto en la lista de la fase que lleva ese número en su tarjeta. */
+  const position = (n: number) => {
+    const found = diagram.modules.findIndex(
+      (module, index) => seenNumber(module, index) === String(n),
+    )
+    return found === -1 ? Number.NaN : found + 1
+  }
   for (const line of text.split('\n')) {
     const parts = line
       .replace(/^\s*[-*•]\s*/, '')
@@ -147,14 +158,14 @@ export function diagramCorrectionsOf(text: string, diagram: Diagram): DiagramCor
     const forma = /^FORMA\s+(\S+)$/.exec(head)
     const separar = /^SEPARAR\s+(\d+)$/.exec(head)
     if (separar) {
-      const at = Number(separar[1])
+      const at = position(Number(separar[1]))
       const from = (parts[1] ?? '').replace(/^[«"`']+|[»"`']+$/g, '').trim()
       const part = partOf(parts[2] ?? '')
       if (inRange(at) && from.length >= 3 && part) {
         out.push({ kind: 'separar', at, from: from.slice(0, 120), part, why: parts[3] ?? '' })
       }
     } else if (renombrar) {
-      const at = Number(renombrar[1])
+      const at = position(Number(renombrar[1]))
       const part = partOf(parts[1] ?? '')
       const now = diagram.modules[at - 1]
       // Lo mismo que ya pone no es una corrección.
@@ -163,7 +174,7 @@ export function diagramCorrectionsOf(text: string, diagram: Diagram): DiagramCor
       }
     } else if (unir) {
       const part = partOf(parts[1] ?? '')
-      const [a, b] = [Number(unir[1]), Number(unir[2])]
+      const [a, b] = [position(Number(unir[1])), position(Number(unir[2]))]
       // Solo fases seguidas: unir dos que están lejos movería código, y eso es otra cosa.
       if (part && inRange(a) && inRange(b) && Math.abs(a - b) === 1) {
         out.push({
@@ -175,7 +186,10 @@ export function diagramCorrectionsOf(text: string, diagram: Diagram): DiagramCor
         })
       }
     } else if (mover) {
-      const [at, after] = [Number(mover[1]), Number(mover[2])]
+      const [at, after] = [
+        position(Number(mover[1])),
+        Number(mover[2]) === 0 ? 0 : position(Number(mover[2])),
+      ]
       if (inRange(at) && (after === 0 || inRange(after)) && at !== after && at !== after + 1) {
         out.push({ kind: 'mover', at, after, why: parts[1] ?? '' })
       }
@@ -249,7 +263,7 @@ export async function judgeDiagram(
       forma: diagram.shape,
       fases: diagram.modules.map((module, index) => {
         const has = contents.get(module.id) ?? []
-        return `${index + 1}. ${module.title}${module.subtitle ? `: ${module.subtitle}` : ''}${has.length > 0 ? ` — tiene: ${has.slice(0, 8).join(' · ')}` : ''}`
+        return `${seenNumber(module, index)}. ${module.title}${module.subtitle ? `: ${module.subtitle}` : ''}${has.length > 0 ? ` — tiene: ${has.slice(0, 8).join(' · ')}` : ''}`
       }),
       ...(applied.length > 0 ? { corregido: [...applied] } : {}),
     },

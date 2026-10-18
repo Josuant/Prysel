@@ -1837,9 +1837,20 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   )
   // Lo que se dibuja, para el auditor del diagrama: la forma, cada fase con su número y sus flechas.
   const drawnDiagram = useMemo(() => {
-    if (!architecture || !program) return null
-    const facts = new Map(view.moduleFacts.map((fact) => [fact.id, fact]))
-    const modules = architecture.modules
+    // Dentro de una función, el del programa entero (con la forma que pidió el auditor, si la tiene).
+    const outer = view.programArchitecture
+    const forced =
+      outer && forcedShape !== null
+        ? shapeCandidates(outer).find((one) => one.shape === forcedShape)
+        : undefined
+    const drawn =
+      architecture ??
+      (outer && forced ? { modules: outer.modules, links: outer.links, ...forced } : outer)
+    if (!drawn || !program) return null
+    const facts = new Map(
+      (architecture ? view.moduleFacts : view.programFacts).map((fact) => [fact.id, fact]),
+    )
+    const modules = drawn.modules
       .flatMap((module) => {
         const fact = facts.get(module.id)
         return fact ? [{ module, fact }] : []
@@ -1856,10 +1867,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     return {
       type: 'diagram' as const,
       key: textKey(program.source),
-      shape: architecture.shape,
-      shapes: shapeCandidates(architecture).map((candidate) => candidate.shape),
+      shape: drawn.shape,
+      shapes: shapeCandidates(drawn).map((candidate) => candidate.shape),
       modules,
-      links: architecture.links
+      links: drawn.links
         .filter((link) => known.has(link.from) && known.has(link.to))
         .map((link) => ({
           from: link.from,
@@ -1868,7 +1879,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           ...(link.label ? { label: link.label } : {}),
         })),
     }
-  }, [architecture, program, view.moduleFacts])
+  }, [
+    architecture,
+    program,
+    view.moduleFacts,
+    view.programArchitecture,
+    view.programFacts,
+    forcedShape,
+  ])
   // Se dice cuando el JEV ya ha dicho el papel de cada fase (o al rato, si tarda). Por su contenido, no por
   // el objeto: mientras se construye, el lienzo se redibuja sin parar con objetos nuevos del mismo diagrama, y
   // la espera volvería a empezar cada vez (no saldría nunca hasta que todo se quedara quieto).
