@@ -2187,6 +2187,14 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
             content: {
               ...outcomeResult.content,
               subtitle: 'probado sin nadie delante: cada botón, una vez',
+              // (El resumen de lo que ofrece la pantalla es para quien revisa, no para leerlo aquí.)
+              ...(outcomeResult.content.text
+                ? {
+                    text: outcomeResult.content.text.filter(
+                      (line) => !line.startsWith('[pantalla: '),
+                    ),
+                  }
+                : {}),
             },
           }
         : outcomeResult,

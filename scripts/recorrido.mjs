@@ -119,27 +119,33 @@ const inspect = () => {
   return { bad, camera, loose, banner: banner ?? null, modules: architecture?.modules.length ?? 0 }
 }
 
-/** Pliega cada etapa abierta y la vuelve a abrir: dice las que no se dejaron. */
+/**
+ * Cada etapa, en los dos sentidos: la abierta se pliega y se vuelve a abrir; la plegada se abre y se vuelve
+ * a plegar. Dice las que no se dejaron.
+ */
 const folding = async () => {
   const wait = (ms) => new Promise((done) => setTimeout(done, ms))
   const label = (button) => button.getAttribute('aria-label') ?? ''
-  const open = [...document.querySelectorAll('button')].filter((button) =>
-    /^Plegar la etapa /.test(label(button)),
-  )
+  const find = (text) => [...document.querySelectorAll('button')].find((one) => label(one) === text)
+  const titles = [...document.querySelectorAll('button')]
+    .map(label)
+    .filter((text) => /^(Plegar|Abrir) la etapa /.test(text))
   const stuck = []
-  for (const button of open) {
-    const title = label(button).replace(/^Plegar la etapa /, '')
-    button.click()
+  for (const text of titles) {
+    const title = text.replace(/^(Plegar|Abrir) la etapa /, '')
+    const closing = text.startsWith('Plegar')
+    const [now, back] = closing ? ['Plegar', 'Abrir'] : ['Abrir', 'Plegar']
+    find(`${now} la etapa ${title}`)?.click()
     await wait(900)
-    const now = [...document.querySelectorAll('button')].map(label)
-    if (!now.includes(`Abrir la etapa ${title}`)) stuck.push(title)
-    else
-      [...document.querySelectorAll('button')]
-        .find((one) => label(one) === `Abrir la etapa ${title}`)
-        ?.click()
-    await wait(600)
+    if (!find(`${back} la etapa ${title}`)) {
+      stuck.push(`${title} (${closing ? 'plegar' : 'abrir'})`)
+      continue
+    }
+    find(`${back} la etapa ${title}`)?.click()
+    await wait(900)
+    if (!find(`${now} la etapa ${title}`)) stuck.push(`${title} (${closing ? 'abrir' : 'plegar'})`)
   }
-  return { tried: open.length, stuck }
+  return { tried: titles.length, stuck }
 }
 
 /** La pantalla: «Empezar», que no salga negra, y pulsar lo primero que se pueda. */
@@ -150,7 +156,16 @@ const useScreen = async (inIdea) => {
     : document.querySelector('.react-flow .screen-node')
   if (!root) return { found: false }
   root.querySelector('.screen-node__start')?.click()
-  await wait(7000)
+  // Hasta que tenga algo que pulsar (o falle), como mucho 15 s: la primera vez se carga Python.
+  for (let waited = 0; waited < 15_000; waited += 500) {
+    await wait(500)
+    const ready =
+      root.querySelector('.screen-node__button') ||
+      root.querySelector('.screen-node__canvas[data-touchable]') ||
+      root.querySelector('.screen-node__error')
+    if (ready) break
+  }
+  await wait(800)
   const canvas = root.querySelector('.screen-node__canvas')
   let black = null
   if (canvas) {
@@ -236,7 +251,7 @@ for (const file of readdirSync(examples)
     const folded = await page.evaluate(folding)
     check(
       file,
-      `las etapas abiertas se pliegan (${folded.tried})`,
+      `las etapas se pliegan y se abren (${folded.tried})`,
       folded.stuck.length === 0,
       folded.stuck.join(', '),
     )
