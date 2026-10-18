@@ -1626,6 +1626,7 @@ export async function auditDiagram(
             diagram,
             program.source.slice(0, REVIEW_BUDGET),
             applied,
+            contentsOf(program),
           ),
           maxTokens: 500,
         }),
@@ -1670,6 +1671,21 @@ export async function auditDiagram(
   }
   if (seen.size === 0) return outcome
   return { ...outcome, written, jevMs, diagramAudit: { id: 'plan', level, findings } }
+}
+
+/** Lo que tiene cada etapa en su primer nivel: la primera línea de cada sentencia, por el id de la etapa. */
+function contentsOf(program: Program): Map<string, string[]> {
+  const rows = program.source.split('\n')
+  const lines = new Map(program.nodes.map((node) => [node.id, node.line]))
+  return new Map(
+    (program.sections ?? []).map((section) => [
+      section.id,
+      section.members.flatMap((id) => {
+        const row = rows[(lines.get(id) ?? 0) - 1]?.trim()
+        return row ? [row.length > 70 ? `${row.slice(0, 69)}…` : row] : []
+      }),
+    ]),
+  )
 }
 
 const lineStart = (source: string, offset: number) => source.lastIndexOf('\n', offset - 1) + 1
@@ -1808,7 +1824,7 @@ async function applyDiagram(
   if (links.length > 0 && !host.signal.aborted) {
     const prior = (await host.program()).source
     const fixed = await modifyOnce(host, players, {
-      command: `Para que se vea cómo pasan los datos de una fase a otra, sin cambiar lo que hace el programa ni lo que se pidió («${asked}»): ${links.map((one) => (one.kind === 'conectar' ? one.fix : '')).join('; ')}.`,
+      command: `Para que cada fase (cada comentario de etapa) tenga lo que dice su nombre y se vea cómo pasan los datos de una a otra, sin cambiar lo que hace el programa ni lo que se pidió («${asked}»): ${links.map((one) => (one.kind === 'conectar' ? one.fix : '')).join('; ')}.`,
       whole: true,
     })
     jevMs += fixed.jevMs

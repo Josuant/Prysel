@@ -62,10 +62,11 @@ export type DiagramCorrection =
 
 export function diagramAuditSystem(): string {
   return [
-    'Eres el AUDITOR INTERNO del diagrama de un programa en Python. Quien lo usa no lee el código: lo entiende por este diagrama. Tienes su forma, sus fases (con el número que se ve en cada una, su nombre, lo que dice que hace y su papel), sus flechas (de qué fase a cuál y qué dicen) y el código.',
-    'Revisa que el diagrama ayude de verdad a entender el programa. TOPOLOGÍA: la forma cuenta cómo funciona (si otra de las posibles lo cuenta mejor, dila). NOMBRES: cada fase dice en pocas palabras lo que hace, se entiende sin saber programar, y no hay dos que se llamen igual o se confundan. NÚMEROS: el orden de las fases es el que se sigue al leerlo y al ejecutarlo (lo que prepara algo va antes que lo que lo usa). CONEXIONES: cada flecha dice algo verdadero y útil; ninguna fase queda suelta sin razón; no falta la que cuenta cómo pasan los datos de una fase a otra.',
+    'Eres el AUDITOR INTERNO del diagrama de un programa en Python. Quien lo usa no lee el código: lo entiende por este diagrama. Tienes su forma, sus fases (con el número que se ve en cada una, su nombre, lo que dice que hace, su papel y lo que tiene en su primer nivel), sus flechas (de qué fase a cuál y qué dicen) y el código.',
+    'Revisa que el diagrama ayude de verdad a entender el programa. TOPOLOGÍA: la forma cuenta cómo funciona (si otra de las posibles lo cuenta mejor, dila). NOMBRES: cada fase dice en pocas palabras lo que hace, se entiende sin saber programar, y no hay dos que se llamen igual o se confundan. NÚMEROS: el orden de las fases es el que se sigue al leerlo y al ejecutarlo (lo que prepara algo va antes que lo que lo usa). CONEXIONES: cada flecha dice algo verdadero y útil; ninguna fase queda suelta sin razón; no falta la que cuenta cómo pasan los datos de una fase a otra. CONTENIDO: cada fase tiene lo que dice su nombre; si tiene líneas que son de otra (por ejemplo, el arranque metido en «Mostrar ticket»), su papel y sus flechas engañan: esa fase parece la que manda.',
     'Si hay que corregir, una corrección por línea, como mucho cuatro:',
-    '«RENOMBRAR N | Título: qué hace | por qué» · «UNIR N y M | Título: qué hace | por qué» (fases seguidas que hacen lo mismo) · «MOVER N tras M | por qué» (tras 0 es al principio) · «FORMA nombre | por qué» (una de las posibles) · «CONECTAR | qué cambiar en el código para que se vea cómo pasa el dato | por qué».',
+    '«RENOMBRAR N | Título: qué hace | por qué» · «UNIR N y M | Título: qué hace | por qué» (fases seguidas que hacen lo mismo) · «MOVER N tras M | por qué» (tras 0 es al principio) · «FORMA nombre | por qué» (una de las posibles) · «ARREGLAR | qué líneas llevar a qué fase, o qué cambiar en el código para que se vea cómo pasa el dato | por qué».',
+    'En lo que escribas tras ARREGLAR, nombra las fases por su nombre entre comillas («Mostrar ticket»), nunca por su número: quien lo lea no ve los números. Lo que pidas no puede cambiar lo que hace el programa.',
     'El título, de dos a cuatro palabras; lo que hace, menos de diez. No propongas lo que ya está así. Si el diagrama ya se entiende bien, responde solo «BIEN».',
   ].join('\n')
 }
@@ -82,6 +83,8 @@ export function diagramAuditPrompt(
   source: string,
   /** Lo que ya se corrigió en una vuelta anterior: no se deshace. */
   applied: readonly string[] = [],
+  /** Lo que tiene cada fase en su primer nivel (la primera línea de cada sentencia), por su id. */
+  contents: ReadonlyMap<string, readonly string[]> = new Map(),
 ): string {
   const at = new Map(diagram.modules.map((module, index) => [module.id, index + 1]))
   const shapeSaid = (shape: string) =>
@@ -98,10 +101,15 @@ export function diagramAuditPrompt(
       : 'No hay otra posible.',
     '',
     'Las fases:',
-    ...diagram.modules.map(
-      (module, index) =>
+    ...diagram.modules.flatMap((module, index) => {
+      const has = contents.get(module.id) ?? []
+      const shown =
+        has.slice(0, 6).join(' · ') + (has.length > 6 ? ` · (y ${has.length - 6} más)` : '')
+      return [
         `${index + 1}. ${module.title}${module.subtitle ? `: ${module.subtitle}` : ''}${module.role ? ` (${module.role})` : ''}`,
-    ),
+        ...(has.length > 0 ? [`   tiene: ${shown}`] : []),
+      ]
+    }),
     '',
     'Las flechas:',
     ...(diagram.links.length > 0
@@ -166,7 +174,7 @@ export function diagramCorrectionsOf(text: string, diagram: Diagram): DiagramCor
       if (shape in ARCH_SHAPES && shape !== diagram.shape && diagram.shapes.includes(shape)) {
         out.push({ kind: 'forma', shape: shape as ArchShapeId, why: parts[1] ?? '' })
       }
-    } else if (/^CONECTAR$/.test(head) && (parts[1] ?? '').length >= 8) {
+    } else if (/^(?:ARREGLAR|CONECTAR)$/.test(head) && (parts[1] ?? '').length >= 8) {
       out.push({ kind: 'conectar', fix: (parts[1] ?? '').slice(0, 300), why: parts[2] ?? '' })
     }
   }

@@ -7,6 +7,7 @@ import type { AiProvider } from '../src/ai/provider.ts'
 import type { Decider } from '../src/jev/client.ts'
 import { auditDiagram, type Outcome, type Stagehand } from '../src/jev/director.ts'
 import {
+  diagramAuditPrompt,
   diagramCorrectionsOf,
   movedSource,
   textKey,
@@ -85,6 +86,14 @@ describe('lo que dice el auditor del diagrama', () => {
       { kind: 'forma', shape: 'tuberia', why: 'es una cadena' },
       { kind: 'conectar', fix: 'que preparar le pase la lista a mostrar', why: 'se ve el dato' },
     ])
+    expect(
+      diagramCorrectionsOf('ARREGLAR | lleva el arranque a «Arrancar» | engaña', diagram),
+    ).toEqual([{ kind: 'conectar', fix: 'lleva el arranque a «Arrancar»', why: 'engaña' }])
+    // Lo que tiene cada fase se le enseña, para que vea lo que está donde no toca.
+    const contents = new Map(diagram.modules.map((module) => [module.id, ['def mostrar(mejor):']]))
+    expect(diagramAuditPrompt('x', diagram, ANTES, [], contents)).toContain(
+      '1. Mostrar el resultado: imprime la mejor\n   tiene: def mostrar(mejor):',
+    )
     expect(diagramCorrectionsOf('BIEN', diagram)).toEqual([])
     expect(diagramCorrectionsOf('ni idea', diagram)).toBeNull()
   })
