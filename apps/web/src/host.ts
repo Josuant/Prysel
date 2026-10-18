@@ -19,7 +19,7 @@ import { ScreenRunner } from './screen.ts'
 import { levelsFrom, type ExpertLevels } from '../../../packages/extension/src/jev/experts.ts'
 
 /** Dónde se guarda en este navegador cuánto está cada experto. */
-const EXPERTS_KEY = 'prysel.web.experts'
+const EXPERTS_KEY = 'prysel.web.experts.v2'
 
 function loadExperts(): ExpertLevels {
   try {

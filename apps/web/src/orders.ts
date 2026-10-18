@@ -782,6 +782,8 @@ export class Orders {
         type: 'audit',
         asked: said ?? outcome.asked ?? command,
         experts: outcome.audit.experts,
+        ...(outcome.audit.rounds === undefined ? {} : { rounds: outcome.audit.rounds }),
+        ...(outcome.audit.stop === undefined ? {} : { stop: outcome.audit.stop }),
         ...(outcome.audit.mended ? { mended: true } : {}),
         ...(outcome.audit.broken === undefined ? {} : { broken: outcome.audit.broken }),
       })

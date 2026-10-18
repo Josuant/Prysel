@@ -96,9 +96,10 @@ describe('lo que dice un experto', () => {
   it('los niveles guardados se leen con cuidado: lo que no vale, el de partida', () => {
     expect(levelsFrom({ ui: 3, ux: 9, codigo: 0 })).toEqual({
       ui: 3,
-      ux: 2,
+      ux: 3,
       codigo: 0,
-      ingenieria: 1,
+      ingenieria: 3,
+      plan: 3,
     })
   })
 })
@@ -163,20 +164,23 @@ describe('la auditoría al acabar una orden', () => {
       for (const id of Object.keys(request.questions)) {
         if (/^hallazgo\d+$/.test(id))
           result.answers[id] = { type: 'choice', choice: 'aplicar', confidence: 0.9 }
+        // La IA de mentira vuelve a pedir lo mismo que ya se arregló: eso es dar vueltas.
+        if (/^vuelta\d+$/.test(id)) result.answers[id] = { type: 'noul', noul: 0.9 }
       }
       return result
     },
   }
 
   it('el que corrige aplica lo que el JEV confirma; el que propone, lo deja; el apagado no habla', async () => {
-    const { host, state } = stage({ ui: 1, ux: 2, codigo: 3, ingenieria: 0 })
+    const { host, state } = stage({ ui: 1, ux: 2, codigo: 3, ingenieria: 0, plan: 0 })
     const provider = ai()
     const outcome = await modify(
       host,
       { provider, decider: jev },
       { command: 'que diga «Hecho» al acabar', whole: true },
     )
-    expect(provider.asked.sort()).toEqual(['codigo', 'ui', 'ux'])
+    // El de código limpio (corrige) vuelve a mirar lo arreglado; los demás miran una vez.
+    expect(provider.asked.sort()).toEqual(['codigo', 'codigo', 'ui', 'ux'])
     // Lo del experto en código limpio (corrige) se aplicó; lo de UX (propone) se queda propuesto.
     expect(state.text).toBe(MEJOR)
     const byId = Object.fromEntries(
@@ -186,13 +190,17 @@ describe('la auditoría al acabar una orden', () => {
     expect(byId['ux']?.findings[0]).toMatchObject({ verdict: 'aplicar' })
     expect(byId['ux']?.findings[0]?.applied).toBeUndefined()
     expect(byId['ui']?.findings).toEqual([])
+    // En la segunda ronda pide otra vez lo ya hecho: el JEV lo nota, no se aplica dos veces y se para.
+    expect(byId['codigo']?.findings[1]).toMatchObject({ verdict: 'vuelta' })
+    expect(byId['codigo']?.findings[1]?.applied).toBeUndefined()
+    expect(outcome.audit).toMatchObject({ rounds: 2, stop: 'vueltas' })
     expect(summaryOf(outcome, ['cambio', 'cambios'])).toContain(
-      'Los expertos arreglaron 1 cosa y tienen 1 recomendación',
+      'Los expertos arreglaron 1 cosa y tienen 1 recomendación en 2 rondas y pararon al notar que daban vueltas',
     )
   })
 
   it('sin expertos presentes no se audita nada', async () => {
-    const { host } = stage({ ui: 0, ux: 0, codigo: 0, ingenieria: 0 })
+    const { host } = stage({ ui: 0, ux: 0, codigo: 0, ingenieria: 0, plan: 0 })
     const provider = ai()
     const outcome = await modify(
       host,

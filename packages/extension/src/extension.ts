@@ -1494,6 +1494,8 @@ async function runDirected(
         type: 'audit',
         asked: said ?? outcome.asked ?? command,
         experts: outcome.audit.experts,
+        ...(outcome.audit.rounds === undefined ? {} : { rounds: outcome.audit.rounds }),
+        ...(outcome.audit.stop === undefined ? {} : { stop: outcome.audit.stop }),
         ...(outcome.audit.mended ? { mended: true } : {}),
         ...(outcome.audit.broken === undefined ? {} : { broken: outcome.audit.broken }),
       })
@@ -1503,7 +1505,7 @@ async function runDirected(
 }
 
 /** Dónde guarda la extensión cuánto está cada experto (vale para todos los espacios de trabajo). */
-const EXPERTS_STATE = 'prysel.experts'
+const EXPERTS_STATE = 'prysel.experts.v2'
 
 /** Cuánto está cada experto ahora (lo de partida, si nunca se tocó). */
 function expertLevels(): ExpertLevels {

@@ -5,7 +5,7 @@ import type { Trace } from './trace.ts'
 import type { CallEntry } from './calls.ts'
 import type { Gist, RunSummary } from './gist/gist.ts'
 import {
-  EXPERT_IDS,
+  ADVISOR_IDS,
   levelsFrom,
   type ExpertLevels,
   type ExpertReport,
@@ -330,6 +330,9 @@ export interface AuditMessage {
   /** Lo que se pidió (a qué se refiere la auditoría). */
   asked: string
   experts: ExpertReport[]
+  /** Cuántas veces miraron los que corrigen, y por qué pararon. */
+  rounds?: number
+  stop?: 'limpio' | 'vueltas' | 'tope'
   mended?: boolean
   broken?: string
 }
@@ -888,11 +891,11 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     return { type: 'experts', levels: levelsFrom((value as { levels?: unknown }).levels) }
   }
   if (type === 'audit') {
-    const { asked, experts, mended, broken } = value as Record<string, unknown>
+    const { asked, experts, mended, broken, rounds, stop } = value as Record<string, unknown>
     if (typeof asked !== 'string' || !Array.isArray(experts)) return null
     const reports = experts.flatMap((raw: unknown) => {
       const report = (raw ?? {}) as Record<string, unknown>
-      const id = EXPERT_IDS.find((one) => one === report['id'])
+      const id = ADVISOR_IDS.find((one) => one === report['id'])
       const level = report['level']
       if (!id || !(level === 0 || level === 1 || level === 2 || level === 3)) return []
       const findings = Array.isArray(report['findings'])
@@ -901,7 +904,14 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
             const { severity, what, fix, verdict, applied } = finding
             if (severity !== 'grave' && severity !== 'mejora') return []
             if (typeof what !== 'string' || typeof fix !== 'string') return []
-            if (verdict !== 'aplicar' && verdict !== 'sugerir' && verdict !== 'descartar') return []
+            if (
+              verdict !== 'aplicar' &&
+              verdict !== 'sugerir' &&
+              verdict !== 'descartar' &&
+              verdict !== 'vuelta'
+            ) {
+              return []
+            }
             return [
               {
                 severity,
@@ -925,6 +935,10 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
       type: 'audit',
       asked: asked.slice(0, MAX_COMMAND),
       experts: reports,
+      ...(typeof rounds === 'number' && rounds >= 1
+        ? { rounds: Math.min(9, Math.round(rounds)) }
+        : {}),
+      ...(stop === 'limpio' || stop === 'vueltas' || stop === 'tope' ? { stop } : {}),
       ...(mended === true ? { mended: true } : {}),
       ...(typeof broken === 'string' ? { broken: broken.slice(0, 300) } : {}),
     }

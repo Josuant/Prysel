@@ -26,7 +26,21 @@ import {
 } from './build.ts'
 import type { Decider } from './client.ts'
 import type { Trace } from '../trace.ts'
-import { consult, EXPERT_IDS, EXPERTS, type ExpertLevels, type ExpertReport } from './experts.ts'
+import {
+  consult,
+  correctedPlan,
+  correctionSaid,
+  correctionsOf,
+  EXPERT_IDS,
+  EXPERTS,
+  judgePlan,
+  planAuditPrompt,
+  planAuditSystem,
+  type ExpertLevels,
+  type ExpertReport,
+  type Finding,
+  type Presence,
+} from './experts.ts'
 import { COMPOSE_THRESHOLDS, judgeCode } from './compose.ts'
 import { WHOLE_BUDGET, contextFor } from './context.ts'
 import { reachesOutside, safeEnough } from './safety.ts'
@@ -230,7 +244,16 @@ export interface Outcome {
    * La auditoría de los expertos, si alguno está presente: lo que vio cada uno (lo aplicado, lo que propone y
    * lo que solo observa). `mended`/`broken`: lo aplicado rompió algo que funcionaba y se arregló (o no).
    */
-  audit?: { experts: ExpertReport[]; mended?: boolean; broken?: string }
+  /** Lo que dijo el auditor del plan (antes de escribir), si miró. */
+  planAudit?: ExpertReport
+  audit?: {
+    experts: ExpertReport[]
+    /** Cuántas veces miraron, y por qué pararon: nada nuevo, daban vueltas, o el tope de rondas. */
+    rounds?: number
+    stop?: 'limpio' | 'vueltas' | 'tope'
+    mended?: boolean
+    broken?: string
+  }
   jevMs: number
   /**
    * Lo que se construyó es una sola cosa con interior (una función, una clase): la línea de su cabecera. Al
@@ -327,6 +350,8 @@ interface Tally {
   chunks: number
   /** Cuántos trozos no se escribieron porque repetían algo que el programa ya tenía. */
   repeated: number
+  /** Lo que dijo el auditor del plan, si miró. */
+  planReport?: ExpertReport
 }
 
 export interface BuildRequest {
@@ -382,6 +407,7 @@ async function conclude(
     evidence,
     asked: command,
     ...(fulfils === undefined ? {} : { fulfils }),
+    ...(tally.planReport ? { planAudit: tally.planReport } : {}),
     jevMs: tally.jevMs,
     ...(tally.chunks === 1 && tally.heads.length === 1 && tally.heads[0] !== undefined
       ? { enter: tally.heads[0] }
@@ -514,7 +540,88 @@ export async function build(
   request: BuildRequest,
 ): Promise<Outcome> {
   const done = await tidy(host, players, await buildOnce(host, players, request))
-  return audit(host, players, request.command, await review(host, players, request.command, done))
+  const audited = await audit(
+    host,
+    players,
+    request.command,
+    await review(host, players, request.command, done),
+  )
+  // Lo del auditor del plan va el primero en el informe de los expertos (fue lo primero que se miró).
+  if (!audited.planAudit) return audited
+  return {
+    ...audited,
+    audit: {
+      ...(audited.audit ?? { experts: [] }),
+      experts: [audited.planAudit, ...(audited.audit?.experts ?? [])],
+    },
+  }
+}
+
+/**
+ * **El auditor del plan** (un experto interno): mira el plan entero antes de escribir nada. La IA propone
+ * correcciones (quitar, unir, cambiar o añadir partes) para que sea congruente y cada parte aporte algo; el
+ * JEV decide cuáles mejoran el plan sin apartarse de lo pedido. Si corrige (lo de partida), devuelve el plan
+ * corregido; si solo observa, lo cuenta.
+ */
+async function auditPlan(
+  host: Stagehand,
+  players: Players,
+  command: string,
+  stages: readonly Stage[],
+  level: Presence,
+): Promise<{ report: ExpertReport; parts: Stage[] | null; ms: number }> {
+  await host.show({
+    type: 'progress',
+    text: 'El auditor revisa el plan: que sus partes encajen y cada una aporte algo…',
+  })
+  let corrections: ReturnType<typeof correctionsOf> = null
+  try {
+    corrections = correctionsOf(
+      await players.provider.generate({
+        system: planAuditSystem(),
+        prompt: planAuditPrompt(command, stages),
+        maxTokens: 400,
+      }),
+      stages.length,
+    )
+  } catch {
+    corrections = null
+  }
+  if (corrections === null) {
+    return { report: { id: 'plan', level, findings: [], silent: true }, parts: null, ms: 0 }
+  }
+  const asked = corrections
+  const judged = await judgePlan(players.decider, command, stages, asked).catch(() => ({
+    accepted: asked.map(() => false),
+    ms: 0,
+  }))
+  const accepted = asked.filter((_, at) => judged.accepted[at])
+  const apply = level === 3 && accepted.length > 0
+  const findings: Finding[] = asked.flatMap((correction, at) =>
+    judged.accepted[at]
+      ? [
+          {
+            severity: 'mejora' as const,
+            what: correction.why || correctionSaid(correction, stages),
+            fix: correctionSaid(correction, stages),
+            verdict: 'aplicar' as const,
+            ...(apply ? { applied: true } : {}),
+          },
+        ]
+      : [],
+  )
+  if (apply) {
+    await host.show({
+      type: 'say',
+      say: `El auditor ajusta el plan: ${accepted.map((correction) => lowerFirst(correctionSaid(correction, stages))).join('; ')}.`,
+      aside: true,
+    })
+  }
+  return {
+    report: { id: 'plan', level, findings },
+    parts: apply ? correctedPlan(stages, accepted) : null,
+    ms: judged.ms,
+  }
 }
 
 async function buildOnce(
@@ -608,7 +715,7 @@ async function buildOnce(
       // Al ritmo de la IA, el plan se dibuja mientras se dice.
       if (!streaming) await host.settle(paceOf({ level: 0, code: '', say: opening }, false))
     }
-    const skeleton = new BuildPlan(request.place)
+    let skeleton = new BuildPlan(request.place)
     /** Una sola parte no es un plan: la primera espera a que llegue la segunda para dibujarse. */
     let held: Stage | null = null
     const draw = async (stage: Stage): Promise<boolean> => {
@@ -664,6 +771,22 @@ async function buildOnce(
       if (!(await draw(stage))) break
     }
     await source.finished
+    // ── El auditor del plan: antes de escribir nada, que las partes encajen y cada una aporte algo. ──
+    const auditing = host.experts?.plan ?? 0
+    if (auditing > 0 && stages.length >= 2 && !host.signal.aborted) {
+      const audited = await auditPlan(host, players, command, stages, auditing)
+      tally.jevMs += audited.ms
+      tally.planReport = audited.report
+      if (audited.parts && !host.signal.aborted) {
+        // El plan corregido se dibuja de nuevo: lo dibujado del plan se quita (aún no hay código) y se pone
+        // el nuevo, parte a parte, como el primero.
+        const drawn = await host.program()
+        await host.write({ edits: [{ start: 0, end: drawn.source.length, text: start.source }] })
+        skeleton = new BuildPlan(request.place)
+        stages.length = 0
+        for (const part of audited.parts) if (!(await draw(part))) break
+      }
+    }
     // El plan está entero: con todas sus partes a la vista se decide qué forma tiene, y ya no cambia.
     if (stages.length >= 2 && !host.signal.aborted) {
       await host.show({
@@ -1262,11 +1385,25 @@ export async function modify(
 
 // ───────────────────────── los expertos ─────────────────────────
 
+/** Cuántas veces, como mucho, se vuelve a mirar lo arreglado por los expertos que corrigen. */
+export const MAX_ROUNDS = 3
+
+/** El programa, sin lo que no cambia nada (espacios al final, líneas en blanco de más): para notar si vuelve. */
+const shapeOf = (source: string) =>
+  source
+    .split('\n')
+    .map((line) => line.replace(/\s+$/, ''))
+    .filter((line) => line !== '')
+    .join('\n')
+
 /**
  * **La auditoría**: al acabar, los expertos presentes miran lo que quedó (el programa, lo que hace al
  * ejecutarlo y su pantalla), cada uno en lo suyo y a la vez. El JEV decide de cada hallazgo si se arregla, se
- * sugiere o se descarta. Lo que se arregla (de los expertos en «corrige») se hace en un solo cambio, que se
- * ve y se deshace; si rompe algo que funcionaba, se arregla una vez. Lo demás se cuenta.
+ * sugiere o se descarta. Lo de los expertos que corrigen (lo de partida) se aplica —todo lo que el JEV no
+ * descarta—, en un solo cambio que se ve y se deshace; si rompe lo que funcionaba, se arregla una vez. Y se
+ * vuelve a mirar, hasta `MAX_ROUNDS` rondas, mientras salga algo nuevo. Se para antes si se nota que se dan
+ * vueltas: el JEV ve que un arreglo deshace o vuelve a pedir otro de antes, o el programa vuelve a una
+ * versión que ya tuvo.
  */
 async function audit(
   host: Stagehand,
@@ -1280,72 +1417,121 @@ async function audit(
   const present = EXPERT_IDS.filter((id) => levels[id] > 0)
   if (present.length === 0 || host.signal.aborted) return outcome
   const asked = outcome.asked ?? command
-  await host.show({
-    type: 'progress',
-    text: `Los expertos lo revisan: ${present.map((id) => EXPERTS[id].name).join(', ')}…`,
-  })
-  const program = await host.program()
-  const before = await ranOf(host)
-  const consulted = await Promise.all(
-    present.map((id) =>
-      consult(players.provider, players.decider, id, levels[id], {
-        command: asked,
-        source: program.source.slice(0, REVIEW_BUDGET),
-        ...(before ? { ran: before.said } : {}),
-        ...(usesScreenModule(program.source) ? { guide: SCREEN_GUIDE } : {}),
-      }),
-    ),
-  )
-  const reports = consulted.map((one) => one.report)
-  let jevMs = outcome.jevMs + consulted.reduce((sum, one) => sum + one.ms, 0)
-  // Lo que se arregla ya: lo que el JEV confirma, de los expertos que corrigen.
-  const toApply = reports.flatMap((report) =>
-    report.level === 3 ? report.findings.filter((finding) => finding.verdict === 'aplicar') : [],
-  )
-  if (toApply.length === 0 || host.signal.aborted) {
-    return { ...outcome, jevMs, audit: { experts: reports } }
+  const merged = new Map<string, ExpertReport>()
+  const applied: string[] = []
+  const seen = new Set<string>([shapeOf((await host.program()).source)])
+  let jevMs = outcome.jevMs
+  let written = outcome.written
+  let rounds = 0
+  let stop: 'limpio' | 'vueltas' | 'tope' = 'limpio'
+  let repairs: { mended?: boolean; broken?: string } = {}
+  for (let round = 1; round <= MAX_ROUNDS && !host.signal.aborted; round++) {
+    // En la primera ronda miran todos; después, solo los que corrigen (los demás ya dijeron lo suyo).
+    const looking = round === 1 ? present : present.filter((id) => levels[id] === 3)
+    if (looking.length === 0) break
+    rounds = round
+    await host.show({
+      type: 'progress',
+      text:
+        round === 1
+          ? `Los expertos lo revisan: ${looking.map((id) => EXPERTS[id].name).join(', ')}…`
+          : `Los expertos vuelven a mirar lo arreglado (ronda ${round})…`,
+    })
+    const program = await host.program()
+    const before = await ranOf(host)
+    const consulted = await Promise.all(
+      looking.map((id) =>
+        consult(players.provider, players.decider, id, levels[id], {
+          command: asked,
+          source: program.source.slice(0, REVIEW_BUDGET),
+          ...(before ? { ran: before.said } : {}),
+          ...(usesScreenModule(program.source) ? { guide: SCREEN_GUIDE } : {}),
+          applied,
+        }),
+      ),
+    )
+    jevMs += consulted.reduce((sum, one) => sum + one.ms, 0)
+    for (const { report } of consulted) {
+      const known = merged.get(report.id)
+      merged.set(
+        report.id,
+        known ? { ...known, findings: [...known.findings, ...report.findings] } : report,
+      )
+    }
+    const fresh = consulted.flatMap(({ report }) => (report.level === 3 ? report.findings : []))
+    // Lo que deshace o vuelve a pedir un arreglo de antes no se aplica: se están dando vueltas.
+    const looping = fresh.some((finding) => finding.verdict === 'vuelta')
+    const toApply = fresh.filter(
+      (finding) => finding.verdict === 'aplicar' || finding.verdict === 'sugerir',
+    )
+    if (toApply.length === 0) {
+      stop = looping ? 'vueltas' : 'limpio'
+      break
+    }
+    await host.show({
+      type: 'say',
+      say: `Los expertos arreglan: ${toApply.map((finding) => lowerFirst(finding.fix)).join('; ')}.`,
+      aside: true,
+    })
+    const fixed = await modifyOnce(host, players, {
+      command: `Mejora el programa como dicen los expertos, sin cambiar lo que hace ni lo que se pidió («${asked}»): ${toApply.map((finding) => finding.fix).join('; ')}.`,
+      whole: true,
+    })
+    jevMs += fixed.jevMs
+    written += fixed.written
+    const done = !fixed.stopped && fixed.trouble === null && fixed.written > 0
+    for (const finding of toApply) finding.applied = done
+    if (!done) break
+    applied.push(...toApply.map((finding) => finding.fix))
+    const mended = await mend(host, players, asked, before)
+    written += mended.written
+    jevMs += mended.jevMs
+    if (mended.repaired) repairs = { mended: true }
+    if (mended.broken !== undefined) {
+      repairs = { broken: mended.broken }
+      break
+    }
+    // El programa vuelve a una versión que ya tuvo: lo que se arregla en una ronda se deshace en otra.
+    const now = shapeOf((await host.program()).source)
+    if (seen.has(now) || looping) {
+      stop = 'vueltas'
+      break
+    }
+    seen.add(now)
+    if (round === MAX_ROUNDS) stop = 'tope'
   }
-  await host.show({
-    type: 'say',
-    say: `Los expertos arreglan: ${toApply.map((finding) => lowerFirst(finding.fix)).join('; ')}.`,
-    aside: true,
-  })
-  const fixed = await modifyOnce(host, players, {
-    command: `Mejora el programa como dicen los expertos, sin cambiar lo que hace ni lo que se pidió («${asked}»): ${toApply.map((finding) => finding.fix).join('; ')}.`,
-    whole: true,
-  })
-  jevMs += fixed.jevMs
-  const done = !fixed.stopped && fixed.trouble === null && fixed.written > 0
-  for (const finding of toApply) finding.applied = done
-  const mended = done ? await mend(host, players, asked, before) : { written: 0, jevMs: 0 }
   return {
     ...outcome,
-    written: outcome.written + fixed.written + mended.written,
-    jevMs: jevMs + mended.jevMs,
-    audit: {
-      experts: reports,
-      ...(mended.repaired ? { mended: true } : {}),
-      ...(mended.broken !== undefined ? { broken: mended.broken } : {}),
-    },
+    written,
+    jevMs,
+    audit: { experts: [...merged.values()], rounds, stop, ...repairs },
   }
 }
 
-/** Lo que se dice de la auditoría al final: lo arreglado y lo que queda por ver en «Expertos». */
+/** Lo que se dice de la auditoría al final: lo arreglado, en cuántas rondas, y lo que queda por ver. */
 function auditSaid(outcome: Outcome): string {
-  const reports = outcome.audit?.experts
-  if (!reports) return ''
-  const findings = reports.flatMap((report) => report.findings)
+  const audit = outcome.audit
+  if (!audit) return ''
+  const findings = audit.experts.flatMap((report) => report.findings)
   const applied = findings.filter((finding) => finding.applied).length
-  const open = findings.length - applied
+  const open = findings.filter(
+    (finding) =>
+      !finding.applied && finding.verdict !== 'vuelta' && finding.verdict !== 'descartar',
+  ).length
   if (findings.length === 0) return ' Los expertos no ven nada que mejorar.'
   const parts = [
     ...(applied > 0 ? [`arreglaron ${applied} ${applied === 1 ? 'cosa' : 'cosas'}`] : []),
     ...(open > 0 ? [`tienen ${open} ${open === 1 ? 'recomendación' : 'recomendaciones'}`] : []),
   ]
-  const broken = outcome.audit?.broken
-    ? ` (lo que aplicaron dejó un fallo: ${outcome.audit.broken})`
-    : ''
-  return ` Los expertos ${parts.join(' y ')}${broken}: míralo en «Expertos».`
+  const rounds = (audit.rounds ?? 1) > 1 ? ` en ${audit.rounds} rondas` : ''
+  const why =
+    audit.stop === 'vueltas'
+      ? ' y pararon al notar que daban vueltas'
+      : audit.stop === 'tope'
+        ? ` y pararon tras ${audit.rounds} rondas`
+        : ''
+  const broken = audit.broken ? ` (lo que aplicaron dejó un fallo: ${audit.broken})` : ''
+  return ` Los expertos ${parts.join(' y ') || 'miraron'}${rounds}${why}${broken}: míralo en «Expertos».`
 }
 
 /**

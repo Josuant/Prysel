@@ -1,6 +1,6 @@
 import {
-  EXPERT_IDS,
-  EXPERTS,
+  ADVISOR_IDS,
+  ADVISORS,
   PRESENCE_NAMES,
   type ExpertLevels,
   type Presence,
@@ -51,13 +51,13 @@ export function ExpertsPanel({
         </button>
       </header>
       <ul className="experts__list">
-        {EXPERT_IDS.map((id) => (
+        {ADVISOR_IDS.map((id) => (
           <li key={id} className="experts__row">
             <div className="experts__who">
-              <span className="experts__name">{EXPERTS[id].name}</span>
-              <span className="experts__looks">{EXPERTS[id].looks}</span>
+              <span className="experts__name">{ADVISORS[id].name}</span>
+              <span className="experts__looks">{ADVISORS[id].looks}</span>
             </div>
-            <div className="experts__levels" role="radiogroup" aria-label={EXPERTS[id].name}>
+            <div className="experts__levels" role="radiogroup" aria-label={ADVISORS[id].name}>
               {PRESENCES.map((level) => (
                 <button
                   key={level}
@@ -88,6 +88,16 @@ export function ExpertsPanel({
                 ? ` — arreglaron ${applied} ${applied === 1 ? 'cosa' : 'cosas'}.`
                 : ''}
           </p>
+          {(audit.rounds ?? 1) > 1 || audit.stop === 'vueltas' ? (
+            <p className="experts__asked">
+              {(audit.rounds ?? 1) > 1 ? `Miraron ${audit.rounds} veces` : 'Miraron una vez'}
+              {audit.stop === 'vueltas'
+                ? ' y pararon al notar que daban vueltas.'
+                : audit.stop === 'tope'
+                  ? ' (el tope de rondas).'
+                  : ': no quedó nada más.'}
+            </p>
+          ) : null}
           {audit.broken !== undefined && (
             <p className="experts__warn">Lo que aplicaron dejó un fallo: {audit.broken}</p>
           )}
@@ -96,7 +106,7 @@ export function ExpertsPanel({
             .map((report) => (
               <div key={report.id} className="experts__report">
                 <h4 className="experts__expert">
-                  {EXPERTS[report.id].name}
+                  {ADVISORS[report.id].name}
                   <span className="experts__mode">{PRESENCE_NAMES[report.level]}</span>
                 </h4>
                 {report.silent && <p className="experts__quiet">No pudo mirarlo esta vez.</p>}
@@ -112,7 +122,16 @@ export function ExpertsPanel({
                       </div>
                       {finding.applied ? (
                         <span className="experts__done">Hecho</span>
+                      ) : finding.verdict === 'vuelta' ? (
+                        <span
+                          className="experts__done"
+                          title="Deshacía o volvía a pedir un arreglo de antes: no se aplicó"
+                        >
+                          Da vueltas
+                        </span>
                       ) : (
+                        // (Lo del auditor del plan era antes de construir: ya no se aplica con un botón.)
+                        report.id !== 'plan' &&
                         report.level >= 1 && (
                           <button
                             type="button"
