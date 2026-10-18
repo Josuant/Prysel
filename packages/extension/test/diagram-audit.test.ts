@@ -6,7 +6,13 @@ import { applyEdits } from '@prysel/python/edits'
 import type { AiProvider } from '../src/ai/provider.ts'
 import type { Decider } from '../src/jev/client.ts'
 import { auditDiagram, type Outcome, type Stagehand } from '../src/jev/director.ts'
-import { diagramCorrectionsOf, movedSource, textKey, type Diagram } from '../src/jev/diagram.ts'
+import {
+  diagramCorrectionsOf,
+  movedSource,
+  textKey,
+  unusedFunctions,
+  type Diagram,
+} from '../src/jev/diagram.ts'
 import { localDecider } from '../src/jev/local.ts'
 
 /**
@@ -219,5 +225,40 @@ describe('al acabar, el diagrama', () => {
     } as unknown as AiProvider
     await auditDiagram(host, { provider, decider: jev }, 'x', done)
     expect(state.text).toBe(before)
+  })
+  it('una conexión que deja una función que nadie usa no ayuda: se deshace', async () => {
+    const { host, state } = stage(3)
+    const CON_SOBRANTE = `${ANTES}${['', 'def correr():', '    mostrar(max(preparar()))', ''].join('\n')}`
+    const provider = {
+      id: 'mentira',
+      generate(request: { system: string }) {
+        if (request.system.includes('AUDITOR INTERNO del diagrama'))
+          return Promise.resolve(
+            'CONECTAR | mete el arranque en una función correr | se ve el ciclo',
+          )
+        if (request.system.includes('programa ENTERO')) return Promise.resolve(CON_SOBRANTE)
+        return Promise.resolve('Meto el arranque en una función.')
+      },
+    } as unknown as AiProvider
+    const outcome = await auditDiagram(host, { provider, decider: jev }, 'x', done)
+    expect(state.text).toBe(ANTES)
+    expect(outcome.diagramAudit?.findings[0]?.applied).toBeUndefined()
+  })
+
+  it('las funciones sin usar: las que su nombre no sale en ningún otro sitio', () => {
+    const source = [
+      'def a():',
+      '    b()',
+      '',
+      'def b():',
+      '    pass',
+      '',
+      'def c():',
+      '    pass',
+      '',
+      'boton("x", a)',
+      '',
+    ].join('\n')
+    expect(unusedFunctions(source)).toEqual(['c'])
   })
 })

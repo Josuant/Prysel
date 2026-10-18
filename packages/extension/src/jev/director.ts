@@ -88,6 +88,7 @@ import {
   diagramCorrectionsOf,
   judgeDiagram,
   movedSource,
+  unusedFunctions,
   type Diagram,
   type DiagramCorrection,
   type Span,
@@ -1527,6 +1528,10 @@ async function audit(
     jevMs += mended.jevMs
     if (mended.repaired) repairs = { mended: true }
     if (mended.broken !== undefined) {
+      // Se aplicó sin preguntar: si deja un fallo que no se arregla, se deshace (quedan como recomendación).
+      await restore(host, program.source)
+      for (const finding of toApply) finding.applied = false
+      applied.splice(applied.length - toApply.length, toApply.length)
       repairs = { broken: mended.broken }
       break
     }
@@ -1719,14 +1724,14 @@ async function applyDiagram(
     const next = movedSource(source, blocks, move.at, move.after)
     if (
       next !== null &&
-      (defines(move.at) || jumped.every(defines)) &&
+      // Sin poder ejecutarlo, solo lo que no puede cambiar nada: ella o las que salta solo definen.
+      (before !== null || defines(move.at) || jumped.every(defines)) &&
       host.parses(next) &&
       (await host.write({ edits: [{ start: 0, end: source.length, text: next }] })) === null
     ) {
-      const after = before && before.broken === null ? await ranOf(host) : null
-      if (after?.broken) {
-        // Al moverla deja de funcionar: se deja como estaba.
-        await host.write({ edits: [{ start: 0, end: next.length, text: source }] })
+      if (!(await sameDoing(host, before, source))) {
+        // Al moverla hace otra cosa (o falla): se deja como estaba.
+        await restore(host, source)
       } else {
         const moved = order.filter((n) => n !== move.at)
         moved.splice(move.after === 0 ? 0 : moved.indexOf(move.after) + 1, 0, move.at)
@@ -1794,6 +1799,7 @@ async function applyDiagram(
   // ── Las conexiones que el código no deja ver: un cambio más, que se ve y se deshace. ──
   const links = accepted.filter((one) => one.kind === 'conectar')
   if (links.length > 0 && !host.signal.aborted) {
+    const prior = (await host.program()).source
     const fixed = await modifyOnce(host, players, {
       command: `Para que se vea cómo pasan los datos de una fase a otra, sin cambiar lo que hace el programa ni lo que se pidió («${asked}»): ${links.map((one) => (one.kind === 'conectar' ? one.fix : '')).join('; ')}.`,
       whole: true,
@@ -1801,13 +1807,36 @@ async function applyDiagram(
     jevMs += fixed.jevMs
     written += fixed.written
     if (!fixed.stopped && fixed.trouble === null && fixed.written > 0) {
-      done.push(...links)
-      const mended = await mend(host, players, asked, before)
-      written += mended.written
-      jevMs += mended.jevMs
+      // Es para que se entienda, no para que haga otra cosa: si cambia lo que hace, falla o deja una
+      // función que nadie usa, se deshace.
+      if (await sameDoing(host, before, prior)) done.push(...links)
+      else await restore(host, prior)
     }
   }
   return { applied: done, written, jevMs }
+}
+
+/** Vuelve a dejar el programa como estaba (`text`). */
+async function restore(host: Stagehand, text: string): Promise<void> {
+  const now = await host.program()
+  if (now.source !== text) await host.write({ edits: [{ start: 0, end: now.source.length, text }] })
+}
+
+/**
+ * ¿El programa de ahora hace lo mismo que el de antes (`prior`, que al ejecutarlo dijo `before`)? Lo mismo al
+ * ejecutarlo (con el azar repetible, la salida es la misma), sin fallos, y sin funciones nuevas que nadie usa.
+ */
+async function sameDoing(
+  host: Stagehand,
+  before: { broken: string | null; said: string } | null,
+  prior: string,
+): Promise<boolean> {
+  const now = await host.program()
+  const unused = new Set(unusedFunctions(prior))
+  if (unusedFunctions(now.source).some((name) => !unused.has(name))) return false
+  if (before === null) return true
+  const after = await ranOf(host)
+  return after !== null && after.broken === before.broken && after.said === before.said
 }
 
 /** Lo que se dice de la auditoría al final: lo arreglado, en cuántas rondas, y lo que queda por ver. */
@@ -1832,7 +1861,9 @@ function auditSaid(outcome: Outcome): string {
       : audit.stop === 'tope'
         ? ` y pararon tras ${audit.rounds} rondas`
         : ''
-  const broken = audit.broken ? ` (lo que aplicaron dejó un fallo: ${audit.broken})` : ''
+  const broken = audit.broken
+    ? ` (lo que aplicaron dejaba un fallo y se deshizo: ${audit.broken})`
+    : ''
   return ` Los expertos ${parts.join(' y ') || 'miraron'}${rounds}${why}${broken}: míralo en «Expertos».`
 }
 

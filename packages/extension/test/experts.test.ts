@@ -14,6 +14,7 @@ import {
   type ExpertLevels,
 } from '../src/jev/experts.ts'
 import { localDecider } from '../src/jev/local.ts'
+import type { Trace } from '../src/trace.ts'
 
 /**
  * Los expertos: al acabar una orden, quien sabe de interfaz, de uso, de código limpio y de ingeniería mira lo
@@ -197,6 +198,42 @@ describe('la auditoría al acabar una orden', () => {
     expect(summaryOf(outcome, ['cambio', 'cambios'])).toContain(
       'Los expertos arreglaron 1 cosa y tienen 1 recomendación en 2 rondas y pararon al notar que daban vueltas',
     )
+  })
+
+  it('lo que se aplicó sin preguntar y deja un fallo que no se arregla, se deshace', async () => {
+    const { host, state } = stage({ ui: 0, ux: 0, codigo: 3, ingenieria: 0, plan: 0 })
+    // Ejecutarlo: lo que usa el color «marrón» falla (no existe).
+    host.run = () =>
+      Promise.resolve(
+        (state.text.includes('marrón')
+          ? {
+              output: '',
+              error: { name: 'ValueError', message: 'No conozco el color «marrón»', line: 5 },
+            }
+          : { output: '7\n', error: null }) as unknown as Trace,
+      )
+    const ROTO = `${MEJOR}print(color("marrón"))\n`
+    const provider = {
+      id: 'mentira',
+      generate(request: { system: string }) {
+        if (request.system.includes('CÓDIGO LIMPIO'))
+          return Promise.resolve(
+            'MEJORA | El parámetro p no dice qué es | Llama precios al parámetro p',
+          )
+        if (request.system.includes('programa ENTERO'))
+          return Promise.resolve(state.text === ANTES ? CAMBIADO : ROTO)
+        return Promise.resolve('Cambio lo que se imprime.')
+      },
+    } as unknown as AiProvider
+    const outcome = await modify(
+      host,
+      { provider, decider: jev },
+      { command: 'que diga «Hecho» al acabar', whole: true },
+    )
+    // Lo pedido se queda; lo de los expertos, que rompía y no se arregló, se deshizo y queda propuesto.
+    expect(state.text).toBe(CAMBIADO)
+    expect(outcome.audit?.broken).toContain('marrón')
+    expect(outcome.audit?.experts[0]?.findings[0]?.applied).toBe(false)
   })
 
   it('sin expertos presentes no se audita nada', async () => {

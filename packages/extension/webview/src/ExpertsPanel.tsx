@@ -99,7 +99,10 @@ export function ExpertsPanel({
             </p>
           ) : null}
           {audit.broken !== undefined && (
-            <p className="experts__warn">Lo que aplicaron dejó un fallo: {audit.broken}</p>
+            <p className="experts__warn">
+              Lo que aplicaron dejaba un fallo y se deshizo (queda como recomendación):{' '}
+              {audit.broken}
+            </p>
           )}
           {audit.experts
             .filter((report) => report.findings.length > 0 || report.silent)

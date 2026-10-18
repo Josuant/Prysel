@@ -332,3 +332,16 @@ export class DrawnDiagram {
     return this.last?.key === key ? this.last : null
   }
 }
+
+/**
+ * Las funciones de primer nivel que nadie usa: su nombre no sale en ningún otro sitio del programa (ni llamada,
+ * ni pasada a otra, como `pantalla.boton("Empezar", empezar)`). Un cambio que solo debía ordenar el diagrama no
+ * puede dejar ninguna nueva.
+ */
+export function unusedFunctions(source: string): string[] {
+  const names = [...source.matchAll(/^def\s+([A-Za-z_]\w*)\s*\(/gm)].map((found) => found[1] ?? '')
+  return names.filter((name) => {
+    const uses = source.match(new RegExp(`\\b${name}\\b`, 'g'))?.length ?? 0
+    return uses <= 1
+  })
+}
