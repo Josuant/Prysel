@@ -40,6 +40,11 @@
         "category": "Prysel"
       },
       {
+        "command": "prysel.ask",
+        "title": "Pedir…",
+        "category": "Prysel"
+      },
+      {
         "command": "prysel.runAll",
         "title": "Ejecutar el archivo",
         "category": "Prysel"

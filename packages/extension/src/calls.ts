@@ -38,7 +38,7 @@ export interface CallEntry {
 /** Lo más que se guarda de un texto: una petición con un archivo enorme no debe ahogar el lienzo. */
 export const MAX_CALL_TEXT = 30_000
 /** Cuántas consultas se recuerdan. */
-export const MAX_CALLS = 120
+export const MAX_CALLS = 400
 /** Mientras llega una respuesta, cada cuánto se avisa de cómo va. */
 const STREAM_NOTIFY_MS = 200
 

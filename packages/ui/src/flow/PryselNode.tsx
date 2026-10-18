@@ -17,7 +17,7 @@ import {
   type Density,
   type NodeState,
 } from '@prysel/morphology'
-import { SCOPE_FRAME, type Axis } from '@prysel/spatial'
+import { SCOPE_FRAME, type Axis, type ModuleRole } from '@prysel/spatial'
 import { MorphNode, type MeasuredSlot, type NodeEdit } from '../MorphNode.tsx'
 import type { ControlModel } from '../controls.tsx'
 import type { MotionPhase } from '../motion.ts'
@@ -26,7 +26,10 @@ import { FLOW_LANE, FLOW_RAIL, flowEntry, isLoopTerritory, territoryHeadroom } f
 import { TrayBox } from './ChipNode.tsx'
 import { LapsStrip } from './LapsStrip.tsx'
 import { LAPS_HEADROOM } from '../laps.ts'
-import { SectionCard, SectionFrame } from './SectionCard.tsx'
+import { titledScene } from '../gist.ts'
+import { GistCard } from './GistCard.tsx'
+import { markOpening, openingNow, unrollDelay } from './opening.ts'
+import { SectionCard, SectionFrame, type ModuleState } from './SectionCard.tsx'
 import { TRAY, resultNames, type ChipSlot, type TrayLayout } from '../chips.ts'
 import { Icon } from '../Icon.tsx'
 
@@ -108,10 +111,22 @@ export interface PryselNodeData extends Record<string, unknown> {
    * abrir ahí lo que se puede crear.
    */
   onAddAfter?: (id: string, at: { x: number; y: number }) => void
+  /** Se puede pedir con palabras lo que va detrás: una etapa enseña un puerto del que sale un cable. */
+  askPort?: boolean
   phase: MotionPhase
   onControlChange?: (id: string, next: ControlModel) => void
   onNodeEdit?: (id: string, edit: NodeEdit) => void
   onEnter?: (id: string) => void
+  /** Probar con otros datos la función de una tarjeta «Qué hace». */
+  onGistEdit?: (id: string) => void
+  /** En la arquitectura: el papel de este módulo (entrada, datos, lógica, control, salida). */
+  role?: ModuleRole
+  /** En la arquitectura: cuántos módulos usan lo que este guarda (cuando son muchos, se dice aquí). */
+  usedBy?: number
+  /** En la arquitectura: se enseña por dentro (sus nombres), no solo con palabras. */
+  xray?: boolean
+  /** En la arquitectura: cómo le fue a este módulo al ejecutar el programa. */
+  moduleState?: ModuleState
   /** Abrir un subproceso (la función, la clase o el método al que llama) desde su pastilla. */
   onOpen?: (id: string) => void
 }
@@ -168,7 +183,7 @@ function railPath(w: number, h: number, top: number): string {
   ].join(' ')
 }
 
-export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
+export function PryselNode({ id, data, selected, positionAbsoluteY }: NodeProps<PryselFlowNode>) {
   const {
     node,
     density,
@@ -183,6 +198,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
     phase,
   } = data
   const [slots, setSlots] = useState<MeasuredSlot[]>([])
+  // Si nace mientras una función se abre desde su tarjeta, se despliega a su turno (los de arriba, antes).
+  // Se decide una vez, al nacer: después ya es un nodo como cualquier otro.
+  const [unroll] = useState(() => unrollDelay(id, positionAbsoluteY))
+  const arriving =
+    unroll === null
+      ? {}
+      : { 'data-unroll': '', style: { '--unroll': `${unroll}ms` } as React.CSSProperties }
   const updateNodeInternals = useUpdateNodeInternals()
 
   const spec = getKind(node.kind)
@@ -316,24 +338,13 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
   /** Los campos que enseñan su nombre: los que reciben un cable, y (al arrastrar uno) donde valdría soltarlo. */
   const named = [...connected, ...open.filter((slot) => eligible?.includes(slot.id))]
 
-  // Una etapa (o un bucle que encabeza una, plegado): su tarjeta o su marco, no una tarjeta de sentencia.
-  const stage = node.section
-  if (stage && (node.kind === 'space.section' || !container)) {
-    const retitle = data.onNodeEdit
-      ? (to: string) => {
-          data.onNodeEdit?.(id, { type: 'rename', to })
-        }
-      : undefined
-    const toggle = data.onEnter
-      ? () => {
-          data.onEnter?.(id)
-        }
-      : undefined
+  // Una función plegada de la que se sabe qué hace: su tarjeta «Qué hace» (lo que entró → lo que salió).
+  if (node.gist && !container) {
     return (
       <div
         className="flow-node"
         data-phase={phase}
-        data-section=""
+        data-gist=""
         data-selected={selected ? '' : undefined}
         data-add-target={data.addTarget ? '' : undefined}
         data-cursor={data.cursor ? '' : undefined}
@@ -343,6 +354,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         data-change={data.change}
         data-hinted={data.hinted ? '' : undefined}
         data-modifier={modifier}
+        {...arriving}
       >
         <Handle
           type="source"
@@ -378,6 +390,113 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
             />
           </>
         )}
+        <GistCard
+          scene={titledScene(node.gist, {
+            ...(node.section ? { stage: node.section.title } : {}),
+            ...(node.note ? { note: node.note } : {}),
+          })}
+          size={size}
+          onToggle={
+            data.onEnter
+              ? () => {
+                  markOpening({ id, w: size.w, h: size.h, y: positionAbsoluteY })
+                  data.onEnter?.(id)
+                }
+              : undefined
+          }
+          onEdit={
+            data.onGistEdit
+              ? () => {
+                  data.onGistEdit?.(id)
+                }
+              : undefined
+          }
+        />
+      </div>
+    )
+  }
+
+  // La función que se acaba de abrir desde su tarjeta: su marco crece desde lo que medía la tarjeta.
+  const from = container ? openingNow() : null
+  const opened =
+    from?.id === id
+      ? ({ '--from-w': `${from.w}px`, '--from-h': `${from.h}px` } as React.CSSProperties)
+      : null
+
+  // Una etapa (o un bucle que encabeza una, plegado): su tarjeta o su marco, no una tarjeta de sentencia.
+  const stage = node.section
+  if (stage && (node.kind === 'space.section' || !container)) {
+    const retitle = data.onNodeEdit
+      ? (to: string) => {
+          data.onNodeEdit?.(id, { type: 'rename', to })
+        }
+      : undefined
+    const toggle = data.onEnter
+      ? () => {
+          data.onEnter?.(id)
+        }
+      : undefined
+    return (
+      <div
+        className="flow-node"
+        data-phase={phase}
+        data-section=""
+        data-role={data.role}
+        data-selected={selected ? '' : undefined}
+        data-add-target={data.addTarget ? '' : undefined}
+        data-cursor={data.cursor ? '' : undefined}
+        data-spotlit={data.spotlit === undefined ? undefined : data.spotlit % 2}
+        data-born={data.born ? '' : undefined}
+        data-echo={data.echoed ? '' : undefined}
+        data-change={data.change}
+        data-hinted={data.hinted ? '' : undefined}
+        data-modifier={modifier}
+        {...arriving}
+      >
+        <Handle
+          type="source"
+          id="note-out"
+          position={Position.Right}
+          isConnectable={false}
+          className="note-handle"
+        />
+        <Handle
+          type="source"
+          id="aux-out"
+          position={Position.Left}
+          isConnectable={false}
+          className="note-handle"
+        />
+        {axis === 'vertical' && (
+          <>
+            <Handle
+              type="target"
+              id="step-in"
+              position={Position.Top}
+              isConnectable={false}
+              className="note-handle"
+              {...(spineStyle ? { style: spineStyle } : {})}
+            />
+            <Handle
+              type="source"
+              id="step-out"
+              position={Position.Bottom}
+              isConnectable={false}
+              className="note-handle"
+              {...(spineStyle ? { style: spineStyle } : {})}
+            />
+          </>
+        )}
+        {data.askPort && (
+          <Handle
+            type="source"
+            id="order-out"
+            position={Position.Right}
+            className="order-port ask-port"
+            title="Arrastra desde aquí y suelta: pide lo que va después de esta parte"
+            isConnectable
+          />
+        )}
         {flow && data.onAddAfter && (
           <button
             type="button"
@@ -405,6 +524,7 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         {container ? (
           <SectionFrame
             info={stage}
+            role={data.role}
             note={node.note}
             size={size}
             signal={data.renameSignal ?? 0}
@@ -414,7 +534,11 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
         ) : (
           <SectionCard
             info={stage}
+            role={data.role}
+            usedBy={data.usedBy}
+            state={data.moduleState}
             note={node.note}
+            plain={data.role !== undefined && data.xray !== true}
             size={size}
             signal={data.renameSignal ?? 0}
             onToggle={toggle}
@@ -438,7 +562,20 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
       data-echo={data.echoed ? '' : undefined}
       data-change={data.change}
       data-hinted={data.hinted ? '' : undefined}
+      {...(opened ? { 'data-opened': '', style: opened } : arriving)}
     >
+      {from && opened && node.gist && (
+        // La tarjeta de la que sale el diagrama: se queda un momento encima, deshaciéndose, mientras el
+        // marco crece y los nodos aparecen debajo. Es un fundido: no se puede tocar ni leer.
+        <div
+          className="gist-ghost"
+          aria-hidden
+          inert
+          style={{ width: from.w, height: from.h, marginLeft: -from.w / 2 }}
+        >
+          <GistCard scene={{ ...node.gist, beats: 0 }} size={{ w: from.w, h: from.h }} />
+        </div>
+      )}
       {/* De aquí sale la flecha de una nota: existe en todo nodo (también en un territorio, que no tiene salida). */}
       <Handle
         type="source"
@@ -985,7 +1122,9 @@ export function PryselNode({ id, data, selected }: NodeProps<PryselFlowNode>) {
                 ? { toggleLabel: `Ver la función de ${node.label}` }
                 : container
                   ? {}
-                  : { toggleLabel: `Abrir ${node.label}` }),
+                  : node.kind === 'control.condition'
+                    ? { toggleLabel: 'Ver cómo funciona' }
+                    : { toggleLabel: `Abrir ${node.label}` }),
             }
           : {})}
       />

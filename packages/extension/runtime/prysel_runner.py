@@ -546,8 +546,291 @@ def instrument_chains(tree, frag):
         return tree
 
 
+# ── las sondas: lo que vale algo en cada vuelta de un bucle ──────────────────────
+
+# Lo que una expresión de sonda puede llamar por su nombre, además de las funciones del propio programa.
+_PROBE_CALLS = frozenset(
+    "abs all any bool dict enumerate float int len list max min range reversed round set sorted str sum "
+    "tuple zip map filter".split()
+)
+# Y los métodos: los que solo leen (ni cambian el objeto ni tocan nada de fuera).
+_PROBE_METHODS = frozenset(
+    "count endswith find format get index items join keys lower lstrip replace rstrip split startswith "
+    "strip title upper values copy".split()
+)
+_PROBE_BANNED = frozenset(
+    "eval exec open input print compile globals locals vars setattr delattr getattr exit quit breakpoint "
+    "help memoryview".split()
+)
+_PROBE_NODES = (
+    ast.Expression, ast.Name, ast.Load, ast.Store, ast.Constant, ast.BinOp, ast.UnaryOp, ast.BoolOp,
+    ast.Compare, ast.IfExp, ast.Subscript, ast.Slice, ast.Tuple, ast.List, ast.Call, ast.Attribute,
+    ast.keyword, ast.GeneratorExp, ast.ListComp, ast.comprehension, ast.Lambda, ast.arguments, ast.arg,
+    ast.operator, ast.unaryop, ast.boolop, ast.cmpop, ast.Starred,
+)
+# Cuántas muestras se guardan de un bucle (con más vueltas, se va guardando una de cada tantas), cuánto
+# puede medir el texto de una, y cuánto tiempo se le da en total a las sondas.
+_PROBE_SAMPLES = 160
+_PROBE_TEXT = 96
+_PROBE_SECONDS = 1.5
+
+
+def _probe_code(text, own):
+    """Una expresión de sonda, compilada; o por qué no vale. Solo puede leer: nombres, cuentas, llamadas a
+    funciones del programa (`own`) o a unas pocas de Python que no cambian nada."""
+    if not isinstance(text, str) or not text.strip() or len(text) > 160:
+        raise ValueError("no es una expresión")
+    tree = ast.parse(text.strip(), mode="eval")
+    for node in ast.walk(tree):
+        if not isinstance(node, _PROBE_NODES):
+            raise ValueError(f"no se admite {type(node).__name__}")
+        if isinstance(node, ast.Name) and (node.id.startswith("__") or node.id in _PROBE_BANNED):
+            raise ValueError(f"no se admite {node.id}")
+        if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
+            raise ValueError(f"no se admite .{node.attr}")
+        if isinstance(node, ast.Call):
+            target = node.func
+            if isinstance(target, ast.Name):
+                if target.id not in _PROBE_CALLS and target.id not in own:
+                    raise ValueError(f"no se admite llamar a {target.id}")
+            elif isinstance(target, ast.Attribute):
+                if target.attr not in _PROBE_METHODS:
+                    raise ValueError(f"no se admite llamar a .{target.attr}")
+            else:
+                raise ValueError("no se admite esa llamada")
+    return compile(tree, "<prysel-probe>", "eval")
+
+
+class _Probe:
+    """Las sondas de un bucle: unas expresiones que se evalúan cada vez que se pasa por su cabecera (al
+    empezar cada vuelta) y al salir de él. Solo miran: lo que impriman no sale, el azar que gasten se
+    devuelve, y lo que se llame desde ellas no se graba."""
+
+    def __init__(self, line, end, texts, own):
+        self.line = line
+        self.end = end
+        self.names = list(texts)
+        self.codes = []
+        self.errors = []
+        for text in texts:
+            try:
+                self.codes.append(_probe_code(text, own))
+                self.errors.append(None)
+            except (SyntaxError, ValueError) as problem:
+                self.codes.append(None)
+                self.errors.append(_short(str(problem), 120))
+        self.laps = []
+        self.values = [[] for _ in texts]
+        # Las veces seguidas que ha fallado cada una sin haber valido nunca: con unas cuantas, se deja.
+        self.failed = [0 for _ in texts]
+        self.worked = [False for _ in texts]
+        # Cada cuántas vueltas se guarda una: se dobla cuando las muestras llenan su cupo.
+        self.stride = 1
+        self.seen = 0
+        self.spent = 0.0
+        self.inside = set()
+        self.at_head = False
+        self.cut = False
+
+    def line_event(self, tracer, frame):
+        """Una línea del marco donde vive el bucle: su cabecera abre una vuelta; fuera de él, se salió."""
+        line = frame.f_lineno
+        key = id(frame)
+        if line == self.line:
+            self.inside.add(key)
+            self.at_head = True
+            self.seen += 1
+            if (self.seen - 1) % self.stride == 0:
+                self.sample(tracer, frame, self.seen - 1)
+        elif key in self.inside:
+            if self.line < line <= self.end:
+                self.at_head = False
+            else:
+                self.leave(tracer, frame)
+
+    def leave(self, tracer, frame):
+        """Se salió del bucle (o de su función): lo que valía todo al acabar la última vuelta."""
+        if id(frame) not in self.inside:
+            return
+        self.inside.discard(id(frame))
+        # Si se salió desde la cabecera y esa pasada ya se guardó, es lo último: no hay nada nuevo que mirar.
+        # Desde dentro (un `break`, un `return`), o si esa pasada no tocaba guardarla, se mira ahora.
+        if not self.at_head or not self.laps or self.laps[-1] != self.seen - 1:
+            self.sample(tracer, frame, self.seen)
+
+    def sample(self, tracer, frame, lap):
+        if self.cut:
+            return
+        started = time.perf_counter()
+        scope = dict(frame.f_globals)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            scope.update(frame.f_locals)
+        random = sys.modules.get("random")
+        luck = random.getstate() if random is not None else None
+        saved = sys.stdout, sys.stderr
+        sys.stdout = sys.stderr = io.StringIO()
+        sys.settrace(None)
+        try:
+            row = []
+            for at, code in enumerate(self.codes):
+                if code is None:
+                    row.append(None)
+                    continue
+                try:
+                    row.append(_probe_value(eval(code, scope)))  # noqa: S307 — expresión ya revisada
+                    self.worked[at] = True
+                except Exception as problem:  # la sonda falla, no el programa
+                    # En la primera vuelta puede que aún no exista lo que mira: se vuelve a intentar.
+                    self.failed[at] += 1
+                    if not self.worked[at] and self.failed[at] >= 6:
+                        self.codes[at] = None
+                    self.errors[at] = _short(f"{type(problem).__name__}: {problem}", 120)
+                    row.append(None)
+        finally:
+            sys.stdout, sys.stderr = saved
+            if luck is not None:
+                random.setstate(luck)
+            sys.settrace(tracer.global_trace)
+        self.laps.append(lap)
+        for at, value in enumerate(row):
+            self.values[at].append(value)
+        if len(self.laps) >= _PROBE_SAMPLES:
+            # Demasiadas: se queda una de cada dos, y a partir de ahora se guarda la mitad de veces.
+            self.laps = self.laps[::2]
+            self.values = [column[::2] for column in self.values]
+            self.stride *= 2
+        self.spent += time.perf_counter() - started
+        if self.spent > _PROBE_SECONDS:
+            self.cut = True
+
+    def result(self):
+        return {
+            "line": self.line,
+            "names": self.names,
+            "laps": self.laps,
+            "values": self.values,
+            "errors": self.errors,
+            "total": self.seen,
+            "cut": self.cut,
+        }
+
+
+# Hasta cuántos números lleva una lista que se dibuja como barras, y cuánto mide un tablero que se dibuja como
+# rejilla (con pocas clases de casilla: es un tablero, no una tabla de datos).
+_PROBE_BARS = 48
+_PROBE_ROWS = 24
+_PROBE_COLS = 48
+_PROBE_TONES = 6
+
+
+def _probe_plain(value):
+    """¿Es un número de los que se dibujan (ni un sí/no, ni infinito)?"""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _probe_grid(value):
+    """Un tablero: filas del mismo largo hechas de casillas sueltas, de pocas clases. `None` si no lo es."""
+    rows = None
+    if isinstance(value, str):
+        lines = [line for line in value.split("\n")]
+        while lines and lines[-1] == "":
+            lines.pop()
+        if len(lines) >= 2:
+            rows = [list(line) for line in lines]
+    elif isinstance(value, (list, tuple)) and 2 <= len(value) <= _PROBE_ROWS:
+        if all(isinstance(row, str) for row in value):
+            rows = [list(row) for row in value]
+        elif all(isinstance(row, (list, tuple)) for row in value):
+            rows = [list(row) for row in value]
+    if not rows or not (2 <= len(rows) <= _PROBE_ROWS):
+        return None
+    width = len(rows[0])
+    if not (2 <= width <= _PROBE_COLS) or any(len(row) != width for row in rows):
+        return None
+    cells = []
+    seen = set()
+    for row in rows:
+        line = []
+        for cell in row:
+            if cell is None:
+                cell = ""
+            elif isinstance(cell, bool):
+                cell = 1 if cell else 0
+            elif isinstance(cell, str):
+                if len(cell) > 2:
+                    return None
+            elif not (_probe_plain(cell) and abs(cell) < 1e9):
+                return None
+            seen.add(cell)
+            if len(seen) > _PROBE_TONES:
+                return None
+            line.append(cell)
+        cells.append(line)
+    return cells
+
+
+def _probe_value(value):
+    """Lo que se guarda de una muestra: un número tal cual, un texto recortado, una lista corta de números o un
+    tablero con su forma (para dibujarlos), y de lo demás su forma escrita."""
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return str(value)
+        return value if abs(value) < 1e15 else str(value)
+    if isinstance(value, str):
+        text = value if len(value) <= _PROBE_TEXT else value[: _PROBE_TEXT - 1] + "…"
+        grid = _probe_grid(value) if "\n" in value else None
+        return {"g": grid, "o": text.split("\n")[0]} if grid is not None else {"s": text}
+    # Una matriz de numpy (pequeña) se mira como las listas que es.
+    if hasattr(value, "tolist") and hasattr(value, "shape"):
+        try:
+            if value.size <= 2500:
+                value = value.tolist()
+        except Exception:  # no era lo que parecía: se queda como está
+            pass
+    # Una colección corta se enseña entera (es lo que se quiere leer: la lista que se va ordenando); una
+    # larga, resumida.
+    try:
+        small = len(value) <= 40
+    except TypeError:
+        small = False
+    text = repr(value) if small else reprlib.repr(value)
+    if len(text) > _PROBE_TEXT:
+        text = reprlib.repr(value)
+    text = _short(text, _PROBE_TEXT)
+    if isinstance(value, (list, tuple)):
+        if 2 <= len(value) <= _PROBE_BARS and all(_probe_plain(item) for item in value):
+            return {"n": [item if abs(item) < 1e15 else 0 for item in value], "o": text}
+        grid = _probe_grid(value)
+        if grid is not None:
+            return {"g": grid, "o": text}
+    return {"o": text}
+
+
 class _TraceLimit(BaseException):
     """Se llegó al tope de pasos de una traza: se corta la ejecución."""
+
+
+class _NoMoreInput(BaseException):
+    """El programa pidió otro dato por teclado y ya no quedaban respuestas de ejemplo: se queda ahí."""
+
+
+def _scripted_input(answers, out):
+    """Un `input` que no espera a nadie: contesta lo que se le dio, en orden, y lo deja escrito en la salida
+    como se vería en la pantalla (la pregunta y, detrás, lo tecleado)."""
+    pending = [str(answer) for answer in answers]
+
+    def ask(prompt=""):
+        out.write(str(prompt))
+        if not pending:
+            raise _NoMoreInput()
+        answer = pending.pop(0)
+        out.write(answer + "\n")
+        return answer
+
+    return ask
 
 
 _COMPREHENSIONS = {"<listcomp>", "<setcomp>", "<dictcomp>", "<genexpr>"}
@@ -580,11 +863,39 @@ def _items(value):
     return items
 
 
+# En modo ancho (lo pide quien va a dibujar el valor con su forma, no a enseñarlo en una celda), una rejilla
+# pequeña se graba entera: hasta estas filas y columnas.
+_WIDE = False
+_GRID_ROWS = 12
+_GRID_COLS = 16
+
+
+def _grid(value):
+    """El texto entero de una rejilla pequeña (una lista de listas de escalares); `None` si no lo es."""
+    if not isinstance(value, (list, tuple)) or not 0 < len(value) <= _GRID_ROWS:
+        return None
+    rows = []
+    for row in value:
+        if not isinstance(row, (list, tuple)) or not 0 < len(row) <= _GRID_COLS:
+            return None
+        items = _items(row)
+        if items is None:
+            return None
+        cells = ", ".join(item if isinstance(item, str) else repr(item) for item in items)
+        rows.append(f"[{cells}]" if isinstance(row, list) else f"({cells}{',' if len(row) == 1 else ''})")
+    text = ", ".join(rows)
+    return f"[{text}]" if isinstance(value, list) else f"({text}{',' if len(rows) == 1 else ''})"
+
+
 def _show(value):
     """Lo que enseña una traza de un valor: un número tal cual, una lista corta de escalares entera
     (`{"l": [...], "n": largo, "t": "list"|"tuple"}`), y lo demás como texto corto."""
     if isinstance(value, bool) or value is None:
         return value
+    if _WIDE:
+        grid = _grid(value)
+        if grid is not None:
+            return grid
     if isinstance(value, (list, tuple)) and len(value) <= _LIST_LIMIT:
         items = _items(value)
         if items is not None:
@@ -700,6 +1011,28 @@ def _is_data(name, value):
     )
 
 
+def _loops(tree):
+    """Los bucles del programa: la línea de su cabecera, la última suya y de qué función son.
+
+    La función se dice por su primera línea (la de su primer decorador, si los lleva: es la que da su código);
+    `0` es el programa. Sirve para seguir contando las vueltas de un bucle cuando ya no se graba su paso a paso.
+    """
+    found = []
+
+    def walk(node, scope):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                first = min([child.lineno] + [mark.lineno for mark in child.decorator_list])
+                walk(child, first)
+                continue
+            if isinstance(child, (ast.For, ast.AsyncFor, ast.While)):
+                found.append((child.lineno, getattr(child, "end_lineno", None) or child.lineno, scope))
+            walk(child, scope)
+
+    walk(tree, 0)
+    return found
+
+
 def _comprehension_only(tree):
     """Los nombres que solo existen como variable de una comprensión: no son variables del programa.
 
@@ -744,6 +1077,8 @@ SAFE_MODULES = frozenset(
         "copy",
         "operator",
         "textwrap",
+        # La pantalla de Prysel: suena, dibuja y tiene botones, pero solo hablando con el lienzo.
+        "pantalla",
     }
 )
 # Nombres que abren una puerta fuera del sandbox (archivos, otro código, otros módulos) aunque el módulo
@@ -778,8 +1113,11 @@ class _UnsafeCode(Exception):
         self.line = line
 
 
-def _check_safe(tree):
-    """Recorre el árbol antes de ejecutar nada: un módulo o un nombre fuera de la lista corta el paso."""
+def _check_safe(tree, scripted=False):
+    """Recorre el árbol antes de ejecutar nada: un módulo o un nombre fuera de la lista corta el paso.
+
+    `scripted`: lo que se teclee ya viene dado (respuestas de ejemplo): `input` no lee del equipo, y vale."""
+    forbidden = SAFE_FORBIDDEN_NAMES - {"input"} if scripted else SAFE_FORBIDDEN_NAMES
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -794,7 +1132,7 @@ def _check_safe(tree):
                 raise _UnsafeCode(
                     f'el módulo «{node.module or "."}» no está permitido en modo seguro', node.lineno
                 )
-        elif isinstance(node, ast.Name) and node.id in SAFE_FORBIDDEN_NAMES:
+        elif isinstance(node, ast.Name) and node.id in forbidden:
             raise _UnsafeCode(f'«{node.id}» no está permitido en modo seguro', node.lineno)
         elif isinstance(node, ast.Attribute) and node.attr in SAFE_FORBIDDEN_ATTRS:
             raise _UnsafeCode(f'acceder a «{node.attr}» no está permitido en modo seguro', node.lineno)
@@ -808,11 +1146,30 @@ class _Tracer:
     en las variables del marco (`ch`), y lo que se imprimió desde el evento anterior (`o`).
     """
 
-    def __init__(self, filename, limit, out, hidden=frozenset()):
+    def __init__(self, filename, limit, out, hidden=frozenset(), finish=0.0, loops=(), probe=None):
         self.filename = filename
         self.hidden = hidden
+        # Las sondas de un bucle (ver `_Probe`), si se pidieron: se miran se esté grabando o no.
+        self.probe = probe
+        # Los bucles del programa (ver `_loops`), y los que estaban dando vueltas al dejar de grabar: a esos
+        # se les siguen contando las vueltas, y se apunta cómo salen. Es barato (un marco, una línea) y es lo
+        # que permite decir «dio 40 vueltas» de un programa del que solo se grabaron las 23 primeras.
+        self.loops = loops
+        self.watch = {}
+        self.coasted = []
+        # Y lo que se usa mientras tanto: cuántas veces se entra en cada función (por la línea de su `def`) y
+        # qué líneas del programa se pisan. Con ello se sabe, de un programa largo, qué partes trabajan y
+        # cuáles nadie toca, aunque ya no se grabe su paso a paso.
+        self.later_calls = {}
+        self.later_lines = set()
         self.limit = limit
         self.out = out
+        # Al llegar al tope de pasos, en vez de cortar: dejar de grabar y dejar que el programa acabe (con
+        # este tope de segundos). Lo que imprima hasta el final sí se recoge: es su resultado.
+        self.finish = finish
+        self.coasting = False
+        self.deadline = 0.0
+        self.ticks = 0
         self.events = []
         self.stack = []
         self.by_frame = {}
@@ -844,7 +1201,76 @@ class _Tracer:
             self.printed = len(text)
         self.events.append(event)
         if len(self.events) >= self.limit:
+            if self.finish <= 0:
+                raise _TraceLimit()
+            self.coasting = True
+            self.deadline = time.perf_counter() + self.finish
+            self.watch_open()
+
+    def watch_open(self):
+        """Al dejar de grabar: en cada función abierta, los bucles en los que se está, para seguirlos."""
+        for key, record in self.by_frame.items():
+            line = record.get("line")
+            if line is None:
+                continue
+            scope = record.get("scope", 0)
+            inside = [
+                {"l": head, "end": end, "f": record["id"], "n": 0, "last": line, "e": None, "x": False}
+                for head, end, owner in self.loops
+                if owner == scope and head <= line <= end
+            ]
+            if inside:
+                self.watch[key] = inside
+                self.coasted.extend(inside)
+
+    def coast(self, frame, event, arg):
+        """Ya no se graba: se vigila, de vez en cuando, que el programa no se quede dando vueltas; y a los
+        bucles que estaban abiertos se les cuentan las vueltas que les quedan y se apunta cómo salen."""
+        self.ticks += 1
+        if self.ticks & 255 == 0 and time.perf_counter() > self.deadline:
             raise _TraceLimit()
+        self.probed(frame, event)
+        code = frame.f_code
+        if event == "call":
+            if code.co_filename == self.filename and code.co_name not in _COMPREHENSIONS:
+                first = code.co_firstlineno
+                self.later_calls[first] = self.later_calls.get(first, 0) + 1
+        elif event == "line" and code.co_name == "<module>" and code.co_filename == self.filename:
+            self.later_lines.add(frame.f_lineno)
+        loops = self.watch.get(id(frame))
+        if loops is not None:
+            if event == "line":
+                line = frame.f_lineno
+                for loop in loops:
+                    if loop["e"] is not None:
+                        continue
+                    # Siguió adelante tras un error: lo atrapó un `try`. No es un fallo del bucle.
+                    loop["x"] = False
+                    if line == loop["l"]:
+                        loop["n"] += 1
+                        loop["last"] = line
+                    elif loop["l"] < line <= loop["end"]:
+                        loop["last"] = line
+                    else:
+                        # Ya está fuera: salió desde la cabecera (se acabó) o desde dentro (un `break`).
+                        loop["e"] = "done" if loop["last"] == loop["l"] else "break"
+            elif event == "exception":
+                for loop in loops:
+                    if loop["e"] is None:
+                        loop["x"] = True
+            elif event == "return":
+                for loop in loops:
+                    if loop["e"] is not None:
+                        continue
+                    if loop["x"]:
+                        loop["e"] = "error"
+                    elif loop["last"] == loop["l"]:
+                        loop["e"] = "done"
+                    else:
+                        # Una función se va con `return`; el programa, simplemente acaba.
+                        loop["e"] = "return" if loop["f"] != 0 else "break"
+                del self.watch[id(frame)]
+        return self.coast
 
     def changes(self, record, frame):
         """Las variables de datos que cambiaron (o son nuevas) desde el último evento de este marco."""
@@ -867,13 +1293,20 @@ class _Tracer:
         return changed, ids
 
     def global_trace(self, frame, event, arg):
+        if self.coasting:
+            return self.coast(frame, event, arg)
         code = frame.f_code
         if code.co_filename != self.filename or code.co_name in _COMPREHENSIONS:
             return None
         if event != "call":
             return None
         module = code.co_name == "<module>"
-        record = {"id": 0 if module else self.next_id, "last": {}, "depth": len(self.stack)}
+        record = {
+            "id": 0 if module else self.next_id,
+            "last": {},
+            "depth": len(self.stack),
+            "scope": 0 if module else code.co_firstlineno,
+        }
         if not module:
             self.next_id += 1
         self.by_frame[id(frame)] = record
@@ -891,7 +1324,19 @@ class _Tracer:
             self.record(entry)
         return self.local_trace
 
+    def probed(self, frame, event):
+        """Las sondas miran en cada línea del programa: la cabecera de su bucle, y la salida de él."""
+        probe = self.probe
+        if probe is not None and frame.f_code.co_filename == self.filename:
+            if event == "line":
+                probe.line_event(self, frame)
+            elif event == "return":
+                probe.leave(self, frame)
+
     def local_trace(self, frame, event, arg):
+        if self.coasting:
+            return self.coast(frame, event, arg)
+        self.probed(frame, event)
         record = self.by_frame.get(id(frame))
         if record is None:
             return None
@@ -1018,39 +1463,85 @@ class Runner:
         corta, ni se compila: se devuelve el mismo evento de error que un fallo normal, con el motivo exacto
         para poder pedirle a la IA que lo corrija.
         """
+        global _WIDE
         run = request.get("id", "trace")
         limit = int(request.get("limit", 5000))
         safe = bool(request.get("safe", False))
+        wide = bool(request.get("wide", False))
+        # Respuestas de teclado dadas de antemano (para ver funcionar un programa que pide datos), y una
+        # semilla para que su azar salga igual cada vez que se vuelve a mirar.
+        inputs = request.get("inputs")
+        seed = request.get("seed")
         filename = f"<prysel-trace:{run}>"
         out = io.StringIO()
         source = request.get("code", "")
         error = None
+        loops = ()
         try:
             tree = ast.parse(source)
             hidden = _comprehension_only(tree)
+            loops = _loops(tree)
             if safe:
-                _check_safe(tree)
+                _check_safe(tree, isinstance(inputs, list))
         except SyntaxError:
             hidden = frozenset()
         except _UnsafeCode as unsafe:
             hidden = frozenset()
             error = {"name": "UnsafeCode", "message": str(unsafe), "line": unsafe.line}
-        tracer = _Tracer(filename, limit, out, hidden)
+        # `finish`: al llegar al tope de pasos, el programa sigue sin grabarse hasta acabar (con un tope de
+        # segundos), para no quedarse sin saber qué da.
+        finish = request.get("finish")
+        budget = 0.0 if not finish else (2.5 if finish is True else float(finish))
+        # `watch`: unas expresiones que mirar en cada vuelta de un bucle (el de esa línea).
+        probe = None
+        watch = request.get("watch")
+        if isinstance(watch, dict) and error is None:
+            head = watch.get("line")
+            texts = [text for text in (watch.get("exprs") or []) if isinstance(text, str)][:6]
+            end = next((last for first, last, _ in loops if first == head), None)
+            if end is not None and texts:
+                own = {
+                    node.name
+                    for node in ast.walk(tree)
+                    if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+                }
+                probe = _Probe(head, end, texts, own)
+        tracer = _Tracer(filename, limit, out, hidden, budget, loops, probe)
+        finished = False
         namespace = {"__name__": "__main__"}
+        if isinstance(inputs, list):
+            namespace["input"] = _scripted_input(inputs, out)
         truncated = False
         if error is None:
             saved = sys.stdout, sys.stderr
             sys.stdout = sys.stderr = out
             self.running.set()
+            # La pantalla empieza de cero en cada ejecución, y sin nadie delante: pulsa cada botón una vez.
+            sys.modules.pop("pantalla", None)
+            simulating = os.environ.get("PRYSEL_SIMULAR")
+            os.environ["PRYSEL_SIMULAR"] = "1"
             try:
                 code = compile(source, filename, "exec")
+                _WIDE = wide
+                if seed is not None:
+                    import random as _random
+
+                    _random.seed(seed)
                 sys.settrace(tracer.global_trace)
                 try:
                     exec(code, namespace)
                 finally:
                     sys.settrace(None)
+                    _WIDE = False
+                # Acabó, aunque de lo último no haya quedado grabado el paso a paso.
+                truncated = tracer.coasting
+                finished = tracer.coasting
             except _TraceLimit:
                 truncated = True
+            except _NoMoreInput:
+                # No es un fallo del programa: se acabó el ejemplo. Queda dicho, para contarlo así.
+                truncated = True
+                error = {"name": "NoMoreInput", "message": "Se quedó esperando otra respuesta.", "line": None}
             except BaseException as caught:  # incluye KeyboardInterrupt y SystemExit
                 line = None
                 for frame in traceback.extract_tb(caught.__traceback__):
@@ -1062,12 +1553,28 @@ class Runner:
             finally:
                 self.running.clear()
                 sys.stdout, sys.stderr = saved
+                if simulating is None:
+                    os.environ.pop("PRYSEL_SIMULAR", None)
+                else:
+                    os.environ["PRYSEL_SIMULAR"] = simulating
         emit(
             {
                 "ev": "trace",
                 "id": run,
                 "events": tracer.events,
                 "truncated": truncated,
+                "finished": finished,
+                # De los bucles que seguían dando vueltas al dejar de grabar: cuántas más dieron y cómo salieron.
+                "coast": [
+                    {"l": loop["l"], "f": loop["f"], "n": loop["n"], "e": loop["e"]}
+                    for loop in tracer.coasted
+                ],
+                # Y de lo que se usó después: las veces que se entró en cada función, y las líneas del programa.
+                "later": {
+                    "calls": {str(line): count for line, count in tracer.later_calls.items()},
+                    "lines": sorted(tracer.later_lines),
+                },
+                **({"probe": probe.result()} if probe is not None else {}),
                 "error": error,
                 "output": out.getvalue()[-MAX_TEXT:],
             }

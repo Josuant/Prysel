@@ -3,6 +3,7 @@ import {
   ACTION_CALLS,
   INLINE_ARGS,
   isNameList,
+  labelsArg,
   labelsArgs,
   moveStep,
   parseChainStep,
@@ -320,7 +321,9 @@ function Editor({
               const index = model.args.indexOf(arg)
               return (
                 <span key={arg.name} className="control-line__arg">
-                  {labeled && <span className="control-line__name">{arg.name}</span>}
+                  {labeled && labelsArg(arg) && (
+                    <span className="control-line__name">{arg.name}</span>
+                  )}
                   <TextInput
                     value={arg.value}
                     slot={{ id: `arg:${arg.name}`, label: arg.name }}

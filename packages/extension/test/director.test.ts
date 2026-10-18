@@ -368,6 +368,24 @@ describe('entender un tema: «explícame cómo funciona la reproducción humana�
       say: 'Para explicarte eso construyendo un modelo hace falta una IA generativa: elige un modelo.',
     })
   })
+
+  it('una idea sobre un lienzo vacío, sin IA: se dice qué falta, no que se seleccione algo', async () => {
+    // Visto en la web sin claves: la frase se leyó como «ir a verlo» y se pidió señalar algo donde no hay nada.
+    const directive = (
+      await decideCommand(
+        {
+          text: 'Quiero una lista de tareas donde pueda añadir, marcar como hechas y ver las pendientes',
+          program: parse(''),
+          selected: null,
+          focus: null,
+          typed: true,
+        },
+        localDecider(),
+      )
+    ).directive
+    expect(directive.kind).toBe('unknown')
+    expect(directive.kind === 'unknown' && directive.say).toMatch(/conectar una IA/)
+  })
 })
 
 describe('ayudas visuales: nodos que no son del programa, pero lo explican', () => {

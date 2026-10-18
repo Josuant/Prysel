@@ -12,7 +12,13 @@ import {
   type Statement,
 } from './plan.ts'
 import type { Assets, KernelStatus, LoopView, RunView } from './runs.ts'
-import type { Trace } from './trace.ts'
+import type { Trace, TraceExtra } from './trace.ts'
+
+/**
+ * Lo que la sesión necesita de un motor: el de un proceso de Python (`Kernel`) o cualquier otro que hable
+ * igual (en la web, Python dentro del navegador).
+ */
+export type Engine = Pick<Kernel, 'alive' | 'run' | 'trace' | 'interrupt' | 'dispose'>
 
 /**
  * Una sesión de ejecución: el motor de un documento y lo que se sabe de cada sentencia que corrió.
@@ -55,7 +61,7 @@ export class Session {
   /** Por qué no pudo arrancar el motor, si no pudo. */
   problem: string | null = null
 
-  private kernel: Kernel | null = null
+  private kernel: Engine | null = null
   private stmts: Statement[] = []
   private top = new Map<string, string>()
   private records = new Map<string, RunRecord>()
@@ -72,7 +78,7 @@ export class Session {
   private disposed = false
 
   constructor(
-    private readonly start: () => Promise<Kernel>,
+    private readonly start: () => Promise<Engine>,
     private readonly notify: (change: SessionChange) => void,
   ) {}
 
@@ -218,7 +224,7 @@ export class Session {
   }
 
   /** El motor, arrancándolo si hace falta; `null` (y el motivo en `problem`) si no se pudo. */
-  private async ensureKernel(): Promise<Kernel | null> {
+  private async ensureKernel(): Promise<Engine | null> {
     if (this.kernel?.alive) return this.kernel
     this.status = 'starting'
     this.notify({ type: 'views' })
@@ -238,7 +244,13 @@ export class Session {
    * Graba la traza de un programa entero: qué pasa línea a línea. Va en el mismo motor pero en un espacio de
    * nombres aparte (no toca lo ejecutado), y se encola con las ejecuciones. `null` si no hay motor.
    */
-  trace(code: string, limit = 20_000, safe = false): Promise<Trace | null> {
+  trace(
+    code: string,
+    limit = 20_000,
+    safe = false,
+    wide = false,
+    extra: TraceExtra = {},
+  ): Promise<Trace | null> {
     const job = this.queue.then(async () => {
       if (this.disposed) return null
       this.problem = null
@@ -247,7 +259,7 @@ export class Session {
       this.status = 'busy'
       this.notify({ type: 'views' })
       try {
-        return await kernel.trace(code, limit, safe)
+        return await kernel.trace(code, limit, safe, wide, extra)
       } catch (error) {
         this.problem = error instanceof Error ? error.message : String(error)
         return null

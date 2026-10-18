@@ -5,7 +5,15 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/generated/**', '**/.vite/**'] },
+  {
+    ignores: [
+      '**/node_modules/**',
+      '**/dist/**',
+      '**/generated/**',
+      '**/.vite/**',
+      '**/public/pyodide/**',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.strict,
   {
@@ -33,5 +41,11 @@ export default tseslint.config(
     files: ['**/*.tsx'],
     plugins: { 'jsx-a11y': jsxA11y },
     rules: jsxA11y.flatConfigs.recommended.rules,
+  },
+  {
+    // `rules-of-hooks` recorre todos los caminos de un componente, y con el del lienzo (miles de líneas en
+    // una sola función) no termina: el lint se quedaba colgado ahí. Las demás reglas sí se le pasan.
+    files: ['packages/ui/src/Canvas.tsx'],
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
   },
 )

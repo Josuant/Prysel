@@ -1,0 +1,34 @@
+{
+  "name": "@prysel/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Prysel en el navegador: diagramas que explican, pensados para el móvil.",
+  "scripts": {
+    "dev": "node scripts/copy-pyodide.mjs && vite",
+    "build": "node scripts/copy-pyodide.mjs && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@prysel/design-tokens": "workspace:*",
+    "@prysel/morphology": "workspace:*",
+    "@prysel/python": "workspace:*",
+    "@prysel/spatial": "workspace:*",
+    "@prysel/ui": "workspace:*",
+    "@vscode/tree-sitter-wasm": "^0.3.1",
+    "pyodide": "314.0.7",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:"
+  }
+}

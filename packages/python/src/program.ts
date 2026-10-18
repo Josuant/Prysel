@@ -1632,8 +1632,11 @@ function visitStatement(builder: Builder, statement: TsNode): string | null {
       return id
     }
 
-    // `pass` no dice nada del programa: un cuerpo con solo un `pass` no tiene nada que dibujar.
+    // `pass` no dice nada del programa: un cuerpo con solo un `pass` no tiene nada que dibujar. Tampoco
+    // `global`/`nonlocal`: solo avisan de qué nombre de fuera se va a cambiar (y eso ya se ve al cambiarlo).
     case 'pass_statement':
+    case 'global_statement':
+    case 'nonlocal_statement':
     case 'comment':
       return null
 

@@ -27,7 +27,7 @@ import { visualOf, withVisual, type Visual } from './visual.ts'
  */
 
 /** Un programa dictado en más pasos que estos ya no es una orden. */
-export const MAX_BUILD_STEPS = 30
+export const MAX_BUILD_STEPS = 90
 
 export interface BuildStep {
   /** Cuántos bloques hay por encima: 0 es el sitio donde se pidió; 1, dentro de la última cabecera de nivel 0… */
@@ -332,6 +332,18 @@ export class BuildPlan {
     here.span = placed.span ?? 1
     if (placed.opens) this.levels.push({ owner: placed.line, last: null })
   }
+
+  /**
+   * Alguien escribió en otro sitio del archivo, más arriba: lo que este plan recordaba por debajo de la línea
+   * `after` está ahora `delta` líneas más abajo.
+   */
+  shift(after: number, delta: number): void {
+    if (delta === 0) return
+    for (const level of this.levels) {
+      if (level.owner !== null && level.owner > after) level.owner += delta
+      if (level.last !== null && level.last > after) level.last += delta
+    }
+  }
 }
 
 // ───────────────────────── lo que se le pide a la IA generativa ─────────────────────────
@@ -383,6 +395,8 @@ export function buildStepsPrompt(request: {
 export interface Stage {
   title: string
   goal: string
+  /** De cuáles de las otras partes necesita algo (sus títulos, como los dijo el plan). */
+  needs?: string[]
 }
 
 export const MAX_STAGES = 7

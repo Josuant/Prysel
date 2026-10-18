@@ -1,0 +1,488 @@
+@import 'tailwindcss';
+@import '@prysel/design-tokens/tokens.css';
+@import '@prysel/design-tokens/tailwind-theme.css';
+@import '@prysel/ui/styles.css';
+
+/* El lienzo y sus piezas viven fuera de esta app: Tailwind tiene que leer también sus clases. */
+@source '../../../packages/extension/webview/src';
+@source '../../../packages/ui/src';
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── la página ─────────────────────────────────────────────────────────── */
+
+.web-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+.web-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  padding: calc(4px + env(safe-area-inset-top)) 6px 4px;
+  border-bottom: 1px solid var(--border-card);
+  background: var(--surface);
+}
+/* El aviso de que se está grabando una explicación: pulsarlo la termina y la guarda. */
+.web-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--state-error) 45%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--state-error) 10%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.web-rec__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state-error);
+  animation: web-rec 1.2s ease-in-out infinite;
+}
+@keyframes web-rec {
+  50% {
+    opacity: 0.25;
+  }
+}
+.web-bar__title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+.web-bar__brand {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+.web-bar__doc {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-icon {
+  display: grid;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.web-icon:hover,
+.web-icon:focus-visible,
+.web-icon[aria-pressed='true'] {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.web-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.web-main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.web-canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.web-canvas > * {
+  height: 100%;
+}
+
+/* El código: encima del diagrama en el móvil; al lado, en una pantalla ancha. */
+.web-code {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--void);
+}
+.web-code[data-overlay] {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+}
+.web-main--split .web-code {
+  order: -1;
+  width: min(42%, 560px);
+  border-right: 1px solid var(--border-card);
+}
+.web-code__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 4px 14px;
+  border-bottom: 1px solid var(--border-card);
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.web-text-button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.web-primary {
+  min-height: 44px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--void);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── el editor ─────────────────────────────────────────────────────────── */
+
+.web-editor {
+  display: flex;
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 14px;
+  line-height: 1.55;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.web-editor__gutter {
+  position: sticky;
+  left: 0;
+  flex: none;
+  min-width: 2.5em;
+  padding: 12px 8px 12px 12px;
+  background: var(--void);
+  opacity: 0.4;
+  text-align: right;
+  user-select: none;
+}
+.web-editor__text {
+  flex: 1;
+  min-width: max-content;
+  padding: 12px 16px 12px 8px;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  /* 16px como mínimo en móvil: con menos, iOS hace zoom al enfocar. */
+  font-size: max(16px, 1em);
+  line-height: inherit;
+  tab-size: 4;
+  white-space: pre;
+}
+@media (min-width: 960px) {
+  .web-editor__text {
+    font-size: inherit;
+  }
+}
+
+/* ── menú y ajustes ────────────────────────────────────────────────────── */
+
+.web-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.web-sheet__scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgb(0 0 0 / 0.35);
+}
+.web-sheet__panel {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(88vw, 380px);
+  overflow-y: auto;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  background: var(--void);
+  box-shadow: 4px 0 24px rgb(0 0 0 / 0.2);
+}
+.web-sheet[data-side='bottom'] .web-sheet__panel {
+  top: auto;
+  right: 0;
+  width: auto;
+  max-width: 560px;
+  max-height: 88dvh;
+  margin: 0 auto;
+  border-radius: 20px 20px 0 0;
+}
+.web-sheet h2 {
+  margin: 10px 4px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+.web-sheet ul {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.web-sheet li button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.web-sheet li button:hover,
+.web-sheet li button:focus-visible {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+.web-sheet li button[aria-current='true'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.web-sheet li strong {
+  font-size: 15px;
+}
+.web-sheet li span {
+  font-size: 13px;
+  opacity: 0.65;
+}
+
+.web-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.web-settings h2 {
+  margin: 0;
+}
+.web-settings__hint {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.web-settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.web-settings label > span {
+  font-size: 14px;
+  font-weight: 600;
+}
+.web-settings input,
+.web-settings select {
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 16px;
+}
+.web-settings small {
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.web-settings a {
+  color: var(--accent);
+}
+.web-settings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Un guion de prueba: dónde se escribe, y el aviso de cuál frase va diciendo mientras corre. */
+.web-script__text {
+  min-height: 200px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-card);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.web-script {
+  position: fixed;
+  z-index: 40;
+  top: 58px;
+  left: 50%;
+  display: flex;
+  max-width: min(720px, calc(100% - 24px));
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  transform: translateX(-50%);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink);
+  font-size: 13px;
+}
+.web-script__dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: web-rec 1.2s ease-in-out infinite;
+}
+.web-script__line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── el lienzo dentro de la web ────────────────────────────────────────── */
+
+/* Limpio: sin botones de zoom (en el móvil se pellizca) ni avisos de construcciones sueltas. */
+@media (pointer: coarse), (max-width: 720px) {
+  .web-canvas .canvas-controls {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  /* La reproducción, compacta: una fila de controles y la línea de tiempo; lo demás se desliza de lado. */
+  .web-canvas .player {
+    margin: 0 6px 6px;
+    padding: 6px 10px 8px;
+    border-radius: 16px;
+  }
+  .web-canvas .player__bar {
+    gap: 2px 6px;
+  }
+  .web-canvas .player__timeline {
+    min-width: 0;
+    flex-basis: 100%;
+    order: 5;
+  }
+  /* Lo justo: atrás, reproducir, adelante, la línea de tiempo (con sus momentos) y la nota del momento. */
+  .web-canvas .player__speed,
+  .web-canvas .player__voice,
+  .web-canvas .player__moments,
+  .web-canvas .player__extras,
+  .web-canvas .player:has(.player__caption) .player__now,
+  .web-canvas .player__vars {
+    display: none;
+  }
+  .web-canvas .player__controls > :first-child,
+  .web-canvas .player__controls > :last-child {
+    display: none;
+  }
+  .web-canvas .player__caption {
+    margin-top: 4px;
+    font-size: 15px;
+  }
+
+  /* Los nodos para entender, en fila: una tarjeta cada vez, deslizando de lado. */
+  .web-canvas .insight-dock {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 8px;
+    max-height: 22dvh;
+    padding: 6px 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .web-canvas .insight-dock > * {
+    flex: 0 0 min(86%, 420px);
+    max-height: 100%;
+    overflow-y: auto;
+    scroll-snap-align: start;
+  }
+}
+
+.web-segmented {
+  display: flex;
+  padding: 3px;
+  border-radius: 12px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+.web-segmented button {
+  flex: 1;
+  min-height: 40px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0.65;
+  cursor: pointer;
+}
+.web-segmented button[aria-checked='true'] {
+  background: var(--void);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  opacity: 1;
+}

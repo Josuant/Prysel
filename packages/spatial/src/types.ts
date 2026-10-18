@@ -1,4 +1,5 @@
 import type { Role } from '@prysel/morphology'
+import type { Figure } from './architecture.ts'
 
 /**
  * Gramática espacial: la quinta gramática de Prysel.
@@ -266,4 +267,6 @@ export interface LayoutResult {
   spine?: number
   /** La espina de cada ámbito, medida desde su borde izquierdo: por ahí entra y sale su secuencia. */
   spines?: Record<string, number>
+  /** Colocado como arquitectura: los dibujos de fondo que dicen su forma (un anillo, unas bandas). */
+  figures?: Figure[]
 }

@@ -14,6 +14,17 @@ export interface ViewerContent {
   stale?: boolean
   /** No enseña un valor: dice que la IA está trabajando ahí. Late mientras dura. */
   busy?: boolean
+  /**
+   * Es el hueco de algo que aún no existe (lo que el usuario está pidiendo): qué clase de cosa va a ser. Se
+   * dibuja con su icono y su color, para que se reconozca antes de que haya código.
+   */
+  ghost?:
+    'function' | 'class' | 'loop' | 'condition' | 'value' | 'list' | 'program' | 'change' | 'talk'
+  /**
+   * Con `ghost`: lo que ya se sabe de la pieza mientras se pide. Su nombre (cuando se ha dicho), lo que
+   * recibe, y lo que se lleva dicho de lo que hace. La caja se va rellenando con ello, palabra a palabra.
+   */
+  draft?: { name?: string; takes?: readonly string[]; does?: string }
   /** Es una ayuda para entender (una curva, una tabla), no algo que el programa haya calculado. */
   aid?: boolean
   table?: {
@@ -29,6 +40,145 @@ export interface ViewerContent {
   series?: { at: number[]; values: number[]; n: number }
   /** Líneas de texto: una muestra, los elementos de una lista, la representación de un valor. */
   text?: string[]
+  /**
+   * **Cómo va cambiando** algo: una fila por momento (su rótulo y lo que valía entonces). `lit`: qué letras
+   * de esa fila ya son las del final: se encienden, y se ve cómo se va acercando.
+   */
+  steps?: { label: string; text: string; lit?: boolean[] }[]
+  /**
+   * Una **lista de números** en varios momentos: una tira de barras por momento (todas a la misma escala).
+   * `lit`: las que ya valen lo que al final; se ve cómo la lista se va colocando.
+   */
+  strips?: { label: string; values: number[]; lit?: boolean[] }[]
+  /**
+   * Un **tablero** en varios momentos: una rejilla pequeña por momento. `cells`: el tono de cada casilla
+   * (`0`, vacía; del `1` en adelante, cada clase de ficha).
+   */
+  grids?: { label: string; cells: number[][] }[]
+  /**
+   * La **película**: todo lo que se midió, vuelta a vuelta (los momentos de arriba son solo unos pocos). Al
+   * reproducirse, el visor la recorre entera: la fila de «ahora» va cambiando hasta llegar a cada momento, y
+   * la curva se dibuja de corrido. `laps`: la vuelta de cada fotograma; y lo que valía en él, según lo que
+   * enseñe el visor (su texto, su lista o su tablero).
+   */
+  film?: { laps: number[]; texts?: string[]; lists?: number[][]; boards?: number[][][] }
+}
+
+/**
+ * Un visor que cuenta cómo cambia algo, **reproducido**: al empezar (`start`) enseña el punto de partida; al
+ * correr (`run`) va avanzando momento a momento durante `ms`; al acabar (`end`) queda entero. `serial` cambia
+ * con cada paso de la reproducción.
+ */
+export interface ViewerPlay {
+  phase: 'start' | 'run' | 'end'
+  ms: number
+  serial: number
+}
+
+/** Cuántos pasos da la curva de un visor que solo tiene curva, al reproducirse. */
+const CURVE_MOMENTS = 8
+
+/**
+ * Los **momentos** de un visor que cuenta cómo cambia algo: la vuelta de cada uno, en orden. Son sus filas,
+ * sus tiras o sus rejillas; si solo tiene una curva, unos cuantos puntos repartidos por ella.
+ */
+export function momentLaps(content: ViewerContent): number[] {
+  const told = content.steps ?? content.strips ?? content.grids
+  if (told && told.length > 0) return told.map((one) => Number(one.label))
+  const laps = content.series?.at ?? []
+  if (laps.length < 2) return []
+  const last = laps[laps.length - 1] ?? 0
+  const first = laps[0] ?? 0
+  return Array.from({ length: CURVE_MOMENTS }, (_, k) =>
+    Math.round(first + ((last - first) * k) / (CURVE_MOMENTS - 1)),
+  )
+}
+
+/**
+ * Por qué momento va un visor que se reproduce (`null`: no se reproduce, se ve entero). `step`: los que
+ * lleva avanzados desde que empezó a correr.
+ */
+export function playCursor(
+  play: ViewerPlay | undefined,
+  count: number,
+  step: number,
+): number | null {
+  if (!play || count === 0) return null
+  if (play.phase === 'start') return 0
+  if (play.phase === 'end') return count - 1
+  return Math.max(0, Math.min(count - 1, step))
+}
+
+/** Las vueltas por las que pasa la reproducción de un visor: las de su película o, sin ella, sus momentos. */
+export function playFrames(content: ViewerContent): number[] {
+  const film = content.film?.laps ?? []
+  return film.length > 1 ? film : momentLaps(content)
+}
+
+/**
+ * Por dónde va la reproducción, en momentos: el último que ya se alcanzó (`cursor`) o, si se va camino del
+ * siguiente, ese (`live`: su fila enseña lo de ahora mismo, que aún no es lo de ese momento).
+ */
+export function playStage(
+  moments: readonly number[],
+  upto: number | null,
+): { cursor: number; live: boolean } | null {
+  if (upto === null || moments.length === 0) return null
+  let reached = 0
+  for (const [at, lap] of moments.entries()) if (lap <= upto) reached = at
+  return reached + 1 < moments.length && upto > (moments[reached] ?? 0)
+    ? { cursor: reached + 1, live: true }
+    : { cursor: reached, live: false }
+}
+
+/**
+ * El visor tal como se ve en un fotograma de su reproducción: la fila de «ahora» lleva lo que valía en ese
+ * fotograma (su vuelta, y su texto, su lista o su tablero), con encendido lo que ya es lo del final.
+ */
+export function withLive(
+  content: ViewerContent,
+  frame: number | null,
+  stage: { cursor: number; live: boolean } | null,
+): ViewerContent {
+  const film = content.film
+  if (!film || frame === null || !stage?.live) return content
+  const label = String(film.laps[frame] ?? '')
+  const at = stage.cursor
+  const text = film.texts?.[frame]
+  const final = film.texts?.[film.texts.length - 1] ?? ''
+  const list = film.lists?.[frame]
+  const settled = film.lists?.[film.lists.length - 1] ?? []
+  const board = film.boards?.[frame]
+  return {
+    ...content,
+    ...(content.steps && text !== undefined
+      ? {
+          steps: content.steps.map((step, k) =>
+            k !== at
+              ? step
+              : {
+                  label,
+                  text,
+                  ...(step.lit && text.length === final.length
+                    ? { lit: [...text].map((letter, i) => letter === final[i]) }
+                    : {}),
+                },
+          ),
+        }
+      : {}),
+    ...(content.strips && list
+      ? {
+          strips: content.strips.map((strip, k) =>
+            k !== at
+              ? strip
+              : { label, values: list, lit: list.map((value, i) => value === settled[i]) },
+          ),
+        }
+      : {}),
+    ...(content.grids && board
+      ? { grids: content.grids.map((grid, k) => (k !== at ? grid : { label, cells: board })) }
+      : {}),
+  }
 }
 
 /** Lo que mide un visor: crece con su contenido hasta un tope, y no más. */
@@ -42,8 +192,32 @@ export const VIEWER = {
   row: 21,
   headRow: 34,
   line: 17,
+  /** Lo que mide una letra de un texto (de ancho fijo), para saber cuándo se parte una línea. */
+  char: 6.8,
   /** Alto de la curva de una serie. */
   chart: 84,
+  /** Alto de una tira de barras, y lo que se deja entre dos rejillas (y a su rótulo). */
+  strip: 24,
+  gridGap: 10,
+  gridLabel: 14,
+}
+
+/**
+ * Cómo se reparten las rejillas de un visor: lo que mide cada casilla (para que el tablero se vea, sea de 3×3
+ * o de 20×20), lo que ocupa cada rejilla, y cuántas caben por fila en ese ancho.
+ */
+export function gridLayout(
+  grids: NonNullable<ViewerContent['grids']>,
+  width: number,
+): { cell: number; w: number; h: number; perRow: number; rows: number } {
+  const rows = grids[0]?.cells.length ?? 1
+  const cols = grids[0]?.cells[0]?.length ?? 1
+  const cell = Math.min(14, Math.max(3, Math.floor(104 / Math.max(rows, cols))))
+  const w = cols * cell
+  const h = rows * cell
+  const room = width - 2 * VIEWER.pad
+  const perRow = Math.max(1, Math.floor((room + VIEWER.gridGap) / (w + VIEWER.gridGap)))
+  return { cell, w, h, perRow, rows: Math.ceil(grids.length / perRow) }
 }
 
 /** El ancho de un visor: el de su imagen o su tabla, dentro de unos límites. */
@@ -53,6 +227,20 @@ export function viewerWidth(content: ViewerContent): number {
     return clamp(content.table.columns.length * 92 + 2 * VIEWER.pad, VIEWER.minW, VIEWER.tableMaxW)
   }
   if (content.image) return clamp(content.image.w + 2 * VIEWER.pad, VIEWER.minW, VIEWER.maxW)
+  if (content.grids?.length) {
+    // Las rejillas, en una fila si caben: tantas como haya, hasta el tope.
+    const cols = content.grids[0]?.cells[0]?.length ?? 1
+    const rows = content.grids[0]?.cells.length ?? 1
+    const cell = Math.min(14, Math.max(3, Math.floor(104 / Math.max(rows, cols))))
+    const all = content.grids.length * (cols * cell + VIEWER.gridGap) - VIEWER.gridGap
+    return clamp(all + 2 * VIEWER.pad + 2, 320, VIEWER.maxW)
+  }
+  if (content.strips) return 320
+  if (content.steps) {
+    // Lo que se lee fila a fila manda en el ancho: una lista corta cabe entera.
+    const longest = Math.max(0, ...content.steps.map((step) => step.text.length))
+    return clamp(Math.ceil(longest * VIEWER.char) + 2 * VIEWER.pad + 46, 320, VIEWER.maxW)
+  }
   if (content.series) return 320
   return 300
 }
@@ -74,11 +262,33 @@ export function viewerHeight(content: ViewerContent): number {
   if (content.table) body += VIEWER.headRow + content.table.rows.length * VIEWER.row + 4
   if (content.image) body += viewerImageSize(content).h + 4
   if (content.series) body += VIEWER.chart + 4
-  if (content.text?.length) body += content.text.length * VIEWER.line + 4
+  if (content.steps?.length) body += content.steps.length * VIEWER.line + 6
+  if (content.strips?.length) body += content.strips.length * VIEWER.strip + 6
+  if (content.grids?.length) {
+    const layout = gridLayout(content.grids, viewerWidth(content))
+    body += layout.rows * (layout.h + VIEWER.gridLabel + 6) + 4
+  }
+  if (content.text?.length) {
+    // Una línea más larga que el visor se parte: cuenta por las filas que ocupa, no por una.
+    const perRow = Math.max(8, Math.floor((viewerWidth(content) - 2 * VIEWER.pad) / VIEWER.char))
+    const rows = content.text.reduce(
+      (sum, line) => sum + Math.max(1, Math.ceil(line.length / perRow)),
+      0,
+    )
+    body += rows * VIEWER.line + 4
+  }
   return VIEWER.head + Math.max(body, VIEWER.line) + VIEWER.pad
 }
 
-export const viewerSize = (content: ViewerContent): { w: number; h: number } => ({
-  w: viewerWidth(content),
-  h: viewerHeight(content),
-})
+export const viewerSize = (content: ViewerContent): { w: number; h: number } =>
+  // La caja de algo que se está pidiendo mide lo que una pieza: su cabecera, lo que recibe (si se ha
+  // dicho), lo que se va diciendo de ella y las líneas de su cuerpo.
+  content.ghost && content.draft
+    ? {
+        w: 280,
+        h:
+          118 +
+          ((content.draft.takes?.length ?? 0) > 0 ? 30 : 0) +
+          Math.min(3, Math.ceil((content.draft.does?.length ?? 0) / 34)) * 18,
+      }
+    : { w: viewerWidth(content), h: viewerHeight(content) }

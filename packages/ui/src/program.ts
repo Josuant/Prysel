@@ -1,3 +1,4 @@
+import { gistPeek } from './gist.ts'
 import { useCallback, useMemo, useState } from 'react'
 import {
   getKind,
@@ -11,10 +12,12 @@ import {
   channelOf,
   collapse,
   groupsFromContainers,
+  type Architecture,
   type SemanticEdge,
   type SemanticGraph,
 } from '@prysel/spatial'
 import type { CanvasNode } from './Canvas.tsx'
+import { described, type ModuleFacts } from './architecture.ts'
 import { isTerritory } from './flow/frame.ts'
 
 /**
@@ -34,6 +37,8 @@ export interface SourceNode {
   label: string
   code: string
   line: number
+  /** Su última línea, si abarca varias. */
+  lineEnd?: number
   contains?: string[]
   ops?: number
   control?: ControlModel
@@ -166,6 +171,7 @@ export function toCanvasNodes(nodes: SourceNode[]): CanvasNode[] {
     // Cualquier nodo se puede escribir como código; un título que es un nombre se puede renombrar.
     ...(node.text === undefined ? {} : { text: node.text }),
     line: node.line,
+    ...(node.lineEnd === undefined ? {} : { lineEnd: node.lineEnd }),
     ...(node.names?.[node.label] !== undefined && IDENTIFIER.test(node.label)
       ? { renamable: true }
       : {}),
@@ -364,6 +370,7 @@ export function withSections(
       kind: 'space.section',
       label: s.title,
       line: s.line,
+      lineEnd: s.lineEnd,
       meta: s.lineEnd > s.line ? `líneas ${s.line}–${s.lineEnd}` : `línea ${s.line}`,
       contains: [...(inside.get(s.id) ?? [])],
       ...(s.owner === undefined ? {} : { owner: s.owner }),
@@ -459,6 +466,27 @@ export function resolveSectionAction(
 /** Una función con cuerpo: es la que aparece en el menú «Funciones» y la que se ve aparte. */
 function isFunction(node: CanvasNode): boolean {
   return getKind(node.kind).role === 'abstraction' && (node.contains?.length ?? 0) > 0
+}
+
+/**
+ * Los `if` que tienen tarjeta «Cómo funciona», con lo que abarcan: los nodos cuya línea cae dentro (sus ramas y
+ * sus `elif`). En el modelo un `if` no contiene sus ramas (son nodos sueltos unidos por aristas); para plegarlo
+ * en su tarjeta, la vista las agrupa.
+ */
+export function branchScopes(nodes: readonly CanvasNode[]): Map<string, string[]> {
+  const scopes = new Map<string, string[]>()
+  for (const node of nodes) {
+    if (node.kind !== 'control.condition' || !node.gist || node.lineEnd === undefined) continue
+    const from = node.line
+    const to = node.lineEnd
+    if (from === undefined) continue
+    const members = nodes
+      .filter((other) => other.id !== node.id && other.line !== undefined)
+      .filter((other) => (other.line as number) > from && (other.line as number) <= to)
+      .map((other) => other.id)
+    if (members.length > 0) scopes.set(node.id, members)
+  }
+  return scopes
 }
 
 /** Un ámbito plegable: una función con cuerpo o un bucle con cuerpo (no una decisión). */
@@ -581,6 +609,9 @@ export interface FoldedView {
   edges: SemanticEdge[]
 }
 
+/** A partir de cuántas etapas con tarjeta dentro el programa se enseña como un mapa (todas en su rótulo). */
+export const MAP_FROM = 3
+
 /**
  * Lo que se ve del programa: o el flujo del archivo (`focus` nulo) o el contenido de una
  * función. Las definiciones usadas se quitan del flujo —su cuerpo se ve en su propio lienzo—
@@ -597,8 +628,16 @@ export function programView(
       ? []
       : nodes.filter((node) => node.contains?.includes(focus)).map((node) => node.id),
   )
+  // Una función de la que se sabe qué hace no se esconde aunque el programa la use: su tarjeta es lo que se
+  // lee de ella.
+  const gisted = new Set(nodes.filter((node) => node.gist).map((node) => node.id))
+  // Ni una que es, ella sola, una etapa del programa (la etapa y su única definición son un mismo nodo): se
+  // iría la etapa entera, y en el esquema quedaría un hueco en la numeración.
+  const phases = new Set(
+    nodes.filter((node) => node.section !== undefined && node.owner === undefined).map((n) => n.id),
+  )
   const used = functionsOf(nodes, edges).filter(
-    (f) => f.used && f.id !== focus && !around.has(f.id),
+    (f) => f.used && f.id !== focus && !around.has(f.id) && !gisted.has(f.id) && !phases.has(f.id),
   )
   const hidden = new Set<string>()
   for (const fn of used) {
@@ -666,12 +705,22 @@ export function inlineCalls(
     }
   }
   const inlined = new Set(swap.values())
+  // Lo que se despliega en su sitio se muda allí: deja de ser de la etapa donde se escribió. Si no, lo
+  // reclamarían las dos etapas, y la segunda no se podría plegar (dos grupos que se solapan).
+  const moved = new Set<string>()
+  for (const id of inlined) {
+    const fn = byId.get(id)
+    for (const each of [id, ...(fn?.contains ?? [])]) moved.add(each)
+  }
   const seen = new Set<string>()
   return {
     nodes: nodes.flatMap((node) => {
       if (!visible.has(node.id)) return []
       const more = extra.get(node.id)
       const owned = owners.has(node.id)
+      const left =
+        !more && !moved.has(node.id) && node.contains?.some((id) => moved.has(id)) === true
+      if (left) return [{ ...node, contains: (node.contains ?? []).filter((id) => !moved.has(id)) }]
       if (!more && !owned) return [node]
       const copy: CanvasNode = { ...node }
       if (owned) {
@@ -790,7 +839,19 @@ export function foldScopes(
     })),
     edges,
   }
-  const groups = groupsFromContainers(graph).filter((group) => folded.has(group.id))
+  // Lo de fuera antes que lo de dentro: una etapa plegada se lleva lo que guarda (también una función plegada
+  // que tenga dentro). En el orden del archivo, una función desplegada en una etapa posterior se adelantaba,
+  // se quedaba sus pasos, y la etapa se descartaba por solaparse: no se dejaba plegar.
+  const parentOf = new Map<string, string>()
+  for (const node of nodes) for (const id of node.contains ?? []) parentOf.set(id, node.id)
+  const depth = (id: string) => {
+    let level = 0
+    for (let at = parentOf.get(id); at !== undefined && level < 50; at = parentOf.get(at)) level++
+    return level
+  }
+  const groups = groupsFromContainers(graph)
+    .filter((group) => folded.has(group.id))
+    .sort((a, b) => depth(a.id) - depth(b.id))
   const result = collapse(graph, groups)
   const kept = new Set(result.graph.nodes.map((n) => n.id))
 
@@ -922,6 +983,19 @@ export interface ProgramView extends FoldedView {
   representative: (id: string) => string | null
   /** Qué vista enseña el cuerpo de una función: la del programa (`null`) si está desplegada ahí. */
   homeOf: (id: string) => string | null
+  /**
+   * La arquitectura del programa (sus módulos, lo que los une y su forma), si se pidió y la tiene: es lo que
+   * el lienzo necesita para colocar el primer nivel. `null` dentro de una función o sin al menos dos módulos.
+   */
+  architecture: Architecture | null
+  /** De cada módulo de la arquitectura, lo que su código deja ver. */
+  moduleFacts: readonly ModuleFacts[]
+  /**
+   * La del programa entero **aunque se esté dentro de una función** (fuera, la misma que `architecture`): la
+   * necesita quien lo audita, que no mira lo que se ve ahora sino el diagrama del programa.
+   */
+  programArchitecture: Architecture | null
+  programFacts: readonly ModuleFacts[]
   /** Cuántos ámbitos hay plegados ahora. */
   folded: number
   /** Cambia con lo que se ve: es la señal para que el lienzo se reencuadre. */
@@ -929,12 +1003,34 @@ export interface ProgramView extends FoldedView {
 }
 
 const NO_SECTIONS: readonly SourceSection[] = []
+const NO_FACTS: readonly ModuleFacts[] = []
 
 /**
  * Lo que se ve, de una vez y sin estado (el hook solo guarda lo que el usuario plegó o abrió): el programa o la
  * función enfocada, con la principal desplegada en el programa; lo plegado según la densidad (compacto, todo;
  * normal, las etapas hoja; expandido, nada) y lo que el usuario o un momento de la lección dieron la vuelta.
  */
+/**
+ * Qué cambia al pulsar plegar/abrir en algo. Si estaba abierto **para enseñar algo** (`revealed`: lo que una
+ * orden quiere que se vea), pulsarlo es dejar de enseñarlo: se quita de ahí. Darle la vuelta, como a lo demás,
+ * no valdría: al plegarse, lo que enseñaba deja de verse, se deja de revelar… y la vuelta lo volvía a abrir.
+ */
+export function afterToggle(
+  id: string,
+  revealed: ReadonlySet<string>,
+  flipped: ReadonlySet<string>,
+): { revealed: ReadonlySet<string>; flipped: ReadonlySet<string> } {
+  if (revealed.has(id) && !flipped.has(id)) {
+    const next = new Set(revealed)
+    next.delete(id)
+    return { revealed: next, flipped }
+  }
+  const next = new Set(flipped)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  return { revealed, flipped: next }
+}
+
 export function viewOf(
   all: CanvasNode[],
   edges: SemanticEdge[],
@@ -947,6 +1043,11 @@ export function viewOf(
     flipped?: ReadonlySet<string>
     /** Lo que se abrió para enseñar algo (un momento de la lección). */
     revealed?: ReadonlySet<string>
+    /**
+     * El primer nivel se lee como arquitectura: cada etapa de arriba es un módulo, y empieza plegada en su
+     * tarjeta (se abre la que interese). Sin esto, las etapas se pliegan o no según lo que guarden.
+     */
+    modules?: boolean
   },
 ): {
   base: FoldedView
@@ -957,11 +1058,43 @@ export function viewOf(
   const { focus, flow, density } = options
   const shown = programView(all, edges, focus)
   const base = focus === null && flow ? inlineCalls(all, edges, shown, functions) : shown
+  // Un `if` con tarjeta se pliega como un ámbito más: sus ramas se agrupan solo aquí, en la vista.
+  const branched = branchScopes(base.nodes)
   // La función que se está viendo nunca se pliega: sería quedarse sin ver lo que se pidió ver.
-  const scopes = base.nodes.filter((node) => isFoldable(node) && node.id !== focus)
+  const scopes = base.nodes.filter(
+    (node) => (isFoldable(node) || branched.has(node.id)) && node.id !== focus,
+  )
   const leaves = leafSections(base.nodes)
+  // En normal, una función de la que se sabe qué hace empieza plegada en su tarjeta: se abre para ver cómo.
+  const gisted = new Set(base.nodes.filter((node) => node.gist).map((node) => node.id))
+  // Una etapa que guarda dentro algo con tarjeta (una función de la que se sabe qué hace, un bucle del que se
+  // sabe cómo funciona) empieza abierta: plegada, su rótulo taparía justo lo que mejor la explica. Dentro,
+  // cada cosa con tarjeta sigue plegada en la suya.
+  const holding = new Set(
+    base.nodes
+      .filter((node) => isSection(node) && node.contains?.some((id) => gisted.has(id)))
+      .map((node) => node.id),
+  )
+  // …pero con muchas así el programa no cabe en una pantalla: entonces se lee como un mapa (cada parte en
+  // su rótulo, con lo que hace en una línea) y se abre la que interese.
+  const map = holding.size > MAP_FROM
+  // Como arquitectura, las etapas de arriba del todo son módulos: cada una en su tarjeta, para que quepan
+  // todas a la vez y se vea lo que las une.
+  const within = new Set(base.nodes.flatMap((node) => node.contains ?? []))
+  const tops = new Set(
+    options.modules === true && focus === null
+      ? base.nodes.filter((node) => node.section && !within.has(node.id)).map((node) => node.id)
+      : [],
+  )
+  const asModules = tops.size >= 2
   const byDefault = (id: string) =>
-    density === 'compact' ? true : density === 'normal' ? leaves.has(id) : false
+    density === 'compact'
+      ? true
+      : density === 'normal'
+        ? (asModules && tops.has(id)) ||
+          (leaves.has(id) && (map || !holding.has(id))) ||
+          gisted.has(id)
+        : false
   const folded = new Set(
     scopes
       .map((node) => node.id)
@@ -971,7 +1104,38 @@ export function viewOf(
           (options.flipped?.has(id) ?? false),
       ),
   )
-  const collapsed = foldScopes(base.nodes, base.edges, folded)
+  // Plegado, el `if` recoge sus ramas (y se ve su tarjeta); abierto, es el rombo de siempre, con su chevron
+  // para volver a plegarlo.
+  const scenes = new Map(base.nodes.flatMap((node) => (node.gist ? [[node.id, node.gist]] : [])))
+  const prepared =
+    branched.size === 0 && holding.size === 0
+      ? base.nodes
+      : base.nodes.map((node) => {
+          // Una etapa plegada que guarda algo con tarjeta dice, en su rótulo, lo que eso hace.
+          if (node.section && holding.has(node.id) && folded.has(node.id)) {
+            const inner = node.contains?.map((id) => scenes.get(id)).find((scene) => scene)
+            const peek = inner ? gistPeek(inner) : ''
+            // Como módulo de la arquitectura se lee de lejos: si su rótulo ya dice con palabras lo que hace,
+            // eso es lo que se enseña, y la muestra queda en su nota (al pasar por encima).
+            if (peek !== '' && asModules && tops.has(node.id) && node.section.subtitle) {
+              return { ...node, note: [node.note, peek].filter(Boolean).join('\n\n') }
+            }
+            return peek === ''
+              ? node
+              : {
+                  ...node,
+                  section: { ...node.section, subtitle: peek },
+                  note: [node.section.subtitle, node.note].filter(Boolean).join('\n\n'),
+                }
+          }
+          const members = branched.get(node.id)
+          if (!members) return node
+          if (folded.has(node.id)) return { ...node, contains: members, openable: true }
+          const open = { ...node, openable: true }
+          delete open.gist
+          return open
+        })
+  const collapsed = foldScopes(prepared, base.edges, folded)
   const returns = foldReturns(collapsed.nodes, collapsed.edges, { hide: !flow })
   return { base, folded, view: flow ? enterSections(returns, folded) : returns, byDefault }
 }
@@ -993,6 +1157,8 @@ export function useProgramView(
     flow?: boolean
     /** Las etapas del programa (solo en el diagrama de flujo). */
     sections?: readonly SourceSection[]
+    /** El primer nivel se lee como arquitectura: módulos colocados según su forma (ver `architecture.ts`). */
+    architecture?: boolean
   } = {},
 ): ProgramView {
   const flow = options.flow === true
@@ -1043,21 +1209,39 @@ export function useProgramView(
         density: mode,
         flipped,
         revealed,
+        modules: flow && options.architecture === true,
       }),
-    [all, edges, functions, focus, flow, mode, flipped, revealed],
+    [all, edges, functions, focus, flow, mode, flipped, revealed, options.architecture],
   )
+  // La arquitectura del programa, tal como sale de su análisis. Solo en el programa (no dentro de una función).
+  const wantsArchitecture = flow && options.architecture === true && focus === null
+  const { architecture, facts: moduleFacts } = useMemo(
+    () =>
+      wantsArchitecture
+        ? described(view.nodes, all, edges)
+        : { architecture: null, facts: NO_FACTS },
+    [wantsArchitecture, view, all, edges],
+  )
+  const outer = useMemo(() => {
+    if (!(flow && options.architecture === true) || focus === null) return null
+    const top = viewOf(all, edges, functions, {
+      focus: null,
+      flow,
+      density: mode,
+      flipped,
+      revealed,
+      modules: true,
+    })
+    return described(top.view.nodes, all, edges)
+  }, [all, edges, functions, focus, flow, mode, flipped, revealed, options.architecture])
 
   const toggle = useCallback(
     (id: string) => {
-      setState((previous) => {
-        const from = previous.mode === mode ? previous.flipped : NONE
-        const next = new Set(from)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return { mode, flipped: next }
-      })
+      const after = afterToggle(id, revealed, flipped)
+      if (after.revealed !== revealed) setRevealed(after.revealed)
+      if (after.flipped !== flipped) setState({ mode, flipped: after.flipped })
     },
-    [mode],
+    [mode, revealed, flipped],
   )
 
   const open = useCallback((id: string | null) => {
@@ -1117,6 +1301,10 @@ export function useProgramView(
     reveal,
     representative,
     homeOf,
+    architecture,
+    moduleFacts,
+    programArchitecture: outer ? outer.architecture : architecture,
+    programFacts: outer ? outer.facts : moduleFacts,
     folded: foldedSet.size,
     viewKey: focus?.id ?? PROGRAM,
   }

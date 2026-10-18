@@ -1,0 +1,11 @@
+{
+  "name": "Prysel",
+  "short_name": "Prysel",
+  "description": "Diagramas que explican cómo funciona el código, paso a paso.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f2ee",
+  "theme_color": "#5b4fd6",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

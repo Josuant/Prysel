@@ -56,6 +56,13 @@ describe('de Python a nodos', () => {
     expect(unsupported[0]?.type).toBe('assert_statement')
   })
 
+  it('`global` y `nonlocal` no son algo sin entender: solo dicen qué nombre de fuera se cambia', () => {
+    const { unsupported } = parse(
+      ['n = 0', 'def subir():', '    global n', '    n = n + 1', ''].join('\n'),
+    )
+    expect(unsupported).toEqual([])
+  })
+
   it('aguanta código a medio escribir: es lo que permite dibujar mientras se teclea', () => {
     const { nodes } = parse('sales = pd.read_csv(\nbig = sales[')
     expect(nodes.length).toBeGreaterThan(0)

@@ -2,6 +2,28 @@ export * from './types.ts'
 export { classify, incoming, isForward, outgoing, THRESHOLDS } from './classify.ts'
 export { DEFAULT_MAX_RUN, layerize, layout, routeEdge, type LayoutOptions } from './layout.ts'
 export { layoutFlowchart, type FlowchartOptions } from './flowchart.ts'
+export {
+  MODULE_ROLES,
+  defaultShape,
+  layoutArchitecture,
+  shapeCandidates,
+  type ArchGraph,
+  type ArchLayout,
+  type ArchLink,
+  type ArchModule,
+  type ArchShape,
+  type Architecture,
+  type Figure,
+  type ModuleRole,
+  type ShapeCandidate,
+  fitZoom,
+  tailSide,
+  endSides,
+  withHead,
+  HEAD_GAP,
+  withTail,
+  TAIL_GAP,
+} from './architecture.ts'
 export { analyze, entryPoints, type Legibility } from './analyze.ts'
 export { generateProgram, type GenerateOptions } from './generate.ts'
 export {
