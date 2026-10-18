@@ -700,12 +700,22 @@ export function inlineCalls(
     }
   }
   const inlined = new Set(swap.values())
+  // Lo que se despliega en su sitio se muda allí: deja de ser de la etapa donde se escribió. Si no, lo
+  // reclamarían las dos etapas, y la segunda no se podría plegar (dos grupos que se solapan).
+  const moved = new Set<string>()
+  for (const id of inlined) {
+    const fn = byId.get(id)
+    for (const each of [id, ...(fn?.contains ?? [])]) moved.add(each)
+  }
   const seen = new Set<string>()
   return {
     nodes: nodes.flatMap((node) => {
       if (!visible.has(node.id)) return []
       const more = extra.get(node.id)
       const owned = owners.has(node.id)
+      const left =
+        !more && !moved.has(node.id) && node.contains?.some((id) => moved.has(id)) === true
+      if (left) return [{ ...node, contains: (node.contains ?? []).filter((id) => !moved.has(id)) }]
       if (!more && !owned) return [node]
       const copy: CanvasNode = { ...node }
       if (owned) {

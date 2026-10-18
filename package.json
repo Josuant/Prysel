@@ -23,7 +23,8 @@
     "package:extension": "pnpm --filter prysel-extension package",
     "e2e:extension": "pnpm --filter prysel-extension e2e",
     "dev:web": "pnpm --filter @prysel/web dev",
-    "build:web": "pnpm --filter @prysel/web build"
+    "build:web": "pnpm --filter @prysel/web build",
+    "recorrido": "node scripts/recorrido.mjs"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
@@ -33,6 +34,7 @@
     "eslint-plugin-react-hooks": "catalog:",
     "globals": "catalog:",
     "prettier": "catalog:",
+    "puppeteer-core": "^25.14.0",
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",
     "vitest": "catalog:"

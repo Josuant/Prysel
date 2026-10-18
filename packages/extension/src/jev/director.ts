@@ -1388,8 +1388,10 @@ export function orphansOf(program: Program): ProgramNode[] {
   const top = (program.sections ?? []).filter((section) => section.owner === undefined)
   if (top.length === 0) return []
   const first = Math.min(...top.map((section) => section.line))
+  // (Los `import` del principio no cuentan: van arriba del todo, como es costumbre, sin etapa propia.)
   return program.nodes
     .filter((node) => node.range && node.range.owner === undefined && node.line < first)
+    .filter((node) => node.kind !== 'external.import')
     .sort((a, b) => a.line - b.line)
 }
 

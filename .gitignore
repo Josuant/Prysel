@@ -10,3 +10,6 @@ Thumbs.db
 __pycache__/
 *.pyc
 apps/web/public/pyodide/
+
+# Las capturas del recorrido automático (scripts/recorrido.mjs)
+scripts/recorrido/capturas/

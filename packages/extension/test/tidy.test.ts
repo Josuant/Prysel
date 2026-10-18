@@ -54,12 +54,13 @@ const PIANO = lines(
 
 describe('lo que queda fuera de toda etapa', () => {
   it('es lo de primer nivel antes del primer rótulo (si el programa tiene etapas)', () => {
-    expect(orphansOf(parse(PIANO)).map((node) => node.line)).toEqual([1, 2, 3, 5])
+    // (El `import` de la primera línea no: va arriba, sin etapa propia.)
+    expect(orphansOf(parse(PIANO)).map((node) => node.line)).toEqual([2, 3, 5])
     expect(orphansOf(parse(lines('x = 1', 'print(x)')))).toEqual([])
   })
 
   it('sin IA: los datos por un lado y las funciones por otro', () => {
-    expect(plainStagesFor(orphansOf(parse(PIANO))).map((stage) => stage.at)).toEqual([0, 2])
+    expect(plainStagesFor(orphansOf(parse(PIANO))).map((stage) => stage.at)).toEqual([0, 1])
   })
 
   it('lo que propone la IA se valida: empieza en la primera, en orden, como mucho tres', () => {
@@ -92,7 +93,7 @@ describe('lo que queda fuera de toda etapa', () => {
       generate(request: { system: string }) {
         if (request.system.includes('quedó sin rótulo de etapa')) {
           return Promise.resolve(
-            '1 | Los datos: lo que suena\n3 | Dibujar el piano: teclas y alturas',
+            '1 | Los datos: lo que suena\n2 | Dibujar el piano: teclas y alturas',
           )
         }
         if (request.system.includes('programa ENTERO')) return Promise.resolve(changed)
@@ -104,7 +105,7 @@ describe('lo que queda fuera de toda etapa', () => {
       { provider, decider: localDecider() },
       { command: 'cambia la altura a 60', whole: true },
     )
-    expect(state.text).toContain('# Los datos: lo que suena\nimport pantalla')
+    expect(state.text).toContain('import pantalla\n\n# Los datos: lo que suena\nnotas = ')
     expect(state.text).toContain('\n\n# Dibujar el piano: teclas y alturas\ndef dibujar_teclado():')
     expect(orphansOf(parse(state.text))).toEqual([])
     expect(state.text).toContain('return 60')
