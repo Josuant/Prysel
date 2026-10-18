@@ -1869,20 +1869,23 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         })),
     }
   }, [architecture, program, view.moduleFacts])
-  // Se dice cuando el JEV ya ha dicho el papel de cada fase (o al rato, si tarda).
+  // Se dice cuando el JEV ya ha dicho el papel de cada fase (o al rato, si tarda). Por su contenido, no por
+  // el objeto: mientras se construye, el lienzo se redibuja sin parar con objetos nuevos del mismo diagrama, y
+  // la espera volvería a empezar cada vez (no saldría nunca hasta que todo se quedara quieto).
   const diagramJudged = archQuestion === null || archQuestion.key in archVerdicts
+  const diagramText = drawnDiagram ? JSON.stringify(drawnDiagram) : null
   useEffect(() => {
-    if (!drawnDiagram) return
+    if (diagramText === null) return
     const timer = window.setTimeout(
       () => {
-        post(drawnDiagram)
+        post(JSON.parse(diagramText))
       },
       diagramJudged ? 300 : 2500,
     )
     return () => {
       window.clearTimeout(timer)
     }
-  }, [drawnDiagram, diagramJudged])
+  }, [diagramText, diagramJudged])
   // Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final.
   const outcome = useMemo(
     () =>

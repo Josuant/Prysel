@@ -1427,6 +1427,8 @@ export async function modify(
 
 /** Cuántas veces, como mucho, se vuelve a mirar lo arreglado por los expertos que corrigen. */
 export const MAX_ROUNDS = 3
+/** Cuántos arreglos de los expertos se aplican, como mucho, en una ronda. */
+export const MAX_FIXES = 5
 
 /** El programa, sin lo que no cambia nada (espacios al final, líneas en blanco de más): para notar si vuelve. */
 const shapeOf = (source: string) =>
@@ -1501,9 +1503,14 @@ async function audit(
     const fresh = consulted.flatMap(({ report }) => (report.level === 3 ? report.findings : []))
     // Lo que deshace o vuelve a pedir un arreglo de antes no se aplica: se están dando vueltas.
     const looping = fresh.some((finding) => finding.verdict === 'vuelta')
-    const toApply = fresh.filter(
-      (finding) => finding.verdict === 'aplicar' || finding.verdict === 'sugerir',
-    )
+    // Unos pocos cada vez (lo grave y lo que el JEV manda arreglar, primero): muchos cambios a la vez rompen
+    // con facilidad. Lo que no cabe queda propuesto, y si sigue haciendo falta vuelve en la ronda siguiente.
+    const rank = (finding: Finding) =>
+      (finding.severity === 'grave' ? 0 : 2) + (finding.verdict === 'aplicar' ? 0 : 1)
+    const toApply = fresh
+      .filter((finding) => finding.verdict === 'aplicar' || finding.verdict === 'sugerir')
+      .sort((a, b) => rank(a) - rank(b))
+      .slice(0, MAX_FIXES)
     if (toApply.length === 0) {
       stop = looping ? 'vueltas' : 'limpio'
       break
