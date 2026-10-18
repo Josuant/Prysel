@@ -6,7 +6,13 @@ import { applyEdits } from '@prysel/python/edits'
 import type { AiProvider } from '../src/ai/provider.ts'
 import type { Decider } from '../src/jev/client.ts'
 import { modify, summaryOf, type Shown, type Stagehand } from '../src/jev/director.ts'
-import { findingsOf, judgeFindings, levelsFrom, type ExpertLevels } from '../src/jev/experts.ts'
+import {
+  expertSystem,
+  findingsOf,
+  judgeFindings,
+  levelsFrom,
+  type ExpertLevels,
+} from '../src/jev/experts.ts'
 import { localDecider } from '../src/jev/local.ts'
 
 /**
@@ -80,6 +86,11 @@ describe('lo que dice un experto', () => {
       finding,
     ])
     expect(verdicts).toEqual(['aplicar', 'descartar', 'sugerir'])
+  })
+
+  it('con la pantalla, el experto sabe cómo funciona (no da por fallo lo que funciona)', () => {
+    expect(expertSystem('ux', 'pantalla.sonar encadena las notas')).toContain('no lo des por fallo')
+    expect(expertSystem('ux')).not.toContain('no lo des por fallo')
   })
 
   it('los niveles guardados se leen con cuidado: lo que no vale, el de partida', () => {

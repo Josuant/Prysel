@@ -353,7 +353,9 @@ function absorbed(block: TopBlock, after: string): boolean {
       .filter((row) => row !== '' && !row.startsWith('#'))
   const mine = rows(block.text)
   if (mine.length === 0) return true
-  const there = new Set(rows(after))
+  // Una línea a la que ahora se le pone nombre (`boton = pantalla.boton(…)`) sigue estando: no se ha perdido.
+  const named = /^[A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*\s*=(?!=)\s*/
+  const there = new Set(rows(after).flatMap((row) => [row, row.replace(named, '')]))
   return mine.filter((row) => there.has(row)).length / mine.length >= 0.6
 }
 

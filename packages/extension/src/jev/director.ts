@@ -1292,6 +1292,7 @@ async function audit(
         command: asked,
         source: program.source.slice(0, REVIEW_BUDGET),
         ...(before ? { ran: before.said } : {}),
+        ...(usesScreenModule(program.source) ? { guide: SCREEN_GUIDE } : {}),
       }),
     ),
   )
@@ -1515,7 +1516,13 @@ async function review(
   try {
     missing = missingOf(
       await players.provider.generate({
-        system: reviewSystem(),
+        // (Con la pantalla, quien revisa sabe cómo funciona: no echa en falta lo que ya hace.)
+        system: usesScreenModule(program.source)
+          ? `${reviewSystem()}
+
+El programa usa la pantalla de Prysel, que funciona así:
+${SCREEN_GUIDE}`
+          : reviewSystem(),
         prompt: reviewPrompt(asked, program.source.slice(0, REVIEW_BUDGET), before?.said),
         maxTokens: 300,
       }),

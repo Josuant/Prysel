@@ -83,9 +83,19 @@ export interface ExpertReport {
 /** Cuántos hallazgos dice cada experto, como mucho: los que más importan. */
 export const MAX_FINDINGS = 3
 
-export function expertSystem(id: ExpertId): string {
+/**
+ * `guide`: lo que tiene que saber de las herramientas que usa el programa (la pantalla de Prysel), para no
+ * dar por fallo lo que funciona (una nota «do5» existe; las notas seguidas ya forman melodía).
+ */
+export function expertSystem(id: ExpertId, guide?: string): string {
   return [
     EXPERTS[id].asks,
+    ...(guide
+      ? [
+          `El programa usa esto, que funciona así (no lo des por fallo):
+${guide}`,
+        ]
+      : []),
     'Te doy lo que se pidió, el programa en Python y lo que hace al ejecutarlo sin nadie delante (y lo que ofrece su pantalla, si la tiene).',
     `Di como mucho ${MAX_FINDINGS} cosas, las que más importan, SOLO de lo tuyo. Una por línea, así: «GRAVE | qué pasa | qué hacer» o «MEJORA | qué pasa | qué hacer». GRAVE es lo que impide usarlo, hacer lo pedido o es un fallo; MEJORA, lo que lo haría mejor.`,
     '«Qué hacer» es una orden corta e imperativa que se le podría dar a quien programa («Usa colores en español que existan», «Añade un botón para empezar de nuevo»).',
@@ -180,12 +190,12 @@ export async function consult(
   decider: Decider,
   expert: ExpertId,
   level: Presence,
-  request: { command: string; source: string; ran?: string },
+  request: { command: string; source: string; ran?: string; guide?: string },
 ): Promise<{ report: ExpertReport; ms: number }> {
   let raw: string
   try {
     raw = await provider.generate({
-      system: expertSystem(expert),
+      system: expertSystem(expert, request.guide),
       prompt: expertPrompt(request.command, request.source, request.ran),
       maxTokens: 400,
     })

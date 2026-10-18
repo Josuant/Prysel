@@ -511,3 +511,16 @@ describe('el comentario que repite al rótulo de su etapa', () => {
     expect(clean(source)).toBe(source)
   })
 })
+
+describe('una línea a la que se le pone nombre no se ha perdido', () => {
+  it('no se devuelve duplicada', () => {
+    const before = lines('import pantalla', 'pantalla.boton("Tocar", tocar)', 'pantalla.mostrar()')
+    const after = lines(
+      'import pantalla',
+      'boton = pantalla.boton("Tocar", tocar)',
+      'pantalla.mostrar()',
+    )
+    expect(lostBlocks(before, after)).toEqual([])
+    expect(restoreLost(before, after).match(/pantalla\.boton/g)).toHaveLength(1)
+  })
+})
