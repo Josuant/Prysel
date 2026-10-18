@@ -111,6 +111,7 @@ import {
 } from './outcome.ts'
 import { ExpertsPanel, openFindings } from './ExpertsPanel.tsx'
 import { DEFAULT_LEVELS, type ExpertLevels } from '../../src/jev/experts.ts'
+import { textKey } from '../../src/jev/diagram.ts'
 import type { AuditMessage } from '../../src/protocol.ts'
 import {
   EMPTY_SCREEN,
@@ -597,6 +598,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
   const [expertsOpen, setExpertsOpen] = useState(false)
   const configAsked = useRef(new Set<string>())
   const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
+  /** La forma que pidió el auditor del diagrama: manda mientras el grafo la tenga de verdad. */
+  const [forcedShape, setForcedShape] = useState<ArchShape | null>(null)
   /**
    * Lo que ocupa la consola («Al ejecutarlo») en el rincón del lienzo, con su margen: el encuadre le deja
    * ese sitio. `null` si no está.
@@ -817,6 +820,9 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         } catch {
           // Una clave que no es la nuestra: no hay a quién aplicarla.
         }
+      } else if (message.type === 'shape') {
+        const known = SHAPES.find((shape) => shape === message.shape)
+        if (known) setForcedShape(known)
       } else if (message.type === 'experts') {
         setExpertLevels(message.levels)
       } else if (message.type === 'audit') {
@@ -1814,13 +1820,69 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
     () => (story && program ? moduleStory(story, program.nodes, view.moduleFacts) : null),
     [story, program, view.moduleFacts],
   )
+  // La forma que pidió el auditor del diagrama, si el grafo la tiene (con su ancla de verdad).
+  const shapedArchitecture = useMemo(() => {
+    if (!heldArchitecture || forcedShape === null || heldArchitecture.shape === forcedShape)
+      return heldArchitecture
+    const candidate = shapeCandidates(heldArchitecture).find((one) => one.shape === forcedShape)
+    if (!candidate) return heldArchitecture
+    return { modules: heldArchitecture.modules, links: heldArchitecture.links, ...candidate }
+  }, [heldArchitecture, forcedShape])
   const architecture = useMemo(
     () =>
-      heldArchitecture && told
-        ? withStory(heldArchitecture, told, { calls: xray })
-        : heldArchitecture,
-    [heldArchitecture, told, xray],
+      shapedArchitecture && told
+        ? withStory(shapedArchitecture, told, { calls: xray })
+        : shapedArchitecture,
+    [shapedArchitecture, told, xray],
   )
+  // Lo que se dibuja, para el auditor del diagrama: la forma, cada fase con su número y sus flechas.
+  const drawnDiagram = useMemo(() => {
+    if (!architecture || !program) return null
+    const facts = new Map(view.moduleFacts.map((fact) => [fact.id, fact]))
+    const modules = architecture.modules
+      .flatMap((module) => {
+        const fact = facts.get(module.id)
+        return fact ? [{ module, fact }] : []
+      })
+      .sort((a, b) => a.fact.line - b.fact.line)
+      .map(({ module, fact }, index) => ({
+        id: module.id,
+        n: fact.ordinal ?? String(index + 1),
+        title: fact.title,
+        ...(fact.subtitle ? { subtitle: fact.subtitle } : {}),
+        role: module.role,
+      }))
+    const known = new Set(modules.map((module) => module.id))
+    return {
+      type: 'diagram' as const,
+      key: textKey(program.source),
+      shape: architecture.shape,
+      shapes: shapeCandidates(architecture).map((candidate) => candidate.shape),
+      modules,
+      links: architecture.links
+        .filter((link) => known.has(link.from) && known.has(link.to))
+        .map((link) => ({
+          from: link.from,
+          to: link.to,
+          kind: link.kind,
+          ...(link.label ? { label: link.label } : {}),
+        })),
+    }
+  }, [architecture, program, view.moduleFacts])
+  // Se dice cuando el JEV ya ha dicho el papel de cada fase (o al rato, si tarda).
+  const diagramJudged = archQuestion === null || archQuestion.key in archVerdicts
+  useEffect(() => {
+    if (!drawnDiagram) return
+    const timer = window.setTimeout(
+      () => {
+        post(drawnDiagram)
+      },
+      diagramJudged ? 300 : 2500,
+    )
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [drawnDiagram, diagramJudged])
   // Los dos extremos de la arquitectura: dónde empieza el trabajo y qué sale al final.
   const outcome = useMemo(
     () =>
@@ -4276,6 +4338,9 @@ const PORT_PLACE: Record<string, Place> = {
   'order-no': 'camino_no',
   'order-body': 'dentro',
 }
+
+/** Las formas que puede tener la arquitectura. */
+const SHAPES: readonly ArchShape[] = ['capas', 'tuberia', 'centro', 'ciclo', 'embudo', 'abanico']
 
 /** Cómo se dice cada forma de la arquitectura, y por qué se eligió. */
 const SHAPE_NAMES: Record<ArchShape, string> = {

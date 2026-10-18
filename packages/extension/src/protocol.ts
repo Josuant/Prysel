@@ -2,6 +2,7 @@ import type { Program, TextEdit } from '@prysel/python'
 import type { Assets, KernelStatus, RunView } from './runs.ts'
 import { LESSON_LIMITS, parseLesson, type Lesson } from './lesson.ts'
 import type { Trace } from './trace.ts'
+import type { Diagram, DiagramLink } from './jev/diagram.ts'
 import type { CallEntry } from './calls.ts'
 import type { Gist, RunSummary } from './gist/gist.ts'
 import {
@@ -337,7 +338,22 @@ export interface AuditMessage {
   broken?: string
 }
 
+/** Extensión → webview: el auditor del diagrama pide dibujarlo con otra forma (una de las que tiene). */
+export interface ShapeMessage {
+  type: 'shape'
+  shape: string
+}
+
+/**
+ * Webview → extensión: lo que el lienzo dibuja del programa (su forma, sus fases con su número y sus flechas).
+ * Es lo que mira el auditor del diagrama.
+ */
+export interface DiagramMessage extends Diagram {
+  type: 'diagram'
+}
+
 export type WebviewMessage =
+  | ShapeMessage
   | ExpertsMessage
   | AuditMessage
   | AskMessage
@@ -606,6 +622,7 @@ export interface PickModelMessage {
 }
 
 export type HostMessage =
+  | DiagramMessage
   | CommandMessage
   | JevKeyMessage
   | StopOrderMessage
@@ -890,6 +907,10 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
   if (type === 'experts') {
     return { type: 'experts', levels: levelsFrom((value as { levels?: unknown }).levels) }
   }
+  if (type === 'shape') {
+    const { shape } = value as { shape?: unknown }
+    return typeof shape === 'string' && shape.length <= 20 ? { type: 'shape', shape } : null
+  }
   if (type === 'audit') {
     const { asked, experts, mended, broken, rounds, stop } = value as Record<string, unknown>
     if (typeof asked !== 'string' || !Array.isArray(experts)) return null
@@ -1099,6 +1120,46 @@ export function parseHostMessage(value: unknown): HostMessage | null {
       : { type: 'listening', on }
   }
   if (type === 'launch') return { type: 'launch' }
+  if (type === 'diagram') {
+    const { key, shape, shapes, modules, links } = value as Record<string, unknown>
+    if (typeof key !== 'string' || key.length > 40 || typeof shape !== 'string') return null
+    if (!namesOf(shapes) || !Array.isArray(modules) || !Array.isArray(links)) return null
+    if (modules.length > MAX_ARCH_MODULES * 2 || links.length > 200) return null
+    const text = (one: unknown, max: number) =>
+      typeof one === 'string' && one.length <= max ? one : null
+    const readModules = modules.flatMap((raw: unknown) => {
+      const { id, n, title, subtitle, role } = (raw ?? {}) as Record<string, unknown>
+      const [readId, readN, readTitle] = [text(id, MAX_ID), text(n, 12), text(title, 120)]
+      if (readId === null || readN === null || readTitle === null) return []
+      const readSubtitle = text(subtitle, 240)
+      const readRole = text(role, 20)
+      return [
+        {
+          id: readId,
+          n: readN,
+          title: readTitle,
+          ...(readSubtitle ? { subtitle: readSubtitle } : {}),
+          ...(readRole ? { role: readRole } : {}),
+        },
+      ]
+    })
+    const readLinks = links.flatMap((raw: unknown): DiagramLink[] => {
+      const { from, to, kind, label } = (raw ?? {}) as Record<string, unknown>
+      if (!isId(from) || !isId(to)) return []
+      if (kind !== 'data' && kind !== 'call' && kind !== 'next') return []
+      const readLabel = text(label, 120)
+      return [{ from, to, kind, ...(readLabel ? { label: readLabel } : {}) }]
+    })
+    if (readModules.length !== modules.length) return null
+    return {
+      type: 'diagram',
+      key,
+      shape: shape.slice(0, 20),
+      shapes,
+      modules: readModules,
+      links: readLinks,
+    }
+  }
   if (type === 'arch') {
     const { key, modules, shapes } = value as { key?: unknown; modules?: unknown; shapes?: unknown }
     if (typeof key !== 'string' || key.length > MAX_ARCH_KEY || !namesOf(shapes)) return null

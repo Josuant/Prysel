@@ -27,6 +27,8 @@ export interface ModuleFacts {
   title: string
   /** Lo que su rótulo dice que hace, con palabras (si lo dice). */
   subtitle?: string
+  /** El número que se ve en su tarjeta (`3`). */
+  ordinal?: string
   /** Pide datos por teclado. */
   asks: boolean
   /** Escribe en pantalla. */
@@ -161,6 +163,7 @@ export function moduleGraph(
       ...(byId.get(top.id)?.section?.subtitle
         ? { subtitle: byId.get(top.id)?.section?.subtitle ?? '' }
         : {}),
+      ...(top.section?.ordinal ? { ordinal: top.section.ordinal } : {}),
       line: top.line ?? 0,
       lineEnd: top.lineEnd ?? top.line ?? 0,
       asks: own.some((node) => ASKS.test(node.code ?? node.text ?? '')),

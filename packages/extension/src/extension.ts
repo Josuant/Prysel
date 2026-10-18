@@ -55,6 +55,7 @@ import {
 } from './jev/plain.ts'
 import { Gists } from './gists.ts'
 import { levelsFrom, type ExpertLevels } from './jev/experts.ts'
+import { DrawnDiagram } from './jev/diagram.ts'
 import { build, modify, summaryOf, type Outcome, type Stagehand } from './jev/director.ts'
 import { decideCommand, type Directive, type Effect } from './jev/engine.ts'
 import { deepseekProvider, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
@@ -1333,6 +1334,11 @@ async function runDirected(
     signal,
     program: () => analyse(doc),
     experts: expertLevels(),
+    diagram: () => drawn.of(doc.getText()),
+    reshape: (shape) => {
+      postToAll({ type: 'shape', shape })
+      return Promise.resolve()
+    },
     // Aquí el programa corre en el equipo: solo en un espacio de trabajo de confianza y en modo seguro.
     run: () =>
       vscode.workspace.isTrusted
@@ -1506,6 +1512,9 @@ async function runDirected(
 
 /** Dónde guarda la extensión cuánto está cada experto (vale para todos los espacios de trabajo). */
 const EXPERTS_STATE = 'prysel.experts.v2'
+
+/** Lo último que dijo el lienzo de su diagrama (lo mira el auditor del diagrama). */
+const drawn = new DrawnDiagram()
 
 /** Cuánto está cada experto ahora (lo de partida, si nunca se tocó). */
 function expertLevels(): ExpertLevels {
@@ -1990,6 +1999,11 @@ function onWebviewMessage(message: unknown) {
   if (parsed.type === 'launch') {
     const doc = currentDoc
     if (doc && doc.languageId === 'python') void launch(doc)
+    return
+  }
+  if (parsed.type === 'diagram') {
+    const { key, shape, shapes, modules, links } = parsed
+    drawn.put({ key, shape, shapes, modules, links })
     return
   }
   if (parsed.type === 'arch') {

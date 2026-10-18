@@ -61,8 +61,9 @@ export const ADVISORS: Record<AdvisorId, { name: string; looks: string }> = {
     looks: 'la estructura, que aguante y que no gaste de más',
   },
   plan: {
-    name: 'Auditor del plan',
-    looks: 'antes de escribir: que las partes sean congruentes y cada una aporte algo',
+    name: 'Auditor del plan y del diagrama',
+    looks:
+      'antes de escribir, que las partes encajen y aporten algo; al acabar, que la forma, los nombres, los números y las flechas del diagrama ayuden a entenderlo',
   },
 }
 
@@ -324,13 +325,19 @@ export type PlanCorrection =
   | { kind: 'unir'; at: number; with: number; part: PlanPart; why: string }
   | { kind: 'cambiar'; at: number; part: PlanPart; why: string }
   | { kind: 'añadir'; after: number; part: PlanPart; why: string }
+  /** El número de la parte (su orden) no es el que se sigue: va detrás de `after` (0: la primera). */
+  | { kind: 'mover'; at: number; after: number; why: string }
+  /** La parte `at` necesita lo que deja `from` (una flecha que falta)… */
+  | { kind: 'conectar'; at: number; from: number; why: string }
+  /** …o no lo necesita (una flecha que no dice nada verdadero). */
+  | { kind: 'soltar'; at: number; from: number; why: string }
 
 export function planAuditSystem(): string {
   return [
-    'Eres el AUDITOR INTERNO de un plan. Alguien pidió un programa en Python, y antes de escribir nada se ha pensado este plan: sus partes, numeradas («Título: qué hace», y detrás de «<-» las partes que necesita).',
-    'Revisa dos cosas. CONGRUENCIA: cada parte hace algo distinto de las demás, todas van hacia lo pedido, el orden tiene sentido y lo que una necesita está antes. VALOR: cada parte aporta algo a lo pedido; ninguna sobra, repite otra o está vacía; y no falta ninguna imprescindible (por ejemplo, la última que lo pone en marcha).',
-    'Si hay que corregir, una corrección por línea, como mucho tres:',
-    '«QUITAR N | por qué» · «UNIR N y M | Título: qué hace | por qué» · «CAMBIAR N | Título: qué hace | por qué» · «AÑADIR tras N | Título: qué hace | por qué» (tras 0 es al principio).',
+    'Eres el AUDITOR INTERNO de un plan. Alguien pidió un programa en Python, y antes de escribir nada se ha pensado este plan: sus partes, numeradas («Título: qué hace», y detrás de «<-» las partes que necesita). Cada parte será una fase del diagrama con el que quien lo usa entiende el programa: con ese número, ese nombre y una flecha por cada cosa que necesita.',
+    'Revisa: CONGRUENCIA: cada parte hace algo distinto de las demás y todas van hacia lo pedido. VALOR: ninguna sobra, repite otra o está vacía, y no falta ninguna imprescindible (por ejemplo, la última que lo pone en marcha). NOMBRES: cada título dice lo que hace esa parte, se entiende sin saber programar y no se confunde con otro. NÚMEROS: el orden es el que se sigue al leerlo y al ejecutarlo (lo que prepara algo va antes de lo que lo usa). CONEXIONES: cada «<-» es verdad (esa parte usa lo que deja la otra) y no falta ninguna que cuente cómo pasan los datos.',
+    'Si hay que corregir, una corrección por línea, como mucho cuatro:',
+    '«QUITAR N | por qué» · «UNIR N y M | Título: qué hace | por qué» · «CAMBIAR N | Título: qué hace | por qué» · «AÑADIR tras N | Título: qué hace | por qué» (tras 0 es al principio) · «MOVER N tras M | por qué» · «CONECTAR N a M | por qué» (M necesita lo que deja N) · «SOLTAR N de M | por qué» (M no necesita nada de N).',
     'El título, de dos a cuatro palabras; lo que hace, menos de diez. Si el plan está bien, responde solo «BIEN».',
   ].join('\n')
 }
@@ -346,7 +353,7 @@ export function planAuditPrompt(command: string, parts: readonly PlanPart[]): st
 }
 
 /** Una parte dicha como «Título: qué hace». */
-function partOf(text: string): PlanPart | null {
+export function partOf(text: string): PlanPart | null {
   const clean = text.trim().replace(/^[«"]+|[»"]+$/g, '')
   const found = /^([^:|]{2,48}):\s*(.{2,120})$/.exec(clean)
   if (!found) return null
@@ -367,7 +374,22 @@ export function correctionsOf(text: string, count: number): PlanCorrection[] | n
     const unir = /^UNIR\s+(\d+)\s*(?:Y|,|\+)\s*(\d+)$/.exec(head)
     const cambiar = /^CAMBIAR\s+(\d+)$/.exec(head)
     const anadir = /^A[ÑN]ADIR\s+TRAS\s+(\d+)$/.exec(head)
-    if (quitar && inRange(Number(quitar[1]))) {
+    const mover = /^MOVER\s+(\d+)\s+(?:TRAS|DESPU[ÉE]S\s+DE)\s+(\d+)$/.exec(head)
+    const conectar = /^CONECTAR\s+(\d+)\s+(?:A|CON|Y)\s+(\d+)$/.exec(head)
+    const soltar = /^SOLTAR\s+(\d+)\s+DE\s+(\d+)$/.exec(head)
+    const why = (at: number) => parts[at] ?? ''
+    if (mover) {
+      const [at, after] = [Number(mover[1]), Number(mover[2])]
+      if (inRange(at) && (after === 0 || inRange(after)) && at !== after && at !== after + 1) {
+        out.push({ kind: 'mover', at, after, why: why(1) })
+      }
+    } else if (conectar || soltar) {
+      const found = conectar ?? soltar
+      const [from, at] = [Number(found?.[1]), Number(found?.[2])]
+      if (inRange(from) && inRange(at) && from !== at) {
+        out.push({ kind: conectar ? 'conectar' : 'soltar', at, from, why: why(1) })
+      }
+    } else if (quitar && inRange(Number(quitar[1]))) {
       out.push({ kind: 'quitar', at: Number(quitar[1]), why: parts[1] ?? '' })
     } else if (unir) {
       const part = partOf(parts[1] ?? '')
@@ -389,7 +411,7 @@ export function correctionsOf(text: string, count: number): PlanCorrection[] | n
       }
     }
   }
-  if (out.length > 0) return out.slice(0, 3)
+  if (out.length > 0) return out.slice(0, 4)
   return /\bBIEN\b/i.test(text) ? [] : null
 }
 
@@ -407,6 +429,14 @@ export function correctionSaid(correction: PlanCorrection, parts: readonly PlanP
       return correction.after === 0
         ? `Añadir «${correction.part.title}» al principio`
         : `Añadir «${correction.part.title}» tras ${name(correction.after)}`
+    case 'mover':
+      return correction.after === 0
+        ? `Poner ${name(correction.at)} la primera`
+        : `Poner ${name(correction.at)} detrás de ${name(correction.after)}`
+    case 'conectar':
+      return `Que ${name(correction.at)} use lo que deja ${name(correction.from)}`
+    case 'soltar':
+      return `Quitar la flecha de ${name(correction.from)} a ${name(correction.at)}`
   }
 }
 
@@ -449,7 +479,10 @@ export async function judgePlan(
   }
 }
 
-/** El plan con las correcciones hechas (los números se refieren al plan de antes). */
+/**
+ * El plan con las correcciones hechas (los números se refieren al plan de antes). Lo que necesitaba una parte
+ * que se cambia o se une a otra pasa a la nueva; lo que necesitaba una parte quitada, se olvida.
+ */
 export function correctedPlan(
   parts: readonly PlanPart[],
   corrections: readonly PlanCorrection[],
@@ -457,26 +490,58 @@ export function correctedPlan(
   const removed = new Set<number>()
   const replaced = new Map<number, PlanPart>()
   const inserted = new Map<number, PlanPart[]>()
+  const needs = new Map(parts.map((part, index) => [index + 1, new Set(part.needs ?? [])]))
+  /** El título que lleva ahora cada parte de antes (`null`: ya no está). */
+  const renamed = new Map<string, string | null>()
+  let order = parts.map((_, index) => index + 1)
   for (const correction of corrections) {
-    if (correction.kind === 'quitar') removed.add(correction.at)
-    else if (correction.kind === 'cambiar') replaced.set(correction.at, correction.part)
-    else if (correction.kind === 'unir') {
+    const title = (n: number) => parts[n - 1]?.title ?? ''
+    if (correction.kind === 'quitar') {
+      removed.add(correction.at)
+      renamed.set(title(correction.at), null)
+    } else if (correction.kind === 'cambiar') {
+      replaced.set(correction.at, correction.part)
+      renamed.set(title(correction.at), correction.part.title)
+    } else if (correction.kind === 'unir') {
       replaced.set(correction.at, correction.part)
       removed.add(correction.with)
-    } else {
+      for (const need of needs.get(correction.with) ?? []) needs.get(correction.at)?.add(need)
+      renamed.set(title(correction.at), correction.part.title)
+      renamed.set(title(correction.with), correction.part.title)
+    } else if (correction.kind === 'añadir') {
       inserted.set(correction.after, [...(inserted.get(correction.after) ?? []), correction.part])
+    } else if (correction.kind === 'mover') {
+      order = order.filter((n) => n !== correction.at)
+      order.splice(
+        correction.after === 0 ? 0 : order.indexOf(correction.after) + 1,
+        0,
+        correction.at,
+      )
+    } else if (correction.kind === 'conectar') {
+      needs.get(correction.at)?.add(title(correction.from))
+    } else {
+      needs.get(correction.at)?.delete(title(correction.from))
     }
   }
   const out: PlanPart[] = [...(inserted.get(0) ?? [])]
-  parts.forEach((part, index) => {
-    const at = index + 1
-    if (!removed.has(at) || replaced.has(at)) out.push(replaced.get(at) ?? part)
+  for (const at of order) {
+    if (!removed.has(at) || replaced.has(at)) {
+      const part = replaced.get(at) ?? parts[at - 1]
+      if (part) out.push({ ...part, needs: [...(needs.get(at) ?? [])] })
+    }
     out.push(...(inserted.get(at) ?? []))
-  })
-  // Lo que necesita cada parte, solo entre las que quedan.
+  }
+  // Lo que necesita cada parte, con los títulos de ahora y solo entre las que quedan (y ninguna a sí misma).
   const titles = new Set(out.map((part) => part.title))
   return out.map((part) => {
-    const needs = (part.needs ?? []).filter((need) => titles.has(need))
-    return needs.length > 0 ? { ...part, needs } : { title: part.title, goal: part.goal }
+    const kept = [
+      ...new Set(
+        (part.needs ?? []).flatMap((need) => {
+          const now = renamed.has(need) ? renamed.get(need) : need
+          return now && titles.has(now) && now !== part.title ? [now] : []
+        }),
+      ),
+    ]
+    return kept.length > 0 ? { ...part, needs: kept } : { title: part.title, goal: part.goal }
   })
 }

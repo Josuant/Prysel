@@ -48,6 +48,7 @@ import type { Lesson } from '../../../packages/extension/src/lesson.ts'
 import type { CommandMessage, WebviewMessage } from '../../../packages/extension/src/protocol.ts'
 import type { Trace } from '../../../packages/extension/src/trace.ts'
 import type { ExpertLevels } from '../../../packages/extension/src/jev/experts.ts'
+import type { Diagram } from '../../../packages/extension/src/jev/diagram.ts'
 
 /**
  * Las órdenes del chat en la web: lo mismo que hace la extensión en `extension.ts` (el motor JEV decide,
@@ -75,6 +76,10 @@ export interface OrderPort {
   run(): Promise<Trace | null>
   /** Cuánto está cada experto (los que auditan al acabar cada orden). */
   experts(): ExpertLevels
+  /** Lo que el lienzo dibuja del programa de ahora (lo mira el auditor del diagrama). */
+  diagram(): Promise<Diagram | null>
+  /** Que el lienzo dibuje el diagrama con otra forma. */
+  reshape(shape: string): void
   setLesson(lesson: Lesson): void
 }
 
@@ -626,6 +631,11 @@ export class Orders {
       // En la web, lo que se pide para usarlo (suena, se toca) se hace con la pantalla y se usa de verdad.
       screen: true,
       experts: port.experts(),
+      diagram: () => port.diagram(),
+      reshape: (shape) => {
+        port.reshape(shape)
+        return Promise.resolve()
+      },
       parses: (code) => !parser.parse(code).rootNode.hasError,
       async write(change) {
         const before = port.text()

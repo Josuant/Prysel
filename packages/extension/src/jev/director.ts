@@ -81,6 +81,17 @@ import {
   type Flavour,
 } from './plain.ts'
 import { formatVisual, seriesIn, visualOf } from './visual.ts'
+import {
+  diagramAuditPrompt,
+  diagramAuditSystem,
+  diagramCorrectionSaid,
+  diagramCorrectionsOf,
+  judgeDiagram,
+  movedSource,
+  type Diagram,
+  type DiagramCorrection,
+  type Span,
+} from './diagram.ts'
 import { entryOf, launchCode, looksInert } from '../gist/entry.ts'
 import { callPrompt, callSystem, validCall } from '../gist/gist.ts'
 import {
@@ -160,6 +171,13 @@ export interface Stagehand {
   screen?: boolean
   /** Cuánto está cada experto (ver `experts.ts`). Sin esto, ninguno audita. */
   experts?: ExpertLevels
+  /**
+   * Lo que el lienzo dibuja del programa **de ahora** (su forma, sus fases con su número, sus flechas): lo
+   * que mira el auditor del diagrama. `null`: no hay lienzo, o no llegó a tiempo.
+   */
+  diagram?(): Promise<Diagram | null>
+  /** Que el lienzo lo dibuje con otra forma (una de las que el diagrama tiene de verdad). */
+  reshape?(shape: string): Promise<void>
 }
 
 export type Shown =
@@ -246,6 +264,8 @@ export interface Outcome {
    */
   /** Lo que dijo el auditor del plan (antes de escribir), si miró. */
   planAudit?: ExpertReport
+  /** Lo que dijo el mismo auditor del diagrama que quedó (al acabar), si miró. */
+  diagramAudit?: ExpertReport
   audit?: {
     experts: ExpertReport[]
     /** Cuántas veces miraron, y por qué pararon: nada nuevo, daban vueltas, o el tope de rondas. */
@@ -546,13 +566,26 @@ export async function build(
     request.command,
     await review(host, players, request.command, done),
   )
-  // Lo del auditor del plan va el primero en el informe de los expertos (fue lo primero que se miró).
-  if (!audited.planAudit) return audited
+  return withAuditor(await auditDiagram(host, players, request.command, audited))
+}
+
+/**
+ * Lo del auditor interno (el plan, antes de escribir; el diagrama, al acabar) va el primero en el informe de
+ * los expertos, como un solo experto: fue lo primero que se miró y lo último.
+ */
+function withAuditor(outcome: Outcome): Outcome {
+  const { planAudit, diagramAudit } = outcome
+  if (!planAudit && !diagramAudit) return outcome
+  const report: ExpertReport = {
+    id: 'plan',
+    level: (planAudit ?? diagramAudit)?.level ?? 3,
+    findings: [...(planAudit?.findings ?? []), ...(diagramAudit?.findings ?? [])],
+  }
   return {
-    ...audited,
+    ...outcome,
     audit: {
-      ...(audited.audit ?? { experts: [] }),
-      experts: [audited.planAudit, ...(audited.audit?.experts ?? [])],
+      ...(outcome.audit ?? { experts: [] }),
+      experts: [report, ...(outcome.audit?.experts ?? [])],
     },
   }
 }
@@ -1380,7 +1413,13 @@ export async function modify(
   request: ModifyRequest,
 ): Promise<Outcome> {
   const done = await tidy(host, players, await modifyOnce(host, players, request))
-  return audit(host, players, request.command, await review(host, players, request.command, done))
+  const audited = await audit(
+    host,
+    players,
+    request.command,
+    await review(host, players, request.command, done),
+  )
+  return withAuditor(await auditDiagram(host, players, request.command, audited))
 }
 
 // ───────────────────────── los expertos ─────────────────────────
@@ -1506,6 +1545,269 @@ async function audit(
     jevMs,
     audit: { experts: [...merged.values()], rounds, stop, ...repairs },
   }
+}
+
+// ───────────────────────── el auditor del diagrama ─────────────────────────
+
+/** Cuántas veces, como mucho, mira el auditor el diagrama (la segunda, lo ya corregido). */
+export const DIAGRAM_ROUNDS = 2
+
+/** Lo que distingue un diagrama de otro (por posiciones, no por líneas): si vuelve uno ya visto, se dan vueltas. */
+function diagramPrint(diagram: Diagram): string {
+  const at = new Map(diagram.modules.map((module, index) => [module.id, index]))
+  return JSON.stringify([
+    diagram.shape,
+    diagram.modules.map((module) => `${module.title}:${module.subtitle ?? ''}`),
+    diagram.links.map((link) => `${at.get(link.from)}>${at.get(link.to)}:${link.kind}`).sort(),
+  ])
+}
+
+/**
+ * **El auditor del diagrama**: al acabar (después de los expertos), el auditor interno mira el diagrama tal como
+ * lo dibuja el lienzo —su forma, los nombres de las fases, sus números y sus flechas— y propone cómo hacer que
+ * ayude más a entender el programa. El JEV decide cada corrección; si el auditor corrige (lo de partida), se
+ * aplica y se vuelve a mirar una vez. Se para si nada cambia, si el JEV nota que se deshace lo de antes o si
+ * vuelve un diagrama que ya se vio.
+ */
+export async function auditDiagram(
+  host: Stagehand,
+  players: Players,
+  command: string,
+  outcome: Outcome,
+): Promise<Outcome> {
+  const level = host.experts?.plan ?? 0
+  if (
+    level === 0 ||
+    !host.diagram ||
+    outcome.stopped ||
+    outcome.trouble !== null ||
+    outcome.written === 0 ||
+    host.signal.aborted
+  )
+    return outcome
+  const asked = outcome.asked ?? command
+  const findings: Finding[] = []
+  const applied: string[] = []
+  const seen = new Set<string>()
+  let { jevMs, written } = outcome
+  for (let round = 1; round <= DIAGRAM_ROUNDS && !host.signal.aborted; round++) {
+    const diagram = await host.diagram().catch(() => null)
+    if (!diagram || diagram.modules.length < 2) break
+    const print = diagramPrint(diagram)
+    if (seen.has(print)) break
+    seen.add(print)
+    await host.show({
+      type: 'progress',
+      text:
+        round === 1
+          ? 'El auditor mira el diagrama: su forma, los nombres de las fases, sus números y sus flechas…'
+          : 'El auditor vuelve a mirar el diagrama, ya corregido…',
+    })
+    const program = await host.program()
+    let corrections: DiagramCorrection[] | null = null
+    try {
+      corrections = diagramCorrectionsOf(
+        await players.provider.generate({
+          system: diagramAuditSystem(),
+          prompt: diagramAuditPrompt(
+            asked,
+            diagram,
+            program.source.slice(0, REVIEW_BUDGET),
+            applied,
+          ),
+          maxTokens: 500,
+        }),
+        diagram,
+      )
+    } catch {
+      corrections = null
+    }
+    if (!corrections || corrections.length === 0) break
+    const asking = corrections
+    const judged = await judgeDiagram(players.decider, asked, diagram, asking, applied).catch(
+      () => ({ verdicts: asking.map(() => 'descartar' as const), ms: 0 }),
+    )
+    jevMs += judged.ms
+    const kept = asking.flatMap((correction, at) => {
+      const verdict = judged.verdicts[at] ?? 'descartar'
+      if (verdict === 'descartar') return []
+      const fix = diagramCorrectionSaid(correction, diagram)
+      const finding: Finding = { severity: 'mejora', what: correction.why || fix, fix, verdict }
+      return [{ correction, finding }]
+    })
+    findings.push(...kept.map((one) => one.finding))
+    const accepted = kept
+      .filter((one) => one.finding.verdict === 'aplicar')
+      .map((one) => one.correction)
+    if (level < 3 || accepted.length === 0) break
+    await host.show({
+      type: 'say',
+      say: `El auditor ajusta el diagrama: ${accepted.map((correction) => lowerFirst(diagramCorrectionSaid(correction, diagram))).join('; ')}.`,
+      aside: true,
+    })
+    const done = await applyDiagram(host, players, asked, diagram, program, accepted)
+    written += done.written
+    jevMs += done.jevMs
+    for (const { correction, finding } of kept) {
+      if (done.applied.includes(correction)) finding.applied = true
+    }
+    if (done.applied.length === 0) break
+    applied.push(...done.applied.map((correction) => diagramCorrectionSaid(correction, diagram)))
+    // Lo que deshacía lo de antes no se aplicó, pero dice que ya se están dando vueltas: no se mira más.
+    if (kept.some((one) => one.finding.verdict === 'vuelta')) break
+  }
+  if (seen.size === 0) return outcome
+  return { ...outcome, written, jevMs, diagramAudit: { id: 'plan', level, findings } }
+}
+
+const lineStart = (source: string, offset: number) => source.lastIndexOf('\n', offset - 1) + 1
+const lineAfter = (source: string, offset: number) => {
+  const end = source.indexOf('\n', offset)
+  return end === -1 ? source.length : end + 1
+}
+const plainTitle = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+
+/**
+ * Aplica lo que el JEV aceptó del auditor del diagrama. Mover una fase cambia de sitio su tramo del archivo,
+ * solo si no puede cambiar lo que hace (o ella o las que salta solo definen funciones) y, si se puede
+ * ejecutar, comprobando que sigue sin fallar. Renombrar y unir (dos seguidas) reescriben sus rótulos. La forma
+ * se le pide al lienzo. Y una conexión que el código no deja ver se le pide a la IA, como un cambio más.
+ */
+async function applyDiagram(
+  host: Stagehand,
+  players: Players,
+  asked: string,
+  diagram: Diagram,
+  program: Program,
+  accepted: readonly DiagramCorrection[],
+): Promise<{ applied: DiagramCorrection[]; written: number; jevMs: number }> {
+  const done: DiagramCorrection[] = []
+  let written = 0
+  let jevMs = 0
+  const before = await ranOf(host)
+  const topsOf = (from: Program) =>
+    (from.sections ?? []).filter((one) => one.owner === undefined).sort((a, b) => a.line - b.line)
+  /** El orden de ahora de las fases del diagrama (sus números de antes). */
+  let order = diagram.modules.map((_, index) => index + 1)
+  let current = program
+
+  // ── Mover: solo una, y solo si sus números son los de las etapas del programa. ──
+  const move = accepted.find(
+    (one): one is Extract<DiagramCorrection, { kind: 'mover' }> => one.kind === 'mover',
+  )
+  const tops = topsOf(current)
+  const same =
+    tops.length === diagram.modules.length &&
+    tops.every((section, index) => section.id === diagram.modules[index]?.id)
+  if (move && same && !host.signal.aborted) {
+    const source = current.source
+    const blocks: Span[] = tops.map((section, index) => {
+      const next = tops[index + 1]
+      return {
+        start: lineStart(source, section.heading.start),
+        end: next ? lineStart(source, next.heading.start) : source.length,
+      }
+    })
+    const kinds = new Map(current.nodes.map((node) => [node.id, node.kind]))
+    const defines = (n: number) =>
+      (tops[n - 1]?.members ?? []).every((id) => {
+        const kind = kinds.get(id) ?? ''
+        return kind.startsWith('abstraction.') || kind === 'external.import'
+      })
+    const jumped =
+      move.after < move.at ? order.slice(move.after, move.at - 1) : order.slice(move.at, move.after)
+    const next = movedSource(source, blocks, move.at, move.after)
+    if (
+      next !== null &&
+      (defines(move.at) || jumped.every(defines)) &&
+      host.parses(next) &&
+      (await host.write({ edits: [{ start: 0, end: source.length, text: next }] })) === null
+    ) {
+      const after = before && before.broken === null ? await ranOf(host) : null
+      if (after?.broken) {
+        // Al moverla deja de funcionar: se deja como estaba.
+        await host.write({ edits: [{ start: 0, end: next.length, text: source }] })
+      } else {
+        const moved = order.filter((n) => n !== move.at)
+        moved.splice(move.after === 0 ? 0 : moved.indexOf(move.after) + 1, 0, move.at)
+        order = moved
+        done.push(move)
+        written++
+        current = await host.program()
+      }
+    }
+  }
+
+  // ── Renombrar y unir: se reescriben los rótulos, todo en un solo cambio. ──
+  const now = topsOf(current)
+  const sectionOf = (n: number) => {
+    const section = now[order.indexOf(n)]
+    const module = diagram.modules[n - 1]
+    // Por si el programa no es el que se dibujó: la fase tiene que seguir llamándose igual.
+    return section && module && plainTitle(section.title) === plainTitle(module.title)
+      ? section
+      : undefined
+  }
+  const source = current.source
+  const edits: { start: number; end: number; text: string }[] = []
+  const touched = new Set<string>()
+  const renamed: DiagramCorrection[] = []
+  for (const correction of accepted) {
+    if (correction.kind !== 'renombrar' && correction.kind !== 'unir') continue
+    const section = sectionOf(correction.at)
+    if (!section || touched.has(section.id)) continue
+    const other = correction.kind === 'unir' ? sectionOf(correction.with) : undefined
+    if (correction.kind === 'unir') {
+      if (!other || touched.has(other.id)) continue
+      // La que se une va justo detrás: su rótulo se quita y sus sentencias pasan a la de delante.
+      if (order.indexOf(correction.with) !== order.indexOf(correction.at) + 1) continue
+      edits.push({
+        start: lineStart(source, other.heading.start),
+        end: lineAfter(source, other.heading.end),
+        text: '',
+      })
+      touched.add(other.id)
+    }
+    edits.push({
+      start: section.textAt.start,
+      end: section.textAt.end,
+      text: `${correction.part.title}: ${correction.part.goal}`,
+    })
+    touched.add(section.id)
+    renamed.push(correction)
+  }
+  if (edits.length > 0 && !host.signal.aborted) {
+    edits.sort((a, b) => a.start - b.start)
+    if ((await host.write({ edits })) === null) {
+      done.push(...renamed)
+      written++
+    }
+  }
+
+  // ── La forma: la dibuja el lienzo. ──
+  const shape = accepted.find((one) => one.kind === 'forma')
+  if (shape?.kind === 'forma' && host.reshape && !host.signal.aborted) {
+    await host.reshape(shape.shape)
+    done.push(shape)
+  }
+
+  // ── Las conexiones que el código no deja ver: un cambio más, que se ve y se deshace. ──
+  const links = accepted.filter((one) => one.kind === 'conectar')
+  if (links.length > 0 && !host.signal.aborted) {
+    const fixed = await modifyOnce(host, players, {
+      command: `Para que se vea cómo pasan los datos de una fase a otra, sin cambiar lo que hace el programa ni lo que se pidió («${asked}»): ${links.map((one) => (one.kind === 'conectar' ? one.fix : '')).join('; ')}.`,
+      whole: true,
+    })
+    jevMs += fixed.jevMs
+    written += fixed.written
+    if (!fixed.stopped && fixed.trouble === null && fixed.written > 0) {
+      done.push(...links)
+      const mended = await mend(host, players, asked, before)
+      written += mended.written
+      jevMs += mended.jevMs
+    }
+  }
+  return { applied: done, written, jevMs }
 }
 
 /** Lo que se dice de la auditoría al final: lo arreglado, en cuántas rondas, y lo que queda por ver. */

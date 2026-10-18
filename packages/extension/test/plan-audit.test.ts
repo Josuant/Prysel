@@ -74,8 +74,38 @@ describe('lo que dice el auditor', () => {
       { kind: 'añadir', after: 3, part: { title: 'D', goal: 'd' }, why: '' },
     ])
     expect(done.map((part) => part.title)).toEqual(['AB', 'C', 'D'])
-    // Lo que necesitaba una parte que ya no está, se olvida.
-    expect(done[1]?.needs).toBeUndefined()
+    // Lo que necesitaba la parte que se unió a otra, ahora lo necesita de la nueva.
+    expect(done[1]?.needs).toEqual(['AB'])
+  })
+
+  it('los números y las flechas: mover una parte, conectar y soltar', () => {
+    const said = [
+      'MOVER 3 tras 0 | se usa antes',
+      'CONECTAR 1 a 2 | la usa',
+      'SOLTAR 2 de 3 | no la usa',
+    ]
+    expect(correctionsOf(said.join('\n'), 3)).toEqual([
+      { kind: 'mover', at: 3, after: 0, why: 'se usa antes' },
+      { kind: 'conectar', at: 2, from: 1, why: 'la usa' },
+      { kind: 'soltar', at: 3, from: 2, why: 'no la usa' },
+    ])
+    // Mover una parte a donde ya está no es una corrección.
+    expect(correctionsOf('MOVER 2 tras 1 | da igual', 3)).toBeNull()
+    const parts = [
+      { title: 'Escuchar', goal: 'graba', needs: ['Preparar'] },
+      { title: 'Traducir', goal: 'a notas' },
+      { title: 'Preparar', goal: 'la melodía' },
+    ]
+    const done = correctedPlan(parts, [
+      { kind: 'mover', at: 3, after: 0, why: '' },
+      { kind: 'conectar', at: 2, from: 1, why: '' },
+      { kind: 'soltar', at: 1, from: 3, why: '' },
+    ])
+    expect(done).toEqual([
+      { title: 'Preparar', goal: 'la melodía' },
+      { title: 'Escuchar', goal: 'graba' },
+      { title: 'Traducir', goal: 'a notas', needs: ['Escuchar'] },
+    ])
   })
 
   it('de partida, todos los expertos corrigen, también el auditor del plan', () => {
