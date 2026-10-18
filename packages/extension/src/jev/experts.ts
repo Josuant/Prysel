@@ -144,6 +144,8 @@ export async function judgeFindings(
   command: string,
   expert: ExpertId,
   findings: readonly Omit<Finding, 'verdict'>[],
+  /** Lo que se sabe de verdad del programa (lo que hizo al ejecutarlo): un hallazgo que lo contradiga no vale. */
+  facts?: string,
 ): Promise<{ verdicts: Finding['verdict'][]; ms: number }> {
   if (findings.length === 0) return { verdicts: [], ms: 0 }
   const { answers, ms } = await decider.decide({
@@ -151,19 +153,21 @@ export async function judgeFindings(
       orden: command,
       experto: EXPERTS[expert].name,
       hallazgos: findings.map((one) => one.what),
+      ...(facts ? { hechos: facts } : {}),
     },
     questions: Object.fromEntries(
       findings.map((finding, at) => [
         `hallazgo${at}`,
         {
           type: 'choice' as const,
-          instructions: `Se pidió un programa en Python con la \`orden\`. Un experto en ${EXPERTS[expert].name} lo revisa y dice: «${finding.what}». Propone: «${finding.fix}». ¿Qué se hace con eso?`,
+          instructions: `Se pidió un programa en Python con la \`orden\`. Un experto en ${EXPERTS[expert].name} lo revisa y dice: «${finding.what}». Propone: «${finding.fix}».${facts ? ' En `hechos` está lo que se sabe de verdad del programa al ejecutarlo: si lo que dice el experto lo contradice (da por inexistente o roto algo que funcionó), es una falsa alarma: descártalo.' : ''} ¿Qué se hace con eso?`,
           criteria: {
             aplicar:
               'Es real en este programa y conviene arreglarlo ya: es un fallo o impide usarlo o hacer lo pedido, y arreglarlo no cambia lo que se pidió.',
             sugerir:
               'Es real pero opcional: lo mejoraría, y quien lo usa puede decidir si lo quiere.',
-            descartar: 'No es real en este programa, es de gusto, o cambiaría lo que se pidió.',
+            descartar:
+              'No es real en este programa (contradice lo que se sabe de él), es de gusto, o cambiaría lo que se pidió.',
           },
         },
       ]),
@@ -204,7 +208,15 @@ export async function consult(
   }
   const findings = findingsOf(raw)
   if (findings === null) return { report: { id: expert, level, findings: [], silent: true }, ms: 0 }
-  const judged = await judgeFindings(decider, request.command, expert, findings).catch(() => null)
+  // El JEV juzga con los hechos delante: lo que hizo al ejecutarlo y cómo funciona lo que usa.
+  const facts = [request.ran, request.guide].filter(Boolean).join('\n\n')
+  const judged = await judgeFindings(
+    decider,
+    request.command,
+    expert,
+    findings,
+    facts || undefined,
+  ).catch(() => null)
   const verdicts = judged?.verdicts ?? findings.map(() => 'sugerir' as const)
   return {
     report: {

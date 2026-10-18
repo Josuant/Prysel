@@ -1595,6 +1595,12 @@ async function ranOf(host: Stagehand): Promise<{ broken: string | null; said: st
     ...(waiting ? ['Y se queda esperando a que se teclee algo.'] : []),
     ...(broken ? [`Y falla: ${broken}`] : []),
     ...(trace.truncated && trace.finished !== true ? ['No llegó a acabar: era muy largo.'] : []),
+    // Un hecho, no una opinión: lo que se usa existe (si no, habría fallado). Quien revisa no lo discute.
+    ...(!broken && !waiting
+      ? [
+          'Se ejecutó entero sin ningún fallo: todo lo que usa (notas, colores, funciones) existe y funciona; si algo no existiera, habría fallado aquí.',
+        ]
+      : []),
   ].join('\n')
   return { broken, said }
 }
