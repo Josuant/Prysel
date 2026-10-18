@@ -38,13 +38,13 @@ const PIANO = lines(
 )
 
 describe('una etapa con una función desplegada en su sitio', () => {
-  const view = (flipped: Set<string>) => {
+  const view = (flipped: Set<string>, density: 'normal' | 'compact' = 'normal') => {
     const program = parse(PIANO)
     const all = withSections(toCanvasNodes(program.nodes), program.edges, program.sections ?? [])
     return viewOf(all, program.edges, functionsOf(all, program.edges), {
       focus: null,
       flow: true,
-      density: 'normal',
+      density,
       flipped,
       modules: true,
     }).view.nodes.map((node) => node.id)
@@ -59,5 +59,11 @@ describe('una etapa con una función desplegada en su sitio', () => {
     const open = view(new Set([start]))
     expect(open.filter((id) => id.startsWith('expr:')).length).toBeGreaterThan(1)
     expect(open.some((id) => id.startsWith('def:'))).toBe(true)
+  })
+
+  it('también si la función está plegada en su tarjeta (lo de fuera se pliega antes que lo de dentro)', () => {
+    // En «compacto» todo empieza plegado: la función también, como cuando ya tiene su tarjeta.
+    const folded = view(new Set(), 'compact')
+    expect(folded.some((id) => id.startsWith('expr:') || id.startsWith('def:'))).toBe(false)
   })
 })

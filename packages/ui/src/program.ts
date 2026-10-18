@@ -834,7 +834,19 @@ export function foldScopes(
     })),
     edges,
   }
-  const groups = groupsFromContainers(graph).filter((group) => folded.has(group.id))
+  // Lo de fuera antes que lo de dentro: una etapa plegada se lleva lo que guarda (también una función plegada
+  // que tenga dentro). En el orden del archivo, una función desplegada en una etapa posterior se adelantaba,
+  // se quedaba sus pasos, y la etapa se descartaba por solaparse: no se dejaba plegar.
+  const parentOf = new Map<string, string>()
+  for (const node of nodes) for (const id of node.contains ?? []) parentOf.set(id, node.id)
+  const depth = (id: string) => {
+    let level = 0
+    for (let at = parentOf.get(id); at !== undefined && level < 50; at = parentOf.get(at)) level++
+    return level
+  }
+  const groups = groupsFromContainers(graph)
+    .filter((group) => folded.has(group.id))
+    .sort((a, b) => depth(a.id) - depth(b.id))
   const result = collapse(graph, groups)
   const kept = new Set(result.graph.nodes.map((n) => n.id))
 
