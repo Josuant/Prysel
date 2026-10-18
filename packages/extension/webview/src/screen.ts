@@ -220,6 +220,20 @@ export const keyLabel = (name: string): string =>
 // ───────────────────────── el sonido ─────────────────────────
 
 let audio: AudioContext | null = null
+/** Lo que está sonando o va a sonar: `parar()` (o volver a arrancar) lo calla. */
+const voices = new Set<OscillatorNode>()
+
+/** Calla todo lo que suena y lo que estaba por sonar (una melodía a medias). */
+export function stopSounds() {
+  for (const voice of voices) {
+    try {
+      voice.stop()
+    } catch {
+      // Ya había parado.
+    }
+  }
+  voices.clear()
+}
 
 /** El sonido de la página, creado (o despertado) ahora: llamado al pulsar algo, que es cuando el navegador lo deja. */
 export function unlockSound(): AudioContext | null {
@@ -262,5 +276,9 @@ export function playNote(hz: number, secs: number, delay = 0) {
     voice.connect(mix).connect(gain)
     voice.start(start)
     voice.stop(start + length + 0.05)
+    voices.add(voice)
+    voice.onended = () => {
+      voices.delete(voice)
+    }
   }
 }

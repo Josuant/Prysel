@@ -118,6 +118,7 @@ import {
   keyLabel,
   keyMatches,
   playNote,
+  stopSounds,
   unlockSound,
   restartScreen,
   usesScreen,
@@ -821,12 +822,19 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       } else if (message.type === 'audit') {
         setAudit(message)
       } else if (message.type === 'screened') {
-        if (message.ev === 'loading') setScreen(restartScreen)
-        else if (message.ev === 'screen') {
+        if (message.ev === 'loading') {
+          // Arranca de cero: lo que sonaba de la vez anterior se calla.
+          stopSounds()
+          setScreen(restartScreen)
+        } else if (message.ev === 'screen') {
           const { command } = message
           // Lo que suena no se dibuja: suena.
           if (command['op'] === 'sound') {
             playNote(Number(command['hz']), Number(command['secs']), Number(command['delay']))
+          } else if (command['op'] === 'stop') {
+            // `pantalla.parar()`: deja de repetirse y se calla lo que estaba sonando.
+            stopSounds()
+            setScreen((known) => applyScreen(known, command))
           } else if (command['op'] === 'ready') {
             setScreen((known) => ({
               ...known,

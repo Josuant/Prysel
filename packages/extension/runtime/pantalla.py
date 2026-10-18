@@ -242,7 +242,7 @@ def cada(segundos, funcion):
 
 
 def parar():
-    """Para lo que se repite con `cada`."""
+    """Para lo que se repite con `cada` y calla lo que estuviera sonando (una melodía a medias)."""
     _timers.clear()
     _emit("stop")
 
