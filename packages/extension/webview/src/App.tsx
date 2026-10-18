@@ -2175,6 +2175,23 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
           },
         }
       : null
+  // Con pantalla, lo que salió al ejecutarlo no es «el resultado»: es la prueba que se hizo sin nadie delante
+  // (pulsando cada botón una vez). Lo que se usa es la pantalla.
+  const outcomeResult = outcome?.result ?? null
+  const screened = screenSource !== null
+  const shownResult = useMemo(
+    () =>
+      outcomeResult && screened
+        ? {
+            ...outcomeResult,
+            content: {
+              ...outcomeResult.content,
+              subtitle: 'probado sin nadie delante: cada botón, una vez',
+            },
+          }
+        : outcomeResult,
+    [outcomeResult, screened],
+  )
   // Una parte del programa que solo define la configuración ya está entera en su nodo: no se dibuja dos
   // veces (sus flechas, a quien usa cada valor, salen del nodo).
   const configLines =
@@ -3323,7 +3340,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                 onGistEdit={setTrying}
                 architecture={drawn.architecture}
                 avoid={consoleBox}
-                result={outcome?.result ?? null}
+                result={shownResult}
                 runs={outcome?.result ? runsShown : null}
                 progress={progressShown}
                 knobs={knobsPanel}
@@ -3662,6 +3679,7 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                   extras={ideaExtras}
                   live={beat?.at ?? null}
                   footer={(reserve?.bottom ?? 0) + 8}
+                  screen={screenPanel}
                   onPick={(id) => {
                     lookFrom('partes')
                     setSelected(id)

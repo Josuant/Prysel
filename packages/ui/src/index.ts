@@ -89,6 +89,7 @@ export {
 export type { AskWhere, CanvasAsk } from './Canvas.tsx'
 export type { KnobControl, KnobItem, KnobsPanel, KnobValue } from './flow/KnobsNode.tsx'
 export type { ScreenPanel, ScreenView } from './flow/ScreenNode.tsx'
+export { ScreenCard } from './flow/ScreenNode.tsx'
 export { momentLaps, playCursor, type ViewerPlay } from './viewer.ts'
 export { viewerSize, type ViewerContent } from './viewer.ts'
 export {

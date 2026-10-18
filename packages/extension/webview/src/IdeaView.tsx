@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef } from 'react'
-import { Icon, type Idea, type IdeaStep } from '@prysel/ui'
+import { Icon, ScreenCard, type Idea, type IdeaStep, type ScreenPanel } from '@prysel/ui'
 
 /**
  * La **idea** del programa: lo que hace, dicho en unas pocas líneas y a un tamaño que se lee en cualquier
@@ -124,6 +124,7 @@ export function IdeaView({
   onPick,
   actions,
   footer = 0,
+  screen = null,
 }: {
   idea: Idea
   extras: IdeaExtras
@@ -134,6 +135,8 @@ export function IdeaView({
   actions?: IdeaActions | null
   /** Lo que ocupan abajo las barras que flotan (la de ver una vuelta, la consola): el texto acaba antes. */
   footer?: number
+  /** La pantalla del programa, si se usa: va la primera (es lo que se usa), y el resultado es de una prueba. */
+  screen?: ScreenPanel | null
 }) {
   const { start, result } = extras
   // La parte donde empieza el trabajo se dice la primera, no entre «lo demás».
@@ -163,6 +166,12 @@ export function IdeaView({
       <div className="idea" role="region" aria-label="La idea del programa">
         <div className="idea__scroll" style={{ bottom: footer }} ref={scroller}>
           <div className="idea__flow">
+            {screen && (
+              <section className="idea__block" data-kind="screen">
+                <h3 className="idea__label">Úsalo</h3>
+                <ScreenCard panel={screen} />
+              </section>
+            )}
             {start && (
               <section className="idea__block" data-kind="start">
                 <h3 className="idea__label">
@@ -219,7 +228,9 @@ export function IdeaView({
                 data-planned={result.planned ? '' : undefined}
                 data-live={live === 'prysel:result' ? '' : undefined}
               >
-                <h3 className="idea__label">{result.planned ? 'Daría' : 'Y al final'}</h3>
+                <h3 className="idea__label">
+                  {result.planned ? 'Daría' : screen ? 'Probado sin nadie delante' : 'Y al final'}
+                </h3>
                 <div className="idea__result">
                   {result.lines.map((line, at) => (
                     <span key={at}>{line}</span>

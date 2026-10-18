@@ -7746,6 +7746,15 @@ button.run-panel__line:hover {
   box-shadow: var(--shadow-card);
   cursor: default;
 }
+/* Fuera del diagrama (en la idea): el ancho que haya, y crece con lo que tenga. */
+.screen-node[data-fluid] {
+  width: 100%;
+  max-width: 560px;
+}
+.screen-node[data-fluid] .screen-node__lines {
+  height: auto !important;
+  max-height: 72px;
+}
 .screen-node[data-phase='failed'] {
   border-color: color-mix(in srgb, var(--state-error) 60%, var(--border-card));
 }

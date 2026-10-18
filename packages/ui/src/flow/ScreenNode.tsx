@@ -104,13 +104,11 @@ export type ScreenFlowNode = Node<ScreenNodeData, 'screen'>
 
 export function ScreenNode({ data }: NodeProps<ScreenFlowNode>) {
   const { panel, size } = data
-  const { view } = panel
-  const lines = view.lines.slice(-MAX_LINES)
   return (
     <div
       className="screen-node nodrag nopan"
       style={{ width: size.w, height: size.h }}
-      data-phase={view.phase}
+      data-phase={panel.view.phase}
     >
       <Handle
         type="target"
@@ -119,6 +117,37 @@ export function ScreenNode({ data }: NodeProps<ScreenFlowNode>) {
         isConnectable={false}
         className="note-handle"
       />
+      <ScreenContent panel={panel} width={size.w} />
+    </div>
+  )
+}
+
+/**
+ * La misma pantalla fuera del diagrama (en la idea del programa, que es lo que se ve primero en el móvil):
+ * ocupa el ancho que haya y crece con lo que tenga.
+ */
+export function ScreenCard({ panel }: { panel: ScreenPanel }) {
+  return (
+    <div className="screen-node" data-fluid="" data-phase={panel.view.phase}>
+      <ScreenContent panel={panel} width={screenSize(panel.view).w} fluid />
+    </div>
+  )
+}
+
+/** Lo de dentro de la pantalla: su cabecera y lo que se usa (el lienzo, los botones, el texto, las teclas). */
+function ScreenContent({
+  panel,
+  width,
+  fluid = false,
+}: {
+  panel: ScreenPanel
+  width: number
+  fluid?: boolean
+}) {
+  const { view } = panel
+  const lines = view.lines.slice(-MAX_LINES)
+  return (
+    <>
       <header className="screen-node__head">
         <span className="screen-node__title">{view.title ?? 'Pantalla'}</span>
         <span className="screen-node__state">
@@ -149,7 +178,8 @@ export function ScreenNode({ data }: NodeProps<ScreenFlowNode>) {
         {view.canvas && (
           <Drawing
             canvas={view.canvas}
-            width={size.w - PAD * 2}
+            width={width - PAD * 2}
+            fluid={fluid}
             onPoint={
               view.phase === 'running' && ((view.zones?.length ?? 0) > 0 || view.touch != null)
                 ? (x, y) => {
@@ -224,7 +254,7 @@ export function ScreenNode({ data }: NodeProps<ScreenFlowNode>) {
           <p className="screen-node__hint">Poniéndolo en marcha…</p>
         )}
       </div>
-    </div>
+    </>
   )
 }
 
@@ -233,9 +263,12 @@ function Drawing({
   canvas,
   width,
   onPoint,
+  fluid = false,
 }: {
   canvas: NonNullable<ScreenView['canvas']>
   width: number
+  /** Ocupa el ancho que haya (fuera del diagrama), sin pasar de su tamaño. */
+  fluid?: boolean
   /** Se pulsó en el lienzo, en (x, y) de sus propias medidas. */
   onPoint?: ((x: number, y: number) => void) | undefined
 }) {
@@ -274,7 +307,11 @@ function Drawing({
       width={canvas.w}
       height={canvas.h}
       data-touchable={onPoint ? '' : undefined}
-      style={{ width: canvas.w * scale, height: canvas.h * scale }}
+      style={
+        fluid
+          ? { width: '100%', maxWidth: canvas.w, height: 'auto' }
+          : { width: canvas.w * scale, height: canvas.h * scale }
+      }
       onPointerDown={
         onPoint
           ? (event) => {
