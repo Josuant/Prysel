@@ -26,6 +26,7 @@ import {
 } from './build.ts'
 import type { Decider } from './client.ts'
 import type { Trace } from '../trace.ts'
+import { consult, EXPERT_IDS, EXPERTS, type ExpertLevels, type ExpertReport } from './experts.ts'
 import { COMPOSE_THRESHOLDS, judgeCode } from './compose.ts'
 import { WHOLE_BUDGET, contextFor } from './context.ts'
 import { reachesOutside, safeEnough } from './safety.ts'
@@ -143,6 +144,8 @@ export interface Stagehand {
    * se pide para usarlo se construye con ella.
    */
   screen?: boolean
+  /** Cuánto está cada experto (ver `experts.ts`). Sin esto, ninguno audita. */
+  experts?: ExpertLevels
 }
 
 export type Shown =
@@ -223,6 +226,11 @@ export interface Outcome {
     /** Y si no se pudo arreglar: el fallo con el que se quedó. */
     broken?: string
   }
+  /**
+   * La auditoría de los expertos, si alguno está presente: lo que vio cada uno (lo aplicado, lo que propone y
+   * lo que solo observa). `mended`/`broken`: lo aplicado rompió algo que funcionaba y se arregló (o no).
+   */
+  audit?: { experts: ExpertReport[]; mended?: boolean; broken?: string }
   jevMs: number
   /**
    * Lo que se construyó es una sola cosa con interior (una función, una clase): la línea de su cabecera. Al
@@ -251,8 +259,9 @@ export function summaryOf(outcome: Outcome, noun: [string, string] = ['paso', 'p
   if (outcome.doubt) {
     return `Hecho en ${count}, pero el JEV duda de que cumpla todo lo pedido: revísalo.`
   }
-  if (review) return `Hecho, en ${count}. Lo revisé con la IA y no falta nada de lo pedido.`
-  return `Hecho, en ${count}.`
+  if (review)
+    return `Hecho, en ${count}. Lo revisé con la IA y no falta nada de lo pedido.${auditSaid(outcome)}`
+  return `Hecho, en ${count}.${auditSaid(outcome)}`
 }
 
 /** Un texto que llega a trozos, convertido en una cola de objetos que se van sacando. */
@@ -504,12 +513,8 @@ export async function build(
   players: Players,
   request: BuildRequest,
 ): Promise<Outcome> {
-  return review(
-    host,
-    players,
-    request.command,
-    await tidy(host, players, await buildOnce(host, players, request)),
-  )
+  const done = await tidy(host, players, await buildOnce(host, players, request))
+  return audit(host, players, request.command, await review(host, players, request.command, done))
 }
 
 async function buildOnce(
@@ -1251,12 +1256,125 @@ export async function modify(
   players: Players,
   request: ModifyRequest,
 ): Promise<Outcome> {
-  return review(
-    host,
-    players,
-    request.command,
-    await tidy(host, players, await modifyOnce(host, players, request)),
+  const done = await tidy(host, players, await modifyOnce(host, players, request))
+  return audit(host, players, request.command, await review(host, players, request.command, done))
+}
+
+// ───────────────────────── los expertos ─────────────────────────
+
+/**
+ * **La auditoría**: al acabar, los expertos presentes miran lo que quedó (el programa, lo que hace al
+ * ejecutarlo y su pantalla), cada uno en lo suyo y a la vez. El JEV decide de cada hallazgo si se arregla, se
+ * sugiere o se descarta. Lo que se arregla (de los expertos en «corrige») se hace en un solo cambio, que se
+ * ve y se deshace; si rompe algo que funcionaba, se arregla una vez. Lo demás se cuenta.
+ */
+async function audit(
+  host: Stagehand,
+  players: Players,
+  command: string,
+  outcome: Outcome,
+): Promise<Outcome> {
+  const levels = host.experts
+  if (!levels || outcome.stopped || outcome.trouble !== null || outcome.written === 0)
+    return outcome
+  const present = EXPERT_IDS.filter((id) => levels[id] > 0)
+  if (present.length === 0 || host.signal.aborted) return outcome
+  const asked = outcome.asked ?? command
+  await host.show({
+    type: 'progress',
+    text: `Los expertos lo revisan: ${present.map((id) => EXPERTS[id].name).join(', ')}…`,
+  })
+  const program = await host.program()
+  const before = await ranOf(host)
+  const consulted = await Promise.all(
+    present.map((id) =>
+      consult(players.provider, players.decider, id, levels[id], {
+        command: asked,
+        source: program.source.slice(0, REVIEW_BUDGET),
+        ...(before ? { ran: before.said } : {}),
+      }),
+    ),
   )
+  const reports = consulted.map((one) => one.report)
+  let jevMs = outcome.jevMs + consulted.reduce((sum, one) => sum + one.ms, 0)
+  // Lo que se arregla ya: lo que el JEV confirma, de los expertos que corrigen.
+  const toApply = reports.flatMap((report) =>
+    report.level === 3 ? report.findings.filter((finding) => finding.verdict === 'aplicar') : [],
+  )
+  if (toApply.length === 0 || host.signal.aborted) {
+    return { ...outcome, jevMs, audit: { experts: reports } }
+  }
+  await host.show({
+    type: 'say',
+    say: `Los expertos arreglan: ${toApply.map((finding) => lowerFirst(finding.fix)).join('; ')}.`,
+    aside: true,
+  })
+  const fixed = await modifyOnce(host, players, {
+    command: `Mejora el programa como dicen los expertos, sin cambiar lo que hace ni lo que se pidió («${asked}»): ${toApply.map((finding) => finding.fix).join('; ')}.`,
+    whole: true,
+  })
+  jevMs += fixed.jevMs
+  const done = !fixed.stopped && fixed.trouble === null && fixed.written > 0
+  for (const finding of toApply) finding.applied = done
+  const mended = done ? await mend(host, players, asked, before) : { written: 0, jevMs: 0 }
+  return {
+    ...outcome,
+    written: outcome.written + fixed.written + mended.written,
+    jevMs: jevMs + mended.jevMs,
+    audit: {
+      experts: reports,
+      ...(mended.repaired ? { mended: true } : {}),
+      ...(mended.broken !== undefined ? { broken: mended.broken } : {}),
+    },
+  }
+}
+
+/** Lo que se dice de la auditoría al final: lo arreglado y lo que queda por ver en «Expertos». */
+function auditSaid(outcome: Outcome): string {
+  const reports = outcome.audit?.experts
+  if (!reports) return ''
+  const findings = reports.flatMap((report) => report.findings)
+  const applied = findings.filter((finding) => finding.applied).length
+  const open = findings.length - applied
+  if (findings.length === 0) return ' Los expertos no ven nada que mejorar.'
+  const parts = [
+    ...(applied > 0 ? [`arreglaron ${applied} ${applied === 1 ? 'cosa' : 'cosas'}`] : []),
+    ...(open > 0 ? [`tienen ${open} ${open === 1 ? 'recomendación' : 'recomendaciones'}`] : []),
+  ]
+  const broken = outcome.audit?.broken
+    ? ` (lo que aplicaron dejó un fallo: ${outcome.audit.broken})`
+    : ''
+  return ` Los expertos ${parts.join(' y ')}${broken}: míralo en «Expertos».`
+}
+
+/**
+ * Si un cambio hecho sin que nadie lo pidiera (completar lo que faltaba, lo de los expertos) dejó de
+ * funcionar donde antes funcionaba, se arregla una vez, con el fallo de verdad.
+ */
+async function mend(
+  host: Stagehand,
+  players: Players,
+  asked: string,
+  before: { broken: string | null } | null,
+): Promise<{ written: number; jevMs: number; repaired?: boolean; broken?: string }> {
+  if (before === null || before.broken !== null || host.signal.aborted)
+    return { written: 0, jevMs: 0 }
+  const after = await ranOf(host)
+  if (!after?.broken) return { written: 0, jevMs: 0 }
+  await host.show({
+    type: 'progress',
+    text: `Al cambiarlo dejó de funcionar (${after.broken}): lo arreglo…`,
+  })
+  const repair = await modifyOnce(host, players, {
+    command: `Al ejecutar el programa falla: ${after.broken}. Arréglalo sin quitar nada de lo que hace (lo que se pidió: «${asked}»).`,
+    whole: true,
+  })
+  const still = await ranOf(host)
+  return {
+    written: repair.written,
+    jevMs: repair.jevMs,
+    ...(still?.broken ? { broken: still.broken } : { repaired: true }),
+  }
 }
 
 // ───────────────────────── ordenar: nada fuera de una etapa ─────────────────────────
@@ -1425,24 +1543,14 @@ async function review(
   const done = !fixed.stopped && fixed.trouble === null && fixed.written > 0
   let written = outcome.written + fixed.written
   let jevTotal = jevMs + fixed.jevMs
-  let mend: { repaired?: boolean; broken?: string } = {}
+  let repairs: { repaired?: boolean; broken?: string } = {}
   // Si al completarlo dejó de funcionar lo que funcionaba, se arregla una vez, sin esperar a nadie.
-  if (done && before !== null && before.broken === null && !host.signal.aborted) {
-    const after = await ranOf(host)
-    if (after?.broken) {
-      await host.show({
-        type: 'progress',
-        text: `Al añadirlo dejó de funcionar (${after.broken}): lo arreglo…`,
-      })
-      const repair = await modifyOnce(host, players, {
-        command: `Al ejecutar el programa falla: ${after.broken}. Arréglalo sin quitar nada de lo que hace (lo que se pidió: «${asked}»).`,
-        whole: true,
-      })
-      written += repair.written
-      jevTotal += repair.jevMs
-      const still = await ranOf(host)
-      mend = still?.broken ? { broken: still.broken } : { repaired: true }
-    }
+  if (done) {
+    const mended = await mend(host, players, asked, before)
+    written += mended.written
+    jevTotal += mended.jevMs
+    if (mended.repaired) repairs = { repaired: true }
+    else if (mended.broken !== undefined) repairs = { broken: mended.broken }
   }
   return {
     ...fixed,
@@ -1451,7 +1559,7 @@ async function review(
     // (El programa ya no es el de antes: lo que dice el JEV es de cómo quedó.)
     evidence: fixed.evidence.length > 0 ? fixed.evidence : outcome.evidence,
     jevMs: jevTotal,
-    review: { missing: judged.asked, done, ...mend },
+    review: { missing: judged.asked, done, ...repairs },
     ...(outcome.enter === undefined ? {} : { enter: outcome.enter }),
   }
 }

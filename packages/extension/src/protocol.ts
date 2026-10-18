@@ -5,6 +5,13 @@ import type { Trace } from './trace.ts'
 import type { CallEntry } from './calls.ts'
 import type { Gist, RunSummary } from './gist/gist.ts'
 import {
+  EXPERT_IDS,
+  levelsFrom,
+  type ExpertLevels,
+  type ExpertReport,
+  type Finding,
+} from './jev/experts.ts'
+import {
   INTENTS,
   PLACES,
   type Decision,
@@ -308,7 +315,28 @@ export interface AskMessage {
   text: string
 }
 
+/** Anfitrión → webview: cuánto está cada experto ahora (ver `jev/experts.ts`). */
+export interface ExpertsMessage {
+  type: 'experts'
+  levels: ExpertLevels
+}
+
+/**
+ * Anfitrión → webview: la auditoría de los expertos al acabar una orden: qué vio cada uno (lo aplicado, lo
+ * que propone, lo que observa) y si lo aplicado rompió algo (y se arregló o no).
+ */
+export interface AuditMessage {
+  type: 'audit'
+  /** Lo que se pidió (a qué se refiere la auditoría). */
+  asked: string
+  experts: ExpertReport[]
+  mended?: boolean
+  broken?: string
+}
+
 export type WebviewMessage =
+  | ExpertsMessage
+  | AuditMessage
   | AskMessage
   | ScreenedMessage
   | ConfiguredMessage
@@ -521,6 +549,12 @@ export interface ConfigMessage {
  * El programa **en marcha para usarlo** (su `pantalla`): arrancarlo de cero con el código de ahora, una
  * pulsación (de un botón, una tecla o lo que se repite con `cada`; `id` es el de su función), o pararlo.
  */
+/** Cambiar cuánto está cada experto (lo guarda quien lo aloja y lo usan las órdenes siguientes). */
+export interface SetExpertsMessage {
+  type: 'setExperts'
+  levels: ExpertLevels
+}
+
 /** Un fallo dentro del lienzo (un error de JavaScript que nadie atrapó): quien lo aloja lo apunta. */
 export interface WebviewErrorMessage {
   type: 'webviewError'
@@ -581,6 +615,7 @@ export type HostMessage =
   | ConfigMessage
   | ScreenMessage
   | WebviewErrorMessage
+  | SetExpertsMessage
   | LaunchMessage
   | PlayMessage
   | TryCallMessage
@@ -849,6 +884,51 @@ export function parseWebviewMessage(value: unknown): WebviewMessage | null {
     if (shape !== null && typeof shape !== 'string') return null
     return { type: 'arched', key, roles: roles as (string | null)[], shape }
   }
+  if (type === 'experts') {
+    return { type: 'experts', levels: levelsFrom((value as { levels?: unknown }).levels) }
+  }
+  if (type === 'audit') {
+    const { asked, experts, mended, broken } = value as Record<string, unknown>
+    if (typeof asked !== 'string' || !Array.isArray(experts)) return null
+    const reports = experts.flatMap((raw: unknown) => {
+      const report = (raw ?? {}) as Record<string, unknown>
+      const id = EXPERT_IDS.find((one) => one === report['id'])
+      const level = report['level']
+      if (!id || !(level === 0 || level === 1 || level === 2 || level === 3)) return []
+      const findings = Array.isArray(report['findings'])
+        ? report['findings'].flatMap((item: unknown) => {
+            const finding = (item ?? {}) as Record<string, unknown>
+            const { severity, what, fix, verdict, applied } = finding
+            if (severity !== 'grave' && severity !== 'mejora') return []
+            if (typeof what !== 'string' || typeof fix !== 'string') return []
+            if (verdict !== 'aplicar' && verdict !== 'sugerir' && verdict !== 'descartar') return []
+            return [
+              {
+                severity,
+                what: what.slice(0, 400),
+                fix: fix.slice(0, 400),
+                verdict,
+                ...(applied === true ? { applied: true } : {}),
+              } satisfies Finding,
+            ]
+          })
+        : []
+      const report2: ExpertReport = {
+        id,
+        level,
+        findings,
+        ...(report['silent'] === true ? { silent: true } : {}),
+      }
+      return [report2]
+    })
+    return {
+      type: 'audit',
+      asked: asked.slice(0, MAX_COMMAND),
+      experts: reports,
+      ...(mended === true ? { mended: true } : {}),
+      ...(typeof broken === 'string' ? { broken: broken.slice(0, 300) } : {}),
+    }
+  }
   if (type === 'ask') {
     const { text } = value as { text?: unknown }
     return typeof text === 'string' && text.trim() !== '' && text.length <= MAX_COMMAND
@@ -1018,6 +1098,9 @@ export function parseHostMessage(value: unknown): HostMessage | null {
         : []
     })
     return read.length === modules.length ? { type: 'arch', key, modules: read, shapes } : null
+  }
+  if (type === 'setExperts') {
+    return { type: 'setExperts', levels: levelsFrom((value as { levels?: unknown }).levels) }
   }
   if (type === 'webviewError') {
     const { message } = value as { message?: unknown }

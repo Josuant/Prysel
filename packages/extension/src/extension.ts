@@ -54,6 +54,7 @@ import {
   type Interruption,
 } from './jev/plain.ts'
 import { Gists } from './gists.ts'
+import { levelsFrom, type ExpertLevels } from './jev/experts.ts'
 import { build, modify, summaryOf, type Outcome, type Stagehand } from './jev/director.ts'
 import { decideCommand, type Directive, type Effect } from './jev/engine.ts'
 import { deepseekProvider, DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL } from './ai/deepseek.ts'
@@ -1331,6 +1332,7 @@ async function runDirected(
   const host: Stagehand = {
     signal,
     program: () => analyse(doc),
+    experts: expertLevels(),
     // Aquí el programa corre en el equipo: solo en un espacio de trabajo de confianza y en modo seguro.
     run: () =>
       vscode.workspace.isTrusted
@@ -1486,8 +1488,26 @@ async function runDirected(
       jevMs: outcome.jevMs,
       done: true,
     })
+    // Lo que vieron los expertos, para su panel.
+    if (outcome.audit) {
+      postToAll({
+        type: 'audit',
+        asked: said ?? outcome.asked ?? command,
+        experts: outcome.audit.experts,
+        ...(outcome.audit.mended ? { mended: true } : {}),
+        ...(outcome.audit.broken === undefined ? {} : { broken: outcome.audit.broken }),
+      })
+    }
   }
   return outcome.written > 0
+}
+
+/** Dónde guarda la extensión cuánto está cada experto (vale para todos los espacios de trabajo). */
+const EXPERTS_STATE = 'prysel.experts'
+
+/** Cuánto está cada experto ahora (lo de partida, si nunca se tocó). */
+function expertLevels(): ExpertLevels {
+  return levelsFrom(extensionContext?.globalState?.get(EXPERTS_STATE))
 }
 
 /**
@@ -2013,6 +2033,11 @@ function onWebviewMessage(message: unknown) {
   }
   // Lo que se le está oyendo decir: aquí no hay voz que escuchar.
   if (parsed.type === 'listening') return
+  if (parsed.type === 'setExperts') {
+    void extensionContext?.globalState?.update(EXPERTS_STATE, parsed.levels)
+    postToAll({ type: 'experts', levels: parsed.levels })
+    return
+  }
   if (parsed.type === 'clearCalls') {
     callLog.clear()
     return
@@ -2068,6 +2093,7 @@ function onWebviewMessage(message: unknown) {
   if (parsed.type !== 'ready') return
   webviewsReady++
   postToAll({ type: 'theme', theme: themeKind() })
+  postToAll({ type: 'experts', levels: expertLevels() })
   void postModels()
   // Un lienzo recién abierto no ha visto las consultas de antes: se le mandan.
   for (const entry of callLog.all()) postToAll({ type: 'call', entry })

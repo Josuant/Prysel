@@ -47,6 +47,7 @@ import {
 import type { Lesson } from '../../../packages/extension/src/lesson.ts'
 import type { CommandMessage, WebviewMessage } from '../../../packages/extension/src/protocol.ts'
 import type { Trace } from '../../../packages/extension/src/trace.ts'
+import type { ExpertLevels } from '../../../packages/extension/src/jev/experts.ts'
 
 /**
  * Las órdenes del chat en la web: lo mismo que hace la extensión en `extension.ts` (el motor JEV decide,
@@ -72,6 +73,8 @@ export interface OrderPort {
   trace(): Promise<Trace | null>
   /** Ejecuta el programa de ahora, aparte y sin nadie delante, hasta el final (para ver qué hace). */
   run(): Promise<Trace | null>
+  /** Cuánto está cada experto (los que auditan al acabar cada orden). */
+  experts(): ExpertLevels
   setLesson(lesson: Lesson): void
 }
 
@@ -622,6 +625,7 @@ export class Orders {
       run: () => port.run(),
       // En la web, lo que se pide para usarlo (suena, se toca) se hace con la pantalla y se usa de verdad.
       screen: true,
+      experts: port.experts(),
       parses: (code) => !parser.parse(code).rootNode.hasError,
       async write(change) {
         const before = port.text()
@@ -772,6 +776,16 @@ export class Orders {
       done: true,
       ...(outcome.enter === undefined ? {} : { enter: outcome.enter }),
     })
+    // Lo que vieron los expertos, para su panel.
+    if (outcome.audit) {
+      port.post({
+        type: 'audit',
+        asked: said ?? outcome.asked ?? command,
+        experts: outcome.audit.experts,
+        ...(outcome.audit.mended ? { mended: true } : {}),
+        ...(outcome.audit.broken === undefined ? {} : { broken: outcome.audit.broken }),
+      })
+    }
     return outcome.written > 0
   }
 

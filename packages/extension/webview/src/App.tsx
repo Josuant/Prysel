@@ -109,6 +109,9 @@ import {
   runsViewer,
   type RunEntry,
 } from './outcome.ts'
+import { ExpertsPanel, openFindings } from './ExpertsPanel.tsx'
+import { DEFAULT_LEVELS, type ExpertLevels } from '../../src/jev/experts.ts'
+import type { AuditMessage } from '../../src/protocol.ts'
 import {
   EMPTY_SCREEN,
   applyScreen,
@@ -587,6 +590,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
    * porque el navegador no deja sonar nada hasta que se pulsa algo: lo que sonara al arrancar se perdería.
    */
   const [screenArmed, setScreenArmed] = useState(false)
+  /** Cuánto está cada experto (lo guarda quien lo aloja) y lo que dijeron en la última orden. */
+  const [expertLevels, setExpertLevels] = useState<ExpertLevels>(DEFAULT_LEVELS)
+  const [audit, setAudit] = useState<AuditMessage | null>(null)
+  const [expertsOpen, setExpertsOpen] = useState(false)
   const configAsked = useRef(new Set<string>())
   const [archLast, setArchLast] = useState<ArchVerdict | null>(null)
   /**
@@ -809,6 +816,10 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
         } catch {
           // Una clave que no es la nuestra: no hay a quién aplicarla.
         }
+      } else if (message.type === 'experts') {
+        setExpertLevels(message.levels)
+      } else if (message.type === 'audit') {
+        setAudit(message)
       } else if (message.type === 'screened') {
         if (message.ev === 'loading') setScreen(restartScreen)
         else if (message.ev === 'screen') {
@@ -3487,6 +3498,17 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       está a la vista hasta entonces. */}
                   {(!replay || features.calls) && (
                     <div className="canvas-float canvas-float--row" data-at="top-right">
+                      {features.orders && !replay && (
+                        <Button
+                          title="Los expertos (interfaz, uso, código limpio e ingeniería) que revisan lo que se construye: cuánto está cada uno y lo que dijeron"
+                          aria-expanded={expertsOpen}
+                          onClick={() => {
+                            setExpertsOpen((open) => !open)
+                          }}
+                        >
+                          Expertos{openFindings(audit) > 0 ? ` · ${openFindings(audit)}` : ''}
+                        </Button>
+                      )}
                       {!replay && (
                         <Button
                           icon="step"
@@ -3517,12 +3539,60 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
                       )}
                     </div>
                   )}
+                  {/* Los expertos: cuánto está cada uno y lo que dijeron en la última orden. */}
+                  {expertsOpen && features.orders && (
+                    <div className="canvas-float experts-float" data-at="top-right">
+                      <ExpertsPanel
+                        levels={expertLevels}
+                        audit={audit}
+                        onLevels={(levels) => {
+                          setExpertLevels(levels)
+                          post({ type: 'setExperts', levels })
+                        }}
+                        onApply={(fix) => {
+                          hear(fix, null)
+                        }}
+                        onClose={() => {
+                          setExpertsOpen(false)
+                        }}
+                      />
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
-                  <div className="canvas-float" data-at="top-right">
+                  <div className="canvas-float canvas-float--row" data-at="top-right">
+                    {features.orders && (
+                      <Button
+                        title="Los expertos (interfaz, uso, código limpio e ingeniería) que revisan lo que se construye: cuánto está cada uno y lo que dijeron"
+                        aria-expanded={expertsOpen}
+                        onClick={() => {
+                          setExpertsOpen((open) => !open)
+                        }}
+                      >
+                        Expertos{openFindings(audit) > 0 ? ` · ${openFindings(audit)}` : ''}
+                      </Button>
+                    )}
                     <DensityControl value={density} onChange={changeDensity} />
                   </div>
+                  {expertsOpen && features.orders && (
+                    <div className="canvas-float experts-float" data-at="top-right">
+                      <ExpertsPanel
+                        levels={expertLevels}
+                        audit={audit}
+                        onLevels={(levels) => {
+                          setExpertLevels(levels)
+                          post({ type: 'setExperts', levels })
+                        }}
+                        onApply={(fix) => {
+                          hear(fix, null)
+                        }}
+                        onClose={() => {
+                          setExpertsOpen(false)
+                        }}
+                      />
+                    </div>
+                  )}
                   {/* (Con el botón de la IA abajo a la izquierda, se añade desde el lienzo: clic derecho, el
                       «+» de cada paso o un cable soltado.) */}
                   {!hub && (

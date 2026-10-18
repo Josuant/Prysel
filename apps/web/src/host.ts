@@ -16,6 +16,19 @@ import { Session } from '../../../packages/extension/src/session.ts'
 import { WebKernel } from './engine.ts'
 import { Orders } from './orders.ts'
 import { ScreenRunner } from './screen.ts'
+import { levelsFrom, type ExpertLevels } from '../../../packages/extension/src/jev/experts.ts'
+
+/** Dónde se guarda en este navegador cuánto está cada experto. */
+const EXPERTS_KEY = 'prysel.web.experts'
+
+function loadExperts(): ExpertLevels {
+  try {
+    const raw = localStorage.getItem(EXPERTS_KEY)
+    return levelsFrom(raw ? JSON.parse(raw) : null)
+  } catch {
+    return levelsFrom(null)
+  }
+}
 import { Gists } from '../../../packages/extension/src/gists.ts'
 import {
   deciderFrom,
@@ -87,6 +100,8 @@ export class WebHost {
   private started = performance.now()
   private orders: Orders
   private gists: Gists
+  /** Cuánto está cada experto: lo elige quien lo usa en su panel, y se guarda en este navegador. */
+  private experts: ExpertLevels = loadExperts()
   /** El programa en marcha para usarlo (su `pantalla`): otro Python, aparte del que lo mira. */
   private readonly screen = new ScreenRunner((event) => {
     this.post({ type: 'screened', ...event })
@@ -147,6 +162,7 @@ export class WebHost {
         ),
       trace: () => this.session.trace(this.doc.text),
       // Con el azar repetible y hasta el final, como lo ve «Al ejecutarlo».
+      experts: () => this.experts,
       run: () => this.session.trace(this.doc.text, 20_000, false, true, { seed: 7, finish: true }),
       setLesson: (lesson: Lesson) => {
         this.doc = { ...this.doc, lesson: JSON.stringify(lesson, null, 2) }
@@ -252,6 +268,7 @@ export class WebHost {
       case 'ready':
         this.ready = true
         this.post({ type: 'theme', theme: this.theme })
+        this.post({ type: 'experts', levels: this.experts })
         this.postModels()
         for (const entry of this.calls.all()) this.post({ type: 'call', entry })
         await this.refresh()
@@ -326,6 +343,15 @@ export class WebHost {
       }
       case 'arch':
         this.orders.arch(message.key, message.modules, message.shapes)
+        return
+      case 'setExperts':
+        this.experts = message.levels
+        try {
+          localStorage.setItem(EXPERTS_KEY, JSON.stringify(message.levels))
+        } catch {
+          // Sin almacenamiento, vale para esta sesión.
+        }
+        this.post({ type: 'experts', levels: this.experts })
         return
       case 'screen':
         if (message.action === 'start') this.screen.start(this.doc.text)
