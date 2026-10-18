@@ -631,7 +631,12 @@ export class Orders {
       // En la web, lo que se pide para usarlo (suena, se toca) se hace con la pantalla y se usa de verdad.
       screen: true,
       experts: port.experts(),
-      diagram: () => port.diagram(),
+      // El lienzo dibuja lo que se le mandó: primero se le manda el programa de ahora (un cambio escrito sin
+      // enseñarlo, como deshacer lo que rompía, aún no le ha llegado).
+      diagram: async () => {
+        await port.refresh()
+        return port.diagram()
+      },
       reshape: (shape) => {
         port.reshape(shape)
         return Promise.resolve()
