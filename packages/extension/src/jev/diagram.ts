@@ -357,7 +357,7 @@ export class DrawnDiagram {
     this.waiting.clear()
   }
 
-  async of(text: string, patience = 6000): Promise<Diagram | null> {
+  async of(text: string, patience = 15_000): Promise<Diagram | null> {
     const key = textKey(text)
     const until = Date.now() + patience
     while (this.last?.key !== key && Date.now() < until) {

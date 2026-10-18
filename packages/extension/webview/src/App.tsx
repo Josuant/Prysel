@@ -1898,7 +1898,8 @@ export function App({ features = ALL_FEATURES }: { features?: HostFeatures } = {
       () => {
         post(JSON.parse(diagramText))
       },
-      diagramJudged ? 300 : 2500,
+      // Enseguida (quien lo audita está esperando); si luego llegan los papeles, se vuelve a decir.
+      diagramJudged ? 300 : 600,
     )
     return () => {
       window.clearTimeout(timer)

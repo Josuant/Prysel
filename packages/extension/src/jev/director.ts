@@ -2158,6 +2158,8 @@ ${SCREEN_GUIDE}`
     jevMs: jevTotal,
     review: { missing: judged.asked, done, ...repairs },
     ...(outcome.enter === undefined ? {} : { enter: outcome.enter }),
+    // Lo que dijo el auditor del plan sigue valiendo: el plan es el mismo.
+    ...(outcome.planAudit ? { planAudit: outcome.planAudit } : {}),
   }
 }
 
