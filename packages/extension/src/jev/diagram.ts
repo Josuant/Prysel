@@ -56,6 +56,8 @@ export type DiagramCorrection =
   | { kind: 'renombrar'; at: number; part: PlanPart; why: string }
   | { kind: 'unir'; at: number; with: number; part: PlanPart; why: string }
   | { kind: 'mover'; at: number; after: number; why: string }
+  /** Partir una fase: un rótulo nuevo delante de la sentencia que empieza por `from` (solo un comentario). */
+  | { kind: 'separar'; at: number; from: string; part: PlanPart; why: string }
   | { kind: 'forma'; shape: ArchShapeId; why: string }
   /** Una conexión que el código no deja ver: se le pide a la IA ese cambio. */
   | { kind: 'conectar'; fix: string; why: string }
@@ -65,7 +67,7 @@ export function diagramAuditSystem(): string {
     'Eres el AUDITOR INTERNO del diagrama de un programa en Python. Quien lo usa no lee el código: lo entiende por este diagrama. Tienes su forma, sus fases (con el número que se ve en cada una, su nombre, lo que dice que hace, su papel y lo que tiene en su primer nivel), sus flechas (de qué fase a cuál y qué dicen) y el código.',
     'Revisa que el diagrama ayude de verdad a entender el programa. TOPOLOGÍA: la forma cuenta cómo funciona (si otra de las posibles lo cuenta mejor, dila). NOMBRES: cada fase dice en pocas palabras lo que hace, se entiende sin saber programar, y no hay dos que se llamen igual o se confundan. NÚMEROS: el orden de las fases es el que se sigue al leerlo y al ejecutarlo (lo que prepara algo va antes que lo que lo usa). CONEXIONES: cada flecha dice algo verdadero y útil; ninguna fase queda suelta sin razón; no falta la que cuenta cómo pasan los datos de una fase a otra. CONTENIDO: cada fase tiene lo que dice su nombre; si tiene líneas que son de otra (por ejemplo, el arranque metido en «Mostrar ticket»), su papel y sus flechas engañan: esa fase parece la que manda.',
     'Si hay que corregir, una corrección por línea, como mucho cuatro:',
-    '«RENOMBRAR N | Título: qué hace | por qué» · «UNIR N y M | Título: qué hace | por qué» (fases seguidas que hacen lo mismo) · «MOVER N tras M | por qué» (tras 0 es al principio) · «FORMA nombre | por qué» (una de las posibles) · «ARREGLAR | qué líneas llevar a qué fase, o qué cambiar en el código para que se vea cómo pasa el dato | por qué».',
+    '«RENOMBRAR N | Título: qué hace | por qué» · «UNIR N y M | Título: qué hace | por qué» (fases seguidas que hacen lo mismo) · «MOVER N tras M | por qué» (tras 0 es al principio) · «FORMA nombre | por qué» (una de las posibles) · «SEPARAR N | primera línea de la nueva fase, tal cual | Título: qué hace | por qué» (una fase que hace dos cosas: desde esa línea, otra fase) · «ARREGLAR | qué líneas llevar a qué fase, o qué cambiar en el código para que se vea cómo pasa el dato | por qué».',
     'En lo que escribas tras ARREGLAR, nombra las fases por su nombre entre comillas («Mostrar ticket»), nunca por su número: quien lo lea no ve los números. Lo que pidas no puede cambiar lo que hace el programa.',
     'El título, de dos a cuatro palabras; lo que hace, menos de diez. No propongas lo que ya está así. Si el diagrama ya se entiende bien, responde solo «BIEN».',
   ].join('\n')
@@ -143,7 +145,15 @@ export function diagramCorrectionsOf(text: string, diagram: Diagram): DiagramCor
     const unir = /^UNIR\s+(\d+)\s*(?:Y|,|\+)\s*(\d+)$/.exec(head)
     const mover = /^MOVER\s+(\d+)\s+(?:TRAS|DESPU[ÉE]S\s+DE)\s+(\d+)$/.exec(head)
     const forma = /^FORMA\s+(\S+)$/.exec(head)
-    if (renombrar) {
+    const separar = /^SEPARAR\s+(\d+)$/.exec(head)
+    if (separar) {
+      const at = Number(separar[1])
+      const from = (parts[1] ?? '').replace(/^[«"`']+|[»"`']+$/g, '').trim()
+      const part = partOf(parts[2] ?? '')
+      if (inRange(at) && from.length >= 3 && part) {
+        out.push({ kind: 'separar', at, from: from.slice(0, 120), part, why: parts[3] ?? '' })
+      }
+    } else if (renombrar) {
       const at = Number(renombrar[1])
       const part = partOf(parts[1] ?? '')
       const now = diagram.modules[at - 1]
@@ -210,6 +220,8 @@ export function diagramCorrectionSaid(correction: DiagramCorrection, diagram: Di
         : `Poner ${name(correction.at)} detrás de ${name(correction.after)}`
     case 'forma':
       return `Dibujarlo como ${SHAPE_NAMES[correction.shape]}`
+    case 'separar':
+      return `Separar de ${name(correction.at)} la fase «${correction.part.title}: ${correction.part.goal}»`
     case 'conectar':
       return correction.fix.replace(/[.]$/, '')
   }
@@ -226,6 +238,8 @@ export async function judgeDiagram(
   diagram: Diagram,
   corrections: readonly DiagramCorrection[],
   applied: readonly string[] = [],
+  /** Lo que tiene cada fase en su primer nivel, por su id: para no dar por bueno lo que no es verdad. */
+  contents: ReadonlyMap<string, readonly string[]> = new Map(),
 ): Promise<{ verdicts: ('aplicar' | 'descartar' | 'vuelta')[]; ms: number }> {
   if (corrections.length === 0) return { verdicts: [], ms: 0 }
   const said = corrections.map((correction) => diagramCorrectionSaid(correction, diagram))
@@ -233,10 +247,10 @@ export async function judgeDiagram(
     state: {
       orden: command,
       forma: diagram.shape,
-      fases: diagram.modules.map(
-        (module, index) =>
-          `${index + 1}. ${module.title}${module.subtitle ? `: ${module.subtitle}` : ''}`,
-      ),
+      fases: diagram.modules.map((module, index) => {
+        const has = contents.get(module.id) ?? []
+        return `${index + 1}. ${module.title}${module.subtitle ? `: ${module.subtitle}` : ''}${has.length > 0 ? ` — tiene: ${has.slice(0, 8).join(' · ')}` : ''}`
+      }),
       ...(applied.length > 0 ? { corregido: [...applied] } : {}),
     },
     questions: Object.fromEntries(
@@ -260,10 +274,11 @@ export async function judgeDiagram(
           `diagrama${at}`,
           {
             type: 'noul' as const,
-            instructions: `El programa que pide la \`orden\` se enseña como un diagrama (forma \`forma\`, fases \`fases\`). El auditor propone: «${said[at]}» (${correction.why || 'sin decir por qué'}). ¿Con eso el diagrama ayuda más a entender el programa (su forma, los nombres, el orden de sus números o sus flechas), sin cambiar lo que hace?`,
+            instructions: `El programa que pide la \`orden\` se enseña como un diagrama (forma \`forma\`, fases \`fases\`). El auditor propone: «${said[at]}» (${correction.why || 'sin decir por qué'}). ¿Con eso el diagrama ayuda más a entender el programa (su forma, los nombres, el orden de sus números, sus flechas o lo que tiene cada fase), sin cambiar lo que hace? En \`fases\` está lo que tiene cada una: si la propuesta dice algo que no es verdad (que falta algo que está), no.`,
             criteria: {
-              true: 'Sí: quien lo mire lo entiende mejor así, y el programa hace lo mismo.',
-              false: 'No: ya se entendía igual o mejor, o eso cambiaría lo que hace el programa.',
+              true: 'Sí: lo que dice es verdad, quien lo mire lo entiende mejor así, y el programa hace lo mismo.',
+              false:
+                'No: no es verdad lo que dice, ya se entendía igual o mejor, o eso cambiaría lo que hace el programa.',
             },
           },
         ] as const,

@@ -1427,6 +1427,10 @@ export async function modify(
 
 /** Cuántas veces, como mucho, se vuelve a mirar lo arreglado por los expertos que corrigen. */
 export const MAX_ROUNDS = 3
+/** Lo que se le recuerda a la IA al reescribir el programa entero: los rótulos de las fases son el diagrama. */
+const KEEP_STAGES =
+  'Conserva cada comentario que abre una fase («# Título: qué hace»), con una línea en blanco delante y encima de su código: son las fases del diagrama.'
+
 /** Cuántos arreglos de los expertos se aplican, como mucho, en una ronda. */
 export const MAX_FIXES = 5
 
@@ -1521,7 +1525,7 @@ async function audit(
       aside: true,
     })
     const fixed = await modifyOnce(host, players, {
-      command: `Mejora el programa como dicen los expertos, sin cambiar lo que hace ni lo que se pidió («${asked}»): ${toApply.map((finding) => finding.fix).join('; ')}.`,
+      command: `Mejora el programa como dicen los expertos, sin cambiar lo que hace ni lo que se pidió («${asked}»): ${toApply.map((finding) => finding.fix).join('; ')}. ${KEEP_STAGES}`,
       whole: true,
     })
     jevMs += fixed.jevMs
@@ -1637,9 +1641,14 @@ export async function auditDiagram(
     }
     if (!corrections || corrections.length === 0) break
     const asking = corrections
-    const judged = await judgeDiagram(players.decider, asked, diagram, asking, applied).catch(
-      () => ({ verdicts: asking.map(() => 'descartar' as const), ms: 0 }),
-    )
+    const judged = await judgeDiagram(
+      players.decider,
+      asked,
+      diagram,
+      asking,
+      applied,
+      contentsOf(program),
+    ).catch(() => ({ verdicts: asking.map(() => 'descartar' as const), ms: 0 }))
     jevMs += judged.ms
     const kept = asking.flatMap((correction, at) => {
       const verdict = judged.verdicts[at] ?? 'descartar'
@@ -1686,6 +1695,17 @@ function contentsOf(program: Program): Map<string, string[]> {
       }),
     ]),
   )
+}
+
+/** Dónde empieza una línea (base 1) en el texto. */
+function offsetOfLine(source: string, line: number): number {
+  let offset = 0
+  for (let row = 1; row < line; row++) {
+    const next = source.indexOf('\n', offset)
+    if (next === -1) return source.length
+    offset = next + 1
+  }
+  return offset
 }
 
 const lineStart = (source: string, offset: number) => source.lastIndexOf('\n', offset - 1) + 1
@@ -1780,7 +1800,33 @@ async function applyDiagram(
   const edits: { start: number; end: number; text: string }[] = []
   const touched = new Set<string>()
   const renamed: DiagramCorrection[] = []
+  const rowsOf = source.split('\n')
+  const lineOf = new Map(current.nodes.map((node) => [node.id, node]))
   for (const correction of accepted) {
+    if (correction.kind === 'separar') {
+      const section = sectionOf(correction.at)
+      if (!section || touched.has(section.id)) continue
+      // La sentencia de su primer nivel que empieza por lo dicho (no la primera: eso no parte nada).
+      const wanted = correction.from.replace(/\s+/g, ' ').slice(0, 40)
+      const member = section.members
+        .slice(1)
+        .map((id) => lineOf.get(id))
+        .find(
+          (node) =>
+            node && (rowsOf[node.line - 1] ?? '').trim().replace(/\s+/g, ' ').startsWith(wanted),
+        )
+      if (!member) continue
+      const at = lineStart(source, offsetOfLine(source, member.line))
+      const blank = (rowsOf[member.line - 2] ?? '').trim() === ''
+      edits.push({
+        start: at,
+        end: at,
+        text: `${blank ? '' : '\n'}# ${correction.part.title}: ${correction.part.goal}\n`,
+      })
+      touched.add(section.id)
+      renamed.push(correction)
+      continue
+    }
     if (correction.kind !== 'renombrar' && correction.kind !== 'unir') continue
     const section = sectionOf(correction.at)
     if (!section || touched.has(section.id)) continue
@@ -1824,7 +1870,7 @@ async function applyDiagram(
   if (links.length > 0 && !host.signal.aborted) {
     const prior = (await host.program()).source
     const fixed = await modifyOnce(host, players, {
-      command: `Para que cada fase (cada comentario de etapa) tenga lo que dice su nombre y se vea cómo pasan los datos de una a otra, sin cambiar lo que hace el programa ni lo que se pidió («${asked}»): ${links.map((one) => (one.kind === 'conectar' ? one.fix : '')).join('; ')}.`,
+      command: `Para que cada fase (cada comentario de etapa) tenga lo que dice su nombre y se vea cómo pasan los datos de una a otra, sin cambiar lo que hace el programa ni lo que se pidió («${asked}»): ${links.map((one) => (one.kind === 'conectar' ? one.fix : '')).join('; ')}. ${KEEP_STAGES}`,
       whole: true,
     })
     jevMs += fixed.jevMs

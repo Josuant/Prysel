@@ -254,6 +254,34 @@ describe('al acabar, el diagrama', () => {
     expect(outcome.diagramAudit?.findings[0]?.applied).toBeUndefined()
   })
 
+  it('separar una fase que hace dos cosas: solo se añade un rótulo, delante de la línea dicha', async () => {
+    const { host, state } = stage(3)
+    state.text = lines(
+      'import random',
+      '',
+      '# Mostrar el resultado: imprime la mejor',
+      'def mostrar(mejor):',
+      '    print("Mejor:", mejor)',
+      'def preparar():',
+      '    return [random.random() for _ in range(3)]',
+      '',
+      '# Arrancar: lo pone en marcha',
+      'mostrar(max(preparar()))',
+    )
+    const provider = {
+      id: 'mentira',
+      generate: () =>
+        Promise.resolve(
+          'SEPARAR 1 | def preparar(): | Preparar los datos: crea la lista | hace dos cosas',
+        ),
+    } as unknown as AiProvider
+    const outcome = await auditDiagram(host, { provider, decider: jev }, 'x', done)
+    expect(state.text).toContain(
+      '    print("Mejor:", mejor)\n\n# Preparar los datos: crea la lista\ndef preparar():',
+    )
+    expect(outcome.diagramAudit?.findings[0]).toMatchObject({ applied: true })
+  })
+
   it('las funciones sin usar: las que su nombre no sale en ningún otro sitio', () => {
     const source = [
       'def a():',
